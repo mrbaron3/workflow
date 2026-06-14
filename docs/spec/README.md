@@ -66,16 +66,17 @@ Dashboard ──────────────────┘  可視化
 | ID | モジュール | 主責務 | 正本 | 参考実装 | 状態 |
 | --- | --- | --- | --- | --- | --- |
 | M01 | 共通契約モデル (Contracts) | 契約エンベロープ・ID規約・frozen・validation方針 | §3.1, §4, §18 | `src/domain/schema.ts`（部分） | 未着手 |
-| M02 | Hermes-agent | 進捗統合（現フェーズの実体）。受付・意図分類・契約生成はオーサリング層(M20)へ移動、部署ルーティングは二部署目まで縮退。改善提案・承認検出。**execution は持たない** | §7, ADR-0001 | なし（新規） | 未着手（ADR-0001 で縮小） |
+| M02 | Hermes-agent | 進捗統合（現フェーズの実体）。受付・意図分類・契約生成はオーサリング層(M20)へ移動、部署ルーティングは二部署目まで縮退。改善提案・承認検出。**execution・dispatch を持たない**（issue ポーリングは M03: D2/D3） | §7, ADR-0001 | なし（新規） | 未着手（ADR-0001 で縮小） |
 | M20 | オーサリング層 / spec.md 契約 | 人間+AI 協業で spec.md（受け入れ要件 AC-ID）・manual-requirements.md（MR-ID）作成 → `contract-approved` 署名。Department への入力契約（最上流） | ADR-0001 | `templates/feature-spec.md`, `templates/manual-requirements.md` | 下書き |
 
 ### 2.2 開発部署 (Development Department)
 
 | ID | モジュール | 主責務 | 正本 | 参考実装 | 状態 |
 | --- | --- | --- | --- | --- | --- |
-| M03 | Development Coordinator | 状態機械（authoring/execution 分割: ADR-0001 §5）・実行ループ保持・ラベル排他・ロック・worktree・agent dispatch（通常コード） | §9, §10, ADR-0001 | `src/pipeline/coordinator.ts`, `src/domain/states.ts`, `templates/labels.yaml` | 未着手 |
+| M03 | Development Coordinator | 状態機械（二段: ADR-0001 §5）・実行ループ保持・**contract-approved issue の直接ポーリング**・**human_review ゲート（タグ + 層別差し戻し: D17）**・ラベル排他・ロック・worktree・agent dispatch（通常コード） | §9, §10, ADR-0001 | `src/pipeline/coordinator.ts`, `src/domain/states.ts`, `templates/labels.yaml` | 未着手 |
 | M04 | Roadmap Planner | Roadmap/Epic 整理・分解 | §8.2, §9.1 | `agents/roadmap-planner.md`, `src/planning/planner.ts` | 未着手 |
-| M05 | Issue Contract Planner | spec.md の受け入れ要件 → 子 issue スライス提案。IssueContract は spec.md@gitSha から resolve（埋め込まない: ADR-0001 D8/D10） | §11, ADR-0001 | `agents/issue-planner.md`, `src/planning/planner.ts` | 未着手 |
+| M05 | Issue Contract Planner（resolve に縮小） | **resolve のみ**: spec.md@gitSha の AC + acceptance.yaml + M21 設計スライス → IssueContract（埋め込まない: ADR-0001 D8）。設計・分解は M21 へ移譲（D13） | §11, ADR-0001 | `agents/issue-planner.md`, `src/planning/planner.ts` | 未着手 |
+| M21 | Design Planner（新規） | approved spec.md → 詳細設計（Tier1 アーキ・スパイン=epic 共有 / Tier2 設計スライス=PR サイズ）+ PR サイズへ issue 分解（β）。AI 著者・人間 override 任意（ADR-0001 D13/D14/D16） | ADR-0001, §11, §12 | `agents/issue-planner.md`（分割元） | 未着手 |
 | M06 | Generator + Adapters | 実装・PR・GeneratorHandoff / Claude(interactive)・Codex・Gemini adapter | §12 | `agents/generator.md`, `src/agents/{runner,cli,mock}.ts` | 未着手 |
 | M07 | Evaluator | 独立評価・scorecard・PR review・repair instruction 投稿 | §13 | `agents/evaluator.md`, `src/pipeline/evaluate.ts` | 未着手 |
 | M08 | Repair Router | scorecard → 修正指示・試行回数管理・上限超過時 escalate | §14 | `agents/repair-router.md`, `src/pipeline/repair.ts` | 未着手 |
@@ -136,6 +137,8 @@ Dashboard ──────────────────┘  可視化
   `severity`。`hard_gates` の項目集合も要整合。
 - `IssueContract`: `Issue.contract` 埋め込み → `specRef`(path+gitSha)+`acceptanceCriteriaIds`
   参照に置換（ADR-0001 D8）。契約は dispatch 時に spec.md@gitSha から resolve する派生物。
+- 新規契約（ADR-0001 で導入）: `acceptance.yaml`（AC-ID→verification, D15）/ Tier1 アーキ・スパイン /
+  Tier2 設計スライス（M21 産・D14）/ ApprovedSpecRef（M20 産・contract-approved の実体）。
 
 ## 4. 参考実装（AgentOps）とのギャップ分析
 
@@ -237,9 +240,10 @@ open question と、解消した決定の記録（日付つき）。
 
 優先順位は §8 推奨優先順位（提案）の初期値。確定のたびに状態を更新する。
 
-- [ ] M20 オーサリング層 / spec.md 契約（ADR-0001・テンプレート済 / resolve ロジック未）
+- [ ] M20 オーサリング層 / spec.md 契約（ADR-0001・下書き / テンプレート要 O1 反転更新）
+- [ ] M21 Design Planner（ADR-0001・詳細設計二層化 + 分解 / 未着手）
 - [ ] M01 共通契約モデル
-- [ ] M02 Hermes-agent（ADR-0001 で進捗集約に縮小）
+- [ ] M02 Hermes-agent（ADR-0001 で進捗集約に縮小・dispatch 不在）
 - [ ] M03 Development Coordinator
 - [ ] M05 Issue Contract Planner（+ IssueContract 確定）
 - [ ] M06 Generator + Adapters（+ GeneratorHandoff 確定）
