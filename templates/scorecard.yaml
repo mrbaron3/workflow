@@ -1,0 +1,50 @@
+# PR Scorecard — the Evaluator's structured verdict.
+#
+# The harness writes one of these per eval run to .harness/evidence/<run>/scorecard.yaml.
+# A verdict is never a bare pass/fail: it carries expected/observed/repro/evidence so a
+# human (or a Generator's repair step) can act on it mechanically.
+
+pr: PR-0001
+issue: ISSUE-0001
+eval_run_id: EVAL-00001
+attempt: 2
+sample: 0
+agent: mock
+verdict: request_changes        # approve | request_changes | needs_human
+
+hard_gates:                     # ANY blocking gate failing => request_changes
+  build: pass
+  typecheck: pass
+  unit_tests: pass
+  api_tests: pass
+  secrets_scan: pass
+  scope_check: pass
+  playwright: fail
+
+blocking_findings:
+  - criterion_id: AC-001
+    severity: blocker
+    expected: "After creating 'Buy milk' and reloading, it is still listed"
+    observed: "Criterion not satisfied by this build (playwright check failed)."
+    reproduction_steps:
+      - "Open app"
+      - "Create task 'Buy milk'"
+      - "Reload page"
+      - "Observe empty list"
+    evidence:
+      trace: trace.txt
+      screenshot: screenshot.svg
+    required_fix:
+      - "Implement backend persistence"
+      - "Fetch GET /tasks on init"
+      - "Add a Playwright regression test"
+
+scores:
+  functionality: 0.65
+  codeQuality: 0.82
+  testQuality: 0.70
+  ux: 0.75
+  accessibility: 0.68
+overall: 0.71
+
+next_action: return_to_generator   # return_to_generator | release

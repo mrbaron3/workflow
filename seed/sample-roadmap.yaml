@@ -1,0 +1,212 @@
+# Sample roadmap that drives `agentops demo`.
+#
+# In a real deployment the Roadmap Planner + Issue Planner agents would PRODUCE this
+# file (and the contracts in it) from a one-line product goal. Here it is authored up
+# front so the loop runs offline. Every `contract` block is validated against the
+# IssueContract schema at plan time — an invalid contract fails the plan loudly.
+
+vision: "A fast, local-first task manager people actually trust with their work."
+principles:
+  - "Persistence is non-negotiable: nothing the user creates may silently vanish."
+  - "Every feature ships with an automated check for its core behaviour."
+  - "Improve the harness on the same roadmap as the product."
+
+epics:
+  - id: EPIC-01
+    title: "Core task management"
+    theme: "core"
+    issues:
+      - type: feature
+        area: frontend
+        title: "Task CRUD with reload persistence"
+        sprint: "2026-W24"
+        contract:
+          productGoal: "Users can manage tasks and never lose them across reloads."
+          userStory: "As a user, I create a task and still see it after refreshing."
+          scope:
+            include: ["create task", "list tasks", "persistence across reload"]
+            exclude: ["auth", "sharing", "notifications"]
+          acceptanceCriteria:
+            - id: AC-001
+              severity: blocker
+              behavior: "A created task survives a page reload"
+              verification:
+                method: playwright
+                expected:
+                  - "After creating 'Buy milk' and reloading, it is still listed"
+            - id: AC-002
+              severity: blocker
+              behavior: "The API persists tasks"
+              verification:
+                method: api_test
+                expected:
+                  - "POST /tasks returns 201"
+                  - "GET /tasks returns the created task"
+            - id: AC-003
+              severity: minor
+              behavior: "Empty state is shown when there are no tasks"
+              verification:
+                method: playwright
+                expected:
+                  - "An empty-state message is visible with zero tasks"
+          redLines:
+            - "Do not fake persistence with local component state only."
+            - "Do not stub the API and claim success."
+
+      - type: feature
+        area: frontend
+        title: "Task filtering and search"
+        sprint: "2026-W24"
+        contract:
+          productGoal: "Users can find tasks quickly in a long list."
+          userStory: "As a user, I filter tasks by text so I can focus."
+          scope:
+            include: ["text filter", "clear filter"]
+            exclude: ["saved filters", "tags"]
+          acceptanceCriteria:
+            - id: AC-001
+              severity: blocker
+              behavior: "Typing in the filter narrows the visible tasks"
+              verification:
+                method: playwright
+                expected:
+                  - "Filtering by 'milk' shows only matching tasks"
+            - id: AC-002
+              severity: major
+              behavior: "Clearing the filter restores the full list"
+              verification:
+                method: playwright
+                expected:
+                  - "Clearing the filter shows all tasks again"
+          redLines:
+            - "Filtering must not mutate or delete tasks."
+
+      - type: bug
+        area: backend
+        title: "Tasks lost on concurrent edit"
+        sprint: "2026-W24"
+        contract:
+          productGoal: "Concurrent edits must not drop data."
+          userStory: "As a user, two quick edits both stick."
+          scope:
+            include: ["last-write-wins with version check"]
+            exclude: ["real-time collaboration"]
+          acceptanceCriteria:
+            - id: AC-001
+              severity: blocker
+              behavior: "Concurrent updates do not lose either field"
+              verification:
+                method: api_test
+                expected:
+                  - "Two PATCHes to different fields both persist"
+            - id: AC-002
+              severity: blocker
+              behavior: "The database invariant holds after concurrent writes"
+              verification:
+                method: db_state_check
+                expected:
+                  - "No task row has a null title after the test"
+          redLines:
+            - "Do not 'fix' by serialising all writes behind a global lock."
+
+  - id: EPIC-02
+    title: "Onboarding"
+    theme: "growth"
+    issues:
+      - type: feature
+        area: fullstack
+        title: "First-run sample data and empty states"
+        contract:
+          productGoal: "New users see a useful first screen, not a void."
+          userStory: "As a new user, I land on sample tasks I can edit or clear."
+          scope:
+            include: ["seed sample tasks on first run", "dismiss sample data"]
+            exclude: ["product tour"]
+          acceptanceCriteria:
+            - id: AC-001
+              severity: major
+              behavior: "First run shows sample tasks"
+              verification:
+                method: playwright
+                expected:
+                  - "A fresh profile shows 3 sample tasks"
+            - id: AC-002
+              severity: major
+              behavior: "Sample data can be cleared in one action"
+              verification:
+                method: unit_test
+                expected:
+                  - "clearSampleData() removes only sample-flagged tasks"
+          redLines:
+            - "Sample data must be clearly flagged so it can be removed cleanly."
+
+      - type: feature
+        area: frontend
+        title: "Keyboard-accessible task list"
+        contract:
+          productGoal: "The core flow is fully usable without a mouse."
+          userStory: "As a keyboard user, I add and complete tasks via the keyboard."
+          scope:
+            include: ["focus management", "ARIA roles", "keyboard shortcuts"]
+            exclude: ["screen-reader copy review"]
+          acceptanceCriteria:
+            - id: AC-001
+              severity: blocker
+              behavior: "A task can be created and completed using only the keyboard"
+              verification:
+                method: playwright
+                expected:
+                  - "Tab to input, type, Enter creates; Space toggles complete"
+            - id: AC-002
+              severity: minor
+              behavior: "Interactive elements expose accessible names"
+              verification:
+                method: llm_rubric
+                expected:
+                  - "Buttons/inputs have discernible accessible names"
+          redLines:
+            - "Do not remove visible focus outlines."
+
+  - id: EPIC-03
+    title: "Harness & quality"
+    theme: "platform"
+    issues:
+      - type: harness
+        area: harness
+        title: "Surface PR scorecards on the dashboard"
+        contract:
+          productGoal: "Operators can see why a PR failed without digging in files."
+          userStory: "As an operator, I open the dashboard and read the latest scorecards."
+          scope:
+            include: ["render recent eval runs", "link evidence"]
+            exclude: ["historical charts"]
+          acceptanceCriteria:
+            - id: AC-001
+              severity: major
+              behavior: "Dashboard lists recent eval runs with verdict and evidence links"
+              verification:
+                method: unit_test
+                expected:
+                  - "renderHtml includes a 'Recent eval runs' table with links"
+          redLines:
+            - "Do not embed secrets or absolute machine paths in shared output."
+
+      - type: eval
+        area: eval
+        title: "Add reload-persistence regression to the eval registry"
+        contract:
+          productGoal: "The 'tasks vanish on reload' class of bug can never silently return."
+          userStory: "As the harness, I keep a regression test for reload persistence."
+          scope:
+            include: ["promote AC-001 of Task CRUD into an eval task"]
+            exclude: ["full E2E suite rewrite"]
+          acceptanceCriteria:
+            - id: AC-001
+              severity: blocker
+              behavior: "A reload-persistence eval task exists in the registry"
+              verification:
+                method: playwright
+                expected:
+                  - "The registry contains a task asserting reload persistence"
+          redLines:
+            - "The regression task must fail if persistence breaks."

@@ -1,0 +1,31 @@
+{
+  "name": "agentops-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AgentOps — a local-first operating harness for running coding agents (Claude Code / Codex / Gemini) through an Issue Contract -> PR -> Eval -> Repair -> Release loop.",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "agentops": "./bin/agentops.mjs"
+  },
+  "scripts": {
+    "harness": "tsx src/cli/index.ts",
+    "demo": "tsx src/cli/index.ts demo",
+    "dashboard": "tsx src/cli/index.ts dashboard --open",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.1"
+  }
+}

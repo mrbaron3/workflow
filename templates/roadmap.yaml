@@ -1,0 +1,32 @@
+# Roadmap seed template — copy to your own file and pass with `agentops plan --seed <file>`.
+# Validated against the SeedRoadmap schema (src/planning/planner.ts) at plan time.
+
+vision: "<one sentence describing the product>"
+principles:
+  - "<a non-negotiable principle that constrains every issue>"
+
+epics:
+  - id: EPIC-01
+    title: "<epic title>"
+    theme: "<theme/initiative>"
+    issues:
+      - type: feature           # feature | story | bug | tech-debt | harness | eval
+        area: frontend          # frontend | backend | fullstack | infra | docs | eval | harness
+        title: "<issue title>"
+        sprint: "2026-W24"      # optional time-box
+        contract:
+          productGoal: "<user value>"
+          userStory: "As a <role>, I want <capability> so that <benefit>."
+          scope:
+            include: ["<in scope>"]
+            exclude: ["<out of scope>"]
+          acceptanceCriteria:
+            - id: AC-001
+              severity: blocker
+              behavior: "<observable behaviour>"
+              verification:
+                method: playwright
+                expected:
+                  - "<concrete expectation>"
+          redLines:
+            - "<must never do>"
