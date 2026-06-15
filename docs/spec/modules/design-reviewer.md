@@ -38,6 +38,13 @@ epic ライフサイクルの `designing → design-reviewed`（合格時）/ `�
 > スコープ境界の要点（D21）: 本層は **設計が全体として整合するか**を判定する。局所品質（componentDesign の
 > 文章・命名・分割趣味）は **最大でも non-blocking**。被覆/排他は集合演算で必要だが「良い設計」には不十分で、
 > 最悪の分割（全 AC を1スライス）でも被覆は通る——だから整合性 tier が要る。
+>
+> **重複に対する本ハーネスの立場（A・ADR-0003 D27/D29 の明文化）**: 設計時に重複の不在を**保証しない**。
+> 防御は3段構え + 事後回収である——(1) M22 が**契約レベル**重複（責務重複・冗長境界・`sharedFoundations` 重複）を
+> 予防的に審査、(2) M07 が**実装レベル**重複を **1 PR 内**で検出、(3) **両者をすり抜ける cross-PR の実装重複**
+> （別スライス由来の PR が同じロジックを各々再発明）は M22 も M07（per-PR）も捕捉できないため、**M10/M21 の
+> foundation-drift 事後抽出**（ADR-0003 D29・[design-planner.md](design-planner.md) §4/FR-015）で回収する。
+> 「設計時保証」ではなく「構造予防 + per-PR 検出 + 事後抽出」が本ハーネスの正直な姿勢。
 
 ## 2. 入力契約 (consumes)
 
@@ -65,9 +72,20 @@ epic ライフサイクルの `designing → design-reviewed`（合格時）/ `�
 | --- | --- | --- | --- |
 | ① | Tier1 内部整合 | `decisions[]` が相互矛盾しない / `invariants[]` が自己無矛盾 | 矛盾・自己撞着があれば blocking |
 | ② | Tier1↔Tier2 整合 | スライスが `dependsOnSpine` で参照した ARCH 決定に**反する設計**をしていないか | 参照先決定への背反は blocking |
-| ③ | cross-slice 整合 | あるスライスが前提するものを別スライスが供給するか / interface・契約が噛み合うか / `dependsOnSlices` が健全な DAG か（循環なし・実依存と一致） | 前提供給の欠落・interface 不一致・循環依存は blocking |
+| ③ | cross-slice 整合 | あるスライスが前提するものを別スライスが供給するか / interface・契約が噛み合うか / `dependsOnSlices` の宣言が**実依存と一致**するか（DAG の循環検出自体は決定的 tier §3.3 が機械実施: C） | 前提供給の欠落・interface 不一致・実依存との乖離は blocking |
 | ④ | 設計↔spec 意味的整合 | 集合被覆（決定的 tier）を**超えて**、componentDesign が `coversAcIds` の AC **意図**を満たしうるか / redLines を侵さないか / testApproach が acceptance.yaml の verification を exercise するか | AC 意図の取りこぼし・redLine 侵犯は blocking |
-| ⑤ | 全体目的整合 | 分割が epic ゴールへ向かう coherent な物語か（恣意的・場当たり分割でないか）/ **契約レベル DRY**: 責務が重なるスライス・冗長なモジュール境界・重複する `sharedFoundations` がないか | 重大な非coherence・契約レベル重複は blocking、軽微は non-blocking |
+| ⑤ | 全体目的整合 | 分割が epic ゴールへ向かう coherent な物語か（恣意的・場当たり分割でないか）/ **契約レベル DRY**: 責務が重なるスライス・冗長なモジュール境界・**意味的に**重複する `sharedFoundations` がないか（名前衝突は決定的 tier §3.3: C） | 重大な非coherence・契約レベル重複は blocking、軽微は non-blocking |
+
+**整合性 tier の rubric は contract altitude で書く（per-axis チェックリストを作らない: ADR-0003 D26/D29⑤）。**
+5軸は各 grader の**スコープ**（何を見るか）であり、軸ごとのしきい表は設けない。代わりに全軸へ一様に適用する2要素を固定する:
+
+- **証拠要件（finding の falsifiability）**: finding は違反の**具体物**（矛盾するペア / 満たされない AC 意図 /
+  供給されない前提 / 背反する ARCH-ID）を引用しなければ無効。trust でなく証拠で立てる（§6 証拠性）。
+- **blocking 判定の単一手続き（D22 false-block ガードの一様適用）**: 実装を**待たずに**違反だと確定でき、かつ
+  **独立ユニット（他スライス / 他 PR）を非整合にする**なら blocking。一部でも実装まで不可知なら non-blocking。
+
+例示（§8 受け入れ条件の「わざと矛盾を仕込んだ設計」等）は grader の助けとして残すが、**網羅チェックリストにはしない**
+（列挙は能力の高い grader の判断を縛り品質を下げる——M22 が M21 に課す contract altitude を M22 自身の採点にも適用する）。
 
 ### 3.2 DesignScorecard（M22 産・M03/M10 への出力）
 
@@ -103,6 +121,10 @@ LLM 判断を要さない構造検証。M21 の不変条件（design-planner.md 
 - **ID 安定**: `ARCH-ID` / `sliceId` に renumber・再利用がない（spawn 後の split は `parentSliceId` 追跡）。
 - **参照実在**: 各 `dependsOnSpine` の ARCH-ID が spine に存在 / `coversMrIds` の MR-ID が MR に存在 /
   IssueSpawnOrder の全 Ref が版固定（`{path, gitSha}`）で解決可能。
+- **依存 DAG 非循環**: 全スライスの `dependsOnSlices` が DAG を成す（循環は blocking）。循環検出は機械的ゆえ本 tier に置き、
+  軸③ の「宣言依存が実依存と一致するか」の判断とは分離する（C）。
+- **共有基盤の名前非衝突**: `sharedFoundations` の所在・公開シェイプ識別子に機械的重複（同一キーの二重定義）がない。
+  責務が**意味的に**重なるかの判断は軸⑤（C）。
 - **埋め込み禁止**: IssueSpawnOrder に契約本体・設計本文が埋め込まれていない（参照のみ: D8）。
 
 決定的 tier の fail は当然 blocking（構造破綻は実装前に確定）。
@@ -120,8 +142,12 @@ epic 状態 `designing → design-reviewed → decomposed`（ADR-0002 D23）。�
    = **審査完了をシグナル**。これを受けて M03 が状態を書く。
 5. **分岐（M03 が実施）**:
    - `pass` → `design-reviewed → decomposed`、issue 投稿、resolve は M05 へ。
-   - `changes-requested` → `designing` へ差し戻し → M21 が finding の逆引きキーで**該当 sliceId/ARCH-ID
+   - `changes-requested` かつ blocking が **humanReview 領域**（`humanReview:true` の Tier1 決定 /
+     `tier:human_review` の MR を含むスライス）に触れる → **human escalate**（人間が事前に関心登録した箇所ゆえ
+     黙って内側ループに回さず表に出す: D17・DREV-FR-014）。
+   - `changes-requested`（上記以外）→ `designing` へ差し戻し → M21 が finding の逆引きキーで**該当 sliceId/ARCH-ID
      のみ**再設計（DSGN-FR-010/011 と同じ機構: D24）→ 再シグナルで M22 を再 dispatch（設計内側ループ）。
+     **試行上限超過で human escalate**（上限機構は M08 Repair Router と対称・別 open: §10）。
 
 異常系:
 
@@ -141,7 +167,9 @@ epic 状態 `designing → design-reviewed → decomposed`（ADR-0002 D23）。�
 - **DREV-FR-002 spawn 前審査**: issue spawn の**前**に審査する（shift-left）。decomposed への遷移は
   `verdict: pass` を条件とする。
 - **DREV-FR-003 整合性主務**: 主務は全体整合性（§3.1 の5軸）。局所品質は **blocking にしない**（最大 non-blocking: D21）。
-- **DREV-FR-004 決定的 tier**: §3.3（被覆/排他・ID・参照・埋め込み）を機械検査し、fail を blocking 化（D25）。
+- **DREV-FR-004 決定的 tier**: §3.3（被覆/排他・ID・参照・埋め込み・**依存 DAG 非循環・sharedFoundations 名前非衝突**）を
+  機械検査し、fail を blocking 化（D25・C）。循環検出・名前衝突は機械的判定ゆえ本 tier に置き、意味的な責務重複・実依存
+  乖離は整合性 tier（軸③/⑤）に残す。
 - **DREV-FR-005 blocking 基準 = 整合性違反**: blocking は「実装を待たず確定判定できる整合性違反」に限定する
   （相互矛盾・invariant 違反・参照背反・cross-slice 不一致・AC 意図取りこぼし・redLine 侵犯・spec drift）。
   「一部が実装まで不可知」な局所品質は non-blocking（false-block 回避: D22）。
@@ -158,11 +186,21 @@ epic 状態 `designing → design-reviewed → decomposed`（ADR-0002 D23）。�
 - **DREV-FR-011 契約レベル DRY 審査**: M22 は設計ドキュメント上で確定できる重複（責務が重なるスライス・
   冗長なモジュール境界・重複する `sharedFoundations`）を全体目的整合（⑤）の一部として審査する。
   実装レベルの重複（再発明されたロジック・コピペ）は M07 の所掌として扱い、本層では断定しない（ADR-0003 D27）。
+  重複への当たり方は M22（契約）・M07（per-PR 実装）・M10/M21（cross-PR 残留の foundation-drift 事後抽出）の3段で、
+  **設計時に重複不在を保証はしない**（§1 立場ブロック・ADR-0003 D27/D29・A）。
 - **DREV-FR-012 foundation drift 抽出の過結合審査（ADR-0003 D29）**: M21 が遡及導入した `sharedFoundations`
   （新 ARCH + 抽出/refactor スライス）を審査する際、**過結合・誤った抽象（wrong abstraction）でないか**を
   ⑤ の一部として見る: 束ねた consumer が**同じ理由で変わる**か（形状だけの偶然の重複を結合していないか）、
   基盤の公開シェイプが安定か。抽出が結合コスト > 重複コストに見える場合は blocking。検出（事実）は M07/監査の
   所掌で、本層は**抽出という設計判断の妥当性**を審査する（判断は M10/M21、審査は M22）。
+- **DREV-FR-013 整合性 rubric の高度（per-axis チェックリスト禁止）**: 整合性 tier は軸ごとのしきい表を持たず、
+  全軸共通の **証拠要件**（finding は違反の具体物を引用）と **単一 blocking 判定手続き**（実装を待たず確定でき独立
+  ユニットを非整合にする → blocking、一部でも実装まで不可知 → non-blocking）で採点する。違反パターンの網羅列挙を
+  焼き込まない（M22 が M21 に課す contract altitude を M22 自身の採点へ適用: ADR-0003 D26/D29⑤・§3.1）。
+- **DREV-FR-014 human escalation 発火条件**: blocking が **humanReview 領域**（`humanReview:true` の Tier1 決定 /
+  `tier:human_review` の MR を含むスライス）に触れたら**即 human escalate**。それ以外の blocking は M21 内側ループへ
+  自動差し戻しし、**試行上限超過で escalate**（上限機構は M08 Repair Router と対称・別 open）。severity は2値
+  （blocking/non-blocking）ゆえ「severity しきい」は**領域 × 上限超過**に読み替える（§4）。
 
 ## 6. 非機能要件
 
@@ -193,8 +231,8 @@ epic 状態 `designing → design-reviewed → decomposed`（ADR-0002 D23）。�
 - M21 が産出した spine + slices + spawn order（例: octolink 相当）を入力に `DesignScorecard` を生成でき、
   決定的 tier（被覆/排他・ID・参照・埋め込み）と整合性5軸の判定が出る。
 - **整合性違反の検出**: わざと矛盾を仕込んだ設計（例: スライス A が前提する出力をどのスライスも供給しない /
-  参照した ARCH 決定に反する componentDesign / `dependsOnSlices` に循環）で、当該 finding が **blocking** として
-  立ち、`verdict: changes-requested` になる。
+  参照した ARCH 決定に反する componentDesign / 宣言依存が実依存と乖離）で、当該 finding が **blocking** として
+  立ち、`verdict: changes-requested` になる。`dependsOnSlices` の**循環**は決定的 tier が blocking 化する（C）。
 - **局所品質は止めない**: componentDesign の文章が粗いだけの設計は **non-blocking** に留まり `verdict: pass`。
 - **被覆は通るが非coherent**: 全 AC を1スライスに詰めた「被覆/排他は通るが分割が破綻」した設計で、決定的 tier は
   pass でも整合性 tier（⑤）が blocking を立てる（被覆検査だけでは捕まらないことの検証）。
@@ -221,11 +259,33 @@ epic 状態 `designing → design-reviewed → decomposed`（ADR-0002 D23）。�
 D23 状態挿入 `designing→design-reviewed→decomposed`・書き込みは M03 / D24 再設計は M21 逆引き再利用 /
 D25 層1=決定的 tier 吸収・層3=design_failure。
 
+本セッション決定（2026-06-15・審査順序 / 重複の分担 / tier 分割 / rubric 高度 / escalation）:
+
+- **A 重複への立場 = 設計時保証の放棄 + 3段構え**: 設計時に重複の不在を保証しない。契約レベル=M22・実装レベル
+  （per-PR）=M07・**cross-PR 残留**=M10/M21 の foundation-drift 事後抽出（D29）で回収（§1 立場ブロック・DREV-FR-011・
+  ADR-0003 D27/D29 の明文化）。「M22 と M07 で重複は防げる」は楽観で、per-PR の M07 は別 PR 間の重複を見られない。
+- **B 根本原因優先報告は不採用**: Tier1 finding の派生として Tier2 finding を抑制/再順序化する機構は**入れない**。
+  既存の逆引きキー（`refs[]`: ARCH-ID/sliceId）が「土台を先に直す」順を既に与えており冗長で、誤帰属で往復が増える
+  リスクがある。全 finding をフラットに1枚の `DesignScorecard` で返し、処理順は M21 が逆引きで決める。
+- **C 軸③/⑤ の機械/判断分割**: `dependsOnSlices` の**循環検出**と `sharedFoundations` の**名前衝突**は機械的ゆえ
+  決定的 tier（§3.3・DREV-FR-004）へ。軸③ には「宣言依存が**実依存と一致**するか」、軸⑤ には「**意味的な**責務重複」の
+  判断のみ残す（§3.1）。
+- **D 審査単位 = 単一審査を維持・Tier1 先行ゲートは保留**: spine + slices + spawn order を spawn 前に**1回**で
+  審査する（分解込み審査）。Tier1 先行の2段ゲートは**入れない**——(i) 審査は spawn 前ゆえコード手戻りは元々無い、
+  (ii) 逆引きで再設計は局所化済み、(iii) 分解して初めてアーキ欠陥が露見するため Tier1 単体審査は偽の安心を生む、
+  (iv) loop 1「最薄の縦1本」原則（README §8）。**再検討トリガ**（操作的しきいは焼かない: D29⑤）: 実 epic で
+  Tier1 変更の設計 drift 逆引きが繰り返しスライス大半へ波及する観測が出たら2段化を再検討。それまでは「最初の
+  1 epic で痛みを1回食う」を受容する。
+- **E 整合性 rubric の高度**: per-axis チェックリストを作らず、全軸共通の**証拠要件** + **単一 blocking 判定手続き**
+  （+ illustrative 例示）で採点（§3.1・DREV-FR-013・ADR-0003 D26/D29⑤）。M22 が M21 に課す contract altitude を
+  自身の採点へも適用する。
+- **F human escalation 発火条件**: blocking ∩ **humanReview 領域** → 即 escalate / その他 blocking → M21 内側ループ
+  （試行上限は M08 Repair Router と対称・別 open）。severity は2値ゆえ "severity しきい" は**領域 × 上限超過**に
+  読み替える（§4/§5・DREV-FR-014）。
+
 残 open:
 
-- 整合性 tier の LLM grader 判定基準の具体化（5軸ごとの rubric）と human escalation 発火条件（humanReview タグ /
-  blocking severity のしきい）。M22 確定時。
 - 設計内側ループの試行上限・escalate 方針（実装側 M08 Repair Router と対称化するか）。M03/M08 確定時。
 - `design_failure` サブ分類の確定と正本 §16 taxonomy への追記（ADR-0002 §4・別コミット）。
 - `DesignScorecard` / `EvalScorecard` の M01 共通化（blocking/non-blocking envelope・grader 3段階 tier・逆引きキー規約）。
-- M22 の audit 単位（spine 全体 + slices をまとめて1審査か、変更分のみの差分審査か）。drift 再審査の効率と関連。
+- drift 再審査時の**差分審査**（変更 sliceId/ARCH-ID のみ再審査するか全体再審査か）の効率最適化。M22 確定時。
