@@ -1,6 +1,7 @@
 # M21 Design Planner 仕様
 
 - 正本参照: ADR-0001（[decisions/0001](../decisions/0001-authoring-execution-split.md) D10/D13/D14/D16/D17）,
+  ADR-0002（[decisions/0002](../decisions/0002-independent-design-review.md) D20-D25・独立設計レビュ / 設計評価ループ）,
   REQUIREMENTS.md §11（Issue Contract 関連 FR）, §12（Generator 入力の前提）
 - 参考実装: [agents/issue-planner.md](../../../agents/issue-planner.md)（**分割元**: 設計判断を本 M21 へ、
   resolve 機械処理を M05 へ振り分け）, `src/planning/planner.ts`（**置換**方針）
@@ -11,7 +12,10 @@
 
 `contract-approved` な spec.md（オーサリング SoT）を入力に、**詳細設計（二層: Tier1 アーキ・スパイン /
 Tier2 設計スライス）** を著し、**PR サイズの issue へ分解（β）** する層。AI が著者で、人間 override は任意
-（ADR-0001 D10/D13/D16）。epic ライフサイクルの `designing → decomposed` を担う。
+（ADR-0001 D10/D13/D16）。epic ライフサイクルの `designing → (design-reviewed) → decomposed` を担う。
+設計成果物は spawn 前に **M22 Design Reviewer の独立審査**を通る（ADR-0002 D20/D23）。本層は設計の**著者・
+修正者**であり、審査者ではない（自己評価しない）。M22 の `DesignScorecard` で blocking が立てば本層へ差し戻され、
+finding の逆引きキー（sliceId/ARCH-ID）で**該当箇所のみ**再設計する（ADR-0002 D24）。
 
 設計（判断）と契約 resolve（機械処理）は性質が異なるため分離する（D13）。本層は**設計と分解の判断**を
 担い、**resolve の実体**（spec.md@gitSha の AC + acceptance.yaml + Tier2 スライス → IssueContract への
@@ -32,7 +36,8 @@ Tier2 設計スライス）** を著し、**PR サイズの issue へ分解（β
 - spec.md@gitSha → IssueContract の **resolve 実体**（投影の決定性・drift 再署名の機械処理）→ M05
 - issue の投稿・状態機械・dispatch・ロック → M03 Coordinator
 - 実装（コード詳細の確定はコード生成側）→ M06 Generator
-- 評価・scorecard → M07 Evaluator
+- 実装成果（PR）の評価・scorecard → M07 Evaluator
+- **設計成果物の審査・DesignScorecard**（被覆検証 + 整合性審査）→ M22 Design Reviewer（本層から独立: ADR-0002 D20）
 
 > スコープ境界の要点（D13/D14）: 本層は **判断**（どう分割し、どう設計するか）を出力する。
 > M05 は本層の出力を入力に **機械的に** IssueContract を組み立てる。境界は「Tier2 スライスを
@@ -161,8 +166,10 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
    Tier1 決定は参照（ARCH-ID）で引き、複製しない。
 5. **human_review タグ判定**（D17）: `humanReview: true` の Tier1 決定、または `coversMrIds` に
    `tier: human_review` を含むスライスがあれば、当該 spawn order に review トリガを立てる。
-6. **IssueSpawnOrder 出力**: スライスごとに spawn order（参照集合）を出力＝**分解完了をシグナル**。
-   これを受けて M03 が `decomposed` を書き issue を投稿、resolve は M05 が引き取る（本層の境界外）。
+6. **IssueSpawnOrder 出力**: スライスごとに spawn order（参照集合）を出力＝**設計完成をシグナル**。
+7. **M22 独立審査**（ADR-0002 D23・本層の外）: M03 が M22 を dispatch。M22 が設計成果物を spawn 前に審査し
+   `DesignScorecard` を産出。`pass`（blocking 空）なら M03 が `design-reviewed → decomposed` を書き issue を投稿、
+   resolve は M05 が引き取る（本層の境界外）。`changes-requested` なら `designing` へ差し戻し、本層が再設計（下記）。
 
 人間 override（任意・D10/D16）:
 
@@ -181,6 +188,10 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
   にした（FR-008）ことで複製ズレは防げるが、参照先の決定変更への追従はこのフックが担う。
 - **サイズ誤判定（B5・M05→M21 の戻り）**: M21 の `estimatedScope` は暫定見積り。M05 resolve 後に実サイズが
   PR を超えると判明した場合、当該スライスを `designing` 相当へ戻し split 規約（§3.2）で再分割する。
+- **設計審査差し戻し（ADR-0002 D24・新規）**: M22 の `DesignScorecard` が `changes-requested`（blocking 非空）の
+  とき、各 finding の逆引きキー（`refs[]`: ARCH-ID/sliceId/AC-ID）を AC drift と同じ機構で逆引きし、**該当する
+  Tier1 決定 / Tier2 スライスのみ**を再設計する（全体再設計を強制しない）。再設計後に再シグナル → M22 再審査
+  （設計内側ループ）。整合性違反（cross-slice 不一致・参照背反・AC 意図取りこぼし等）の修正が主。
 - **アーキ差し戻し（D17）**: human_review から「アーキ差し戻し」を受けると、当該 Tier1 決定 / スライスを
   再設計対象に戻す。
 
@@ -228,7 +239,9 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
   加えて、設計起因の実装失敗を北極星の三能力（評価・改善）に接続する**観測点を持つ**: 各 issue の評価結果
   （scorecard）と `sliceId` / `ARCH-ID` を紐づけ、「どの設計判断が後段の失敗に関与したか」を辿れるようにする。
   設計起因失敗（誤った分割・アーキ決定）を M10 Eval Curator / M12 Harness Analyst へ送る経路の**存在**を
-  保証する（実体は当該モジュール確定時。ここでは接続点だけ規定）。
+  保証する（実体は当該モジュール確定時。ここでは接続点だけ規定）。**この層3 接続点の供給は M22 Design Reviewer に
+  移譲**し、M22 が `design_failure` サブ分類で携帯する（ADR-0002 D25・[design-reviewer.md](design-reviewer.md) §6）。
+  本層は逆引きキー（sliceId/ARCH-ID）を成果物に持たせることでその join を可能にする。
 
 ## 7. 不変条件・禁止事項 (red lines)
 
@@ -292,6 +305,15 @@ D14 設計二層化 / D16 AI 著者・可読性前提 / D17 human_review 層別�
 - B1 被覆を双方向化 + 「AC は分割不可能・超過は M20 差し戻し」明文化 / B2 状態書き込みを M03 に委譲（FR-012）/
   B3 設計ファイル版固定 + 設計 drift 逆引き（FR-011）/ B4 1:1 を正直に記録 + split 規約 / B5 estimatedScope を
   暫定見積りとし M05→M21 サイズ差し戻し経路を新設 / C1 評価・改善トレースの接続点を §6 に追加。
+
+独立設計レビュ追加（2026-06-15・ADR-0002）:
+
+- **設計の独立審査点を新設**。人間は WHAT（spec/AC）のみ定義し設計は AI 著者ゆえ、実装が M07 Evaluator を
+  通るのと対称に、設計も **M22 Design Reviewer**（M21 から独立）の `DesignScorecard` を spawn 前に通す（D20）。
+  本層は設計の**著者・修正者**に純化（審査は持たない）。状態は `designing → design-reviewed → decomposed`（D23）。
+- M22 の主務は**全体整合性**（局所品質採点でない・D21）。blocking=整合性違反、局所品質=non-blocking（D22）。
+- 設計差し戻しは AC drift と**同じ逆引き機構**を再利用し該当箇所のみ再設計（D24・§4 異常系）。層3（事後トレース）
+  の供給は M22 へ移譲（D25・§6）。
 
 残 open:
 
