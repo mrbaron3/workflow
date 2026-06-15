@@ -113,22 +113,30 @@ issue（work order）ライフサイクル（投稿時に生成）:
 ## 7. 成果物（このセッション）
 
 - [templates/feature-spec.md](../../templates/feature-spec.md) — spec.md テンプレート
-  （**O1 反転に伴い verification を acceptance.yaml へ分離する更新が必要**。M20 §9 参照）。
+  （O1 反転済み: meta=frontmatter / behavior+subArea のみ / verification 分離。2026-06-15）。
+- [templates/acceptance.yaml](../../templates/acceptance.yaml) — verification（AC-ID キー・O1 反転で新設）。
 - [templates/manual-requirements.md](../../templates/manual-requirements.md) — 要審査要件票。
-- [docs/spec/modules/authoring-layer.md](../modules/authoring-layer.md) — M20 下書き。
+- [docs/spec/modules/authoring-layer.md](../modules/authoring-layer.md) — M20（**確定** 2026-06-15）。
+- [docs/spec/modules/design-planner.md](../modules/design-planner.md) — M21（下書き 2026-06-15）。
 
 ## 8. 未決事項 / 決定ログ
 
 O1-O4 解決済（簡易アプリ通しで確認）:
 
 - **O1 → 反転で解決（D15）**: embedded YAML をやめ spec.md(behavior) + acceptance.yaml(verification)。
-- **O2 → 確定**: 署名 = issue に `specRef`(path+gitSha) を焼く（issue が承認記録）+ spec.md frontmatter `status: approved`。専用承認 DB なし。
-- **O3 → 確定**: ApprovedSpecRef は **commit SHA**。drift は `approved..HEAD` の **path 単位 diff**。
-- **O4 → 確定**: drift 再署名は **変更 AC-ID のサブセットのみ**。
+- **O2 → 確定（M20 v2 訂正 2026-06-15）**: 署名記録の最初の永続先は **epic 状態オブジェクト**。issue は
+  decomposed 後に生成されるため「issue が承認記録」は転記後の話（issue を最初の置き場にできない）。
+  詳細: [modules/authoring-layer.md](../modules/authoring-layer.md) §3.4。
+- **O3 → 確定（M20 v2 訂正 2026-06-15）**: drift は **二段**（path 単位で変更有無 → AC 単位の構造 diff で
+  変更 AC-ID を特定）。「path 単位 diff のみ」では AC-ID を特定できない。ApprovedSpecRef に AC 単位
+  ハッシュ（`acFingerprints`）を持つ。詳細: authoring-layer.md §4 / AUTH-FR-008。
+- **O4 → 確定**: drift 再署名は **変更 AC-ID のサブセットのみ**（`approvedAcIds` から外して表現）。
 
 残 open:
 
-- M21 の Tier1/Tier2 出力スキーマと、resolve(M05) への引き渡し形式の確定。
+- ~~M21 の Tier1/Tier2 出力スキーマと、resolve(M05) への引き渡し形式の確定。~~
+  → [modules/design-planner.md](../modules/design-planner.md)（M21 下書き）で確定。
+  Tier1=`ArchitectureSpine` / Tier2=`DesignSlice` / handoff=`IssueSpawnOrder`（参照のみ・D8）。
 - Hermes 進捗集約 join の報告面（Dashboard / レポート）。
 - 実装シーケンス（埋め込み契約の参照化・状態機械二段化・auto-merge 廃止・テンプレート更新の順序）。
 - M20/M21 のモジュール化（README 地図への M21 追加・M20 確定）。
