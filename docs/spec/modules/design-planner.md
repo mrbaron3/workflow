@@ -261,6 +261,8 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
 
 - [agents/issue-planner.md](../../../agents/issue-planner.md): 「設計 + 分解 + 契約生成」を一体で持つ
   → **分割**。設計判断（Tier1/Tier2）と分解を本 M21 へ、resolve（機械投影）を M05 へ。
+- **正本 §11 DEV-PLAN-FR の再配分**（D13 の具体化）: 設計・分解判断 = 本 M21 / spec→IssueContract の
+  resolve・schema validation = M05。旧 §11「Planner が契約を作成」は、判断（M21）と機械処理（M05）に二分された。
 - `src/planning/planner.ts`: seed YAML から contract を直接生成する経路を **置換**。
   spec.md → Tier1/Tier2 設計 → IssueSpawnOrder（参照）→ M05 resolve に組み替える。
 - `Issue.contract` 埋め込み（[schema.ts](../../../src/domain/schema.ts) L108）廃止と連動

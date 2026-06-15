@@ -1,8 +1,14 @@
 # Architecture
 
+> ⚠️ **現実装（AgentOps MVP）の記述。新設計の正本は [docs/spec/](spec/) + [ADR-0001](spec/decisions/0001-authoring-execution-split.md)。**
+> 本書の `status: contract-drafted` 等の旧ラベル、`agents/issue-planner.md` 単独の Planning layer、
+> `any approved ? release` は新設計で更新済み（status は二段ライフサイクル + `build-approved`/`ready-to-release`
+> に改名、Planning は M21 Design Planner + M05 resolve に分割、本番 merge は人間ゲート）。実装が追従するまでの
+> 参考として残す。
+
 ## Layers
 
-```
+```text
 Product layer     Roadmap, Epics, release goals            domain/schema.ts, planning/
 Planning layer    Issue Contracts, acceptance criteria     domain/schema.ts, agents/issue-planner.md
 Execution layer   agent assignment, samples, PRs           agents/runner.ts, pipeline/coordinator.ts
@@ -12,7 +18,7 @@ Learning layer    metrics, dashboard, eval growth          metrics/, dashboard/,
 
 ## Data flow (one issue)
 
-```
+```text
 plan ──► Issue{status: contract-drafted, contract}
    │
 coordinator.runIssue

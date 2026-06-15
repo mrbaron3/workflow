@@ -117,7 +117,13 @@ Dashboard ──────────────────┘  可視化
 | IntakeContract | Hermes → Hermes(routing) | §7.4 | なし | 新規 |
 | RoutingDecision | Hermes → Coordinator | §7.5 | なし | 新規 |
 | DepartmentContract | Hermes → Department | §7.6, §18 | なし | 新規 |
-| IssueContract | Planner → Generator/Evaluator | §11.2 | `IssueContract` | 既存・差分あり |
+| spec.md（AC behavior） | 人間+AI → M21 | ADR D4/D15 | `templates/feature-spec.md` | 確定（M20 v2） |
+| acceptance.yaml（AC-ID→verification） | M20 → M05(resolve) | ADR D15 | `templates/acceptance.yaml` | 確定（M20 v2） |
+| ApprovedSpecRef（path+gitSha+acFingerprints） | M20 → M21/M05 | ADR D8/O2/O3 | なし | 確定（M20 v2） |
+| ArchitectureSpine（Tier1・決定のみ） | M21 → M05/Generator | ADR D14 | なし | 下書き（M21） |
+| DesignSlice（Tier2・PR サイズ） | M21 → M05 | ADR D14 | なし | 下書き（M21） |
+| IssueSpawnOrder（参照集合・版固定） | M21 → M03/M05(resolve) | ADR D8/D13 | なし | 下書き（M21） |
+| IssueContract | M05(resolve) → Generator/Evaluator | §11.2 | `IssueContract` | 既存・差分あり（resolve 派生物に） |
 | GeneratorHandoff | Generator → Evaluator | §12.3 | `BuildArtifact`（近似） | 部分・要正式化 |
 | EvalScorecard | Evaluator → Repair/DB | §13.3 | `EvalRun` | 既存・差分あり |
 | RepairInstruction | Evaluator/Repair → Generator | §13.5, §14.1 | repair brief（`pipeline/repair.ts`） | 部分 |
@@ -136,9 +142,9 @@ Dashboard ──────────────────┘  可視化
 - `EvalScorecard`: 正本は blocking/non-blocking を分離、既存 `EvalRun` は `findings` 統合 +
   `severity`。`hard_gates` の項目集合も要整合。
 - `IssueContract`: `Issue.contract` 埋め込み → `specRef`(path+gitSha)+`acceptanceCriteriaIds`
-  参照に置換（ADR-0001 D8）。契約は dispatch 時に spec.md@gitSha から resolve する派生物。
-- 新規契約（ADR-0001 で導入）: `acceptance.yaml`（AC-ID→verification, D15）/ Tier1 アーキ・スパイン /
-  Tier2 設計スライス（M21 産・D14）/ ApprovedSpecRef（M20 産・contract-approved の実体）。
+  参照に置換（ADR-0001 D8）。契約は dispatch 時に M05 が spec.md@gitSha から resolve する派生物。
+- ADR-0001 で導入した新規契約（spec.md / acceptance.yaml / ApprovedSpecRef / ArchitectureSpine /
+  DesignSlice / IssueSpawnOrder）は上表に正式行として収載。M20 産は確定 v2、M21 産は下書き。
 
 ## 4. 参考実装（AgentOps）とのギャップ分析
 
