@@ -296,8 +296,9 @@ D14 設計二層化 / D16 AI 著者・可読性前提 / D17 human_review 層別�
 残 open:
 
 - `estimatedScope` の判定基準（閾値 vs AI 判断）。**所掌は M21 の暫定見積りで確定**（B5）。実サイズは M05 resolve 後。
-- スライス間依存（`dependsOnSlices`）と M03 の dispatch 順 / 並行度の接続。tracer-bullet 縦切り優先を
-  分解段階で表現するか M03 のスケジューリングに委ねるか（M03 起票時に確定）。
+- ~~スライス間依存（`dependsOnSlices`）と M03 の dispatch 順の接続~~ → **確定（Tier C）**: M21 は依存
+  **DAG（`dependsOnSlices`）のみ**出力。tracer-bullet 縦切り優先の順位付け・並行度は **M03 が所有**
+  （スケジューリングは決定的 backbone の責務・設計段階で焼き込まない）。M03 起票時に DAG の消費方法を確定。
 - Tier1 任意レビュー（`humanReview`）の粒度: 決定単位か spine ファイル単位か。
 - `ArchitectureSpine` / `DesignSlice` / `IssueSpawnOrder` の M01 共通契約モデルへの抽出（垂直1本通過後）。
   各スキーマの ID 規約・version-pinned Ref・envelope は M01 抽出候補。

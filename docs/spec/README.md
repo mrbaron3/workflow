@@ -263,36 +263,45 @@ open question と、解消した決定の記録（日付つき）。
 - [ ] M04 Roadmap Planner
 - [ ] M19 Department / Handoff 抽象（将来・抽象のみ）
 
-## 8. 推奨優先順位（提案）
+## 8. 推奨優先順位（北極星整合・スライス順）
 
-「依存の根が深い順 + 実行時データフロー順」で並べた提案。最終確定はユーザー判断。
-各項目は「なぜこの順か」を一行で付す。
+モジュールの線形順ではなく、[北極星](../NORTH_STAR.md)の三能力（**自律 × 評価 × 改善**）を閉じる
+**ループを薄く1本通し、太らせる**順で並べる。
 
-> ⚠️ 北極星との緊張（要再検討）: [docs/NORTH_STAR.md](../NORTH_STAR.md) は「自律 × 評価 × 改善」を
-> 同格の三能力とする。本順位は改善系（M10 Curator / M12 Analyst / M14）を後段（8・10番目）に
-> 置いており、北極星と整合しない。delivery（自律）だけ先に作り評価・改善を後回しにはできない。
-> §8 を見直すときはこの緊張を解消する。
+> **「同格」の解釈**: 北極星は三能力を同格とするが、これは同時着工ではなく **いずれも恒久的に後回しに
+> しない＝最初のループが三能力すべてに触れる**こと。サイクルはどこかで bootstrap が要り、データフロー上は
+> 自律→評価→改善 に依存するが、**loop 1 で閉じる**。これにより操舵の最優先点（同じ失敗を二度繰り返さない
+> ＝失敗を回帰化）を loop 1 から守る。
+>
+> **旧 §8 の緊張の解消**: (a) 旧版は M01 を1番目に置いたが ADR-0001 D1「抽象は具体の後」と矛盾した →
+> **M01 は loop 1 で現れた契約から抽出**（垂直1本の後）。(b) 旧版は改善系（M10/M12/M14）を 8・10 番目に
+> 置き北極星と乖離した → **失敗の回帰化は loop 1 に含む**（M10 Curator は薄く）。プロセス改善提案
+> （M12/M14）は loop 2 の厚み付けに回す。
 
-1. **M01 共通契約モデル** — 全モジュールが参照する共通語彙。重いと後段の手戻りが最大。
-   まずエンベロープ・ID規約・frozen・validation方針・契約カタログだけ軽く固定し、
-   各契約の詳細は担当モジュールと同時に詰める。
-2. **M02 Hermes-agent** — 入口かつ新規の主役。出力（Intake/Routing/Department 契約）が
-   開発部署の入力を規定するため、先に形を決めると下流がぶれない。
-3. **M03 Development Coordinator** — 全 dev agent を駆動する決定的 backbone。
-   状態機械とラベルが定まらないと各 agent の境界が決められない。
-4. **M05 Issue Contract Planner（+ IssueContract 確定）** — 作業単位。下流すべての前提。
-5. **M06 Generator + Adapters（+ GeneratorHandoff）** — 実装と handoff 契約。
-6. **M07 Evaluator + M09 Evaluation Harness（+ Scorecard）** — 合否の心臓部かつ最大の
-   未確定領域（隔離実行 / 実 grader）。Evaluator と harness は一体で詰める。
-7. **M08 Repair Router** — 修正ループ方針（scope限定・試行上限・escalate）。
-8. **M10 Eval Curator** — false pass の回帰昇格と failure taxonomy。
-9. **M13 Dashboard & Metrics** — ここまでの成果物を可視化。
-10. **M12 Harness Analyst + M14 Daily Report / Improvement Proposal** — 自己改善ループ。
-11. **M15 Security & Approval / M16 Model Independence** — 横断制約。各モジュールが
-    「制約」として早期に参照するが、確定自体はある程度モジュールが固まってからで良い。
-12. **M11 Release Manager / M17 CLI / M18 Storage** — 仕上げ（接合と運用面）。
-13. **M04 Roadmap Planner** — 既存実装で薄く成立。後段で軽く確定。
-14. **M19 Department / Handoff 抽象** — 将来拡張。interface と sample 契約のみ。
+### Loop 1 — 三能力を閉じる最薄の縦1本（最優先）
 
-> 次アクション: この優先順位で問題なければ **No.1（M01 共通契約モデル）** から
-> `modules/contracts.md` を起票して詰める。順番の入れ替え・粒度変更があれば指定する。
+すべて「薄く」。各モジュールを作り込むのではなく**ループを閉じる**ことが目的。
+
+- **自律**: M20 spec.md → M21 設計/分解 → M05 resolve → M03 Coordinator（薄）→ M06 Generator → PR。
+- **評価**: M07 Evaluator + M09 Harness（薄・実 grader 1〜2種）→ scorecard / evidence。
+- **改善**: M08 Repair（薄・生成↔評価を閉じる）/ M10 Eval Curator（薄・**loop 1 の失敗を回帰 eval に昇格**）。
+
+loop 1 の完了基準: 1 機能が人間の HOW 無しで PR 化され、証拠で採点され、**その失敗が回帰ケースとして
+捕捉される**（北極星の反証「失敗が回帰化されない」を loop 1 で潰す）。
+
+### 抽出 — M01 共通契約モデル（loop 1 の直後）
+
+loop 1 で**実際に現れた契約**（IssueContract / Scorecard / spec.md / ApprovedSpecRef / IssueSpawnOrder /
+DesignSlice 等）から、共通エンベロープ・ID 規約・frozen・validation・version-pinned Ref を**抽出**して
+固定する（ADR D1）。先に作ると偽の汎用性になる。
+
+### Loop 2+ — 各能力を太らせる
+
+- **自律**: M02 Hermes（進捗集約）/ M11 Release Manager / M04 Roadmap Planner。
+- **評価**: M09 隔離実行・実 grader 群の拡充（最大の未確定領域）/ M13 Dashboard & Metrics。
+- **改善**: M12 Harness Analyst + M14 Daily Report / Improvement Proposal（プロセス改善提案）。
+- **横断**: M15 Security & Approval / M16 Model Independence / M17 CLI / M18 Storage。
+- **将来**: M19 Department / Handoff 抽象（interface + sample 契約のみ）。
+
+> 次アクション: 垂直1本（M20 v2 → M21 → **M05 resolve**）の続きとして M05 を起票。loop 1 を閉じてから
+> M01 を抽出する。順番の入れ替え・粒度変更があれば指定する。

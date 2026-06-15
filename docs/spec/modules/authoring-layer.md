@@ -238,3 +238,6 @@ O1-O4 解決済（簡易アプリ通しで確認）:
 
 残 open（本層）: v2 修正の受け入れ条件（§8）を実装で固める。`acFingerprints` のハッシュ対象（behavior +
 verification の正規化方法）の確定。M21 への `subArea` 受け渡しは [design-planner.md](design-planner.md) §2 で consume 済み。
+
+**M01 抽出候補（loop 1 通過後・README §8）**: `ApprovedSpecRef`（path + gitSha + acFingerprints）の
+version-pinned Ref 形と、AC-ID / MR-ID の ID 規約は M01 共通契約モデルへ抽出する候補。先に固定しない（ADR D1）。
