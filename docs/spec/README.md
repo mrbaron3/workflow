@@ -29,7 +29,8 @@ REQUIREMENTS.md         ← 要求の正本（大枠 / 全FR）
 > モジュールを横断する設計決定は [`decisions/`](decisions/) に決定記録（ADR）として
 > 凍結する。各モジュール仕様・実装はこれに従う。
 > 現行: [0001 オーサリング層と実行層の分離・spec.md を SoT とする](decisions/0001-authoring-execution-split.md) /
-> [0002 独立設計レビュ・設計評価ループ](decisions/0002-independent-design-review.md)。
+> [0002 独立設計レビュ・設計評価ループ](decisions/0002-independent-design-review.md) /
+> [0003 仕様の高度・薄い実装層・DRY の分担](decisions/0003-spec-altitude-and-dry.md)。
 
 ## 1. 大枠（レイヤーと原則）
 
@@ -77,8 +78,8 @@ Dashboard ──────────────────┘  可視化
 | M03 | Development Coordinator | 状態機械（二段: ADR-0001 §5）・実行ループ保持・**contract-approved issue の直接ポーリング**・**human_review ゲート（タグ + 層別差し戻し: D17）**・ラベル排他・ロック・worktree・agent dispatch（通常コード） | §9, §10, ADR-0001 | `src/pipeline/coordinator.ts`, `src/domain/states.ts`, `templates/labels.yaml` | 未着手 |
 | M04 | Roadmap Planner | Roadmap/Epic 整理・分解 | §8.2, §9.1 | `agents/roadmap-planner.md`, `src/planning/planner.ts` | 未着手 |
 | M05 | Issue Contract Planner（resolve に縮小） | **resolve のみ**: spec.md@gitSha の AC + acceptance.yaml + M21 設計スライス → IssueContract（埋め込まない: ADR-0001 D8）。設計・分解は M21 へ移譲（D13） | §11, ADR-0001 | `agents/issue-planner.md`, `src/planning/planner.ts` | 未着手 |
-| M21 | Design Planner（新規） | approved spec.md → 詳細設計（Tier1 アーキ・スパイン=epic 共有 / Tier2 設計スライス=PR サイズ）+ PR サイズへ issue 分解（β）。AI 著者・人間 override 任意（ADR-0001 D13/D14/D16） | ADR-0001, §11, §12 | `agents/issue-planner.md`（分割元） | 下書き |
-| M22 | Design Reviewer（新規） | M21 設計成果物（Tier1/Tier2/spawn order）を **spawn 前**に **M21 から独立**して審査し `DesignScorecard`（blocking/non-blocking）を産出。主務は全体整合性（大域 coherence）。設計評価ループ `designing→design-reviewed→decomposed`（ADR-0002 D20-D25） | ADR-0002, §3, §16 | `agents/evaluator.md`（独立評価者パターン流用） | 下書き |
+| M21 | Design Planner（新規） | approved spec.md → 詳細設計（Tier1 アーキ・スパイン=epic 共有 / Tier2 設計スライス=PR サイズ）+ PR サイズへ issue 分解（β）。AI 著者・人間 override 任意（ADR-0001 D13/D14/D16） | ADR-0001, ADR-0002, ADR-0003, §11, §12 | `agents/issue-planner.md`（分割元） | 下書き |
+| M22 | Design Reviewer（新規） | M21 設計成果物（Tier1/Tier2/spawn order）を **spawn 前**に **M21 から独立**して審査し `DesignScorecard`（blocking/non-blocking）を産出。主務は全体整合性（大域 coherence）。設計評価ループ `designing→design-reviewed→decomposed`（ADR-0002 D20-D25） | ADR-0002, ADR-0003, §3, §16 | `agents/evaluator.md`（独立評価者パターン流用） | 下書き |
 | M06 | Generator + Adapters | 実装・PR・GeneratorHandoff / Claude(interactive)・Codex・Gemini adapter | §12 | `agents/generator.md`, `src/agents/{runner,cli,mock}.ts` | 未着手 |
 | M07 | Evaluator | 独立評価・scorecard・PR review・repair instruction 投稿 | §13 | `agents/evaluator.md`, `src/pipeline/evaluate.ts` | 未着手 |
 | M08 | Repair Router | scorecard → 修正指示・試行回数管理・上限超過時 escalate | §14 | `agents/repair-router.md`, `src/pipeline/repair.ts` | 未着手 |
@@ -119,12 +120,12 @@ Dashboard ──────────────────┘  可視化
 | IntakeContract | Hermes → Hermes(routing) | §7.4 | なし | 新規 |
 | RoutingDecision | Hermes → Coordinator | §7.5 | なし | 新規 |
 | DepartmentContract | Hermes → Department | §7.6, §18 | なし | 新規 |
-| spec.md（AC behavior） | 人間+AI → M21 | ADR D4/D15 | `templates/feature-spec.md` | 確定（M20 v2） |
-| acceptance.yaml（AC-ID→verification） | M20 → M05(resolve) | ADR D15 | `templates/acceptance.yaml` | 確定（M20 v2） |
-| ApprovedSpecRef（path+gitSha+acFingerprints） | M20 → M21/M05 | ADR D8/O2/O3 | なし | 確定（M20 v2） |
-| ArchitectureSpine（Tier1・決定のみ） | M21 → M05/Generator | ADR D14 | なし | 下書き（M21） |
-| DesignSlice（Tier2・PR サイズ） | M21 → M05 | ADR D14 | なし | 下書き（M21） |
-| IssueSpawnOrder（参照集合・版固定） | M21 → M03/M05(resolve) | ADR D8/D13 | なし | 下書き（M21） |
+| spec.md（AC behavior） | 人間+AI → M21 | ADR-0001 D4/D15 | `templates/feature-spec.md` | 確定（M20 v2） |
+| acceptance.yaml（AC-ID→verification） | M20 → M05(resolve) | ADR-0001 D15 | `templates/acceptance.yaml` | 確定（M20 v2） |
+| ApprovedSpecRef（path+gitSha+acFingerprints） | M20 → M21/M05 | ADR-0001 D8/O2/O3 | なし | 確定（M20 v2） |
+| ArchitectureSpine（Tier1・共有決定） | M21 → M05/Generator/M22 | ADR-0001 D14, ADR-0003 D26-D27 | なし | 下書き（M21） |
+| DesignSlice（Tier2・PR サイズ） | M21 → M05/M22 | ADR-0001 D14, ADR-0003 D26 | なし | 下書き（M21） |
+| IssueSpawnOrder（参照集合・版固定） | M21 → M03/M05(resolve) | ADR-0001 D8/D13 | なし | 下書き（M21） |
 | IssueContract | M05(resolve) → Generator/Evaluator | §11.2 | `IssueContract` | 既存・差分あり（resolve 派生物に） |
 | GeneratorHandoff | Generator → Evaluator | §12.3 | `BuildArtifact`（近似） | 部分・要正式化 |
 | EvalScorecard | Evaluator → Repair/DB | §13.3 | `EvalRun` | 既存・差分あり |
@@ -300,7 +301,7 @@ loop 1 の完了基準: 1 機能が人間の HOW 無しで PR 化され、証拠
 
 loop 1 で**実際に現れた契約**（IssueContract / EvalScorecard / DesignScorecard / spec.md / ApprovedSpecRef /
 IssueSpawnOrder / DesignSlice 等）から、共通エンベロープ・ID 規約・frozen・validation・version-pinned Ref を
-**抽出**して固定する（ADR D1）。先に作ると偽の汎用性になる。Scorecard 2種（Eval/Design）の blocking/non-blocking
+**抽出**して固定する（ADR-0001 D1）。先に作ると偽の汎用性になる。Scorecard 2種（Eval/Design）の blocking/non-blocking
 構造と grader 3段階 tier は共通化の主要候補（ADR-0002 §5）。
 
 ### Loop 2+ — 各能力を太らせる

@@ -2,6 +2,7 @@
 
 - 正本参照: ADR-0001（[decisions/0001](../decisions/0001-authoring-execution-split.md) D10/D13/D14/D16/D17）,
   ADR-0002（[decisions/0002](../decisions/0002-independent-design-review.md) D20-D25・独立設計レビュ / 設計評価ループ）,
+  ADR-0003（[decisions/0003](../decisions/0003-spec-altitude-and-dry.md) D26-D28・contract altitude / DRY 分担）,
   REQUIREMENTS.md §11（Issue Contract 関連 FR）, §12（Generator 入力の前提）
 - 参考実装: [agents/issue-planner.md](../../../agents/issue-planner.md)（**分割元**: 設計判断を本 M21 へ、
   resolve 機械処理を M05 へ振り分け）, `src/planning/planner.ts`（**置換**方針）
@@ -86,13 +87,23 @@ ArchitectureSpine:
     rationale:     なぜこの選択か
     affectsAcIds[]:  この決定が関わる AC-ID（drift 影響解析のキー）
     humanReview:   bool          # Tier1 任意レビュータグ（D17）
-  moduleBoundaries[]:            # コンポーネント分割と責務の切れ目
+  moduleBoundaries[]:            # モジュール境界と責務の切れ目（境界・契約まで。内部設計は持たない）
+  sharedFoundations[]:           # 共有基盤 / 共通抽象の置き場決定（DRY の構造的錨。ADR-0003 D27）
+                                 #   - 共通関心の所在（例: 共有 core/X モジュール・ドメイン型の置き場）
+                                 #   - 共有 seam の **公開シェイプ**（signature・契約）のみ。内部表現は実装に委ねる
   crossCuttingPolicies[]:        # 横断方針（エラー処理 / ログ / 契約規約 等）
   invariants[]:                  # epic 全体で破ってはならない不変条件
 ```
 
-不変条件: `decision` は「決定」（採否のある判断）のみ。実装手順・コード断片を書かない（D14 の
-「共有決定だけ epic に残す」を守る）。
+不変条件（contract altitude・ADR-0003 D26）:
+
+- `decision` は「決定」（採否のある判断）のみ。実装手順・コード断片を書かない（D14）。
+- **クラス内部設計（クラス / メソッド / 内部データ構造・アルゴリズム）を書かない**。Tier1 は決定 +
+  モジュール間契約 / seam までの高度に留め、内部の HOW は実装（M06 Generator）に委ねる（D26）。
+- **記載テスト（D26）**: 各項目は「**これが書かれていないと別の独立ユニット（他スライス / 他 PR）が
+  非整合になるか？**」で判定する。Yes なら共有契約として書く（B）。No（そのスライス内で局所決定できる）なら
+  書かず実装に委ねる（C）。`sharedFoundations` はこのテストを通る DRY の構造的防止線（共通関心の所在は
+  共有しないと各スライスが再発明する）。
 
 ### 3.2 Tier2 設計スライス（slices/SLICE-*.md / PR サイズ・1:1 で issue）
 
@@ -108,9 +119,12 @@ DesignSlice:
   coversMrIds[]:   関連する manual requirement（human_review トリガ: D17）
   dependsOnSpine[]:  参照する ARCH-ID（Tier1 への参照。決定を複製しない）
   dependsOnSlices[]: 先行すべき他スライス（分解の依存順）
-  componentDesign: PR サイズのコンポーネント詳細（人間可読・AI 著者: D16）
-                   - 変更 / 新規ファイル・関数・データ構造の方針
-                   - インターフェース・契約の局所的な形
+  componentDesign: PR サイズの **seam / 契約レベル**設計（人間可読・AI 著者: D16・contract altitude: D26）
+                   - 変更 / 新規する **境界**（どのモジュール・ファイル群に触れるか）
+                   - 公開 interface・契約の局所的な形（他スライス / 既存コードとの噛み合わせ）
+                   - 満たすべき制約（invariants・redLines・依存）
+                   - **内部構造（関数分割・内部データ構造・アルゴリズム）は書かない** → M06 Generator に委ねる（D26）
+                   - 共有型を消費する場合は公開シェイプを参照。内部表現は実装の自由
   testApproach:    acceptance.yaml の verification を実装でどう満たすか（grader 視点の実装メモ）
   estimatedScope:  M21 の暫定 PR サイズ見積り（AI 判断）。実サイズは M05 resolve 後に確定（B5）
 ```
@@ -188,6 +202,13 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
   にした（FR-008）ことで複製ズレは防げるが、参照先の決定変更への追従はこのフックが担う。
 - **サイズ誤判定（B5・M05→M21 の戻り）**: M21 の `estimatedScope` は暫定見積り。M05 resolve 後に実サイズが
   PR を超えると判明した場合、当該スライスを `designing` 相当へ戻し split 規約（§3.2）で再分割する。
+- **foundation drift（共有基盤の遡及的切り出し・ADR-0003 D29・第3の drift 源）**: 共有基盤が後から必要と判明
+  した時の戻り。**抽出のみ**が本層に来る（クリーンな既存単位への単純再利用は M06/M08 で閉じ本層に来ない）。
+  M10 が「抽出すべき」と判断した work order を受け、本層は **additive** に処理: 新 `sharedFoundations` ARCH-ID を
+  追加し、これに依存すべき既存スライスを**前向き逆引き**（AC/設計 drift と対称）して `dependsOnSpine`/
+  `dependsOnSlices` 辺を張り、基盤スライス（新採番）+ 必要なら merged 依存への refactor スライス（新採番）を起こす。
+  **既存 ID を renumber せず merged を巻き戻さない**。抽出基準（知識同一/同じ変更理由/rule of three）は判断であり
+  操作的 rubric は焼き込まない（D29⑤・learn-on-the-fly）。
 - **設計審査差し戻し（ADR-0002 D24・新規）**: M22 の `DesignScorecard` が `changes-requested`（blocking 非空）の
   とき、各 finding の逆引きキー（`refs[]`: ARCH-ID/sliceId/AC-ID）を AC drift と同じ機構で逆引きし、**該当する
   Tier1 決定 / Tier2 スライスのみ**を再設計する（全体再設計を強制しない）。再設計後に再シグナル → M22 再審査
@@ -227,12 +248,27 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
   して再検証対象に挙げる（AC 逆引きと対称・B3）。
 - **DSGN-FR-012 状態シグナル（書き込みは M03）**: 本層は設計成果物の完成（spawn order 出力）を**シグナル**
   するのみ。`designing`/`decomposed` ラベルの書き込み・resolve・投稿は行わない（状態は M03、resolve は M05・B2）。
+- **DSGN-FR-013 contract altitude（クラス内部設計を書かない）**: Tier1/Tier2 は決定 + モジュール間契約 / seam
+  までの高度に留め、クラス / メソッド / 内部データ構造・アルゴリズムを書かない。各項目は記載テスト（§3.1）で
+  「独立ユニットが非整合になるか」を判定し、Yes のみ書く。内部 HOW は M06 Generator に委ねる（ADR-0003 D26）。
+- **DSGN-FR-014 DRY の構造的防止（設計時の分担）**: アプリ全体の DRY は設計時に**保証**しない（実装レベルの
+  大域特性のため）。本層は構造的防止のみ担う: ① `sharedFoundations` で共通関心の所在を決める、② `dependsOnSlices`
+  で基盤スライスを先行させ後続が**既存コードを再利用**できる順序を与える。**契約レベルの重複**（責務が重なる
+  スライス・冗長なモジュール境界）は M22 が審査、**実装レベルの重複**（再発明されたロジック）は M07 Evaluator が
+  実コードに対して検出する（ADR-0003 D27）。
+- **DSGN-FR-015 foundation drift の additive 処理（ADR-0003 D29）**: M10 から抽出 work order を受けたら、新
+  `sharedFoundations` ARCH-ID + 基盤スライス（+ merged 依存への refactor スライス）を**新採番で追加**し、前向き
+  逆引きで依存辺を張る。**既存 ID を renumber せず merged を巻き戻さない**。単純再利用（既存単位の流用）は本層に
+  来ず M06/M08 で閉じる。抽出可否の判断は知識同一/同じ変更理由に基づき、操作的しきいは焼き込まない（D29②③⑤）。
 
 ## 6. 非機能要件
 
 - **入力決定性**: 同一 gitSha では同一の設計入力を読む。出力（設計判断）は AI 著述ゆえ完全決定的では
   ないが、入力 pin により再現・監査の基盤を確保する。
 - **人間可読性**: Tier1/Tier2 は Markdown で人間可読を維持（D16）。grader 向け詳細ではなく設計判断を書く。
+- **contract altitude / 薄い実装層（ADR-0003）**: 出力は契約・seam・制約までの高度。内部設計を焼き込まず
+  実装エージェントの自由度を残す。これは能力の高いモデルほど内部 HOW を文脈内で良く決めること（過剰指示は
+  出力品質を下げる）と、不変条件は**コード/スキーマ/独立評価で強制**しプロンプトを薄く保つ方針に整合する。
 - **Git 追跡**: 設計成果物は repo 内に置き Git 履歴に乗せる（drift 解析・監査・保守の基盤）。
 - **モデル独立性**: 著者 AI の provider/model に依存しない出力スキーマ（M16 準拠）。
 - **可観測性 / 評価・改善トレース（C1）**: AC → スライス → issue の対応（双方向被覆）が機械的に検証可能。
@@ -250,6 +286,10 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
 - IssueSpawnOrder / issue に**契約本体・設計本文を埋め込まない**（参照のみ: D8）。
 - AC をスライスから**取りこぼさない / 二重計上しない**（被覆かつ排他・双方向: DSGN-FR-004）。
 - 1 AC をスライス側で分割しない（PR サイズ超過 AC は M20 へ差し戻す: B1）。
+- **クラス内部設計（クラス / メソッド / 内部データ構造・アルゴリズム）を Tier1/Tier2 に書かない**（contract
+  altitude を超えない。内部 HOW は M06 に委ねる: ADR-0003 D26）。
+- **アプリ全体の DRY を設計時に「保証」したと主張しない**。構造的防止（sharedFoundations + 依存順）までが本層。
+  実装レベルの重複検出は M07 の所掌（ADR-0003 D27）。
 - `ARCH-ID` / `sliceId` を renumber・再利用しない。
 - **状態ラベルを書き込まない**（書き込みは M03。本層は完成をシグナルするのみ: B2）。
 - IssueSpawnOrder の参照は全て版固定（`{path, gitSha}`）。設計ファイルを可変参照で渡さない（B3）。
@@ -269,6 +309,10 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
   （双方向被覆。B1）。
 - Tier1 決定を1つ変更 → `dependsOnSpine` 逆引きで影響 Tier2 スライスのみが再検証対象になる（設計 drift。B3）。
 - 本層は spawn order を出力するのみで、`designing`/`decomposed` ラベルの書き込み・resolve・投稿を行わない（B2）。
+- Tier1/Tier2 が contract altitude を超えず、クラス / メソッド / 内部データ構造・アルゴリズムを設計本文に
+  焼き込んでいないことを検証できる。
+- 複数スライスで共有すべき関心がある場合、`sharedFoundations` と `dependsOnSlices` により共有基盤の所在と
+  先行順が表現される。ただしアプリ全体の DRY を設計時に保証したとは主張しない。
 
 ## 9. 既存実装とのギャップ / 移行方針
 
@@ -314,6 +358,15 @@ D14 設計二層化 / D16 AI 著者・可読性前提 / D17 human_review 層別�
 - M22 の主務は**全体整合性**（局所品質採点でない・D21）。blocking=整合性違反、局所品質=non-blocking（D22）。
 - 設計差し戻しは AC drift と**同じ逆引き機構**を再利用し該当箇所のみ再設計（D24・§4 異常系）。層3（事後トレース）
   の供給は M22 へ移譲（D25・§6）。
+
+設計高度・DRY 分担（2026-06-15・ADR-0003）:
+
+- **Tier1/Tier2 を contract altitude に締めた**（D26）。クラス内部設計を禁止し（FR-013・§3.1/§3.2/§7）、各項目を
+  記載テスト「独立ユニットが非整合になるか」で判定。理由: クラス内部は実装ユニットが局所決定でき、能力の高い
+  モデルが文脈内で良く決める（過剰指示は品質を下げる）。契約・seam は能力非依存で必要なので残す。
+- **DRY を分解した**（D27・FR-014）。アプリ全体 DRY は設計時に保証不能（実装レベルの大域特性）。本層は
+  `sharedFoundations`（共通関心の所在）+ 依存順による再利用で**構造的に防止**。契約レベル重複は M22、実装レベル
+  重複は M07 が**実コードに対して**検出。「設計時保証」でなく「構造防止 + 実装時検出・修正」が現実的姿勢。
 
 残 open:
 

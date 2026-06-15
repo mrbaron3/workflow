@@ -1,6 +1,7 @@
 # M22 Design Reviewer 仕様
 
 - 正本参照: ADR-0002（[decisions/0002](../decisions/0002-independent-design-review.md) D20-D25）,
+  ADR-0003（[decisions/0003](../decisions/0003-spec-altitude-and-dry.md) D26-D28・contract altitude / DRY 分担）,
   ADR-0001 D14/D16/D17（設計二層・可読性・human_review）, REQUIREMENTS.md §3（評価独立性）, §16（failure_taxonomy）
 - 参考実装: [agents/evaluator.md](../../../agents/evaluator.md)（**独立評価者パターンの流用元**。入力が PR→設計に変わる）,
   `src/graders/index.ts`（3段階 grader の流用候補）
@@ -31,6 +32,8 @@ epic ライフサイクルの `designing → design-reviewed`（合格時）/ `�
 - 状態ラベルの書き込み・差し戻し dispatch・issue 投稿 → M03 Coordinator（本層は完成をシグナルするのみ: D23）
 - 実装成果（PR）の評価 → M07 Evaluator（入力・証拠・タイミングが異なる別モジュール: ADR-0002 §5）
 - spec.md@gitSha → IssueContract の resolve → M05
+- **実装レベル DRY**（再発明されたロジック・コピペ）の検出 → M07 Evaluator が**実コードに対して**行う。本層は
+  **契約レベル DRY**（責務重複・冗長なモジュール境界）まで（設計ドキュメントしか見ないため。ADR-0003 D27）
 
 > スコープ境界の要点（D21）: 本層は **設計が全体として整合するか**を判定する。局所品質（componentDesign の
 > 文章・命名・分割趣味）は **最大でも non-blocking**。被覆/排他は集合演算で必要だが「良い設計」には不十分で、
@@ -41,7 +44,7 @@ epic ライフサイクルの `designing → design-reviewed`（合格時）/ `�
 すべて版固定（`{path, gitSha}`）。M21 が出力し設計完成をシグナルした成果物群 + その根拠となる WHAT:
 
 - **ArchitectureSpine@gitSha**（M21 §3.1）: `decisions[]`(ARCH-ID / decision / rationale / affectsAcIds / humanReview),
-  `moduleBoundaries[]`, `crossCuttingPolicies[]`, `invariants[]`。
+  `moduleBoundaries[]`, `sharedFoundations[]`, `crossCuttingPolicies[]`, `invariants[]`。
 - **DesignSlice[]@gitSha**（M21 §3.2）: `sliceId` / `coversAcIds` / `coversMrIds` / `dependsOnSpine` /
   `dependsOnSlices` / `componentDesign` / `testApproach` / `estimatedScope`。
 - **IssueSpawnOrder[]**（M21 §3.3）: spawn order 群（参照集合・版固定）。分解の最終形。
@@ -64,7 +67,7 @@ epic ライフサイクルの `designing → design-reviewed`（合格時）/ `�
 | ② | Tier1↔Tier2 整合 | スライスが `dependsOnSpine` で参照した ARCH 決定に**反する設計**をしていないか | 参照先決定への背反は blocking |
 | ③ | cross-slice 整合 | あるスライスが前提するものを別スライスが供給するか / interface・契約が噛み合うか / `dependsOnSlices` が健全な DAG か（循環なし・実依存と一致） | 前提供給の欠落・interface 不一致・循環依存は blocking |
 | ④ | 設計↔spec 意味的整合 | 集合被覆（決定的 tier）を**超えて**、componentDesign が `coversAcIds` の AC **意図**を満たしうるか / redLines を侵さないか / testApproach が acceptance.yaml の verification を exercise するか | AC 意図の取りこぼし・redLine 侵犯は blocking |
-| ⑤ | 全体目的整合 | 分割が epic ゴールへ向かう coherent な物語か（恣意的・場当たり分割でないか） | 重大な非coherence は blocking、軽微は non-blocking |
+| ⑤ | 全体目的整合 | 分割が epic ゴールへ向かう coherent な物語か（恣意的・場当たり分割でないか）/ **契約レベル DRY**: 責務が重なるスライス・冗長なモジュール境界・重複する `sharedFoundations` がないか | 重大な非coherence・契約レベル重複は blocking、軽微は non-blocking |
 
 ### 3.2 DesignScorecard（M22 産・M03/M10 への出力）
 
@@ -152,6 +155,14 @@ epic 状態 `designing → design-reviewed → decomposed`（ADR-0002 D23）。�
   のみを産する。
 - **DREV-FR-010 層3 接続**: pass/fail に関わらず、設計起因の知見を `design_failure` サブ分類で
   M10 Curator / M12 Analyst へ送る観測点を供給（§6）。
+- **DREV-FR-011 契約レベル DRY 審査**: M22 は設計ドキュメント上で確定できる重複（責務が重なるスライス・
+  冗長なモジュール境界・重複する `sharedFoundations`）を全体目的整合（⑤）の一部として審査する。
+  実装レベルの重複（再発明されたロジック・コピペ）は M07 の所掌として扱い、本層では断定しない（ADR-0003 D27）。
+- **DREV-FR-012 foundation drift 抽出の過結合審査（ADR-0003 D29）**: M21 が遡及導入した `sharedFoundations`
+  （新 ARCH + 抽出/refactor スライス）を審査する際、**過結合・誤った抽象（wrong abstraction）でないか**を
+  ⑤ の一部として見る: 束ねた consumer が**同じ理由で変わる**か（形状だけの偶然の重複を結合していないか）、
+  基盤の公開シェイプが安定か。抽出が結合コスト > 重複コストに見える場合は blocking。検出（事実）は M07/監査の
+  所掌で、本層は**抽出という設計判断の妥当性**を審査する（判断は M10/M21、審査は M22）。
 
 ## 6. 非機能要件
 
@@ -175,6 +186,7 @@ epic 状態 `designing → design-reviewed → decomposed`（ADR-0002 D23）。�
 - M21 と **AI コンテキストを共有しない**（自己評価の排除: DREV-FR-001）。
 - 審査対象は全て**版固定参照**で読む（可変参照で審査しない）。
 - pass を **証拠なしに出さない**（blocking 空の根拠＝決定的 tier pass + 整合性5軸の証拠）。
+- 実装レベルの DRY 違反を、設計ドキュメントだけから blocking として断定しない（M07 の実コード評価に委ねる）。
 
 ## 8. 受け入れ条件 (testable)
 
@@ -186,6 +198,8 @@ epic 状態 `designing → design-reviewed → decomposed`（ADR-0002 D23）。�
 - **局所品質は止めない**: componentDesign の文章が粗いだけの設計は **non-blocking** に留まり `verdict: pass`。
 - **被覆は通るが非coherent**: 全 AC を1スライスに詰めた「被覆/排他は通るが分割が破綻」した設計で、決定的 tier は
   pass でも整合性 tier（⑤）が blocking を立てる（被覆検査だけでは捕まらないことの検証）。
+- **契約レベル DRY**: 複数スライスが同じ責務や共有基盤を別々に所有すると主張する設計で、責務重複・冗長境界・
+  `sharedFoundations` 重複が finding として出る。実装レベルの重複は M07 所掌として扱われる。
 - **逆引きキー**: 全 finding が ARCH-ID/sliceId/AC-ID を持ち、M21 が該当箇所のみ再設計できる。
 - **状態を書かない**: M22 は DesignScorecard を出すのみで、`design-reviewed`/`designing` 差し戻しの書き込み・
   dispatch・投稿を行わない（B2）。
