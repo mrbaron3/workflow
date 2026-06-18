@@ -6,7 +6,7 @@ status: draft                 # draft | co-authoring | approved
 approval:                     # status: approved の時のみ埋める（署名の人間可読記録）
   approvedAcIds: []           # 署名対象の AC-ID 集合（drift 再署名はこのサブセット: O4）
   approvedAt: ""              # ISO8601。署名日時
-  approvedBy: ""              # 署名者（役割名）。gitSha は issue の specRef に焼く（O2）
+  approvedBy: ""              # 署名者（役割名）。版固定 ref は ApprovedSpecRef に保存し issue へ転記（O2）
 ---
 
 # <機能名> 仕様

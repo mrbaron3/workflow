@@ -106,28 +106,31 @@ approval:
 > 署名の真正性を証明しない。真正性は **署名 commit（status:approved を含む commit）の author/committer**
 > （必要なら署名付き commit）が担保し、`approvedBy` はその人間可読の表示にすぎない。
 >
-> **gitSha を frontmatter に置かない理由**: 署名 commit の SHA はその commit を作るまで確定せず、
-> ファイル内に自己参照で焼けない（§3.4 で永続先を定義）。
+> **版固定 ref を frontmatter に置かない理由**: 署名 commit の SHA はその commit を作るまで確定せず、
+> 内容 blob SHA も frontmatter に自己参照で焼くと内容が変わる。版固定 ref は §3.4 の永続先に置く。
 
 ### 3.4 ApprovedSpecRef（contract-approved の実体・最初の永続先）
 
 ```text
 ApprovedSpecRef:
-  epicId:          epic 識別子
-  path:            spec.md のリポジトリ内パス
-  gitSha:          署名 commit（status:approved を含む commit）の SHA。drift 検知の基準（O3）
-  approvedAcIds[]: 署名済み AC-ID 集合（= frontmatter.approval.approvedAcIds）
-  acFingerprints:  AC-ID → 署名時点の内容ハッシュ（spec.behavior + acceptance.verification）。AC 単位 drift の基準
-  approvedAt:      署名日時（= frontmatter.approval.approvedAt）
+  epicId:                 epic 識別子
+  approvalCommitSha:      署名 commit（status:approved を含む commit）の SHA。真正性 / 監査用
+  behaviorRef:            {path, gitSha}  spec.md の版固定 ref。gitSha は blob SHA（ADR-0001 D8）
+  verificationRef:        {path, gitSha}  acceptance.yaml の版固定 ref。gitSha は blob SHA（ADR-0001 D8）
+  manualRequirementsRef?: {path, gitSha}  manual-requirements.md の版固定 ref。gitSha は blob SHA（存在する場合）
+  approvedAcIds[]:        署名済み AC-ID 集合（= frontmatter.approval.approvedAcIds）
+  acFingerprints:         AC-ID → 署名時点の内容ハッシュ（spec.behavior + acceptance.verification）。AC 単位 drift の基準
+  approvedAt:             署名日時（= frontmatter.approval.approvedAt）
 ```
 
-> **最初の永続先 = epic 状態オブジェクト（M18 store）（A2）**: 署名 commit の SHA はその commit を
-> 作るまで確定せず frontmatter に焼けない（自己参照）。かつ issue は decomposed 後（M21→M05→M03 の
+> **最初の永続先 = epic 状態オブジェクト（M18 store）（A2）**: 署名 commit の SHA と版固定 ref は
+> frontmatter に焼けない（自己参照）。かつ issue は decomposed 後（M21→M05→M03 の
 > 下流）にしか生まれないため、**issue を最初の置き場にできない**（M21 着手時には issue が無い）。
-> よって M20 tooling が署名直後に HEAD から gitSha を取得し、ApprovedSpecRef を **epic 状態オブジェクト
-> （M18 store）に書く**。これが issue 生成前の権威ある記録。M21 はここから gitSha を読んで pin する。
+> よって M20 tooling が署名直後に `approvalCommitSha` と各ファイルの blob SHA を取得し、ApprovedSpecRef を
+> **epic 状態オブジェクト（M18 store）に書く**。これが issue 生成前の権威ある記録。M21 はここから
+> `behaviorRef` / `verificationRef` / `manualRequirementsRef` を読んで pin する。
 > issue 投稿時（M03）に issue の `specRef` へ **転記**される（O2「issue が承認記録」は転記後の話）。
-> gitSha は承認イベントのメタ（どの版を承認したか）であり、実行 SoT 側（D5）に属する。
+> `approvalCommitSha` と各 blob SHA は承認イベントのメタ（どの版を承認したか）であり、実行 SoT 側（D5）に属する。
 >
 > **acFingerprints が AC 単位 drift の基準**: path 単位 diff だけでは「どの AC が変わったか」を返せない
 > ため（§4 参照）、署名時に AC-ID ごとの内容ハッシュを固定し、AC 単位の構造 diff の基準とする。
@@ -140,13 +143,15 @@ ApprovedSpecRef:
 2. AI が各 AC-ID に `verification`（method + expected）を acceptance.yaml で提案し、**自動採点可否を分類**（`co-authoring`）。
 3. 自動採点できない要件は manual-requirements.md（MR）へ振り分け（受け入れ要件に混ぜない）。
 4. 人間が verification を確定。全受け入れ要件が自動採点 method を持つ状態にする。
-5. 人間が署名。tooling が署名 commit の SHA と AC 単位の内容ハッシュを ApprovedSpecRef に固定（§3.4）。
+5. 人間が署名。tooling が署名 commit の SHA、各ファイルの blob SHA、AC 単位の内容ハッシュを
+   ApprovedSpecRef に固定（§3.4）。
    `approvedAcIds` が全 AC を覆い、status は派生的に `approved` になる。
 6. 設計・分解は **M21 Design Planner** が担う（本層の境界外）。M21 が自動スライス、人間 override は任意（ADR-0001 D10/D13）。
 
 drift 検知は**二段**（A1。path 単位 diff だけでは「どの AC が変わったか」を返せないため）:
 
-1. **粗検知（path 単位）**: `gitSha..HEAD` で spec.md / acceptance.yaml が変わったかを検知（変更有無のみ）。
+1. **粗検知（path 単位）**: ApprovedSpecRef の各 ref の blob SHA と HEAD の blob SHA を比較し、
+   spec.md / acceptance.yaml が変わったかを検知（変更有無のみ）。
 2. **AC 単位の構造 diff**: 変更ありなら両ファイルを構造パースし、AC-ID ごとに現内容ハッシュ
    （behavior + verification）を ApprovedSpecRef の `acFingerprints` と比較。**ハッシュが変わった AC-ID
    のみ**を `approvedAcIds` から外す（→ status が `co-authoring` に落ち、再署名を要求）。
@@ -168,7 +173,8 @@ drift の各ケースの扱い:
 - **AUTH-FR-005 協業 / ファイル分離**: `behavior` は人間が spec.md に記述、`verification` は AI が acceptance.yaml に提案 + 人間確定（O1 反転: D15）。
 - **AUTH-FR-006 署名ゲート / status 派生**: `status` は `approval.approvedAcIds` から導出する集約値
   （`approvedAcIds ⊇ 現 AC 全集合` で `approved`）。署名の SoT は `approvedAcIds`（A3）。
-- **AUTH-FR-007 gitSha pin / 永続先**: 署名 commit の SHA と AC 単位ハッシュ（`acFingerprints`）を
+- **AUTH-FR-007 gitSha pin / 永続先**: 署名 commit の SHA（真正性 / 監査用）と各ファイルの blob SHA
+  （`behaviorRef` / `verificationRef` / `manualRequirementsRef`）、AC 単位ハッシュ（`acFingerprints`）を
   ApprovedSpecRef に固定し、**epic 状態オブジェクト（M18 store）を最初の永続先**とする。issue へは転記（A2）。
 - **AUTH-FR-008 drift 二段検知**: (1) path 単位で spec.md / acceptance.yaml の変更有無を検知 →
   (2) AC 単位の構造 diff（現ハッシュ vs `acFingerprints`）で変更 AC-ID を特定し `approvedAcIds` から外す（A1）。
@@ -180,7 +186,7 @@ drift の各ケースの扱い:
 
 - **人間可読性**: spec.md は人間が編集する Markdown を維持。grader 向け詳細（verification）は acceptance.yaml に逃がす（D15）。
 - **Git 追跡**: spec.md / acceptance.yaml / manual-requirements.md はリポジトリ内に置き Git 履歴に乗せる。
-- **入力決定性**: 同一 `gitSha` は同一の resolve 入力を保証（projection の決定性は M05、入力の安定性は本層）。
+- **入力決定性**: 同一 blob `gitSha` は同一の resolve 入力を保証（projection の決定性は M05、入力の安定性は本層）。
 - **skill 駆動**: 本層の協業は skill として実装（既存 `draft-spec` を本出力形に拡張/置換: D19）。
 
 ## 7. 不変条件・禁止事項 (red lines)
@@ -194,7 +200,7 @@ drift の各ケースの扱い:
 
 - サンプル spec.md + acceptance.yaml（例: octolink `stake/` 相当）がパースでき、AC-ID で join できる。
 - 受け入れ要件と manual 要件の混在がゼロ（全 AC が acceptance.yaml に自動採点 method を持つ）。
-- `approved` な spec.md から gitSha + acFingerprints 付き ApprovedSpecRef を生成し、**issue 生成前に
+- `approved` な spec.md / acceptance.yaml から版固定 ref + acFingerprints 付き ApprovedSpecRef を生成し、**issue 生成前に
   epic 状態オブジェクトへ永続化**できる（M21 がそこから gitSha を読める）。
 - spec.md の AC behavior を1つ変更 → AC 単位の構造 diff が**その AC-ID のみ**を再署名対象にし、
   未変更 AC の署名は保持される（path 単位検知だけでは達成不能なことを検証）。
@@ -220,18 +226,20 @@ D16 可読性前提 / D19 skill 駆動。
 O1-O4 解決済（簡易アプリ通しで確認）:
 
 - **O1 → 反転で確定（D15）**: embedded YAML をやめ、spec.md(behavior) + acceptance.yaml(verification)。
-- **O2 → 確定（v2 訂正）**: 署名記録は frontmatter `status`（派生値）+ ApprovedSpecRef。gitSha の最初の
+- **O2 → 確定（v2 訂正）**: 署名記録は frontmatter `status`（派生値）+ ApprovedSpecRef。版固定 ref の最初の
   永続先は **epic 状態オブジェクト（M18 store）**。issue は decomposed 後に生まれるので「issue が承認記録」は
   **転記後**の話であり、issue を最初の置き場にはできない（A2 修正）。専用承認 DB なし。
-- **O3 → 確定（v2 訂正）**: ApprovedSpecRef は commit SHA + AC 単位ハッシュ。drift は **二段**——path 単位で
-  変更有無 → **AC 単位の構造 diff** で変更 AC-ID を特定。「path 単位 diff のみ」では AC-ID を特定不能（A1 修正）。
+- **O3 → 確定（v2 訂正 / 2026-06-18 追従）**: ApprovedSpecRef は `approvalCommitSha` + ファイル別 blob ref +
+  AC 単位ハッシュ。drift は **二段**——path 単位で変更有無 → **AC 単位の構造 diff** で変更 AC-ID を特定。
+  「path 単位 diff のみ」では AC-ID を特定不能（A1 修正）。
 - **O4 → 確定**: drift 再署名は **変更 AC-ID のサブセットのみ**。`approvedAcIds` から外して表現（A3）。
 
 本セッション改訂（2026-06-15・下書き → 確定 → 敵対レビューで下書きへ差し戻し v2）:
 
 - **frontmatter（§3.3）**: meta=YAML frontmatter。署名 SoT は `approvedAcIds`、`status` は派生値（A3）。
   `approvedBy` は補助表示・真正性は署名 commit author（A4）。
-- **ApprovedSpecRef（§3.4）**: path + gitSha + acFingerprints + approvedAcIds。**最初の永続先 = epic 状態
+- **ApprovedSpecRef（§3.4）**: `approvalCommitSha` + `behaviorRef` / `verificationRef` / `manualRequirementsRef`
+  （各 `{path, gitSha(blob)}`）+ acFingerprints + approvedAcIds。**最初の永続先 = epic 状態
   オブジェクト**（A2）。
 - **drift（§4 / AUTH-FR-008）**: 二段検知に修正（A1）。AC ⇔ acceptance 双方向被覆を AUTH-FR-010 に昇格。
 - **テンプレート（§9）**: feature-spec.md を O1 反転形に更新・acceptance.yaml 新設。
@@ -239,5 +247,5 @@ O1-O4 解決済（簡易アプリ通しで確認）:
 残 open（本層）: v2 修正の受け入れ条件（§8）を実装で固める。`acFingerprints` のハッシュ対象（behavior +
 verification の正規化方法）の確定。M21 への `subArea` 受け渡しは [design-planner.md](design-planner.md) §2 で consume 済み。
 
-**M01 抽出候補（loop 1 通過後・README §8）**: `ApprovedSpecRef`（path + gitSha + acFingerprints）の
+**M01 抽出候補（loop 1 通過後・README §8）**: `ApprovedSpecRef`（version-pinned refs + acFingerprints）の
 version-pinned Ref 形と、AC-ID / MR-ID の ID 規約は M01 共通契約モデルへ抽出する候補。先に固定しない（ADR D1）。

@@ -25,7 +25,7 @@
 | D5 | issue/PR は実行 SoT（spec.md からの派生） | オーサリング SoT（spec.md）と実行 SoT（状態・ラベル・PR）を分離 |
 | D6 | 合格基準は人間+AI 協業。エントリ状態 = `contract-approved`（人間が AC に署名） | 共著してから承認。承認時点で合格基準は人間のもの |
 | D7 | B 方針: spec.md の受け入れ要件は自動採点メソッドのみ。非自動は要審査票へ分離し tier 別 | 自動採点不可項目（原子性・再入防止等）の緑チェック偽装を防ぐ |
-| D8 | issue は契約を埋め込まず `specRef`(path+gitSha) + `acceptanceCriteriaIds` で参照。契約は dispatch 時 resolve。gitSha 固定で drift 検知 → 再署名 | spec.md=SoT を守り二重管理を排除 |
+| D8 | issue は契約を埋め込まず source refs（`specRef` / `verificationRef` / 設計 refs。各 path+gitSha）+ `acceptanceCriteriaIds` で参照。契約は dispatch 時 resolve。gitSha 固定で drift 検知 → 再署名 | spec.md=SoT を守り二重管理を排除 |
 | D9 | 状態機械を二段に割る: **epic（spec.md）ライフサイクル** と **issue（work order）ライフサイクル**（§5） | 契約オーサリング・設計は issue より前。前段は epic の状態 |
 | D10 | 粒度（β）: 1 機能(1 spec.md)=**epic**、受け入れ要件サブ領域=分割ヒント、**issue=PR サイズ**。M21/M05 が AC をまたいで PR サイズに導出。**AI が自動スライス、人間 override は任意** | subArea のサイズはバラバラ。1:1 に縛らず PR サイズに揃える。人間の単位は epic まで |
 | D11 | Epic 進捗は Department 所有・Hermes は read-only。進捗 = join(リポジトリのロードマップ, issue/PR 状態) で導出し保存しない | §3.2 単体動作。保存すると drift する |
@@ -50,7 +50,7 @@
 【設計・分解 M21 / M05 — AI】
   ④ M21 Design Planner: 詳細設計（Tier1 スパイン=epic 共有 / Tier2 スライス=PR サイズ）
        + PR サイズへ issue 分解（β）。人間 override は任意
-  ⑤ epic:issue を投稿。issue = specRef(path+gitSha) + AC-ID 群 + Tier2 スライス + MR-ID 群
+  ⑤ epic:issue を投稿。issue = specRef / verificationRef / Tier2 スライス ref + AC-ID 群 + MR-ID 群
 
 【実行層 — Development Department（issue/PR = 実行 SoT）】
   ⑥ dev 部署の Coordinator が contract-approved の issue を直接ポーリング
@@ -131,12 +131,15 @@ O1-O4 解決済（簡易アプリ通しで確認）:
   変更 AC-ID を特定）。「path 単位 diff のみ」では AC-ID を特定できない。ApprovedSpecRef に AC 単位
   ハッシュ（`acFingerprints`）を持つ。詳細: authoring-layer.md §4 / AUTH-FR-008。
 - **O4 → 確定**: drift 再署名は **変更 AC-ID のサブセットのみ**（`approvedAcIds` から外して表現）。
+- **D8 補足 → 確定（2026-06-18）**: `path@gitSha` の `gitSha` は **blob SHA**（commit SHA でなく）。内容が
+  不変なら同一性が保たれ、M05 resolve の決定性（byte-identical: RSLV-FR-001）とキャッシュ安定性を担保する。
+  commit SHA は内容不変でも再 commit・隣接ファイルの巻き込みで変わり drift 誤検知を招く。
+  M05（[modules/issue-contract-planner.md](../modules/issue-contract-planner.md) §6/§10）からの correctness 要件を D8 に確定。
+- **M21 出力スキーマ / M05 引き渡し形式 → 確定**: Tier1=`ArchitectureSpine` / Tier2=`DesignSlice` /
+  handoff=`IssueSpawnOrder`（参照のみ・D8）。詳細: [modules/design-planner.md](../modules/design-planner.md)。
 
 残 open:
 
-- ~~M21 の Tier1/Tier2 出力スキーマと、resolve(M05) への引き渡し形式の確定。~~
-  → [modules/design-planner.md](../modules/design-planner.md)（M21 下書き）で確定。
-  Tier1=`ArchitectureSpine` / Tier2=`DesignSlice` / handoff=`IssueSpawnOrder`（参照のみ・D8）。
 - Hermes 進捗集約 join の報告面（Dashboard / レポート）。
 - 実装シーケンス（埋め込み契約の参照化・状態機械二段化・auto-merge 廃止・テンプレート更新の順序）。
 - M20/M21 のモジュール化（README 地図への M21 追加・M20 確定）。

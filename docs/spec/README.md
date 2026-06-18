@@ -77,7 +77,7 @@ Dashboard ──────────────────┘  可視化
 | --- | --- | --- | --- | --- | --- |
 | M03 | Development Coordinator | 状態機械（二段: ADR-0001 §5）・実行ループ保持・**contract-approved issue の直接ポーリング**・**human_review ゲート（タグ + 層別差し戻し: D17）**・ラベル排他・ロック・worktree・agent dispatch（通常コード） | §9, §10, ADR-0001 | `src/pipeline/coordinator.ts`, `src/domain/states.ts`, `templates/labels.yaml` | 未着手 |
 | M04 | Roadmap Planner | Roadmap/Epic 整理・分解 | §8.2, §9.1 | `agents/roadmap-planner.md`, `src/planning/planner.ts` | 未着手 |
-| M05 | Issue Contract Planner（resolve に縮小） | **resolve のみ**: spec.md@gitSha の AC + acceptance.yaml + M21 設計スライス → IssueContract（埋め込まない: ADR-0001 D8）。設計・分解は M21 へ移譲（D13） | §11, ADR-0001 | `agents/issue-planner.md`, `src/planning/planner.ts` | 未着手 |
+| M05 | Issue Contract Planner（resolve に縮小） | **resolve のみ**: 版固定 `IssueSource`（greenfield 分解 / bug・tech-debt・harness・eval・brownfield の票を正規化）→ IssueContract（埋め込まない: ADR-0001 D8）。設計・分解は M21 へ移譲（D13）。全 lane 共通の決定的コア・drift gate・schema validation | §11, ADR-0001, ADR-0003 | `agents/issue-planner.md`（分割元）, `src/planning/planner.ts`（置換） | 下書き |
 | M21 | Design Planner（新規） | approved spec.md → 詳細設計（Tier1 アーキ・スパイン=epic 共有 / Tier2 設計スライス=PR サイズ）+ PR サイズへ issue 分解（β）。AI 著者・人間 override 任意（ADR-0001 D13/D14/D16） | ADR-0001, ADR-0002, ADR-0003, §11, §12 | `agents/issue-planner.md`（分割元） | 下書き |
 | M22 | Design Reviewer（新規） | M21 設計成果物（Tier1/Tier2/spawn order）を **spawn 前**に **M21 から独立**して審査し `DesignScorecard`（blocking/non-blocking）を産出。主務は全体整合性（大域 coherence）。設計評価ループ `designing→design-reviewed→decomposed`（ADR-0002 D20-D25） | ADR-0002, ADR-0003, §3, §16 | `agents/evaluator.md`（独立評価者パターン流用） | 下書き |
 | M06 | Generator + Adapters | 実装・PR・GeneratorHandoff / Claude(interactive)・Codex・Gemini adapter | §12 | `agents/generator.md`, `src/agents/{runner,cli,mock}.ts` | 未着手 |
@@ -122,11 +122,11 @@ Dashboard ──────────────────┘  可視化
 | DepartmentContract | Hermes → Department | §7.6, §18 | なし | 新規 |
 | spec.md（AC behavior） | 人間+AI → M21 | ADR-0001 D4/D15 | `templates/feature-spec.md` | 確定（M20 v2） |
 | acceptance.yaml（AC-ID→verification） | M20 → M05(resolve) | ADR-0001 D15 | `templates/acceptance.yaml` | 確定（M20 v2） |
-| ApprovedSpecRef（path+gitSha+acFingerprints） | M20 → M21/M05 | ADR-0001 D8/O2/O3 | なし | 確定（M20 v2） |
+| ApprovedSpecRef（version-pinned refs + acFingerprints） | M20 → M21/M05 | ADR-0001 D8/O2/O3 | なし | 確定（M20 v2） |
 | ArchitectureSpine（Tier1・共有決定） | M21 → M05/Generator/M22 | ADR-0001 D14, ADR-0003 D26-D27 | なし | 下書き（M21） |
 | DesignSlice（Tier2・PR サイズ） | M21 → M05/M22 | ADR-0001 D14, ADR-0003 D26 | なし | 下書き（M21） |
 | IssueSpawnOrder（参照集合・版固定） | M21 → M03/M05(resolve) | ADR-0001 D8/D13 | なし | 下書き（M21） |
-| IssueContract | M05(resolve) → Generator/Evaluator | §11.2 | `IssueContract` | 既存・差分あり（resolve 派生物に） |
+| IssueContract | M05(resolve) → Generator/Evaluator | §11.2, ADR-0001 D8 | `IssueContract` | 既存・差分あり（resolve 派生物に・M05 下書き） |
 | GeneratorHandoff | Generator → Evaluator | §12.3 | `BuildArtifact`（近似） | 部分・要正式化 |
 | EvalScorecard | Evaluator → Repair/DB | §13.3 | `EvalRun` | 既存・差分あり |
 | DesignScorecard | Design Reviewer(M22) → Coordinator(M03)/Planner(M21)/Curator(M10) | ADR-0002 | なし | 新規（EvalScorecard と同構造・M01 共通化候補） |
@@ -145,8 +145,8 @@ Dashboard ──────────────────┘  可視化
 - `IssueContract`: 正本には `tech_stack` と `verification.steps` があるが既存schemaに無い。
 - `EvalScorecard`: 正本は blocking/non-blocking を分離、既存 `EvalRun` は `findings` 統合 +
   `severity`。`hard_gates` の項目集合も要整合。
-- `IssueContract`: `Issue.contract` 埋め込み → `specRef`(path+gitSha)+`acceptanceCriteriaIds`
-  参照に置換（ADR-0001 D8）。契約は dispatch 時に M05 が spec.md@gitSha から resolve する派生物。
+- `IssueContract`: `Issue.contract` 埋め込み → source refs（`specRef` / `verificationRef` / 設計 refs）+
+  `acceptanceCriteriaIds` 参照に置換（ADR-0001 D8）。契約は dispatch 時に M05 が版固定 source から resolve する派生物。
 - ADR-0001 で導入した新規契約（spec.md / acceptance.yaml / ApprovedSpecRef / ArchitectureSpine /
   DesignSlice / IssueSpawnOrder）は上表に正式行として収載。M20 産は確定 v2、M21 産は下書き。
 
@@ -191,6 +191,19 @@ Dashboard ──────────────────┘  可視化
   実 checkout に対し `npm test`/Playwright を走らせる形が未実装。
 - **M02 Hermes 全体**: 新規。上位レイヤーは概念のみで実装が無い。
 - **M15 承認 / 権限**: red lines は文章化済みだが、強制する仕組みが無い。
+
+### 4.4 横断 open（owner 未 spec・申し送り）
+
+確定済みモジュールから派生したが、owner module が未 spec のため**その owner の起票時に回収する** cross-module
+open。1か所で追跡し、各モジュール仕様の §10 には残さない（重複・drift 防止）。
+
+| open | owner（回収先） | 由来 | メモ |
+| --- | --- | --- | --- |
+| IssueContract schema 差分（zod 収載・camel/snake 命名統一・`verification.steps` 採否） | M01 / `schema.ts` | M05 §10 | `tech_stack` 源泉は Tier1 spine で確定済。残は実装追従と命名・`steps` 採否のみ |
+| resolve 出力の永続 / キャッシュ（置き場） | M18 Storage | M05 §10 | キー = `(issueId/sliceId, IssueSource の各 gitSha)` は確定。置き場のみ未定 |
+| 遡及修正の検知契機（再署名時 impact gate へ一般化） | 著述層(M20) / M03 | M05 §10 | dispatch 時 gate（M05 所掌）の外。fingerprint diff で機械算出可・新規データ不要 |
+| 修正 / dispatch の pinned+signed 強制（入口ガード） | M20 / M21 / M03 | M05 §10 | M05 は既に pinned+signed のみ受理。上流入口にも同ガードを mechanism として課す |
+| targeted lane の起票 spec（軽量 issue-spec の構造・署名所掌） | triage / M02 / M10 / M12 | M05 §10 | C 級・運用学習。M05 は `IssueSource` 形のみ固定済 |
 
 ## 5. スコープ境界（実装する / しない）
 
@@ -256,7 +269,7 @@ open question と、解消した決定の記録（日付つき）。
 - [ ] M01 共通契約モデル
 - [ ] M02 Hermes-agent（ADR-0001 で進捗集約に縮小・dispatch 不在）
 - [ ] M03 Development Coordinator
-- [ ] M05 Issue Contract Planner（+ IssueContract 確定）
+- [ ] M05 Issue Contract Planner（resolve・決定的コード / 下書き・+ IssueContract 確定）
 - [ ] M06 Generator + Adapters（+ GeneratorHandoff 確定）
 - [ ] M07 Evaluator ＋ M09 Evaluation Harness（+ Scorecard 確定）
 - [ ] M08 Repair Router
@@ -312,8 +325,12 @@ IssueSpawnOrder / DesignSlice 等）から、共通エンベロープ・ID 規�
 - **横断**: M15 Security & Approval / M16 Model Independence / M17 CLI / M18 Storage。
 - **将来**: M19 Department / Handoff 抽象（interface + sample 契約のみ）。
 
-> 次アクション: 垂直1本（M20 v2 → M21 → **M22 設計審査** → M05 resolve）の続きとして M05 を起票。
-> loop 1 を閉じてから M01 を抽出する。
+> 次アクション: 垂直1本（M20 v2 → M21 → **M22 設計審査** → M05 resolve）のうち M05 を起票（下書き）。
+> M05 は lane 非依存の uniform `IssueSource` を入力に確定（greenfield 分解 / bug・tech-debt・brownfield の票を
+> 同一 resolve で処理。[issue-contract-planner.md](modules/issue-contract-planner.md) §2/§10）。
+> 続きは M03 Coordinator（薄）で resolve→dispatch→状態機械を閉じる。loop 1 を閉じてから M01 を抽出する。
+> M05 の残 open は解消済（自身の未決ゼロ）: narrative は M21 `DesignSlice.narrative`（design-planner.md §3.2）、
+> blob SHA は ADR-0001 D8 で確定。owner 未 spec の cross-module open は §4.4 で一元追跡。
 >
 > ⚠️ loop-1 緊張（要確認）: M22 は「設計レビュ必須」（ADR-0002 D20）だが、loop 1 は「最薄の縦1本」が原則。
 > M22 を loop 1 に**薄く**（決定的 tier + 軽い整合性）入れて整合性 grader 作り込みを loop 2 へ送る案を採った。

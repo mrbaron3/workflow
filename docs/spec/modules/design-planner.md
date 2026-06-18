@@ -27,7 +27,7 @@ finding の逆引きキー（sliceId/ARCH-ID）で**該当箇所のみ**再設�
 - Tier1 アーキ・スパイン（epic 共有・決定のみ・repo に1ファイル）の著述
 - Tier2 設計スライス（PR サイズ・1スライス = 1 issue）の著述
 - AC をまたいだ PR サイズへの分解（β）。`subArea` を分割境界ヒントとして使用
-- issue spawn 指示（specRef + AC-ID 群 + MR-ID 群 + Tier2 スライス参照）の生成 = M05 への handoff 契約
+- issue spawn 指示（specRef + verificationRef + AC-ID 群 + MR-ID 群 + Tier2 スライス参照）の生成 = M05 への handoff 契約
 - 設計の human_review タグ点（Tier1 任意レビュー: D17）の決定
 - spec drift 時の設計再判断（変更 AC-ID が触れる Tier1 決定 / Tier2 スライスの特定）
 
@@ -48,11 +48,12 @@ finding の逆引きキー（sliceId/ARCH-ID）で**該当箇所のみ**再設�
 
 M20 が産出し、`contract-approved` で固定された参照群:
 
-- **ApprovedSpecRef**（M20 §3.3）: `path` + `gitSha` + `approvedAcIds[]` + `approvedAt`。
-  入力の不変条件は「gitSha 固定 = 設計入力の決定性」。
-- **spec.md@gitSha**（M20 §3.1）: `acceptanceCriteria[]`（id / severity / behavior / subArea）, `scope`, `redLines`。
-- **acceptance.yaml@gitSha**（M20 §3.1a）: AC-ID → `verification`(method + expected)。Tier2 の `testApproach` の根拠。
-- **manual-requirements.md@gitSha**（M20 §3.2）: `MR-ID`（severity / requirement / tier）。
+- **ApprovedSpecRef**（M20 §3.4）: `approvalCommitSha` + `behaviorRef` / `verificationRef` /
+  `manualRequirementsRef`（各 `{path, gitSha(blob)}`）+ `approvedAcIds[]` + `acFingerprints` + `approvedAt`。
+  入力の不変条件は「各 ref の blob gitSha 固定 = 設計入力の決定性」。
+- **spec.md@behaviorRef.gitSha**（M20 §3.1）: `acceptanceCriteria[]`（id / severity / behavior / subArea）, `scope`, `redLines`。
+- **acceptance.yaml@verificationRef.gitSha**（M20 §3.1a）: AC-ID → `verification`(method + expected)。Tier2 の `testApproach` の根拠。
+- **manual-requirements.md@manualRequirementsRef.gitSha**（M20 §3.2）: `MR-ID`（severity / requirement / tier）。
   `tier: human_review` の MR は分解時に対象 issue へ紐づけ、ゲートのトリガにする（D17）。
 
 前提条件:
@@ -115,6 +116,11 @@ DesignSlice:
   sliceId:         SLICE-<EPIC>-NNN   （安定・不変。issue / IssueContract の join キー）
   parentSliceId:   分割で生じた場合の親（renumber 禁止下の split 規約。後述）。なければ null
   title:           スライスの意味的な名前
+  narrative:       per-slice の意図（M05 が IssueContract.{productGoal,userStory} へ copy 投影する源泉:
+                   issue-contract-planner.md §3。epic 粒度の自由文を純機械 join に乗せられない問題を、
+                   authoring を M21 へ寄せて解消する）
+                   - productGoal: このスライスが達成する成果（epic spec.md の goal をスライス粒度へ具体化）
+                   - userStory:   利用者視点の1文（誰が・何を・なぜ）
   coversAcIds[]:   このスライスが満たす AC-ID 群（複数 AC をまたぐ: β）
   coversMrIds[]:   関連する manual requirement（human_review トリガ: D17）
   dependsOnSpine[]:  参照する ARCH-ID（Tier1 への参照。決定を複製しない）
@@ -126,7 +132,7 @@ DesignSlice:
                    - **内部構造（関数分割・内部データ構造・アルゴリズム）は書かない** → M06 Generator に委ねる（D26）
                    - 共有型を消費する場合は公開シェイプを参照。内部表現は実装の自由
   testApproach:    acceptance.yaml の verification を実装でどう満たすか（grader 視点の実装メモ）
-  estimatedScope:  M21 の暫定 PR サイズ見積り（AI 判断）。実サイズは M05 resolve 後に確定（B5）
+  estimatedScope:  M21 の暫定 PR サイズ見積り（AI 判断）。実サイズ超過は Generator が実装後に検知（B5）
 ```
 
 不変条件（**被覆かつ排他・双方向**: B1）:
@@ -152,7 +158,8 @@ issue 投稿のための指示。**参照のみ**を持ち、契約本体は埋�
 IssueSpawnOrder:
   epicId
   sliceId:                SLICE-<EPIC>-NNN     # 1 spawn order = 1 slice = 1 issue
-  specRef:                { path, gitSha }      # ApprovedSpecRef 由来（spec.md の版固定）
+  specRef:                { path, gitSha }      # ApprovedSpecRef.behaviorRef 由来（spec.md の版固定・blob SHA）
+  verificationRef:        { path, gitSha }      # ApprovedSpecRef.verificationRef 由来（acceptance.yaml の版固定・blob SHA）
   acceptanceCriteriaIds[]:  このスライスが担う AC-ID（= DesignSlice.coversAcIds）
   manualRequirementIds[]:   human_review ゲートのトリガ（= DesignSlice.coversMrIds）
   tier2SliceRef:          { path, gitSha }      # Tier2 スライスの版固定参照（埋め込まない）
@@ -160,9 +167,10 @@ IssueSpawnOrder:
   dependsOn[]:            先行 issue（DesignSlice.dependsOnSlices から導出）
 ```
 
-> M05 resolve はこの order を入力に `resolve(spec.md@gitSha の AC + acceptance.yaml + Tier2 スライス@gitSha)
+> M05 resolve はこの order を入力に `resolve(spec.md@blob の AC + acceptance.yaml@blob + Tier2 スライス@blob)
 > → IssueContract` を機械的に行う。本層は **order の形（参照集合）まで**を確定し、投影の中身は M05 の所掌。
-> 運用簡略化として spec.md と設計ファイルを同一 commit に含めれば 3 つの gitSha は一致するが、強制はしない。
+> 運用簡略化として spec.md / acceptance.yaml / 設計ファイルを同一 commit に含めても、ref は各ファイルの
+> blob SHA として持つ。
 
 ## 4. 振る舞い / 処理フロー
 
@@ -170,7 +178,8 @@ epic 状態 `contract-approved → designing → decomposed`（ADR-0001 §5）�
 Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を直接書かず、成果物の完成を**シグナル**する
 だけ（B2。「状態遷移を LLM にやらせない」原則）。下記は M21 の作業ステップで、各完了が M03 の遷移条件になる。
 
-1. **着手**: M03 が `contract-approved` を確認し `designing` を書く。M21 は ApprovedSpecRef の gitSha で
+1. **着手**: M03 が `contract-approved` を確認し `designing` を書く。M21 は ApprovedSpecRef の
+   `behaviorRef` / `verificationRef` / `manualRequirementsRef` で
    spec.md / acceptance.yaml / manual-requirements.md を pin して読む（入力決定性）。
 2. **Tier1 スパイン著述**: epic 共有の設計決定（構造・技術・境界・横断方針・不変条件）を
    architecture-spine.md に書く。各決定に `affectsAcIds` と必要なら `humanReview: true` を付す。
@@ -200,8 +209,9 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
 - **設計 drift（B3・新規）**: spec は不変だが Tier1 決定が override された場合、変更 `ARCH-ID` を
   `dependsOnSpine` に持つ Tier2 スライスを逆引きして再検証対象に挙げる（AC 逆引きと対称）。Tier1 を参照のみ
   にした（FR-008）ことで複製ズレは防げるが、参照先の決定変更への追従はこのフックが担う。
-- **サイズ誤判定（B5・M05→M21 の戻り）**: M21 の `estimatedScope` は暫定見積り。M05 resolve 後に実サイズが
-  PR を超えると判明した場合、当該スライスを `designing` 相当へ戻し split 規約（§3.2）で再分割する。
+- **サイズ誤判定（B5・Generator→M21 の戻り）**: M21 の `estimatedScope` は暫定見積り。実装後に Generator が
+  実サイズ超過を検知した場合、当該スライスを `designing` 相当へ戻し split 規約（§3.2）で再分割する。
+  M05 はサイズを判定せず、再 split 後の新スライスを再 resolve するのみ。
 - **foundation drift（共有基盤の遡及的切り出し・ADR-0003 D29・第3の drift 源）**: 共有基盤が後から必要と判明
   した時の戻り。**抽出のみ**が本層に来る（クリーンな既存単位への単純再利用は M06/M08 で閉じ本層に来ない）。
   M10 が「抽出すべき」と判断した work order を受け、本層は **additive** に処理: 新 `sharedFoundations` ARCH-ID を
@@ -231,12 +241,12 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
   最小単位とし、PR サイズ超過 AC は M20 へ差し戻す（B1）。
 - **DSGN-FR-005 PR サイズ分解（β）**: issue = PR サイズ。複数 AC をまたいで導出し、`subArea` は分割境界の
   ヒントとして使う（1:1 に縛らない: D10）。各スライスに `estimatedScope`（**M21 の暫定見積り**。実サイズは
-  M05 resolve 後に確定: B5）を付す。
+  Generator が実装後に検知: B5）を付す。
 - **DSGN-FR-006 ID 安定性 / split 規約**: `ARCH-ID` / `sliceId` は一度振ったら不変。renumber・再利用を禁止。
   超過時の split は新 sliceId を採番（spawn 前は自由、spawn 後は親 retire + `parentSliceId`）。high-water mark
   は `slices/` の既存最大番号スキャンで導出（M21 ステートレス）。`sliceId` は issue / IssueContract の join キー。
-- **DSGN-FR-007 参照渡し（全 Ref 版固定）**: IssueSpawnOrder は specRef + AC-ID 群 + MR-ID 群 +
-  Tier2/Tier1 への `{path, gitSha}` **参照**のみを持ち、契約本体・設計本文を埋め込まない（D8 を設計ファイルへ拡張・B3）。
+- **DSGN-FR-007 参照渡し（全 Ref 版固定）**: IssueSpawnOrder は specRef + verificationRef + AC-ID 群 + MR-ID 群 +
+  Tier2/Tier1 への `{path, gitSha(blob)}` **参照**のみを持ち、契約本体・設計本文を埋め込まない（D8 を設計ファイルへ拡張・B3）。
 - **DSGN-FR-008 Tier1 参照（非複製）**: Tier2 スライスは Tier1 決定を `dependsOnSpine`(ARCH-ID) で
   参照し、決定内容を複製しない。
 - **DSGN-FR-009 human_review タグ**: `humanReview` な Tier1 決定 / `tier: human_review` の MR を含む
@@ -292,7 +302,7 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
   実装レベルの重複検出は M07 の所掌（ADR-0003 D27）。
 - `ARCH-ID` / `sliceId` を renumber・再利用しない。
 - **状態ラベルを書き込まない**（書き込みは M03。本層は完成をシグナルするのみ: B2）。
-- IssueSpawnOrder の参照は全て版固定（`{path, gitSha}`）。設計ファイルを可変参照で渡さない（B3）。
+- IssueSpawnOrder の参照は全て版固定（`{path, gitSha(blob)}`）。設計ファイルを可変参照で渡さない（B3）。
 - Tier1 にコンポーネント詳細・実装手順を書かない（Tier2 の領分: D14）。
 - 未署名（`contract-approved` 未満）の spec に着手しない。
 
@@ -300,7 +310,7 @@ Coordinator（通常コード）が行う**。M21 は LLM 著者ゆえ状態を�
 
 - サンプル `contract-approved` spec.md（例: octolink 相当）から architecture-spine.md と
   複数の SLICE-*.md を生成でき、全 AC が**過不足なく**いずれかのスライスに割り付く（被覆かつ排他を検証）。
-- 各スライスから IssueSpawnOrder（specRef + AC-ID 群 + MR-ID 群 + Tier2/Tier1 参照）を生成でき、
+- 各スライスから IssueSpawnOrder（specRef + verificationRef + AC-ID 群 + MR-ID 群 + Tier2/Tier1 参照）を生成でき、
   契約本体・設計本文が**埋め込まれていない**ことを検証できる。
 - `tier: human_review` の MR を含むスライスの spawn order に review トリガが立つ。
 - spec.md の AC を1つ変更（drift）→ 影響する Tier1 決定 / Tier2 スライスのみが再設計対象に挙がり、
@@ -351,7 +361,7 @@ D14 設計二層化 / D16 AI 著者・可読性前提 / D17 human_review 層別�
 
 - B1 被覆を双方向化 + 「AC は分割不可能・超過は M20 差し戻し」明文化 / B2 状態書き込みを M03 に委譲（FR-012）/
   B3 設計ファイル版固定 + 設計 drift 逆引き（FR-011）/ B4 1:1 を正直に記録 + split 規約 / B5 estimatedScope を
-  暫定見積りとし M05→M21 サイズ差し戻し経路を新設 / C1 評価・改善トレースの接続点を §6 に追加。
+  暫定見積りとし Generator→M21 サイズ差し戻し経路を新設 / C1 評価・改善トレースの接続点を §6 に追加。
 
 独立設計レビュ追加（2026-06-15・ADR-0002）:
 
@@ -373,7 +383,7 @@ D14 設計二層化 / D16 AI 著者・可読性前提 / D17 human_review 層別�
 
 残 open:
 
-- `estimatedScope` の判定基準（閾値 vs AI 判断）。**所掌は M21 の暫定見積りで確定**（B5）。実サイズは M05 resolve 後。
+- `estimatedScope` の判定基準（閾値 vs AI 判断）。**所掌は M21 の暫定見積りで確定**（B5）。実サイズ超過は Generator が実装後に検知。
 - Tier1 任意レビュー（`humanReview`）の粒度: 決定単位か spine ファイル単位か。
 - `ArchitectureSpine` / `DesignSlice` / `IssueSpawnOrder` の M01 共通契約モデルへの抽出（垂直1本通過後）。
   各スキーマの ID 規約・version-pinned Ref・envelope は M01 抽出候補。
