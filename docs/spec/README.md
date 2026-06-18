@@ -30,7 +30,9 @@ REQUIREMENTS.md         ← 要求の正本（大枠 / 全FR）
 > 凍結する。各モジュール仕様・実装はこれに従う。
 > 現行: [0001 オーサリング層と実行層の分離・spec.md を SoT とする](decisions/0001-authoring-execution-split.md) /
 > [0002 独立設計レビュ・設計評価ループ](decisions/0002-independent-design-review.md) /
-> [0003 仕様の高度・薄い実装層・DRY の分担](decisions/0003-spec-altitude-and-dry.md)。
+> [0003 仕様の高度・薄い実装層・DRY の分担](decisions/0003-spec-altitude-and-dry.md) /
+> [0004 設計の三層化（system/epic/slice）と層別・大域整合の独立審査](decisions/0004-layered-design-and-global-review.md) /
+> [0005 skill / コード分担と Agent Skill 梱包方針](decisions/0005-skill-code-split-and-packaging.md)。
 
 ## 1. 大枠（レイヤーと原則）
 
@@ -78,8 +80,8 @@ Dashboard ──────────────────┘  可視化
 | M03 | Development Coordinator | 状態機械（二段: ADR-0001 §5）・実行ループ保持・**contract-approved issue の直接ポーリング**・**human_review ゲート（タグ + 層別差し戻し: D17）**・ラベル排他・ロック・worktree・agent dispatch（通常コード） | §9, §10, ADR-0001 | `src/pipeline/coordinator.ts`, `src/domain/states.ts`, `templates/labels.yaml` | 未着手 |
 | M04 | Roadmap Planner | Roadmap/Epic 整理・分解 | §8.2, §9.1 | `agents/roadmap-planner.md`, `src/planning/planner.ts` | 未着手 |
 | M05 | Issue Contract Planner（resolve に縮小） | **resolve のみ**: 版固定 `IssueSource`（greenfield 分解 / bug・tech-debt・harness・eval・brownfield の票を正規化）→ IssueContract（埋め込まない: ADR-0001 D8）。設計・分解は M21 へ移譲（D13）。全 lane 共通の決定的コア・drift gate・schema validation | §11, ADR-0001, ADR-0003 | `agents/issue-planner.md`（分割元）, `src/planning/planner.ts`（置換） | 下書き |
-| M21 | Design Planner（新規） | approved spec.md → 詳細設計（Tier1 アーキ・スパイン=epic 共有 / Tier2 設計スライス=PR サイズ）+ PR サイズへ issue 分解（β）。AI 著者・人間 override 任意（ADR-0001 D13/D14/D16） | ADR-0001, ADR-0002, ADR-0003, §11, §12 | `agents/issue-planner.md`（分割元） | 下書き |
-| M22 | Design Reviewer（新規） | M21 設計成果物（Tier1/Tier2/spawn order）を **spawn 前**に **M21 から独立**して審査し `DesignScorecard`（blocking/non-blocking）を産出。主務は全体整合性（大域 coherence）。設計評価ループ `designing→design-reviewed→decomposed`（ADR-0002 D20-D25） | ADR-0002, ADR-0003, §3, §16 | `agents/evaluator.md`（独立評価者パターン流用） | 下書き |
+| M21 | Design Planner（新規） | approved spec.md → **三層設計**（system 層=ドメイン/データ/アーキ＝global 単一 SoT・追加のみ / epic=design-delta / slice=コンポーネント=PR サイズ）+ issue 分解（β）。AI 著者・人間 override 任意（ADR-0004 D30-D34） | ADR-0001, ADR-0002, ADR-0003, ADR-0004, §11, §12 | `agents/issue-planner.md`（分割元） | 下書き |
+| M22 | Design Reviewer（新規） | M21 三層成果物を **spawn 前**に **M21 から独立**して**層別審査**し `DesignScorecard`（blocking/non-blocking）を産出。system 層拡張は**大域整合**で審査。実装メモは非ゲート（γ）。`designing→design-reviewed→decomposed`（ADR-0002 D20-D25 / ADR-0004 D32-D34） | ADR-0002, ADR-0003, ADR-0004, §3, §16 | `agents/evaluator.md`（独立評価者パターン流用） | 下書き |
 | M06 | Generator + Adapters | 実装・PR・GeneratorHandoff / Claude(interactive)・Codex・Gemini adapter | §12 | `agents/generator.md`, `src/agents/{runner,cli,mock}.ts` | 未着手 |
 | M07 | Evaluator | 独立評価・scorecard・PR review・repair instruction 投稿 | §13 | `agents/evaluator.md`, `src/pipeline/evaluate.ts` | 未着手 |
 | M08 | Repair Router | scorecard → 修正指示・試行回数管理・上限超過時 escalate | §14 | `agents/repair-router.md`, `src/pipeline/repair.ts` | 未着手 |
@@ -120,11 +122,12 @@ Dashboard ──────────────────┘  可視化
 | IntakeContract | Hermes → Hermes(routing) | §7.4 | なし | 新規 |
 | RoutingDecision | Hermes → Coordinator | §7.5 | なし | 新規 |
 | DepartmentContract | Hermes → Department | §7.6, §18 | なし | 新規 |
-| spec.md（AC behavior） | 人間+AI → M21 | ADR-0001 D4/D15 | `templates/feature-spec.md` | 確定（M20 v2） |
-| acceptance.yaml（AC-ID→verification） | M20 → M05(resolve) | ADR-0001 D15 | `templates/acceptance.yaml` | 確定（M20 v2） |
-| ApprovedSpecRef（version-pinned refs + acFingerprints） | M20 → M21/M05 | ADR-0001 D8/O2/O3 | なし | 確定（M20 v2） |
-| ArchitectureSpine（Tier1・共有決定） | M21 → M05/Generator/M22 | ADR-0001 D14, ADR-0003 D26-D27 | なし | 下書き（M21） |
-| DesignSlice（Tier2・PR サイズ） | M21 → M05/M22 | ADR-0001 D14, ADR-0003 D26 | なし | 下書き（M21） |
+| spec.md（受け入れ基準 = Given/When/Then・AC-ID） | 人間+AI → M21 | ADR-0001 D4/D15, ADR-0004 D35 | `templates/feature-spec.md` | 下書き（GWT 改訂） |
+| acceptance.yaml（AC-ID→severity+verification） | M20 → M05(resolve) | ADR-0001 D15 | `templates/acceptance.yaml` | 下書き（severity 追加） |
+| ApprovedSpecRef（version-pinned refs + acFingerprints + systemRefs） | M20 → M21/M05 | ADR-0001 D8/O2/O3, ADR-0004 | なし | 下書き |
+| system 層（domain-map / data-model / architecture・global 単一 SoT・追加のみ） | M21 → M05/Generator/M22 | ADR-0004 D30-D32 | なし | 下書き（M21） |
+| DesignDelta（epic の system 層拡張記録） | M21 → M22/M05 | ADR-0004 D31 | なし | 下書き（M21） |
+| DesignSlice（slice・PR サイズ・コンポーネント設計） | M21 → M05/M22 | ADR-0001 D14, ADR-0004 D30 | なし | 下書き（M21） |
 | IssueSpawnOrder（参照集合・版固定） | M21 → M03/M05(resolve) | ADR-0001 D8/D13 | なし | 下書き（M21） |
 | IssueContract | M05(resolve) → Generator/Evaluator | §11.2, ADR-0001 D8 | `IssueContract` | 既存・差分あり（resolve 派生物に・M05 下書き） |
 | GeneratorHandoff | Generator → Evaluator | §12.3 | `BuildArtifact`（近似） | 部分・要正式化 |
@@ -147,8 +150,8 @@ Dashboard ──────────────────┘  可視化
   `severity`。`hard_gates` の項目集合も要整合。
 - `IssueContract`: `Issue.contract` 埋め込み → source refs（`specRef` / `verificationRef` / 設計 refs）+
   `acceptanceCriteriaIds` 参照に置換（ADR-0001 D8）。契約は dispatch 時に M05 が版固定 source から resolve する派生物。
-- ADR-0001 で導入した新規契約（spec.md / acceptance.yaml / ApprovedSpecRef / ArchitectureSpine /
-  DesignSlice / IssueSpawnOrder）は上表に正式行として収載。M20 産は確定 v2、M21 産は下書き。
+- ADR-0001/0004 で導入した新規契約（spec.md / acceptance.yaml / ApprovedSpecRef / system 層 /
+  DesignDelta / DesignSlice / IssueSpawnOrder）は上表に正式行として収載。M21 産は下書き（ADR-0004 で三層化）。
 
 ## 4. 参考実装（AgentOps）とのギャップ分析
 
@@ -199,7 +202,7 @@ open。1か所で追跡し、各モジュール仕様の §10 には残さない
 
 | open | owner（回収先） | 由来 | メモ |
 | --- | --- | --- | --- |
-| IssueContract schema 差分（zod 収載・camel/snake 命名統一・`verification.steps` 採否） | M01 / `schema.ts` | M05 §10 | `tech_stack` 源泉は Tier1 spine で確定済。残は実装追従と命名・`steps` 採否のみ |
+| IssueContract schema 差分（zod 収載・camel/snake 命名統一・`verification.steps` 採否） | M01 / `schema.ts` | M05 §10 | `tech_stack` 源泉は system 層 architecture で確定（ADR-0004）。残は実装追従と命名・`steps` 採否のみ |
 | resolve 出力の永続 / キャッシュ（置き場） | M18 Storage | M05 §10 | キー = `(issueId/sliceId, IssueSource の各 gitSha)` は確定。置き場のみ未定 |
 | 遡及修正の検知契機（再署名時 impact gate へ一般化） | 著述層(M20) / M03 | M05 §10 | dispatch 時 gate（M05 所掌）の外。fingerprint diff で機械算出可・新規データ不要 |
 | 修正 / dispatch の pinned+signed 強制（入口ガード） | M20 / M21 / M03 | M05 §10 | M05 は既に pinned+signed のみ受理。上流入口にも同ガードを mechanism として課す |
@@ -264,7 +267,7 @@ open question と、解消した決定の記録（日付つき）。
 優先順位は §8 推奨優先順位（提案）の初期値。確定のたびに状態を更新する。
 
 - [ ] M20 オーサリング層 / spec.md 契約（下書き v2・O1 反転完了 / 敵対レビューで drift 二段化・gitSha 永続先・status 派生を再修正）
-- [ ] M21 Design Planner（ADR-0001・詳細設計二層化 + 分解 / 下書き）
+- [ ] M21 Design Planner（ADR-0004・三層設計 system/epic/slice + 分解 / 下書き）
 - [ ] M22 Design Reviewer（ADR-0002・独立設計レビュ + DesignScorecard / 下書き）
 - [ ] M01 共通契約モデル
 - [ ] M02 Hermes-agent（ADR-0001 で進捗集約に縮小・dispatch 不在）

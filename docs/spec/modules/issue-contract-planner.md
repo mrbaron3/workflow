@@ -2,6 +2,7 @@
 
 - 正本参照: ADR-0001（[decisions/0001](../decisions/0001-authoring-execution-split.md) D8/D10/D13）,
   ADR-0003（[decisions/0003](../decisions/0003-spec-altitude-and-dry.md) D26/D28/D29）,
+  ADR-0004（[decisions/0004](../decisions/0004-layered-design-and-global-review.md) D31・spine→system 層）,
   REQUIREMENTS.md §11（Issue Contract 関連 FR・resolve 側へ再配分）, §12（Generator 入力の前提）
 - 参考実装: [agents/issue-planner.md](../../../agents/issue-planner.md)（**分割元**: 設計判断は M21 へ、
   resolve 機械処理を本 M05 へ）, [src/planning/planner.ts](../../../src/planning/planner.ts)（**置換**方針）,
@@ -82,8 +83,9 @@ IssueSource（版固定・承認済み）:
   acceptanceCriteriaIds[]: この source が宣言する AC-ID 集合
   scope:                   { include[], exclude[] }
   redLines[]
-  tier1SpineRef?:          {path, gitSha}      任意（greenfield のみ。Tier1 ArchitectureSpine=epic 共有技術決定の
-                                               版固定参照。`tech_stack` の投影元。targeted は epic 非経由ゆえ無し）
+  systemRefs[]?:           {artifact, elementId, gitSha}   任意（greenfield のみ。依存する system 層要素
+                                               （architecture.md の ARCH-NNN 等）の版固定参照。`tech_stack` の投影元。
+                                               targeted は epic 非経由ゆえ無し）
   tier2SliceRef?:          {path, gitSha}      任意（greenfield のみ。targeted は issue 粒度で既にスライス済み）
   acFingerprints:          AC-ID → 承認時ハッシュ（behavior + verification）。drift gate の基準
   dependsOn[]:             先行スライス/issue（dependsOnSlices。再利用順序）
@@ -96,12 +98,12 @@ IssueSource（版固定・承認済み）:
 lane ごとの `IssueSource` の組み立て元（本層の外。consume するのは正規化後の形のみ）:
 
 - **greenfield**: M21 が IssueSpawnOrder（design-planner.md §3.3）の 1 要素として供給。`behaviorRef` = epic
-  spec.md@gitSha、`verificationRef` = acceptance.yaml@gitSha、`tier1SpineRef` = Tier1 ArchitectureSpine@gitSha
-  （共有技術決定。README カタログ `ArchitectureSpine: M21 → M05/Generator/M22` と整合）、`tier2SliceRef` = Tier2
+  spec.md@gitSha、`verificationRef` = acceptance.yaml@gitSha、`systemRefs` = 依存する system 層要素
+  （architecture.md の ARCH-NNN 等。`tech_stack` の投影元・ADR-0004 D31）の版固定参照、`tier2SliceRef` = Tier2
   DesignSlice@gitSha、`narrative` = M21 が著す per-slice goal/userStory（§10 決定）、`acFingerprints` =
   ApprovedSpecRef（M20 §3.4）由来。
 - **targeted lane（bug/tech-debt/harness/eval 票 + brownfield intake）**: triage / M02 / M10 / M12 が、1 issue
-  粒度の票（behavior + verification を M20 と同じ著述形で版固定）を供給。`tier1SpineRef` / `tier2SliceRef` は
+  粒度の票（behavior + verification を M20 と同じ著述形で版固定）を供給。`systemRefs` / `tier2SliceRef` は
   無し（epic 非経由・既に issue 粒度。`tech_stack` を持たない）、`epicRef` は任意（brownfield は合成 epic or null）。
   `narrative` は票が直接持つ。
 
@@ -139,9 +141,9 @@ IssueContract:
       method:         verificationRef@gitSha[AC-ID].method（自動採点のみ）
       expected[]:     verificationRef@gitSha[AC-ID].expected
   redLines[]:         IssueSource.redLines（copy。greenfield は slice 制約を含み得る）
-  tech_stack?:        tier1SpineRef@gitSha の共有技術決定（copy。greenfield のみ。targeted は spine 非保持ゆえ
-                      無し。契約には収載済み = 正本: 源泉は Tier1 spine で確定。zod schema.ts は実装追従で拡張
-                      する: §9 移行。現 schema.ts の状態は本仕様の制約ではない）
+  tech_stack?:        systemRefs の architecture 要素（ARCH-NNN）から copy（greenfield のみ。targeted は
+                      system 非保持ゆえ無し。源泉は system 層 architecture で確定・ADR-0004。zod schema.ts は
+                      実装追従で拡張する: §9。現 schema.ts の状態は本仕様の制約ではない）
 ```
 
 投影規則（**機械 join / copy**・各フィールドの源泉を固定）:
@@ -150,8 +152,8 @@ IssueContract:
   `behaviorRef@gitSha` から、`{verification:{method, expected}}` を `verificationRef@gitSha` から取り、AC-ID で
   1:1 join。
 - `productGoal` / `userStory` / `scope` / `redLines`: `IssueSource` から copy（上流が著述。M05 は創作しない）。
-- `tech_stack`: `tier1SpineRef@gitSha`（Tier1 ArchitectureSpine）から copy（greenfield のみ。spine 無しの
-  targeted では出力しない）。M05 は技術決定を**創作せず**版固定の spine を運ぶだけ（決定性保持）。
+- `tech_stack`: `systemRefs` の architecture 要素（ARCH-NNN・system 層）から copy（greenfield のみ。system 無しの
+  targeted では出力しない）。M05 は技術決定を**創作せず**版固定の system 要素を運ぶだけ（決定性保持）。
 
 不変条件:
 
@@ -227,7 +229,7 @@ resolve は M03 が dispatch 可能 issue を処理する時点で呼ばれる�
 - **RSLV-FR-010 全 Ref 版固定の強制**: `IssueSource` の全 Ref は `{path, gitSha}`。gitSha 無しの可変参照を
   受け取らない。
 - **RSLV-FR-011 lane 非依存（uniform IssueSource）**: resolve は `issueType` / lane に依らず同一処理。
-  `tier1SpineRef` / `tier2SliceRef` / `epicRef` は任意。slice 無し（targeted）の場合は被覆を source/output の
+  `systemRefs` / `tier2SliceRef` / `epicRef` は任意。slice 無し（targeted）の場合は被覆を source/output の
   二者で検証する。greenfield も targeted（bug/tech-debt/harness/eval 票・brownfield lane）も同じコードパスを通る。
 - **RSLV-FR-012 著述は上流・合成しない**: `narrative` / `behavior` / `verification` / `scope` は `IssueSource` が
   供給する。M05 はこれらを copy/join するのみで、自由文や NL から AC・narrative を**合成しない**（決定性保持）。
@@ -287,7 +289,7 @@ resolve は M03 が dispatch 可能 issue を処理する時点で呼ばれる�
 - [src/domain/schema.ts](../../../src/domain/schema.ts): `Issue.contract` 埋め込み（L108）→ source refs 参照へ
   （D8・M18/M21 と連動）。resolve 出力は派生物として別管理（キャッシュ or 一時。§10）。
 - **IssueContract schema 差分**（README §3 差分注意）: 正本には `tech_stack` と `verification.steps` があるが
-  zod schema に無い。`tech_stack` の**源泉は Tier1 `ArchitectureSpine` で確定**し、`IssueSource.tier1SpineRef`
+  zod schema に無い。`tech_stack` の**源泉は system 層 architecture 要素で確定**し（ADR-0004）、`IssueSource.systemRefs`
   経由で copy 投影する（§2/§3）。残るは zod への収載と命名（camelCase / snake_case）統一、および
   `verification.steps` の採否で、M01 抽出時に確定する（README §4.4 で追跡）。
 - **brownfield の grader bootstrap（本層の外）**: 既存プロジェクトに自動採点インフラ（playwright/api_test 等）が
@@ -315,7 +317,7 @@ D29 foundation drift（spawn 後 merge 前は `dependsOn` 辺追加 + gitSha 更
   判断を要さない（要するなら上流の欠落）。D28 / D26 §3 に整合し、M16 モデル独立性も自動充足。
 - **drift は検知して差し戻すのみ・再署名はしない**。再署名は人間（著述層・O4）。本層は dispatch 時の gate。
 - **lane 非依存の uniform `IssueSource`（§2）**: greenfield 分解と issue 粒度の票（bug/tech-debt/harness/eval 票
-  および brownfield lane）を同一の `IssueSource` に正規化し、`tier1SpineRef`/`tier2SliceRef`/`epicRef` を任意化。M05 を**全 lane 共通の
+  および brownfield lane）を同一の `IssueSource` に正規化し、`systemRefs`/`tier2SliceRef`/`epicRef` を任意化。M05 を**全 lane 共通の
   resolve + validation コア**に確定。被覆は slice 有無で三者/二者に degrade。理由: スキーマが既に bug/tech-debt/
   harness/eval を持ち、M10/M12 が epic を経由しない issue を生むため、resolve を greenfield 専用にすると
   これらが契約に乗らない（B 級・変更コスト高ゆえ今確定）。
@@ -332,10 +334,10 @@ D29 foundation drift（spawn 後 merge 前は `dependsOn` 辺追加 + gitSha 更
 - **fingerprint フィールド名 = `acFingerprints` に統一**（旧 `approvedFingerprints` を改名）。M20 AUTH（authoring-layer.md）
   / README と同名にし、§6 の共有純関数 `fingerprint()`（= AUTH-FR-008）と命名を揃える（DRY・別名による wiring
   ズレを回避）。
-- **`tech_stack` の源泉 = Tier1 `ArchitectureSpine`（`tier1SpineRef` 経由）で確定**。`IssueSource` に
-  `tier1SpineRef?` を持たせ、M05 が spine から `tech_stack` を copy 投影する（greenfield のみ。targeted は
-  spine 非保持）。README カタログ `ArchitectureSpine: M21 → M05/Generator/M22` と整合。M05 は技術決定を創作せず
-  版固定 spine を運ぶのみ。zod への収載・命名統一は M01 抽出時（§9）。
+- **`tech_stack` の源泉 = system 層 architecture 要素（`systemRefs` 経由）**（2026-06-18 改訂・ADR-0004 で
+  二層 spine が三層へ解体されたことに追従）。`IssueSource` に `systemRefs[]?` を持たせ、M05 が architecture 要素から
+  `tech_stack` を copy 投影する（greenfield のみ。targeted は system 非保持）。M05 は技術決定を創作せず版固定の
+  system 要素を運ぶのみ。zod への収載・命名統一は M01 抽出時（§9）。
 - **B5 サイズ超過は M05 が判定しない（検知は下流）**。実サイズは実装後にしか確定しないため、検知は Generator、
   再 split は M21、本層は新スライスを再 resolve するのみ（§5 foundation drift と同経路）。理由: resolve 時に
   「実サイズ」を知る決定的メトリクスが無く、閾値判定は「決定」混入で pure 性を壊し M21 の分解と二重持ちになる。
@@ -345,7 +347,7 @@ D29 foundation drift（spawn 後 merge 前は `dependsOn` 辺追加 + gitSha 更
 
 本セッション決定（2026-06-18）:
 
-- **契約の SoT は本仕様（正本）・schema.ts は追従実装**。`tech_stack` は契約に収載済み（源泉 = Tier1 spine・§3）。
+- **契約の SoT は本仕様（正本）・schema.ts は追従実装**。`tech_stack` は契約に収載済み（源泉 = system 層 architecture・§3）。
   現 zod schema.ts に未収載なのは「実装が未追従」であって契約からの除外ではない。zod 収載・命名統一は実装追従
   タスク（§9）。残るは `verification.steps` の採否のみ（M01 確定）。「今の実装に縛られない」方針を明文化。
 - **M05 の gate 所掌 = dispatch 時のみ**を明文化。再署名時 impact gate（遡及検知の一般化）は著述層/M03 の所掌で

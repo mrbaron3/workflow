@@ -1,32 +1,36 @@
 # <機能名> 受け入れ検証 (acceptance.yaml)
 #
-# ADR-0001 D15（O1 反転）により、grader 向けの verification を spec.md から分離した SoT。
-# spec.md の acceptanceCriteria[].id をキーに join する。両ファイルとも同じ epic ディレクトリの
-# repo 内に置き Git 追跡する。
+# grader 向けの verification + severity を spec.md から分離した SoT（ADR-0001 D15）。
+# spec.md の各受け入れ基準シナリオに付した AC-ID をキーに join する。両ファイルとも同じ epic
+# ディレクトリの repo 内に置き Git 追跡する。
 #
 # 役割分担:
-#   - spec.md         : 人間が behavior（観測可能な WHAT）を書く（人間可読）
-#   - acceptance.yaml : AI が協業で verification（method + expected）を提案 → 人間が確定（grader 向け）
+#   - spec.md         : 人間が受け入れ基準を Given/When/Then（観測可能な WHAT）で書く（人間可読）
+#   - acceptance.yaml : AI が協業で severity + verification（method + expected）を提案 → 人間が確定（grader 向け）
 #
 # 制約:
+#   - severity は blocker | major | minor。blocking 判定（落ちたら出荷不可か）に使う。
 #   - method は自動採点メソッドのみ。manual は禁止（自動採点不可は manual-requirements.md へ）。
 #     使える method: build | typecheck | unit_test | api_test | db_state_check |
 #                    playwright | secrets_scan | scope_check | llm_rubric
-#   - spec.md の全 AC-ID が、ここに過不足なく対応する（被覆）。新 AC を足したら必ずここにも追加。
+#   - spec.md の全 AC-ID が、ここに過不足なく対応する（被覆。双方向一致をコードが強制）。
 #   - expected は grader が実際に判定できる具体値を最低 1 行。
 
 verifications:
   AC-<FEATURE>-001:
+    severity: blocker
     method: playwright
     expected:
-      - "<具体的・検証可能な期待値。例: 申請成功後の遷移先 URL が /portfolio である>"
+      - "<具体的・検証可能な期待値。例: QR 表示後に該当決済が PENDING 状態で開始する>"
 
-  AC-<FEATURE>-010:
+  AC-<FEATURE>-002:
+    severity: major
     method: api_test
     expected:
-      - "<例: 失敗イベント注入後、GET /balance が減算前の値に戻っている>"
+      - "<例: 金額不一致の着金を反映後、警告が記録され二重計上されない>"
 
-  AC-<FEATURE>-011:
+  AC-<FEATURE>-003:
+    severity: major
     method: db_state_check
     expected:
-      - "<例: 遅延着金注入後、レコード status が Completed かつ二重減算されていない>"
+      - "<例: 切断中の着金注入後、状態遷移が 1 度だけ実行され重複検知が吸収される>"

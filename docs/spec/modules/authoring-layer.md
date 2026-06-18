@@ -1,66 +1,80 @@
 # M20 オーサリング層 / spec.md 契約 仕様
 
-- 正本参照: ADR-0001（[decisions/0001](../decisions/0001-authoring-execution-split.md)）,
-  REQUIREMENTS.md §7（intake 部分）, §11（Issue Contract 関連 FR）
+- 正本参照: ADR-0001（[0001](../decisions/0001-authoring-execution-split.md)）,
+  **ADR-0004（[0004](../decisions/0004-layered-design-and-global-review.md) D31/D35・system 層参照 / 文書形式）**,
+  REQUIREMENTS.md §7（intake 部分）, §11
 - 参考実装: [templates/feature-spec.md](../../../templates/feature-spec.md),
-  [templates/manual-requirements.md](../../../templates/manual-requirements.md),
-  `src/planning/planner.ts`（**置換**方針）
-- 仕様状態: 下書き（v2 改訂中。敵対レビュー 2026-06-15 で drift 検知・gitSha 永続先・status 粒度の欠陥を検出し再修正）
-- 最終更新: 2026-06-15
+  [templates/acceptance.yaml](../../../templates/acceptance.yaml),
+  [templates/manual-requirements.md](../../../templates/manual-requirements.md), `src/planning/planner.ts`（**置換**）
+- 仕様状態: 下書き（受け入れ基準を Given/When/Then 形式に・frontmatter 廃止・採番/整合をコード強制へ改訂）
+- 最終更新: 2026-06-18
 
 ## 1. 目的とスコープ境界
 
-人間 + AI 協業で **spec.md（オーサリング SoT）** と **manual-requirements.md** を作成し、
-人間署名により `contract-approved` を成立させ、Development Department への**入力契約**を
-確定する層。全フローの最上流。
+人間 + AI 協業で **spec.md（オーサリング SoT）** と **acceptance.yaml** / **manual-requirements.md** を作成し、
+人間署名により `contract-approved` を成立させ、Development Department への**入力契約**を確定する層。全フローの最上流。
 
 担う:
 
-- spec.md / manual-requirements.md の構造（schema）と AC-ID / MR-ID 規約
-- 合格基準の協業（人間=behavior、AI=verification 提案）
-- 自動採点 AC と非自動要件（manual）の分離（B 方針）
+- spec.md（受け入れ基準を Given/When/Then で）/ acceptance.yaml / manual-requirements.md の構造と AC-ID / MR-ID 規約
+- 合格基準の協業（人間 = 受け入れ基準の behavior、AI = severity + verification 提案）
+- 自動採点 AC と非自動要件（manual）の分離
 - `contract-approved` 署名ゲートと gitSha pin・drift 検知の意味論
+- **AC-ID の採番・整合（被覆・renumber 禁止）をコードで強制**（特定 skill に依存しない）
 
 担わない（隣接モジュール）:
 
-- **詳細設計（Tier1 スパイン / Tier2 スライス）と PR サイズ分解** → M21 Design Planner
-- spec.md → IssueContract の **resolve 実体** → M05 Issue Contract Planner
-- 子 issue へのディスパッチ・状態機械の execution 後半 → M03 Coordinator
+- **ドメインマップ / データ設計 / アーキ（system 層）の著述** → 設計立案役（本層は system 層を**固定制約として
+  参照**するのみ・埋め込まない・ADR-0004 D31）
+- 詳細設計（system / epic / slice 三層）と PR サイズ分解 → 設計立案役
+- spec.md → IssueContract の resolve 実体 → M05
+- 子 issue へのディスパッチ・状態機械の後半 → M03 Coordinator
 - 実装 → M06 Generator
 - 自然言語の意図分類・抽象度判定（将来）→ M02 Hermes
 
 ## 2. 入力契約 (consumes)
 
 - 人間の機能要求（自然言語 / 既存ドキュメント）。構造化前。
+- **system 層成果物（`_system/domain-map.md` 等）**: ドメイン概念・ユビキタス言語・業務ステータス・データ/アーキの
+  全体共有事項を**固定制約として参照**する（存在する場合。greenfield 初回は未整備で、設計層が seed する）。
 - ロードマップ文脈（vision / principles / 機能間の優先順位）。M04 Roadmap Planner との境界。
 
 ## 3. 出力契約 (produces)
 
+人間が所有・編集する文書はリッチ Markdown（ADR-0004 D35）。**frontmatter は持たない**（meta・署名は
+epic 状態オブジェクト ＝ ApprovedSpecRef が持つ）。
+
 ### 3.1 spec.md（オーサリング SoT・リポジトリ内・人間可読）
 
-O1 反転（ADR-0001 D15）により、spec.md は **人間可読な AC** のみを持つ。
-grader 向けの `verification` は §3.1a の `acceptance.yaml` に分離する。
+受け入れ基準は **名前付き Given/When/Then シナリオ**で書く（フラットなチェックリストや YAML でなく）。
+各シナリオに安定 AC-ID を付す。grader 向けの verification は acceptance.yaml に分離する。
 
 ```text
-meta:            featureId, area, epicId, status(draft|co-authoring|approved)
-概要:            productGoal / userStory の源泉（自由文）
-scope:           include[] / exclude[]
-前提条件:        precondition[]
-acceptanceCriteria[]:               # 人間可読なチェックリスト
-  id:            AC-<FEATURE>-NNN   （安定。不変。acceptance.yaml との join キー）
-  severity:      blocker | major | minor
-  behavior:      観測可能な振る舞い（人間が記述）
-  subArea:       受け入れ要件サブ見出し（= 分割ヒント。1:1 で issue ではない: β）
-redLines[]:      実装が絶対にしてはならないこと
+# <機能名> 受け入れ要件
+（冒頭に WHAT/HOW 境界の明記 + system 層を固定制約として参照する旨）
+
+## サブ機能一覧            表: ID | サブ機能 | 優先度（= 分割境界ヒント。Design Planner が使う）
+
+## <サブ機能>
+  ユーザーストーリー       誰が / 何を / なぜ
+  事前条件                 成立を前提とする状態・他機能・system 層の固定制約
+  受け入れ基準             名前付き Given/When/Then シナリオ。各に AC-ID:
+                            - [AC-<FEATURE>-NNN] <正常/異常/耐障害性>: <名前>
+                                Given <前提> / When <操作> / Then <観測可能な結果>
+  非機能要件               性能 / セキュリティ / 可観測性（自動採点不能は manual へ）
+  完了条件                 自動テスト / SLO / デモ（人間の検証宣言）
+
+## レッドライン           実装が絶対にしてはならないこと
 ```
 
 ### 3.1a acceptance.yaml（grader 向け・リポジトリ内・AI 協業で記述）
 
-`verification` を spec.md から分離。AC-ID をキーに join する。
+`severity` と `verification` を AC-ID をキーに持つ。
 
 ```text
 verifications:
   <AC-ID>:
+    severity:    blocker | major | minor          # blocking 判定に使う
     method:      自動採点メソッドのみ（build|typecheck|unit_test|api_test|
                  db_state_check|playwright|secrets_scan|scope_check|llm_rubric）
     expected[]:  grader が判定できる具体値（AI が協業で確定）
@@ -78,174 +92,156 @@ manualRequirements[]:
   evidence:     証跡
 ```
 
-### 3.3 spec.md frontmatter（meta・機械パース可能な署名記録）
+### 3.3 meta・署名の永続先（frontmatter を持たない）
 
-meta は **YAML frontmatter** で持つ（AUTH-FR-001 機械パース可能。Markdown テーブルより確実）。
-`approval.approvedAcIds` が**署名の SoT**。`status` はそこから導出する集約値（後述）。
+spec.md は frontmatter を持たない（実物のプロダクト spec も持たない・可読性のため）。meta（featureId / area /
+epicId）と署名状態（status / approvedAcIds）は **epic 状態オブジェクト（M18 store）が持つ**。`status` は
+`approvedAcIds` から導出する集約値（`approvedAcIds ⊇ 現 AC 全集合` で `approved`）。featureId は AC-ID の接頭辞・
+ディレクトリ名から導出できる。
 
-```text
----
-featureId:   <FEATURE>                # AC/MR ID 接頭辞
-area:        frontend|backend|fullstack|infra
-epicId:      <EPIC-ID>
-status:      draft|co-authoring|approved   # 派生値: approvedAcIds ⊇ 現 AC 全集合 なら approved
-approval:
-  approvedAcIds[]:  署名済みの AC-ID 集合（= 署名の SoT。部分 drift はここから外す: O4）
-  approvedAt:       ISO8601
-  approvedBy:       署名者の人間可読表示（補助。真正性は署名 commit の author が担保）
----
-```
-
-> **status は派生値（A3）**: `status` は epic 単位の単一値だが、署名は AC 単位で動く（O4 の部分再署名）。
-> よって `status` は `approval.approvedAcIds` から導出する: `approvedAcIds ⊇ spec.md の現 AC 全集合`
-> なら `approved`、真サブセットなら `co-authoring`、空/未着手なら `draft`。部分 drift は drift した
-> AC-ID を `approvedAcIds` から除くだけで表現でき、status は自動的に `co-authoring` へ落ちる。
-> approval ブロックを消さないので、未変更 AC の署名証跡は保持される。
->
-> **approvedBy は補助表示（A4）**: frontmatter は repo 内テキストで誰でも編集可能ゆえ、これ単体では
-> 署名の真正性を証明しない。真正性は **署名 commit（status:approved を含む commit）の author/committer**
-> （必要なら署名付き commit）が担保し、`approvedBy` はその人間可読の表示にすぎない。
->
-> **版固定 ref を frontmatter に置かない理由**: 署名 commit の SHA はその commit を作るまで確定せず、
-> 内容 blob SHA も frontmatter に自己参照で焼くと内容が変わる。版固定 ref は §3.4 の永続先に置く。
-
-### 3.4 ApprovedSpecRef（contract-approved の実体・最初の永続先）
+### 3.4 ApprovedSpecRef（contract-approved の実体・最初の永続先 = epic 状態オブジェクト）
 
 ```text
 ApprovedSpecRef:
-  epicId:                 epic 識別子
-  approvalCommitSha:      署名 commit（status:approved を含む commit）の SHA。真正性 / 監査用
-  behaviorRef:            {path, gitSha}  spec.md の版固定 ref。gitSha は blob SHA（ADR-0001 D8）
-  verificationRef:        {path, gitSha}  acceptance.yaml の版固定 ref。gitSha は blob SHA（ADR-0001 D8）
-  manualRequirementsRef?: {path, gitSha}  manual-requirements.md の版固定 ref。gitSha は blob SHA（存在する場合）
-  approvedAcIds[]:        署名済み AC-ID 集合（= frontmatter.approval.approvedAcIds）
-  acFingerprints:         AC-ID → 署名時点の内容ハッシュ（spec.behavior + acceptance.verification）。AC 単位 drift の基準
-  approvedAt:             署名日時（= frontmatter.approval.approvedAt）
+  epicId
+  featureId / area                     # meta（frontmatter でなくここが持つ）
+  approvalCommitSha:                   # 署名 commit の SHA。真正性 / 監査用
+  behaviorRef:       {path, gitSha}    # spec.md の版固定 ref。gitSha は blob SHA
+  verificationRef:   {path, gitSha}    # acceptance.yaml の版固定 ref
+  manualRequirementsRef?: {path, gitSha}
+  systemRefs[]:      {artifact, elementId, gitSha}   # 参照した system 層の固定制約（版固定）
+  approvedAcIds[]:                     # 署名済み AC-ID 集合（= 署名の SoT）
+  acFingerprints:                      # AC-ID → 署名時の内容ハッシュ（GWT behavior + severity + verification）
+  approvedAt
 ```
 
-> **最初の永続先 = epic 状態オブジェクト（M18 store）（A2）**: 署名 commit の SHA と版固定 ref は
-> frontmatter に焼けない（自己参照）。かつ issue は decomposed 後（M21→M05→M03 の
-> 下流）にしか生まれないため、**issue を最初の置き場にできない**（M21 着手時には issue が無い）。
-> よって M20 tooling が署名直後に `approvalCommitSha` と各ファイルの blob SHA を取得し、ApprovedSpecRef を
-> **epic 状態オブジェクト（M18 store）に書く**。これが issue 生成前の権威ある記録。M21 はここから
-> `behaviorRef` / `verificationRef` / `manualRequirementsRef` を読んで pin する。
-> issue 投稿時（M03）に issue の `specRef` へ **転記**される（O2「issue が承認記録」は転記後の話）。
-> `approvalCommitSha` と各 blob SHA は承認イベントのメタ（どの版を承認したか）であり、実行 SoT 側（D5）に属する。
->
-> **acFingerprints が AC 単位 drift の基準**: path 単位 diff だけでは「どの AC が変わったか」を返せない
-> ため（§4 参照）、署名時に AC-ID ごとの内容ハッシュを固定し、AC 単位の構造 diff の基準とする。
+> 署名 commit の SHA・blob SHA は frontmatter に自己参照で焼けず、issue は decomposed 後にしか生まれないため、
+> **epic 状態オブジェクトを最初の永続先**とする。issue 投稿時（M03）に issue の `specRef` へ転記される。
+> `acFingerprints` のハッシュ対象は **GWT シナリオ（Given/When/Then）+ severity + verification** で、AC 単位
+> drift の基準。
 
 ## 4. 振る舞い / 処理フロー
 
-協業ループ（状態: `draft → co-authoring → approved`）:
+協業ループ（status: `draft → co-authoring → approved`。status は派生値）:
 
-1. 人間が機能の概要・scope・前提・受け入れ要件の **behavior** を spec.md に起票（`draft`）。
-2. AI が各 AC-ID に `verification`（method + expected）を acceptance.yaml で提案し、**自動採点可否を分類**（`co-authoring`）。
-3. 自動採点できない要件は manual-requirements.md（MR）へ振り分け（受け入れ要件に混ぜない）。
-4. 人間が verification を確定。全受け入れ要件が自動採点 method を持つ状態にする。
-5. 人間が署名。tooling が署名 commit の SHA、各ファイルの blob SHA、AC 単位の内容ハッシュを
-   ApprovedSpecRef に固定（§3.4）。
-   `approvedAcIds` が全 AC を覆い、status は派生的に `approved` になる。
-6. 設計・分解は **M21 Design Planner** が担う（本層の境界外）。M21 が自動スライス、人間 override は任意（ADR-0001 D10/D13）。
+1. 人間が機能の概要・サブ機能・ユーザーストーリー・事前条件・受け入れ基準（**Given/When/Then**）・完了条件を
+   spec.md に起票する。**system 層の固定制約を参照**し、ドメイン/データを重複させない（`draft`）。
+2. AI が各 AC-ID に `severity` と `verification`（method + expected）を acceptance.yaml で提案し、**自動採点可否を
+   分類**する（`co-authoring`）。
+3. 自動採点できない要件は manual-requirements.md（MR）へ振り分け（受け入れ基準に混ぜない）。
+4. 人間が severity / verification を確定。全受け入れ基準が自動採点 method を持つ状態にする。
+5. **コードが整合を検証**（AC-ID の存在・renumber/再利用なし・spec.md と acceptance.yaml の双方向被覆）。違反は
+   署名ゲートで落とす。
+6. 人間が署名。**コード**が署名 commit の SHA・各ファイルの blob SHA・AC 単位ハッシュを ApprovedSpecRef に固定し、
+   epic 状態オブジェクトへ書く。`approvedAcIds` が全 AC を覆い status は派生的に `approved`。
+7. 設計・分解は設計立案役が担う（本層の境界外）。
 
-drift 検知は**二段**（A1。path 単位 diff だけでは「どの AC が変わったか」を返せないため）:
+drift 検知は**二段**:
 
-1. **粗検知（path 単位）**: ApprovedSpecRef の各 ref の blob SHA と HEAD の blob SHA を比較し、
-   spec.md / acceptance.yaml が変わったかを検知（変更有無のみ）。
-2. **AC 単位の構造 diff**: 変更ありなら両ファイルを構造パースし、AC-ID ごとに現内容ハッシュ
-   （behavior + verification）を ApprovedSpecRef の `acFingerprints` と比較。**ハッシュが変わった AC-ID
-   のみ**を `approvedAcIds` から外す（→ status が `co-authoring` に落ち、再署名を要求）。
+1. **粗検知（path 単位）**: ApprovedSpecRef の各 ref の blob SHA と HEAD を比較し、spec.md / acceptance.yaml の
+   変更有無を検知。
+2. **AC 単位の構造 diff**: 変更ありなら両ファイルを構造パースし、AC-ID ごとに現ハッシュ（GWT behavior + severity +
+   verification）を `acFingerprints` と比較。**ハッシュが変わった AC-ID のみ**を `approvedAcIds` から外す（→ status が
+   `co-authoring` に落ち再署名を要求）。
 
-drift の各ケースの扱い:
-
-- **behavior / verification の中身だけ変更**（AC-ID 行は不変）: 構造 diff がその AC-ID のハッシュ差を検出 → 当該 AC を再署名対象に。
-- **AC 新規追加**: 新 AC-ID は `approvedAcIds` に無く、`approvedAcIds ⊉ 現 AC 全集合` となり status が `co-authoring` に落ちる（被覆漏れとして必ず署名要求）。
-- **AC 削除**: 削除 AC-ID を `approvedAcIds`・`acFingerprints` から除去。M21 側の孤児スライス検知（[design-planner.md](design-planner.md) FR-010）と連動。
+drift の各ケース: GWT/severity/verification の中身変更 → 当該 AC を再署名対象に。AC 新規追加 → 被覆漏れで status
+降格。AC 削除 → `approvedAcIds`/`acFingerprints` から除去・設計立案役の孤児検知と連動。
 
 ## 5. 機能要件 (FR)
 
-新規採番 `AUTH-FR-xxx`。
+`AUTH-FR-xxx`。
 
-- **AUTH-FR-001 構造**: spec.md は meta + scope + acceptanceCriteria(behavior) + redLines を機械パース可能に持つ。
-- **AUTH-FR-002 AC-ID 安定性**: 一度振った AC-ID / MR-ID は不変。renumber・再利用を禁止。AC-ID は spec.md と acceptance.yaml の join キー。
+- **AUTH-FR-001 構造**: spec.md は サブ機能一覧 + 各サブ機能（ユーザーストーリー / 事前条件 / 受け入れ基準[GWT] /
+  非機能 / 完了条件）+ レッドラインを持つ。frontmatter は持たない。各受け入れ基準シナリオは **機械抽出可能な
+  AC-ID** を1つ持つ。
+- **AUTH-FR-002 AC-ID 安定性**: 一度振った AC-ID / MR-ID は不変。renumber・再利用を禁止。AC-ID は spec.md と
+  acceptance.yaml の join キー。
 - **AUTH-FR-003 自動採点制約**: acceptance.yaml の `method` は自動採点集合のみ（`manual` 禁止）。
 - **AUTH-FR-004 manual 分離**: 非自動要件は manual-requirements.md に分離し `tier` を付す。
-- **AUTH-FR-005 協業 / ファイル分離**: `behavior` は人間が spec.md に記述、`verification` は AI が acceptance.yaml に提案 + 人間確定（O1 反転: D15）。
-- **AUTH-FR-006 署名ゲート / status 派生**: `status` は `approval.approvedAcIds` から導出する集約値
-  （`approvedAcIds ⊇ 現 AC 全集合` で `approved`）。署名の SoT は `approvedAcIds`（A3）。
-- **AUTH-FR-007 gitSha pin / 永続先**: 署名 commit の SHA（真正性 / 監査用）と各ファイルの blob SHA
-  （`behaviorRef` / `verificationRef` / `manualRequirementsRef`）、AC 単位ハッシュ（`acFingerprints`）を
-  ApprovedSpecRef に固定し、**epic 状態オブジェクト（M18 store）を最初の永続先**とする。issue へは転記（A2）。
-- **AUTH-FR-008 drift 二段検知**: (1) path 単位で spec.md / acceptance.yaml の変更有無を検知 →
-  (2) AC 単位の構造 diff（現ハッシュ vs `acFingerprints`）で変更 AC-ID を特定し `approvedAcIds` から外す（A1）。
-- **AUTH-FR-009 スライス源**: `subArea` を分割境界ヒントとして M21 Design Planner へ提供（1:1 では issue でない: β）。
-- **AUTH-FR-010 AC ⇔ acceptance 被覆**: spec.md の AC-ID 集合と acceptance.yaml のキー集合は**双方向一致**
-  （過不足ゼロ）。署名ゲートの機械チェックに含める（Tier D 指摘の昇格）。
+- **AUTH-FR-005 協業 / ファイル分離**: 受け入れ基準（GWT behavior）は人間が spec.md に記述、`severity` +
+  `verification` は AI が acceptance.yaml に提案 + 人間確定。
+- **AUTH-FR-006 署名ゲート / status 派生**: `status` は epic 状態オブジェクトの `approvedAcIds` から導出する集約値
+  （`approvedAcIds ⊇ 現 AC 全集合` で `approved`）。署名の SoT は `approvedAcIds`。
+- **AUTH-FR-007 gitSha pin / 永続先**: 署名 commit の SHA・各ファイルの blob SHA・AC 単位ハッシュ・参照した
+  system 要素を ApprovedSpecRef に固定し、**epic 状態オブジェクトを最初の永続先**とする。issue へは転記。
+- **AUTH-FR-008 drift 二段検知**: path 単位で変更有無 → AC 単位の構造 diff（現ハッシュ vs `acFingerprints`）で
+  変更 AC-ID を特定し `approvedAcIds` から外す。ハッシュ対象は GWT behavior + severity + verification。
+- **AUTH-FR-009 分割ヒント**: サブ機能一覧（ID + 優先度）を分割境界ヒントとして設計立案役へ提供（1:1 で issue
+  ではない: β）。
+- **AUTH-FR-010 AC ⇔ acceptance 被覆**: spec.md の AC-ID 集合と acceptance.yaml のキー集合は**双方向一致**。
+  署名ゲートの機械チェックに含める。
+- **AUTH-FR-011 system 層参照（非埋め込み）**: ドメイン/データ/業務ステータス等の全体共有事項は system 層を
+  参照し、spec.md に重複させない。参照した system 要素は ApprovedSpecRef の `systemRefs` に版固定で記録する
+  （ADR-0004 D31）。
+- **AUTH-FR-012 完了条件**: 各サブ機能は完了条件（自動テスト / SLO / デモ等の人間可読な検証宣言）を持つ。
+- **AUTH-FR-013 採番・整合のコード強制**: AC-ID の存在・renumber/再利用禁止・双方向被覆・manual 不在を、
+  **決定的コード**（署名ゲート / lint / pre-commit）で強制する。特定 skill に依存しない（ADR-0003 D28・本層は
+  AI 補助 + コード強制）。任意で未採番シナリオへ high-water-mark 連番補完を行う純テキスト変換を持ってよい。
 
 ## 6. 非機能要件
 
-- **人間可読性**: spec.md は人間が編集する Markdown を維持。grader 向け詳細（verification）は acceptance.yaml に逃がす（D15）。
+- **人間可読性**: spec.md は人間が編集する Markdown（図・表・GWT 可）。grader 向け詳細（severity / verification）は
+  acceptance.yaml に逃がす。
+- **AI 補助 + コード強制（旧 skill 駆動を置換）**: 著述は人間 + 任意の AI 補助で行い、**契約形式・自動採点・
+  AC-ID 整合の強制はコード（決定的 validation）**が担う。特定 skill（旧 draft-spec）を必須にしない。これは
+  ADR-0001 D19 を更新する（§10）。
 - **Git 追跡**: spec.md / acceptance.yaml / manual-requirements.md はリポジトリ内に置き Git 履歴に乗せる。
-- **入力決定性**: 同一 blob `gitSha` は同一の resolve 入力を保証（projection の決定性は M05、入力の安定性は本層）。
-- **skill 駆動**: 本層の協業は skill として実装（既存 `draft-spec` を本出力形に拡張/置換: D19）。
+- **入力決定性**: 同一 blob `gitSha` は同一の resolve 入力を保証。
 
 ## 7. 不変条件・禁止事項 (red lines)
 
 - 実行層（Coordinator / Generator）が spec.md を書き換えない。SoT は人間。
-- 実装後に AC を緩めない。
+- 実装後に受け入れ基準を緩めない。
 - AC-ID / MR-ID を renumber・再利用しない。
-- 受け入れ要件に `manual` メソッドを混ぜない（必ず MR へ）。
+- 受け入れ基準に `manual` メソッドを混ぜない（必ず MR へ）。
+- spec.md に frontmatter を持たせない（meta・署名は epic 状態オブジェクト）。
+- ドメイン/データ/アーキを spec.md に**埋め込まない**（system 層を参照する・ADR-0004 D31）。
 
 ## 8. 受け入れ条件 (testable)
 
-- サンプル spec.md + acceptance.yaml（例: octolink `stake/` 相当）がパースでき、AC-ID で join できる。
-- 受け入れ要件と manual 要件の混在がゼロ（全 AC が acceptance.yaml に自動採点 method を持つ）。
-- `approved` な spec.md / acceptance.yaml から版固定 ref + acFingerprints 付き ApprovedSpecRef を生成し、**issue 生成前に
-  epic 状態オブジェクトへ永続化**できる（M21 がそこから gitSha を読める）。
-- spec.md の AC behavior を1つ変更 → AC 単位の構造 diff が**その AC-ID のみ**を再署名対象にし、
-  未変更 AC の署名は保持される（path 単位検知だけでは達成不能なことを検証）。
+- サンプル spec.md（GWT 受け入れ基準・例: rin 決済相当）＋ acceptance.yaml がパースでき、AC-ID で join できる。
+- 受け入れ基準と manual 要件の混在がゼロ（全 AC が acceptance.yaml に自動採点 method を持つ）。
+- `approved` な spec.md / acceptance.yaml から版固定 ref + acFingerprints + systemRefs 付き ApprovedSpecRef を
+  生成し、**issue 生成前に epic 状態オブジェクトへ永続化**できる。
+- 受け入れ基準シナリオの GWT を1つ変更（drift）→ AC 単位の構造 diff が**その AC-ID のみ**を再署名対象にし、
+  未変更 AC の署名は保持される。
 - AC を1つ追加 → status が派生的に `co-authoring` に落ち、被覆漏れとして署名要求が立つ。
+- spec.md に frontmatter が無く、ドメイン/データが埋め込まれず system 層を参照していることを検証できる。
+- AC-ID の renumber / 重複 / spec↔acceptance の被覆不一致を、署名ゲートのコード検証が**落とす**。
 
 ## 9. 既存実装とのギャップ / 移行方針
 
 - `src/planning/planner.ts`: seed YAML（contract 全埋め込み）→ リポジトリ内 spec.md + acceptance.yaml +
   M05 の resolve に**置換**。`SeedRoadmap` schema は廃止 / 再定義。
 - `Issue.contract` 埋め込み廃止 → `specRef` 参照（M05 / M18 と連動）。
-- 現状の `ready-for-contract → contract-drafted` 即時遷移（`planFromSeed` L74-76）を、
-  協業 + 署名ゲート（`draft → co-authoring → approved`）に置換。
-- **テンプレート更新（完了 2026-06-15）**: [templates/feature-spec.md](../../../templates/feature-spec.md) を
-  O1 反転形に更新済み（meta=YAML frontmatter / 受け入れ要件は behavior+subArea のみ / verification を分離）。
-  [templates/acceptance.yaml](../../../templates/acceptance.yaml) を新設（AC-ID キーで verification）。
+- **テンプレート（本改訂で更新）**: [templates/feature-spec.md](../../../templates/feature-spec.md) を **GWT 形式**
+  （サブ機能一覧 + ユーザーストーリー / 事前条件 / 受け入れ基準[Given/When/Then] + AC-ID / 非機能 / 完了条件 /
+  レッドライン・frontmatter なし）に更新。[templates/acceptance.yaml](../../../templates/acceptance.yaml) に
+  `severity` を追加。
+- **採番・整合の強制 = コード**: AC-ID lint（存在・renumber 禁止・双方向被覆・manual 不在）を署名ゲートに置く
+  （新規・決定的コード）。`fingerprint()` は M05 と共有（M01 候補）。
 
 ## 10. 未決事項 / 決定ログ
 
-決定済（ADR-0001）: D4 spec.md=SoT / D6 協業・contract-approved / D7 B 方針 /
-D8 specRef 参照・gitSha / D9 状態二段化 / D10 粒度 β / D13 M21 分離 / D15 O1 反転 /
-D16 可読性前提 / D19 skill 駆動。
+決定済（ADR-0001）: spec.md=SoT / 協業・contract-approved / B 方針 / specRef 参照・gitSha / 状態二段化 /
+粒度 β。
 
-O1-O4 解決済（簡易アプリ通しで確認）:
+本改訂で確定（2026-06-18）:
 
-- **O1 → 反転で確定（D15）**: embedded YAML をやめ、spec.md(behavior) + acceptance.yaml(verification)。
-- **O2 → 確定（v2 訂正）**: 署名記録は frontmatter `status`（派生値）+ ApprovedSpecRef。版固定 ref の最初の
-  永続先は **epic 状態オブジェクト（M18 store）**。issue は decomposed 後に生まれるので「issue が承認記録」は
-  **転記後**の話であり、issue を最初の置き場にはできない（A2 修正）。専用承認 DB なし。
-- **O3 → 確定（v2 訂正 / 2026-06-18 追従）**: ApprovedSpecRef は `approvalCommitSha` + ファイル別 blob ref +
-  AC 単位ハッシュ。drift は **二段**——path 単位で変更有無 → **AC 単位の構造 diff** で変更 AC-ID を特定。
-  「path 単位 diff のみ」では AC-ID を特定不能（A1 修正）。
-- **O4 → 確定**: drift 再署名は **変更 AC-ID のサブセットのみ**。`approvedAcIds` から外して表現（A3）。
+- **受け入れ基準を Given/When/Then 名前付きシナリオに**（フラットチェックリスト / YAML を廃止）。各シナリオに
+  AC-ID。ユーザーストーリー / 事前条件 / 完了条件を節として採用（参考: rin 決済 spec）。
+- **frontmatter 廃止**: meta・署名は epic 状態オブジェクト（ApprovedSpecRef）が持つ。
+- **severity を acceptance.yaml へ**移動（採点属性ゆえ grader 側）。
+- **system 層参照（非埋め込み）**: ドメイン/データ/業務ステータスは system 層を参照（ADR-0004 D31）。AUTH-FR-011。
+- **採番・整合をコード強制**（AUTH-FR-013）。**ADR-0001 D19「skill 駆動」を「AI 補助 + コード強制」へ更新**
+  （特定 skill を必須にしない・ADR-0003 D28）。この ADR 更新は「skill / コード分担」の決定記録で正式化する（§残 open）。
+- acFingerprints のハッシュ対象を GWT behavior + severity + verification に。
 
-本セッション改訂（2026-06-15・下書き → 確定 → 敵対レビューで下書きへ差し戻し v2）:
+残 open:
 
-- **frontmatter（§3.3）**: meta=YAML frontmatter。署名 SoT は `approvedAcIds`、`status` は派生値（A3）。
-  `approvedBy` は補助表示・真正性は署名 commit author（A4）。
-- **ApprovedSpecRef（§3.4）**: `approvalCommitSha` + `behaviorRef` / `verificationRef` / `manualRequirementsRef`
-  （各 `{path, gitSha(blob)}`）+ acFingerprints + approvedAcIds。**最初の永続先 = epic 状態
-  オブジェクト**（A2）。
-- **drift（§4 / AUTH-FR-008）**: 二段検知に修正（A1）。AC ⇔ acceptance 双方向被覆を AUTH-FR-010 に昇格。
-- **テンプレート（§9）**: feature-spec.md を O1 反転形に更新・acceptance.yaml 新設。
+- ADR-0001 D19 の正式更新（skill 駆動 → AI 補助 + コード強制）を「skill / コード分担」決定記録で行う。
+- AC-ID lint・`fingerprint()` 正規化（GWT テキストの正規化方法）の実装確定。
+- system 層が未整備（greenfield 初回）のときの参照の扱い（設計層が seed する順序との調整）。
 
-残 open（本層）: v2 修正の受け入れ条件（§8）を実装で固める。`acFingerprints` のハッシュ対象（behavior +
-verification の正規化方法）の確定。M21 への `subArea` 受け渡しは [design-planner.md](design-planner.md) §2 で consume 済み。
-
-**M01 抽出候補（loop 1 通過後・README §8）**: `ApprovedSpecRef`（version-pinned refs + acFingerprints）の
-version-pinned Ref 形と、AC-ID / MR-ID の ID 規約は M01 共通契約モデルへ抽出する候補。先に固定しない（ADR D1）。
+**M01 抽出候補（loop 1 通過後）**: `ApprovedSpecRef`（version-pinned refs + acFingerprints + systemRefs）、
+AC-ID / MR-ID の ID 規約、純粋 `fingerprint()`（M20 ↔ M05 共有）。

@@ -19,7 +19,7 @@
 | ID | 名前 | 一行で | loop 1 の spec |
 | --- | --- | --- | --- |
 | M20 | オーサリング層 | 人間+AI で spec.md / acceptance.yaml を共著し、人間が署名する | 下書き(v2) |
-| M21 | Design Planner | 承認済み spec から詳細設計（Tier1/Tier2）を著し、PR サイズに分解する | 下書き |
+| M21 | Design Planner | 承認済み spec から三層設計（system/epic/slice）を著し、PR サイズに分解する | 下書き |
 | M22 | Design Reviewer | M21 の設計を **spawn 前**に独立審査し DesignScorecard を出す | 下書き |
 | M05 | Issue Contract Planner | 版固定された承認物を **機械的に** IssueContract へ投影（resolve）する | 下書き |
 | M03 | Coordinator | 状態機械・dispatch・ロック・worktree を持つ **決定的コード**の背骨 | **未着手（穴）** |
@@ -87,40 +87,57 @@ issue（work order）ライフサイクル — spawn 時に生成:
 人間が **behavior（WHAT）** を `spec.md` に書く。AI が各 AC に **verification（採点方法）** を `acceptance.yaml`
 で提案し、自動採点できない要件を `manual-requirements.md` へ振り分ける。最後に人間が署名する。
 
-**spec.md は人間向けのプロダクトドキュメント**（散文・図・表・チェックリスト・ユーザーストーリー）であって、
-YAML ではない（ADR-0001 D15 の behavior=人間向け WHAT）。機械が必要とするのは **各受け入れ要件に振った
-AC-ID アンカー 1 つだけ**（acceptance.yaml との join キー・被覆チェック用）。それ以外は自由な Markdown。
+**spec.md は人間向けのプロダクトドキュメント**（受け入れ基準は名前付き Given/When/Then・ユーザーストーリー・
+完了条件）であって YAML ではない。機械が必要とするのは **各シナリオに振った AC-ID 1 つだけ**（acceptance.yaml
+との join キー・被覆チェック用）。ドメイン/データ等の全体共有事項は system 層を参照する（ADR-0004 D31）。
 
 `specs/todo-due/spec.md`（人間向けドキュメント。機械が要るのは AC-ID アンカーのみ）:
 
 ```markdown
-# Todo に期限(dueDate)を追加
+# Todo に期限(dueDate)を追加 受け入れ要件
 
 <!-- meta(featureId=TODODUE / area=fullstack / epicId=EPIC-TODODUE)・署名は epic 状態オブジェクト(M18)が持つ -->
+<!-- ドメイン概念・業務ステータスは system 層(_system/)を固定制約として参照する -->
 
-## 概要
+## サブ機能一覧
 
-Todo に任意の期限(dueDate)を持たせる。期限切れは一目で分かるよう赤く示し、期限の近い順に
-並べ替えられるようにする。期限は未設定(null)も許す。
+| ID | サブ機能 | 優先度 |
+| --- | --- | --- |
+| TODODUE-A | 期限の永続化と入力 | 高 |
+| TODODUE-B | 期限切れ表示と並べ替え | 中 |
 
-> **ユーザーストーリー**: ユーザーとして Todo に期限を設定したい — 締切を忘れず、近いものから
-> 対処したいから。
+## 期限の永続化と入力
 
-## 前提条件
+**ユーザーストーリー**
+
+- 誰が: Todo 利用者
+- 何を: Todo に期限(dueDate)を設定したい
+- なぜ: 締切を忘れず、近いものから対処したいから
+
+**事前条件**
 
 - 既存の Todo データがある(dueDate を後付けする)。
-- Todo の作成/編集 API と一覧 UI が既に存在する。
 
-## 受け入れ要件
+**受け入れ基準**
 
-### 永続化と入力
+- **[AC-TODODUE-001] 正常系: 期限の保存**
+  - Given Todo の作成/編集画面
+  - When 期限を入力して保存する（未入力も可）
+  - Then 期限が永続化され、未入力時は null として保存される
 
-- [ ] **AC-TODODUE-001** Todo の作成/編集時に期限(dueDate)を設定できる。未設定(null)も許す。
+## 期限切れ表示と並べ替え
 
-### 表示
+**受け入れ基準**
 
-- [ ] **AC-TODODUE-002** 期限切れの Todo はリスト上で赤く(overdue 表示で)表示される。
-- [ ] **AC-TODODUE-003** Todo を期限の近い順に並べ替えできる。
+- **[AC-TODODUE-002] 正常系: 期限切れ表示**
+  - Given 期限が過去の Todo がある
+  - When 一覧を表示する
+  - Then その行が赤く(overdue 表示で)表示される
+
+- **[AC-TODODUE-003] 正常系: 期限ソート**
+  - Given 期限の異なる複数の Todo
+  - When 期限順の並べ替えを行う
+  - Then 期限の近い順に並ぶ（null は末尾）
 
 ## やってはいけないこと (red lines)
 
@@ -171,12 +188,14 @@ manualRequirements:
 ```text
 ApprovedSpecRef:
   epicId:            EPIC-TODODUE
+  featureId: TODODUE / area: fullstack    # meta（frontmatter でなくここが持つ）
   approvalCommitSha: a1b2c3…              # 署名 commit。真正性/監査用
   behaviorRef:       { path: specs/todo-due/spec.md,             gitSha: <blob-sha> }
   verificationRef:   { path: specs/todo-due/acceptance.yaml,     gitSha: <blob-sha> }
   manualRequirementsRef: { path: specs/todo-due/manual-requirements.md, gitSha: <blob-sha> }
+  systemRefs:        []                   # 参照した system 層の固定制約（この例は新規参照なし）
   approvedAcIds:     [AC-TODODUE-001, AC-TODODUE-002, AC-TODODUE-003]
-  acFingerprints:    # AC 単位の内容ハッシュ（behavior+verification）。drift 判定の基準
+  acFingerprints:    # AC 単位の内容ハッシュ（GWT behavior + severity + verification）。drift 判定の基準
     AC-TODODUE-001: h1
     AC-TODODUE-002: h2
     AC-TODODUE-003: h3
@@ -186,70 +205,59 @@ ApprovedSpecRef:
 > 勘所: **人間が触る上限はここまで**（spec.md / AC / 署名）。この下の設計・実装は全部 AI 著者になる
 > （ADR-0001 D13/D16）。だからこそ「設計の独立審査（M22）」が必須になる（次の Hop で効いてくる）。
 
-### Hop 2 — M21 Design Planner（設計を著して PR サイズに割る・AI）
+### Hop 2 — M21 Design Planner（三層で設計し PR サイズに割る・AI）
 
-M03 が epic を `designing` にする。M21 は ApprovedSpecRef の各 ref を **gitSha で pin して読み**、
-**Tier1（epic 共有の決定だけ）** と **Tier2（PR サイズの設計スライス）** を著す。
+M03 が epic を `designing` にする。M21 は承認物と **関連する system 層**を gitSha で pin して読み、三層で著す:
+**system 層**（全体で単一・必要分だけ additive 拡張）/ **epic の design-delta**（拡張の記録）/ **slice**（PR サイズ）。
+この Todo はドメイン概念を増やさず、**データに1カラム**と判定/ソートの**共有基盤**を足すだけ（domain-map は触らない＝adaptive）。
 
-`specs/todo-due/architecture-spine.md`（Tier1・epic に 1 ファイル・決定のみ）:
+system 層への追加（global・追加のみ）。`specs/_system/data-model.md` と `architecture.md` に各1要素を additive 追加:
 
 ```text
-ArchitectureSpine:
-  epicId: EPIC-TODODUE
-  decisions:
-    - id: ARCH-TODODUE-001
-      decision: dueDate は ISO8601 文字列で store に保存。null 許容。
-      rationale: 既存スキーマに additive。タイムゾーンは文字列で持ち判定層で解釈。
-      affectsAcIds: [AC-TODODUE-001, AC-TODODUE-002, AC-TODODUE-003]
-    - id: ARCH-TODODUE-002
-      decision: 期限判定とソートは共有モジュール core/dueDate に置く。
-      rationale: 002/003 が同じ「期限の意味」を二重実装しないため。
-      affectsAcIds: [AC-TODODUE-002, AC-TODODUE-003]
-  sharedFoundations:
-    - module: core/dueDate
-      publicShape:                       # ← 公開シェイプ(契約)だけ。内部実装は書かない(D26/D27)
-        - "isOverdue(todo, now): boolean"
-        - "compareByDue(a, b): number"
-  invariants:
-    - dueDate 欠如時は null として読める（後方互換）。
+data-model.md   + DATA-014  todos.dueDate 列（nullable・ISO8601 文字列）。既存行は null として読める（後方互換）。
+architecture.md + ARCH-031  共有モジュール core/dueDate（公開シェイプのみ・内部実装は書かない）:
+                              - isOverdue(todo, now): boolean
+                              - compareByDue(a, b): number
+                            期限の「意味」を各所で二重実装しないための共有 seam。
 ```
 
-`specs/todo-due/slices/SLICE-TODODUE-001.md`（Tier2・PR サイズ・1 スライス=1 issue）:
+`specs/todo-due/design-delta.md`（epic がどの system 層をどう拡張したか）:
 
 ```text
-DesignSlice:
-  sliceId: SLICE-TODODUE-001
-  title: dueDate の永続化と入力
-  narrative:
-    productGoal: Todo に期限を保存・編集できる
-    userStory: ユーザーとして Todo に期限を設定したい（忘れないため）
+DesignDelta (EPIC-TODODUE):
+  reads:   []                                   # 既存 system 要素は前提にしていない
+  extends:
+    - { artifact: data-model,   elementId: DATA-014, affectsAcIds: [AC-TODODUE-001,002,003] }
+    - { artifact: architecture, elementId: ARCH-031, affectsAcIds: [AC-TODODUE-002,003] }
+```
+
+`specs/todo-due/slices/SLICE-TODODUE-001.md`（slice・PR サイズ・1 スライス=1 issue）:
+
+```text
+DesignSlice (SLICE-TODODUE-001  期限の永続化と入力):
+  narrative: { productGoal: 期限を保存・編集できる, userStory: 期限を設定したい（忘れないため） }
   coversAcIds: [AC-TODODUE-001]
   coversMrIds: []
-  dependsOnSpine: [ARCH-TODODUE-001]
+  dependsOnSystem: [DATA-014]              # system 要素を参照（複製しない）
   dependsOnSlices: []
-  componentDesign:               # seam/契約レベルのみ。関数分割や内部構造は書かない(D26)
-    - store schema に dueDate(nullable) を additive 追加（migration）
+  componentDesign:                          # seam/契約レベルのみ。内部構造は書かない
     - 作成/編集フォームに dueDate 入力欄。API は dueDate を受理・永続化
-  testApproach: api_test で POST→GET の往復と null 既定を exercise
+  testApproach: api_test で POST→GET 往復と null 既定を exercise
   estimatedScope: S
 ```
 
 `specs/todo-due/slices/SLICE-TODODUE-002.md`:
 
 ```text
-DesignSlice:
-  sliceId: SLICE-TODODUE-002
-  title: 期限切れ表示と期限ソート
-  narrative:
-    productGoal: 期限切れを一目で分かり、期限順に並べられる
-    userStory: ユーザーとして締切が近い順に見たい
+DesignSlice (SLICE-TODODUE-002  期限切れ表示と並べ替え):
+  narrative: { productGoal: 期限切れを一目で分かり期限順に並べる, userStory: 締切が近い順に見たい }
   coversAcIds: [AC-TODODUE-002, AC-TODODUE-003]
-  coversMrIds: [MR-TODODUE-001]          # ← human_review トリガを背負う
-  dependsOnSpine: [ARCH-TODODUE-001, ARCH-TODODUE-002]
-  dependsOnSlices: [SLICE-TODODUE-001]   # 永続化が先（依存順）
+  coversMrIds: [MR-TODODUE-001]            # human_review トリガを背負う
+  dependsOnSystem: [DATA-014, ARCH-031]    # 共有基盤 core/dueDate(ARCH-031) を参照
+  dependsOnSlices: [SLICE-TODODUE-001]     # 永続化が先（依存順）
   componentDesign:
-    - core/dueDate を実装（ARCH-002 の公開シェイプに準拠）
-    - リストが isOverdue で overdue クラス付与、compareByDue でソート UI
+    - 一覧が core/dueDate の isOverdue で overdue クラス付与、compareByDue でソート
+  implementationNotes?: （任意・非ゲート）大量件数なら事前計算…等を固定したい時だけ書く
   testApproach: playwright(overdue 表示) + unit_test(compareByDue 昇順)
   estimatedScope: M
 ```
@@ -260,14 +268,15 @@ DesignSlice:
 
 ```text
 IssueSpawnOrder (SLICE-TODODUE-002):
-  epicId: EPIC-TODODUE
-  sliceId: SLICE-TODODUE-002
+  epicId: EPIC-TODODUE / sliceId: SLICE-TODODUE-002
   specRef:         { path: specs/todo-due/spec.md,         gitSha: <blob> }
   verificationRef: { path: specs/todo-due/acceptance.yaml, gitSha: <blob> }
   acceptanceCriteriaIds: [AC-TODODUE-002, AC-TODODUE-003]
   manualRequirementIds:  [MR-TODODUE-001]
-  tier2SliceRef:   { path: specs/todo-due/slices/SLICE-TODODUE-002.md, gitSha: <blob> }
-  tier1SpineRef:   { path: specs/todo-due/architecture-spine.md,       gitSha: <blob> }
+  sliceRef:        { path: specs/todo-due/slices/SLICE-TODODUE-002.md, gitSha: <blob> }
+  designDeltaRef:  { path: specs/todo-due/design-delta.md,            gitSha: <blob> }
+  systemRefs:      [ {artifact: architecture, elementId: ARCH-031, gitSha: <blob>},
+                     {artifact: data-model,   elementId: DATA-014, gitSha: <blob>} ]
   dependsOn:       [SLICE-TODODUE-001]
 ```
 
@@ -276,12 +285,12 @@ IssueSpawnOrder (SLICE-TODODUE-002):
 M03 が M22 を dispatch。M22 は M21 と **AI コンテキストを共有しない**（自己評価の排除）。
 2 段で審査する。
 
-**決定的 tier（機械検査）**: 被覆/排他 ✓、ID 安定 ✓、参照実在（ARCH-001/002 は spine に在る）✓、
-依存 DAG 非循環（002→001 のみ）✓、sharedFoundations 名前衝突なし ✓、埋め込み禁止 ✓。→ pass。
+**決定的 tier（機械検査）**: 被覆/排他 ✓、ID 安定 ✓、additive（既存 system 要素を書き換えない）✓、
+参照実在（DATA-014 / ARCH-031 が system 層に在る）✓、依存 DAG 非循環 ✓、名前衝突なし ✓、埋め込み禁止 ✓。→ pass。
 
-**整合性 tier（5 軸・LLM 判断）**: ここでわざと 1 件の不整合を仕込む。SLICE-002 の componentDesign が
-「core/dueDate を実装」と言いつつ、ARCH-002 が定義した公開シェイプ `compareByDue(a,b)` ではなく
-`sortByDue(list)` を前提に書いていた、とする。これは **軸②（Tier1↔Tier2 背反）** に当たる:
+**整合性 tier（層別・LLM 判断）**: ここでわざと 1 件の不整合を仕込む。SLICE-002 が共有基盤
+`compareByDue(a,b)`（ARCH-031 の公開シェイプ）ではなく `sortByDue(list)` を前提に書いていた、とする。これは
+**スライス層 ↔ 参照した system 要素の背反**に当たる:
 
 ```text
 DesignScorecard:
@@ -290,16 +299,16 @@ DesignScorecard:
   findings:
     - id: F1
       severity: blocking
-      axis: t1-t2
-      refs: [SLICE-TODODUE-002, ARCH-TODODUE-002]   # ← M21 の逆引きキー
-      statement: SLICE-002 が参照する関数 sortByDue は ARCH-002 の公開シェイプ compareByDue に反する
-      evidence: ARCH-002.publicShape=[isOverdue, compareByDue] / SLICE-002.componentDesign=sortByDue
+      layer: slice
+      refs: [SLICE-TODODUE-002, ARCH-031]          # ← M21 の逆引きキー
+      statement: SLICE-002 が参照する sortByDue は共有基盤 ARCH-031 の公開シェイプ compareByDue に反する
+      evidence: ARCH-031.publicShape=[isOverdue, compareByDue] / SLICE-002.componentDesign=sortByDue
   verdict: changes-requested      # blocking が非空
   failureClass: design_failure
 ```
 
 **内側ループが回る**: M03 が epic を `designing` へ差し戻す → M21 が finding の逆引きキー
-（`SLICE-TODODUE-002`, `ARCH-TODODUE-002`）で **その 1 スライスだけ** 再設計（全体は触らない）→ 公開シェイプに
+（`SLICE-TODODUE-002`, `ARCH-031`）で **その 1 スライスだけ** 再設計（全体は触らない）→ 公開シェイプに
 合わせて修正 → 再シグナル → M22 再審査 → 今度は blocking 空で `verdict: pass`。M03 が
 `design-reviewed → decomposed` を書く。
 
@@ -333,7 +342,7 @@ IssueContract (SLICE-TODODUE-001):
       behavior: Todo の作成/編集時に期限を設定できる。null も許す。   # behaviorRef から
       verification: { method: api_test, expected: [ "POST→GET 往復", "省略時 null" ] }  # verificationRef から
   redLines: [ 既存 Todo を破壊しない ]
-  tech_stack: <Tier1 spine の共有技術決定>                  # tier1SpineRef から copy（greenfield のみ）
+  tech_stack: <architecture 要素の共有技術決定>            # systemRefs の architecture から copy（greenfield のみ）
 ```
 
 **drift gate**: M05 は dispatch 時に `acFingerprints` と現版の AC ハッシュを照合する。もし誰かが署名後に
@@ -367,7 +376,7 @@ loop 1 を理解する上で「**承認した版と現版がズレたらどう�
 | drift | 何が起きた | 誰が検知 | どう畳む |
 | --- | --- | --- | --- |
 | AC drift | 署名後に spec.md/acceptance.yaml が変わった | M20（二段検知）/ M05（dispatch 時 gate） | 変更 AC-ID を `approvedAcIds` から外す → 該当スライスだけ再設計・再署名 |
-| 設計 drift | Tier1 決定が override された | M21 | 変更 ARCH-ID を `dependsOnSpine` に持つスライスだけ再検証 |
+| system 層 drift | system 要素（ドメイン/データ/アーキ）が変わった | M21 | 変更要素 ID を `dependsOnSystem` に持つスライスを**全 epic 横断**で再検証 |
 | foundation drift | 共有基盤が後から必要と判明 | M07/監査が**事実**、M10/M21 が**抽出判断** | 新 `sharedFoundations` を **additive** 追加・既存 ID は renumber しない |
 
 > 例（AC drift）: 誰かが `AC-TODODUE-002` の behavior を「赤」→「太字」に変えると、M20 が `acFingerprints`
@@ -385,7 +394,7 @@ loop 1 を理解する上で「**承認した版と現版がズレたらどう�
    契約は埋め込まず `path@blobSHA` 参照で渡し、SHA 固定で drift を機械検知（Hop 5 の gate）。
 2. **対称な二重ループ + 独立評価**: 設計（M21↔M22・Hop 3）と実装（M06↔M07・Hop 7）に、それぞれ
    「独立評価者 → scorecard → 逆引きで該当だけ差し戻し」が入る。状態は LLM でなく M03 が書く。
-3. **薄い実装層 / contract altitude**: 設計は「決定 + モジュール間 seam/契約」までしか書かない（Tier1 の
+3. **薄い実装層 / contract altitude**: 設計は「決定 + モジュール間 seam/契約」までしか書かない（system 層の
    公開シェイプだけ・内部は M06 に委ねる）。厳格さは **コード/grader/schema validation** で強制（M05 は
    決定的コード、grader は実コマンド）し、プロンプトは薄く保つ。
 4. **ブートストラップ**: loop 1 を**手で**作り、以降は loop 1 自身を使って loop 2+ を作る（ドッグフード）。

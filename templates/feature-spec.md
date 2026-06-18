@@ -1,92 +1,79 @@
----
-featureId: <FEATURE>          # AC/MR ID の接頭辞。例: STAKE
-area: backend                 # frontend | backend | fullstack | infra
-epicId: <EPIC-ID>
-status: draft                 # draft | co-authoring | approved
-approval:                     # status: approved の時のみ埋める（署名の人間可読記録）
-  approvedAcIds: []           # 署名対象の AC-ID 集合（drift 再署名はこのサブセット: O4）
-  approvedAt: ""              # ISO8601。署名日時
-  approvedBy: ""              # 署名者（役割名）。版固定 ref は ApprovedSpecRef に保存し issue へ転記（O2）
----
+# <機能名> 受け入れ要件
 
-# <機能名> 仕様
-
-> このファイルは **Development Department への入力契約**であり、人間が AC の **behavior**（WHAT）を
-> 著す source of truth（オーサリング SoT）。grader 向けの `verification` は本ファイルに書かず、
-> 同じ epic ディレクトリの **`acceptance.yaml`** に AC-ID をキーで分離する（ADR-0001 D15・O1 反転）。
+> このファイルは Development Department への入力契約であり、人間が機能の **WHAT（受け入れ基準）** を
+> 著す source of truth（オーサリング SoT）。frontmatter は持たない（meta・署名は epic 状態オブジェクト
+> ＝ ApprovedSpecRef が持つ）。
 >
-> 書くもの / 書かないもの:
+> 書くもの / 書かないもの / 参照するもの:
 >
-> - **書く（= 採点対象の WHAT・人間可読）**: 概要・スコープ・前提条件・受け入れ要件の
->   `behavior`・レッドライン。ステータス遷移・失敗時の返還・エラー挙動など「観測可能で金が動く」
->   振る舞いは、散文にせず **必ず受け入れ要件（AC）へ昇格**させる。
-> - **書かない（= grader 向け HOW）**: `verification`(method / expected) は **`acceptance.yaml`** へ。
->   内部シーケンス図・コントラクト関数内部・実装手順は **M21 Design Planner** が detailed-design
->   （Tier1/Tier2）として生成する。人間が先に書くと解空間を縛り、二重管理になる。
-> - **ここに置かない（= 別票）**: 自動採点できない要件（原子性・再入防止・マルチシグ・
->   タイムロック・監査/人間レビュー前提）は、本ファイルではなく
->   `manual-requirements.md`（要審査要件票）へ分離する。
-
-## 概要
-
-<この機能は誰の何の価値を実現するか（why）。v1 からの変更点があれば併記。>
-<= Issue Contract の `productGoal` / `userStory` の源泉。>
-
-## スコープ
-
-### 対象
-
-- <この機能に含む振る舞い>
-
-### 対象外
-
-- <明示的に含めないもの。スコープ膨張のガード。空にしない。>
-
-## 前提条件
-
-- <成立を前提とする状態・他機能・外部条件>
-
-## 受け入れ要件
-
-> 自動採点可能な AC のみをここに置く（B 方針）。各 AC は安定 ID を持ち、`behavior`（人間可読の WHAT）
-> のみを記す。grader 向けの `verification` は **`acceptance.yaml`** に AC-ID をキーで書く（O1 反転）。
+> - **書く（WHAT・人間可読）**: ユーザーストーリー・事前条件・受け入れ基準（Given/When/Then）・
+>   非機能要件・完了条件。観測可能で価値/金が動く挙動（ステータス遷移・失敗時の返還・耐障害性・
+>   タイムアウト復旧）は **必ず受け入れ基準へ昇格**させ、散文に埋めない。
+> - **書かない（HOW・詳細設計）**: DB スキーマ・API 仕様・内部アルゴリズム・コンポーネント設計は、
+>   設計立案役が三層設計（system / epic / slice）として生成する（ADR-0004）。人間が先に書くと解空間を縛り、
+>   二重管理になる。
+> - **参照する（固定制約）**: ドメイン概念・ユビキタス言語・業務ステータス・データ/アーキの全体共有事項は
+>   **system 層**（`_system/domain-map.md` ・`data-model.md` ・`architecture.md`）を参照し、本ファイルに
+>   重複させない。
+> - **別票へ（自動採点不能）**: 原子性・再入防止・人間監査前提などは `manual-requirements.md` へ分離する。
 >
-> - `id`: `AC-<FEATURE>-NNN`。一度振ったら**変えない**（acceptance.yaml / scorecard / evidence /
->   repair / Tier2 スライスが参照する join キー）。
-> - `severity`: `blocker`（落ちたら出荷不可）/ `major` / `minor`。
-> - `behavior`: 観測可能な振る舞いを一文で。**人間が書く。**
-> - `subArea`: 受け入れ要件サブ見出し（= **分割境界ヒント**）。M21 が PR サイズへ分解する際に使う。
->   1:1 で issue ではない（β: ADR-0001 D10）。
->
-> 自動採点できない要件（`verification.method` に `manual` を使いたくなるもの）は、ここではなく
-> `manual-requirements.md` 行き。本ファイルの全 AC は acceptance.yaml に自動採点 method を持つこと。
+> 機械結合（ハーネスが要求する最小限）: 各シナリオに **安定 ID**（`AC-<FEATURE>-NNN`）を1つ付す。grader 向けの
+> `verification`（method + expected）と `severity` は `acceptance.yaml` に AC-ID をキーで分離する（人間文書を
+> YAML で汚さないため・ADR-0001 D15）。AC-ID の採番・整合（被覆・renumber 禁止）はコードが強制する。
 
-### <サブ領域A: 例「操作」>
+## サブ機能一覧
 
-```yaml
-acceptanceCriteria:
-  - id: AC-<FEATURE>-001
-    severity: blocker
-    behavior: "<ユーザー観測の振る舞い。例: 申請成功後 My Portfolio にリダイレクトする>"
-    subArea: "操作"
-```
+| ID | サブ機能 | 優先度 |
+| --- | --- | --- |
+| <FEATURE>-A | <サブ機能名> | 高 |
+| <FEATURE>-B | <サブ機能名> | 中 |
 
-### <サブ領域B: 例「ステータス・失敗時挙動」>
+## <サブ機能名 A>
 
-> ここを忘れない。金が動く保証（遷移・返還・タイムアウト復旧）は最重要 AC。
-> 散文の「ステータス遷移ルール」「返還ルール」を、必ずこの形へ昇格させる。
+**ユーザーストーリー**
 
-```yaml
-acceptanceCriteria:
-  - id: AC-<FEATURE>-010
-    severity: blocker
-    behavior: "<失敗時の観測可能な結果。例: ブロードキャスト後に失敗したら充当した残高を返還する>"
-    subArea: "ステータス・失敗時挙動"
-  - id: AC-<FEATURE>-011
-    severity: blocker
-    behavior: "<例: タイムアウト後に遅延着金を検知したら自動で Completed に復旧する>"
-    subArea: "ステータス・失敗時挙動"
-```
+- 誰が: <ロール>
+- 何を: <達成したいこと>
+- なぜ: <価値・理由>
+
+**事前条件**
+
+- <成立を前提とする状態・他機能・system 層の固定制約への参照>
+
+**受け入れ基準**
+
+> 観測可能な振る舞いを **名前付き Given/When/Then** で記述する。各シナリオに AC-ID を付す。
+> 正常系だけでなく **異常系・耐障害性・境界・並列** を忘れない（金が動く保証は最重要シナリオ）。
+> 自動採点できないものはここに置かず `manual-requirements.md` へ。
+
+- **[AC-<FEATURE>-001] 正常系: <シナリオ名>**
+  - Given <前提となる状態>
+  - When <ユーザー/システムの操作>
+  - Then <観測可能な結果。ステータス遷移があれば明記>
+
+- **[AC-<FEATURE>-002] 異常系: <シナリオ名>**
+  - Given <前提>
+  - When <異常の発生>
+  - Then <観測可能な結果。失敗時の返還・警告・ログ等>
+
+- **[AC-<FEATURE>-003] 耐障害性: <シナリオ名>**
+  - Given <障害の前提>
+  - When <再起動 / 切断 / 重複等>
+  - Then <漏らさない・二重計上しない・復元する等の観測可能な保証>
+
+**非機能要件**
+
+- 性能: <体感・SLO への参照>
+- セキュリティ: <PII・権限>
+- 可観測性: <運用ログに残すこと>
+
+> 上記のうち自動採点できないもの（人間監査・静的解析前提など）は `manual-requirements.md` へ移す。
+
+**完了条件**
+
+- 自動テスト: <正常 / 異常 / 耐障害性 各 n>
+- SLO: <監視で確認できる閾値があれば>
+- デモ / データ確認: <人間が見て確認する完了の証>
 
 ## レッドライン
 
@@ -94,11 +81,4 @@ acceptanceCriteria:
 
 - <例: ローカル状態だけで永続化したふりをしない>
 - <例: 実装後に合格基準を緩めない>
-
-## 補助: ユーザー観測フロー（任意）
-
-> ユーザーが観測するレベルの happy / error パスのみ。内部コンポーネントの
-> シーケンス図（OctoLink → コントラクト → ウォレットインフラ等）は**ここに書かない**
-> ——それは HOW であり M21 Design Planner が生成する。
-
-1. <ユーザー視点の手順>
+- <例: 既存レコードを破壊する移行をしない>

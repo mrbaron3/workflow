@@ -1,0 +1,35 @@
+---
+name: authoring-assist
+description: 機能の WHAT（受け入れ要件）をハーネスの契約形式で著述する補助。spec.md に名前付き Given/When/Then の受け入れ基準（安定 AC-ID 付き）、acceptance.yaml に severity と自動採点 verification、自動採点できない要件は manual-requirements.md へ分離する。新機能の定義、受け入れ基準の作成・編集、spec.md / acceptance.yaml の作成、設計・署名前の機能整備のときに使う。
+allowed-tools: Read, Write, Edit, Bash
+---
+
+# オーサリング補助
+
+人間が、設計層への入力契約として妥当な機能仕様を著述するのを助ける。
+あなたは補助し、**整合の強制はコードが行う**（ADR-0005）。WHAT を所有し署名するのは人間。
+
+## 何をするか
+
+1. WHAT を引き出す：ユーザーストーリー（誰が / 何を / なぜ）・サブ機能・事前条件。HOW は設計しない。
+2. テンプレート `templates/feature-spec.md` を写経して `spec.md` を書く：
+   - 受け入れ基準は **名前付き Given/When/Then シナリオ**。各に安定 AC-ID（`AC-<FEATURE>-NNN`）を
+     行頭の太字アンカーで付す：`- **[AC-FOO-001] 正常系: 名前**`。
+   - 正常系だけでなく異常系・耐障害性も覆う。
+   - frontmatter なし・YAML 本文なし。共有のドメイン / データ / 業務ステータスは `_system/` を参照し埋め込まない。
+3. 各 AC-ID に `severity` ＋ `verification`（自動採点 `method` ＋ `expected`）をテンプレート
+   `templates/acceptance.yaml` 形式で提案。自動採点できないものは `manual-requirements.md` へ。
+4. 整合チェックを走らせ、通るまで直す（リポジトリ直下で実行）：
+   `npx tsx .claude/skills/authoring-assist/scripts/check-spec.ts <epic-dir>`
+   双方向被覆（spec ⇔ acceptance）・AC-ID 重複なし・`manual` method 不在を強制する。
+5. 止める。人間が受け入れ基準をレビューし署名する（`contract-approved`）。あなたは署名しない。
+
+書式の詳細：`.claude/skills/authoring-assist/references/format.md`。
+
+## レッドライン
+
+- `spec.md` を YAML にしない・frontmatter を付けない（meta / 署名は epic 状態オブジェクトが持つ）。
+- HOW（DB スキーマ・API・アルゴリズム・コンポーネント設計）を書かない。設計層の所掌。
+- AC-ID を renumber・再利用しない。
+- `acceptance.yaml` に `manual` method を入れない（`manual-requirements.md` へ）。
+- 共有の `_system/` 層に属すドメイン / データ / ステータスを埋め込まない。参照する。
