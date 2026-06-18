@@ -6,7 +6,7 @@
  * prose never re-implements the rules.
  *
  * Run from the repo root:
- *   npx tsx .claude/skills/authoring-assist/scripts/check-spec.ts <epic-dir>
+ *   npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>
  * Exit: 0 = passed, 1 = lint failed, 2 = usage / read error.
  *
  * The shared library is imported via a CWD-anchored absolute path (not a relative

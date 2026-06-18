@@ -1,0 +1,33 @@
+---
+name: to-spec
+description:
+   機能の WHAT（受け入れ要件）をハーネスの契約形式で著述する補助。
+   spec.md に名前付き Given/When/Then の受け入れ基準（安定 AC-ID 付き）、
+   acceptance.yaml に severity と自動採点 verification、自動採点できない要件はチャットで指摘する。
+   新機能の定義、受け入れ基準の作成・編集、spec.md / acceptance.yaml の作成、設計・署名前の機能整備のときに使う。
+allowed-tools: Read, Write, Edit, Bash
+---
+
+# to-spec
+
+**すでに方向性の決まった機能**を、設計層への入力契約として妥当な機能仕様に落とし込むのを助ける。
+あなたは補助し、**整合の強制はコードが行う**（check-spec.ts / ADR-0005）。WHAT を所有し署名するのは人間。
+
+## 何をするか
+
+1. **Intake — 決定を再ヒアリングせず取り込む。** 上流に決定 doc（ブレスト結果・draft・メモ等）があれば
+   パスを尋ねるか `draft/_brainstorm/` を探して読み、決定済み内容を SoT として扱う。spec へ写像する：
+   目的 → ユーザーストーリー、採用した方向性 / 成功基準 → 受け入れ基準、制約 / 前提 → 事前条件・レッドライン、
+   未解決の問い → 署名前に解消すべき穴。doc が空けている所**だけ**を再ヒアリングする。上流 doc が無ければ
+   WHAT をゼロから引き出す（誰が / 何を / なぜ・サブ機能・事前条件）。いずれにせよ **WHAT のみ・HOW は書かない。**
+2. テンプレート `templates/feature-spec.md` を写経して `spec.md` を書く。ここでの本質的な仕事は決定内容の
+   契約化：名前付き Given/When/Then シナリオ＋安定 AC-ID に整え、探索 doc にまず無い **異常系・耐障害性**の
+   パスを補う（正常系だけにしない）。書式規約は `references/format.md` にある。テンプレートに従い、ここで再掲しない。
+3. 各 AC-ID に `severity` ＋ `verification`（自動採点 `method` ＋ `expected`）を `acceptance.yaml`
+   （テンプレート `templates/acceptance.yaml`）で提案。自動採点できない要件は**黙って振り分けず、
+   チャットで指摘する**（どれが・なぜ自動採点できないか）。扱いは人間が判断する。
+4. 整合チェックを走らせ、通るまで直す（リポジトリ直下で実行）：
+   `npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>`
+5. 止める。人間が受け入れ基準をレビューし署名する（`contract-approved`）。あなたは署名しない。
+
+書式の詳細：`.claude/skills/to-spec/references/format.md`。
