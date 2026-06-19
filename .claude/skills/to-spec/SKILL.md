@@ -19,16 +19,17 @@ The human owns the WHAT and signs.
    constraints / assumptions → preconditions and red lines, open questions → gaps to close before
    signing. Re-elicit **only** what the doc leaves open. If there is no such doc, draw the WHAT out
    from scratch (who / what / why, sub-features, preconditions). Either way: **WHAT only, never HOW.**
-2. Write `spec.md` from `templates/feature-spec.md`. The genuine work here is contract-shaping the
+2. Write `spec.md` from `assets/feature-spec.md`. The genuine work here is contract-shaping the
    decided content: turn it into named Given/When/Then scenarios with stable AC-IDs, and cover the
-   error / resilience paths an exploratory doc rarely has — not just the happy path. Format rules
-   live in `references/format.md`; follow the template, don't restate it here.
+   error / resilience paths an exploratory doc rarely has — not just the happy path. The template
+   is self-documenting (format rules live in its leading comments); follow it, don't restate it here.
 3. For each AC-ID, propose `severity` + `verification` (auto grader `method` + `expected`) in
-   `acceptance.yaml` (template: `templates/acceptance.yaml`). When a requirement resists
+   `acceptance.yaml` (template: `assets/acceptance.yaml`). When a requirement resists
    auto-grading, **don't file it away silently — surface it in chat** (which requirement, why it
    can't be auto-graded) and let the human decide how to handle it.
 4. Run the integrity check and fix until it passes (from the repo root):
    `npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>`
 5. Stop. The human reviews and signs the acceptance criteria (`contract-approved`). You do not sign.
 
-Format details: `.claude/skills/to-spec/references/format.md`.
+Templates live next to this skill under `assets/` (self-documenting). Integrity invariants are enforced
+by `scripts/check-spec.ts` (and `src/authoring/lint.ts`), which are the source of truth — not a prose doc.

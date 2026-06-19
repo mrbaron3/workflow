@@ -4,7 +4,7 @@
 > M05 Issue Contract Planner が `resolve(spec.md@gitSha の AC behavior + acceptance.yaml の
 > verification + Tier2 設計スライス)` を dispatch 時に機械生成する。オーサリング SoT は
 > spec.md（人間署名）。本テンプレートは resolve 後の形を示す参考であり、issue へ埋め込まず
-> `specRef`(path+gitSha) + AC-ID 群 + スライス参照で持つ（[design-planner.md](../docs/spec/modules/design-planner.md)）。
+> `specRef`(path+gitSha) + AC-ID 群 + スライス参照で持つ（[design-planner.md](../draft/_spec/modules/design-planner.md)）。
 
 A Generator must be able to implement this from the contract alone. If a Generator
 has to guess, the contract is the bug. The `acceptanceCriteria` block is parsed by

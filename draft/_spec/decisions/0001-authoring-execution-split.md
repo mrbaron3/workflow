@@ -116,8 +116,8 @@ issue（work order）ライフサイクル（投稿時に生成）:
   （O1 反転済み: meta=frontmatter / behavior+subArea のみ / verification 分離。2026-06-15）。
 - [templates/acceptance.yaml](../../templates/acceptance.yaml) — verification（AC-ID キー・O1 反転で新設）。
 - [templates/manual-requirements.md](../../templates/manual-requirements.md) — 要審査要件票。
-- [docs/spec/modules/authoring-layer.md](../modules/authoring-layer.md) — M20（**確定** 2026-06-15）。
-- [docs/spec/modules/design-planner.md](../modules/design-planner.md) — M21（下書き 2026-06-15）。
+- [draft/_spec/modules/authoring-layer.md](../modules/authoring-layer.md) — M20（**確定** 2026-06-15）。
+- [draft/_spec/modules/design-planner.md](../modules/design-planner.md) — M21（下書き 2026-06-15）。
 
 ## 8. 未決事項 / 決定ログ
 

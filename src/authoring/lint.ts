@@ -12,7 +12,7 @@
 
 import { VerificationMethod } from '../domain/schema.js';
 
-/** Auto-gradable methods — everything except `manual` (which must go to manual-requirements.md). */
+/** Auto-gradable methods — everything except `manual` (which is not an allowed grader method). */
 export const AUTO_METHODS: readonly string[] = VerificationMethod.options.filter((m) => m !== 'manual');
 
 export interface CoverageResult {
@@ -57,7 +57,7 @@ export interface ManualResult {
   manualAcIds: string[];
 }
 
-/** Every acceptance method must be auto-gradable; `manual` belongs in manual-requirements.md. */
+/** Every acceptance method must be auto-gradable; non-auto requirements are surfaced in chat, not graded. */
 export function checkManualAbsence(methodsById: Record<string, string>): ManualResult {
   const manualAcIds = Object.entries(methodsById)
     .filter(([, method]) => !AUTO_METHODS.includes(method))

@@ -10,7 +10,7 @@
 #
 # 制約:
 #   - severity は blocker | major | minor。blocking 判定（落ちたら出荷不可か）に使う。
-#   - method は自動採点メソッドのみ。manual は禁止（自動採点不可は manual-requirements.md へ）。
+#   - method は自動採点メソッドのみ。manual は禁止（自動採点不可な要件はチャットで人間に指摘し人間が判断）。
 #     使える method: build | typecheck | unit_test | api_test | db_state_check |
 #                    playwright | secrets_scan | scope_check | llm_rubric
 #   - spec.md の全 AC-ID が、ここに過不足なく対応する（被覆。双方向一致をコードが強制）。

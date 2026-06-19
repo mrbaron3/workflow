@@ -3,7 +3,7 @@
 #
 # ⚠️ 旧形式（ADR-0001 で置換予定）: この seed は contract を全埋め込みする旧モデル。
 # 新設計では spec.md（behavior）+ acceptance.yaml（verification）+ M05 resolve に置換される
-# （docs/spec/modules/authoring-layer.md §9）。下記の contract.acceptanceCriteria[].verification は
+# （draft/_spec/modules/authoring-layer.md §9）。下記の contract.acceptanceCriteria[].verification は
 # 旧 O1 形式（embedded・manual 可）であり、新形式では acceptance.yaml に分離し manual を排する。
 # 新規機能は feature-spec.md / acceptance.yaml テンプレートを使うこと。
 

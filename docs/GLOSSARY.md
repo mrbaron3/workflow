@@ -2,7 +2,7 @@
 
 > ⚠️ ADR-0001 で二層モデル（オーサリング層 / 実行層）を導入。下記の階層図は旧モデルで、新設計では
 > **Epic = 1 spec.md**（人間署名の WHAT）であり、**Issue Contract は M05 resolve の派生物**（手書きせず
-> spec.md@gitSha + acceptance.yaml + Tier2 スライスから生成）。正本は [docs/spec/](spec/) + ADR-0001。
+> spec.md@gitSha + acceptance.yaml + Tier2 スライスから生成）。新設計の下書きは [draft/_spec/](../draft/_spec/)（draft）+ ADR-0001。
 > 新語は下表末尾に追加。
 
 The brief's most important early fix: stop overloading "Sprint" to mean "one feature".
