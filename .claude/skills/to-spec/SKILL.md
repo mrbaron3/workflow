@@ -30,9 +30,11 @@ Re-elicit only what the doc leaves open. If there is no such doc, draw the WHAT 
 
 ### 2. Write `spec.md` from `assets/feature-spec.md`
 
-The genuine work is contract-shaping the decided content: named Given/When/Then scenarios with stable
-AC-IDs, covering the error / resilience paths an exploratory doc rarely has — not just the happy path.
-The template is self-documenting; follow its leading comments, don't restate them here.
+Write into the epic's directory — call it `<epic-dir>` — alongside the `acceptance.yaml` of step 3.
+(The epic dir is the home of this epic's authored contract; the epic state object pins its files on
+signing.) The genuine work is contract-shaping the decided content: named Given/When/Then scenarios
+with stable AC-IDs, covering the error / resilience paths an exploratory doc rarely has — not just the
+happy path. The template is self-documenting; follow its leading comments, don't restate them here.
 
 ### 3. Propose grading in `acceptance.yaml`
 
@@ -40,9 +42,11 @@ For each AC-ID, propose `severity` + `verification` (auto grader `method` + `exp
 `assets/acceptance.yaml`. When a requirement resists auto-grading, don't file it away silently —
 surface it in chat (which requirement, why) and let the human decide how to handle it.
 
-### 4. Run the integrity check until it passes
+### 4. Self-check before handoff
 
-From the repo root:
+Run the same deterministic lint the signing gate / pre-commit enforce, from the repo root, and fix
+until it passes. The skill doesn't own this gate — code does (skill-independent, ADR-0005 D37); you
+run it early only to catch AC-ID coverage / numbering breaks before a human reviews.
 
 ```bash
 npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>

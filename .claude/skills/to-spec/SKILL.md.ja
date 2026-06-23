@@ -31,7 +31,9 @@ allowed-tools: Read, Write, Edit, Bash
 
 ### 2. テンプレートを写経して `spec.md` を書く
 
-テンプレートは `assets/feature-spec.md`。本質的な仕事は決定内容の契約化：
+テンプレートは `assets/feature-spec.md`。書き出し先は **この epic のディレクトリ（`<epic-dir>`）**で、step 3 の
+`acceptance.yaml` と同居させる（epic dir はこの epic の著述契約の住処。署名時に epic 状態オブジェクトがファイルを
+版固定する）。本質的な仕事は決定内容の契約化：
 
 - 名前付き Given/When/Then シナリオ＋安定 AC-ID に整える。
 - 探索 doc にまず無い**異常系・耐障害性**のパスを補う（正常系だけにしない）。
@@ -45,9 +47,11 @@ allowed-tools: Read, Write, Edit, Bash
 - 各 AC-ID に `severity` ＋ `verification`（自動採点 `method` ＋ `expected`）を提案する。
 - 自動採点できない要件は**黙って振り分けず、チャットで指摘する**（どれが・なぜ）。扱いは人間が判断する。
 
-### 4. 整合チェックを通るまで走らせる
+### 4. 人間へ渡す前の自己検証
 
-リポジトリ直下で実行：
+署名ゲート / pre-commit が強制するのと**同じ決定的 lint** を、リポジトリ直下で通るまで走らせる。このゲートを
+所有するのは skill ではなく**コード**（skill 非依存・ADR-0005 D37）。ここで早回しするのは、人間レビュー前に
+AC-ID の被覆漏れ・採番崩れを潰すため。
 
 ```bash
 npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>
