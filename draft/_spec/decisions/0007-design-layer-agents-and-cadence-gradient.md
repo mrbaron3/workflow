@@ -2,7 +2,7 @@
 
 - 状態: 確定
 - 最終更新: 2026-06-24
-- 影響モジュール: M21 Design Planner（カデンツで 2 skill: `to-system-design` / `to-slice-design`・層別カデンツ・D49）/ M22 Design Reviewer（単一審査・派生図表は非ゲート・境界コンテキスト整合）/ M18 Storage（system層の住処 = 境界コンテキスト単位）/ M03 Coordinator（モード選択・first-touch 検知・並行時のロック単位 = 境界コンテキスト・loop2）/ 共有コード `src/design/lint.ts`（決定的 tier・skill scripts と M03 が共に呼ぶ）/ ADR-0004（D31「adaptive」を「層別カデンツ」へ拡張・§6 open を解消）
+- 影響モジュール: M21 Design Planner（文書種別で 3 専用エージェント: `to-basic-design` / `to-db-design` / `to-detail-design`・層別カデンツ・D49）/ M22 Design Reviewer（単一審査・派生図表は非ゲート・境界コンテキスト整合）/ M18 Storage（system層の住処 = 境界コンテキスト単位）/ M03 Coordinator（エージェント選択・first-touch 検知・並行時のロック単位 = 境界コンテキスト・loop2）/ 共有コード `src/design/lint.ts`（決定的 tier・各エージェントに vendor・進行管理も呼ぶ）/ ADR-0004（D31「adaptive」を「層別カデンツ」へ拡張・§6 open を解消）
 - 正本差分: REQUIREMENTS.md への上書きなし（設計層の内部構造をさらに精密化するもの。ADR-0004 を拡張し override しない）
 
 ## 1. 背景
@@ -33,7 +33,7 @@ system 層を global 単一 SoT・追加のみに格上げした。だが ADR-00
 | D46 | **設計カデンツのグラデーション**: 層別に設計単位を変える。domain-map / data-model = **境界コンテキスト単位**（cross-epic 所有・遅変）/ architecture = モジュール境界 / slice（詳細設計）= **epic / PR** / 図表 = 派生。「全 epic 画一」は採らない | 層で変化速度・横断度・二重設計リスクが違う。一律 epic は (b) の場当たり追加を生む。ADR-0004 D31 の adaptive（触る層は subset）を「設計単位が層で異なる」へ拡張 |
 | D47 | **DB / domain は lazy boundary / coherent within**: 触らない境界コンテキストは設計しない（D1 維持）が、**最初に触れた時点でその境界コンテキストのデータモデルを概念レベルで一貫設計**し、物理スキーマは必要分だけ additive。2 番目以降の同コンテキスト epic は **read のみ**（再設計しない） | 「lazy=speculative 回避」と「coherent=二重設計回避」を両立する唯一の畳み方。所有を epic でなく境界コンテキストのデータ設計責任へ移すことで、概念の別名重複を**設計時に**潰す |
 | D48 | **並行整合のロック単位 = 境界コンテキスト**（`_system/` 全体ロックでない）。同コンテキストの epic は直列・別コンテキストは並行。loop2 で **まず直列化**し、スループット律速になったら**バッチ大域審査へ昇格**（D33 と同じ畳み方）。これにより ADR-0004 §6 open「domain-map を境界コンテキスト単位で割るか」を「**境界コンテキストを設計・所有・ロックの単位にする**」で解消 | 全体ロックは並行度を殺す。境界コンテキストを単位にすると、所有・カデンツ・ロックの粒度が一致し、並行性と整合を両立できる |
-| D49 | 設計著者の実装は **カデンツで 2 skill に分割**する（文書種別ではない）: `to-system-design`（domain/data/architecture・境界コンテキスト単位）と `to-slice-design`（slice・epic 単位）。図表は派生ゆえ skill でなく下流レンダラ。決定的 tier は共有 `src/design/lint.ts`（skill `scripts/` と M03 が共に呼ぶ・D37）。D41 の「1 skill・2 モード」案を、実装して実態を確認した上で本分割に確定 | 実装すると 2 モードは本文をほぼ共有せず（system=境界コンテキスト / slice=epic でスコープ・契約・カデンツが別）、「1 SKILL を被った 2 skill」になった。自然な seam は文書種別（基本/DB/詳細）でなく**カデンツ**。基本設計＋DB設計は同一カデンツゆえ system skill に同居、詳細設計は slice skill |
+| D49 | 設計著者は **文書種別で 3 つの専用エージェントに分割**する: `to-basic-design`（domain-map + architecture・境界コンテキスト単位）/ `to-db-design`（data-model・境界コンテキスト単位）/ `to-detail-design`（slice・epic 単位）。各エージェントは **`context: fork` で隔離・`assets/` 出力テンプレ・frontmatter `hooks`（Stop）で決定的検査を強制**。図表は派生レンダラ（エージェントにしない）。決定的 tier は単一ソース `src/design/lint.ts` を各エージェントに **vendor（`npm run bundle-skills`）** し、進行管理側は src を呼ぶ（D37・重複実装しない）。D41 の「1 skill・2 モード」→ 2 skill を実装して実態確認した上で、本 3 エージェントに確定 | カデンツ分割（2 skill）は「1 SKILL を被った 2 skill」で本文を共有せず、文書種別ごとに専用テンプレ・専用 I/O・専用検査を持たせた方が責務と入出力が明確。公式の `context: fork` + skill 内 `hooks` で「専用エージェント＋検査強制」を規約準拠で実現できると確認。カデンツ（基本/DB=境界コンテキスト・詳細=epic）は外側が駆動し不変 |
 
 ## 3. 設計層の 4 役と成果物（D41-D44）
 
@@ -120,8 +120,11 @@ loop1 は単一機能ゆえ並行は発生せず、何も実装しない（早�
 
 ## 8. 残 open
 
-- **loop1 でどこまで薄く起動するか**（slice のみ薄く / system は最小・ADR-0006 D3 連動）。設計著者の実装形態は
-  D49 で確定済み（カデンツで 2 skill）。
+- **loop1 でどこまで薄く起動するか**（詳細設計のみ薄く / 基本・DB は最小・ADR-0006 D3 連動）。設計著者の
+  実装形態は D49 で確定済み（文書種別で 3 専用エージェント）。
+- **Stop フックへの epic_dir 受け渡しの実機検証**: skill 引数 `$1` がフックコマンドに渡るかを対話セッションで
+  確認する（未検証ゆえ現状はフック内で dir 不在なら fail-open）。権威的な検査ゲートは進行管理側が同じ lib を
+  再実行する形で担保。
 - **カデンツを駆動する M03 ディスパッチ**の起票（first-touch 検知・境界コンテキスト lock・モード選択）。
   これが無いとグラデーションは skill 単体では現れない。
 - 図表の**レンダリング機構**（決定的スクリプト or AI）・保存場所・**source との drift 検知の有無**（再生成で

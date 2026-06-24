@@ -5,8 +5,8 @@
  * ids) and delegates to the vendored deterministic tier in ./lib/design-lint.ts. The
  * skill's prose never re-implements these rules.
  *
- * Run from the repo root:
- *   npx tsx .claude/skills/to-slice-design/scripts/check-slice-design.ts <epic-dir> [--system <dir>]
+ * Run from anywhere:
+ *   npx tsx <skill>/scripts/check-detail-design.ts <epic-dir> [--system <dir>]
  *
  * <epic-dir> holds spec.md and slices/SLICE-*.md. The global system layer is found at
  * <epic-dir>/../_system by default (override with --system <dir>).
@@ -41,14 +41,12 @@ const systemFlagIdx = args.indexOf('--system');
 const systemDirArg = systemFlagIdx >= 0 ? args[systemFlagIdx + 1] : undefined;
 
 if (!dir) {
-  console.error('usage: check-slice-design <epic-dir> [--system <dir>]');
+  console.error('usage: check-detail-design <epic-dir> [--system <dir>]');
   process.exit(2);
 }
 
-// 1. spec AC-IDs (anchors in the human-readable spec.md).
 const specAcIds = uniq(readOrExit(join(dir, 'spec.md'), 'spec.md').match(AC_RE) ?? []);
 
-// 2. slices — each slice file carries one ```yaml structured core (the prose is around it).
 const slicesDir = join(dir, 'slices');
 if (!existsSync(slicesDir)) {
   console.error(`no slices/ dir under ${dir}`);
@@ -74,7 +72,6 @@ for (const f of readdirSync(slicesDir).filter((x) => x.endsWith('.md'))) {
   });
 }
 
-// 3. system element ids (optional — referenced, never copied).
 const systemDir = systemDirArg ? resolve(systemDirArg) : resolve(dir, '..', '_system');
 let systemElementIds: string[] = [];
 const systemChecked = existsSync(systemDir);
@@ -93,10 +90,10 @@ if (!systemChecked && slices.some((s) => s.dependsOnSystem.length)) {
 
 if (result.ok) {
   console.log(
-    `check-slice-design: OK (${slices.length} slices, ${specAcIds.length} AC, ${systemElementIds.length} system elements)`,
+    `check-detail-design: OK (${slices.length} slices, ${specAcIds.length} AC, ${systemElementIds.length} system elements)`,
   );
   process.exit(0);
 }
-console.error('check-slice-design: FAILED');
+console.error('check-detail-design: FAILED');
 for (const e of result.errors) console.error(`  - ${e}`);
 process.exit(1);

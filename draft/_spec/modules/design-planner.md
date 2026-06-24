@@ -302,10 +302,11 @@ foundation drift。これらのうち**二層 spine は ADR-0004 で三層へ解
 
 - **文書種別で4役に内部分割**（基本設計=architecture/domain-map / DB設計=data-model / 詳細設計=slice /
   図表生成=派生）。本層の専門化であり層/高度規律は不変（D41）。
-- **実装はカデンツで 2 skill に分割**（D49・実装して実態確認の上で確定）: `to-system-design`（domain/data/
-  architecture・境界コンテキスト単位）/ `to-slice-design`（slice・epic 単位）。図表は skill でなく下流レンダラ。
-  決定的 tier は共有 `src/design/lint.ts`（skill `scripts/` と M03 が共に呼ぶ・D37）。文書種別(基本/DB/詳細)
-  でなくカデンツが自然な seam だったため。
+- **実装は文書種別で 3 専用エージェントに分割**（D49・2 skill を実装して実態確認の上で確定）:
+  `to-basic-design`（domain-map + architecture・境界コンテキスト）/ `to-db-design`（data-model・境界
+  コンテキスト）/ `to-detail-design`（slice・epic）。各々 `context: fork` 隔離・`assets/` 出力テンプレ・
+  frontmatter `hooks`（Stop）で検査強制。図表は skill でなく下流レンダラ。決定的 tier は単一ソース
+  `src/design/lint.ts` を各エージェントに vendor（`npm run bundle-skills`）し、M03 も同じ src を呼ぶ（D37）。
 - **図表生成は派生レンダリング**（data-model→ER / architecture→コンポーネント / domain-map→ドメイン /
   slice+architecture seam→シーケンス）。SoT でない・非ゲート・source 変更時に再生成（D42）。
 - **詳細設計の高度 = seam/契約まで**。内部実装は非ゲートの実装メモ（D43 = D34 の役適用）。

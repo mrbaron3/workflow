@@ -1,12 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Pre-spawn integrity check for a system-layer delta: a thin wrapper that parses the
- * epic's design-delta.md (reads/extends element ids) and verifies every referenced id
- * is present in the global system layer, delegating to the vendored deterministic tier
- * in ./lib/design-lint.ts.
+ * Integrity check for a DB-design contribution: a thin wrapper that parses the epic's
+ * design-delta.md (reads/extends element ids) and verifies every referenced id is
+ * present in the global system layer, delegating to the vendored deterministic tier in
+ * ./lib/design-lint.ts.
  *
- * Run from the repo root:
- *   npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts <epic-dir> [--system <dir>]
+ * Run from anywhere:
+ *   npx tsx <skill>/scripts/check-db-design.ts <epic-dir> [--system <dir>]
  *
  * <epic-dir> holds design-delta.md. The global system layer is found at
  * <epic-dir>/../_system by default (override with --system <dir>).
@@ -48,11 +48,10 @@ const systemFlagIdx = args.indexOf('--system');
 const systemDirArg = systemFlagIdx >= 0 ? args[systemFlagIdx + 1] : undefined;
 
 if (!dir) {
-  console.error('usage: check-system-design <epic-dir> [--system <dir>]');
+  console.error('usage: check-db-design <epic-dir> [--system <dir>]');
   process.exit(2);
 }
 
-// 1. element ids the delta reads / extends (the structured core of design-delta.md).
 const block = firstYamlBlock(readOrExit(join(dir, 'design-delta.md'), 'design-delta.md'));
 if (!block) {
   console.error('design-delta.md has no ```yaml core block');
@@ -63,7 +62,6 @@ const referenced = uniq(
   [...(delta.reads ?? []), ...(delta.extends ?? [])].map((r) => r.elementId).filter((x): x is string => !!x),
 );
 
-// 2. element ids present in the global system layer.
 const systemDir = systemDirArg ? resolve(systemDirArg) : resolve(dir, '..', '_system');
 if (!existsSync(systemDir)) {
   console.error(`system layer not found at ${systemDir}`);
@@ -77,9 +75,9 @@ for (const f of readdirSync(systemDir).filter((x) => x.endsWith('.md'))) {
 const r = checkReferencesPresent(referenced, uniq(present));
 
 if (r.ok) {
-  console.log(`check-system-design: OK (${referenced.length} referenced ids, all present)`);
+  console.log(`check-db-design: OK (${referenced.length} referenced ids, all present)`);
   process.exit(0);
 }
-console.error('check-system-design: FAILED');
+console.error('check-db-design: FAILED');
 console.error(`  - delta references element not present in system layer: ${r.dangling.join(', ')}`);
 process.exit(1);

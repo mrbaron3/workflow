@@ -1,0 +1,44 @@
+---
+name: to-basic-design
+description: 基本設計（ドメインモデルとアーキテクチャ）を境界コンテキスト単位で著す・拡張する。基本設計・方式設計・アーキテクチャ・ドメインモデル・モジュール境界・seam を作るときに使う。DB設計は to-db-design、詳細設計（スライス）は to-detail-design を使う。
+allowed-tools: Read, Write, Edit, Bash
+arguments: epic_dir
+context: fork
+hooks:
+  Stop:
+    - hooks:
+        - type: command
+          command: '[ -d "$1" ] && npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-basic-design.ts "$1" || exit 0'
+---
+
+# To basic design（日本語訳 — 正本は SKILL.md）
+
+署名済みの `spec.md` から、1 つの境界コンテキストについて **global・単一の正本** となるドメインモデルと
+アーキテクチャを著す/拡張する。あなたは補助で、構造的不変条件は `scripts/check-basic-design.ts` が強制する。
+WHAT の所有者は人間 — `spec.md` / `acceptance.yaml` は編集しない。
+
+## 入出力
+
+| | |
+| --- | --- |
+| **入力** | 署名済み `spec.md` + `acceptance.yaml`、このコンテキストの既存 system 層（全部読む） |
+| **出力** | `_system/<context>/domain-map.md`（`DOM-NNN`）+ `architecture.md`（`ARCH-NNN`）への追記、epic の `design-delta.md`（`reads` / `extends`） |
+
+テンプレを埋める: [domain-map](assets/domain-map.md), [architecture](assets/architecture.md)。
+
+## 規則
+
+- 1 起動 = 1 境界コンテキスト。どのコンテキストを・いつ著すかは外側で決まる。
+- **追加のみ** — 要素 ID は安定。renumber・書き換えしない。
+- **lazy boundary / coherent within** + contract altitude。詳細と実例は
+  [references/basic-design.md](references/basic-design.md)。
+- 機械抽出可能な構造コアを出す。図表は下流で派生し、ここでは著述しない。
+
+## セルフチェックして停止
+
+```bash
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-basic-design.ts <epic_dir>
+```
+
+Stop フックがこれを再実行し、失敗なら完了をブロックする。完成をシグナルする — ワークフロー状態は書かず、
+署名もしない。境界コンテキスト全体に対する拡張の独立レビューが続く。
