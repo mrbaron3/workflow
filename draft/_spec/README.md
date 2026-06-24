@@ -33,7 +33,8 @@ REQUIREMENTS.md         ← 要求の正本（大枠 / 全FR）
 > [0002 独立設計レビュ・設計評価ループ](decisions/0002-independent-design-review.md) /
 > [0003 仕様の高度・薄い実装層・DRY の分担](decisions/0003-spec-altitude-and-dry.md) /
 > [0004 設計の三層化（system/epic/slice）と層別・大域整合の独立審査](decisions/0004-layered-design-and-global-review.md) /
-> [0005 skill / コード分担と Agent Skill 梱包方針](decisions/0005-skill-code-split-and-packaging.md)。
+> [0005 skill / コード分担と Agent Skill 梱包方針](decisions/0005-skill-code-split-and-packaging.md) /
+> [0007 設計層のエージェント分割（文書種別4役）と設計カデンツのグラデーション](decisions/0007-design-layer-agents-and-cadence-gradient.md)。
 
 ## 1. 大枠（レイヤーと原則）
 
@@ -81,8 +82,8 @@ Dashboard ──────────────────┘  可視化
 | M03 | Development Coordinator | 状態機械（二段: ADR-0001 §5）・実行ループ保持・**contract-approved issue の直接ポーリング**・**human_review ゲート（タグ + 層別差し戻し: D17）**・ラベル排他・ロック・worktree・agent dispatch（通常コード） | §9, §10, ADR-0001 | `src/pipeline/coordinator.ts`, `src/domain/states.ts`, `templates/labels.yaml` | 未着手 |
 | M04 | Roadmap Planner | Roadmap/Epic 整理・分解 | §8.2, §9.1 | `agents/roadmap-planner.md`, `src/planning/planner.ts` | 未着手 |
 | M05 | Issue Contract Planner（resolve に縮小） | **resolve のみ**: 版固定 `IssueSource`（greenfield 分解 / bug・tech-debt・harness・eval・brownfield の票を正規化）→ IssueContract（埋め込まない: ADR-0001 D8）。設計・分解は M21 へ移譲（D13）。全 lane 共通の決定的コア・drift gate・schema validation | §11, ADR-0001, ADR-0003 | `agents/issue-planner.md`（分割元）, `src/planning/planner.ts`（置換） | 下書き |
-| M21 | Design Planner（新規） | approved spec.md → **三層設計**（system 層=ドメイン/データ/アーキ＝global 単一 SoT・追加のみ / epic=design-delta / slice=コンポーネント=PR サイズ）+ issue 分解（β）。AI 著者・人間 override 任意（ADR-0004 D30-D34） | ADR-0001, ADR-0002, ADR-0003, ADR-0004, §11, §12 | `agents/issue-planner.md`（分割元） | 下書き |
-| M22 | Design Reviewer（新規） | M21 三層成果物を **spawn 前**に **M21 から独立**して**層別審査**し `DesignScorecard`（blocking/non-blocking）を産出。system 層拡張は**大域整合**で審査。実装メモは非ゲート（γ）。`designing→design-reviewed→decomposed`（ADR-0002 D20-D25 / ADR-0004 D32-D34） | ADR-0002, ADR-0003, ADR-0004, §3, §16 | `agents/evaluator.md`（独立評価者パターン流用） | 下書き |
+| M21 | Design Planner（新規） | approved spec.md → **三層設計**（system 層=ドメイン/データ/アーキ＝global 単一 SoT・追加のみ / epic=design-delta / slice=コンポーネント=PR サイズ）+ issue 分解（β）。**実装はカデンツで 2 skill**（`to-system-design`=基本/DB設計・境界コンテキスト単位 / `to-slice-design`=詳細設計・epic 単位・D49）・図表は派生・**層別カデンツ**。AI 著者・人間 override 任意（ADR-0004 D30-D34 / **ADR-0007 D41-D49**） | ADR-0001, ADR-0002, ADR-0003, ADR-0004, ADR-0007, §11, §12 | `.claude/skills/to-system-design/`, `.claude/skills/to-slice-design/`, `src/design/lint.ts`（新規）, `agents/issue-planner.md`（分割元） | 下書き（skill 雛形あり） |
+| M22 | Design Reviewer（新規） | M21 三層成果物を **spawn 前**に **M21 から独立**して**層別審査**し `DesignScorecard`（blocking/non-blocking）を産出。system 層拡張は**大域整合**で審査。実装メモ・**派生図表は非ゲート**（γ）。**著者を4役に割っても審査は単一**（ADR-0007 D44）。`designing→design-reviewed→decomposed`（ADR-0002 D20-D25 / ADR-0004 D32-D34 / ADR-0007 D44） | ADR-0002, ADR-0003, ADR-0004, ADR-0007, §3, §16 | `agents/evaluator.md`（独立評価者パターン流用） | 下書き |
 | M06 | Generator + Adapters | 実装・PR・GeneratorHandoff / Claude(interactive)・Codex・Gemini adapter | §12 | `agents/generator.md`, `src/agents/{runner,cli,mock}.ts` | 未着手 |
 | M07 | Evaluator | 独立評価・scorecard・PR review・repair instruction 投稿 | §13 | `agents/evaluator.md`, `src/pipeline/evaluate.ts` | 未着手 |
 | M08 | Repair Router | scorecard → 修正指示・試行回数管理・上限超過時 escalate | §14 | `agents/repair-router.md`, `src/pipeline/repair.ts` | 未着手 |

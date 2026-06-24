@@ -16,7 +16,8 @@
     "dashboard": "tsx src/cli/index.ts dashboard --open",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "bundle-skills": "tsx scripts/bundle-skills.ts"
   },
   "dependencies": {
     "yaml": "^2.5.1",

@@ -3,10 +3,11 @@
 - 正本参照: ADR-0002（[0002](../decisions/0002-independent-design-review.md) D20-D25）,
   ADR-0003（[0003](../decisions/0003-spec-altitude-and-dry.md) D26-D29）,
   **ADR-0004（[0004](../decisions/0004-layered-design-and-global-review.md) D30-D35・層別審査 / 大域整合 / γ）**,
+  **ADR-0007（[0007](../decisions/0007-design-layer-agents-and-cadence-gradient.md) D44・著者4役でも審査は単一 / 派生図表は非ゲート）**,
   ADR-0001 D14/D16/D17, REQUIREMENTS.md §3/§16
 - 参考実装: [agents/evaluator.md](../../../agents/evaluator.md)（独立評価者パターンの流用元）, `src/graders/index.ts`
-- 仕様状態: 下書き（ADR-0004 で単一審査 → 層別審査 + 大域整合に改訂）
-- 最終更新: 2026-06-18
+- 仕様状態: 下書き（ADR-0004 で層別審査 + 大域整合に改訂・ADR-0007 で単一審査トポロジを確認）
+- 最終更新: 2026-06-24
 
 ## 1. 目的とスコープ境界
 
@@ -236,6 +237,13 @@ D25 層1=決定的・層3=design_failure。
 - **γ**: `implementationNotes` は非ゲート・審査対象外（D34）。本層は契約 altitude のみをゲートする。
 - **DesignScorecard は構造化データのまま**（機械成果物・D35）。`layer` / `systemRefs` を追加。
 - 決定的 tier に **additive 破り検査**（system 要素の renumber/書き換え禁止）を追加。
+
+本改訂で確定（ADR-0007 D44・2026-06-24）:
+
+- **著者を4役（基本/DB/詳細/図表）に割っても審査は本層単一**。4 役の成果物を 1 人が層別セクションで審査し、
+  著者≠審査者の独立性を保つ（D44）。役ごとに審査を付けない（多段ゲート回避・D33）。
+- **派生図表は審査対象外・非ゲート**（`implementationNotes` と同じ扱い・γ）。図は data-model/architecture/
+  domain-map/slice の SoT から派生するため、審査は source 側の整合で足りる（ADR-0007 D42）。
 
 残 open:
 

@@ -4,10 +4,11 @@
   ADR-0002（[0002](../decisions/0002-independent-design-review.md) D20-D25）,
   ADR-0003（[0003](../decisions/0003-spec-altitude-and-dry.md) D26-D29）,
   **ADR-0004（[0004](../decisions/0004-layered-design-and-global-review.md) D30-D35・設計三層化 / 大域整合）**,
+  **ADR-0007（[0007](../decisions/0007-design-layer-agents-and-cadence-gradient.md) D41-D43, D45-D48・文書種別4役 / 層別カデンツ / 図表派生）**,
   REQUIREMENTS.md §11/§12
 - 参考実装: [agents/issue-planner.md](../../../agents/issue-planner.md)（**分割元**）, `src/planning/planner.ts`（**置換**）
-- 仕様状態: 下書き（ADR-0004 で二層 spine+slice → 三層 system/epic/slice に改訂）
-- 最終更新: 2026-06-18
+- 仕様状態: 下書き（ADR-0004 で三層 system/epic/slice に改訂・ADR-0007 で文書種別4役分割と層別カデンツを追加）
+- 最終更新: 2026-06-24
 
 ## 1. 目的とスコープ境界
 
@@ -297,9 +298,31 @@ foundation drift。これらのうち**二層 spine は ADR-0004 で三層へ解
 - **γ**: 強制は contract altitude のみ・固定は非ゲートの実装メモ（D34）。
 - 文書 = リッチ Markdown / 機械 handoff = 構造化（D35）。
 
+本改訂で確定（ADR-0007 D41-D48・2026-06-24）:
+
+- **文書種別で4役に内部分割**（基本設計=architecture/domain-map / DB設計=data-model / 詳細設計=slice /
+  図表生成=派生）。本層の専門化であり層/高度規律は不変（D41）。
+- **実装はカデンツで 2 skill に分割**（D49・実装して実態確認の上で確定）: `to-system-design`（domain/data/
+  architecture・境界コンテキスト単位）/ `to-slice-design`（slice・epic 単位）。図表は skill でなく下流レンダラ。
+  決定的 tier は共有 `src/design/lint.ts`（skill `scripts/` と M03 が共に呼ぶ・D37）。文書種別(基本/DB/詳細)
+  でなくカデンツが自然な seam だったため。
+- **図表生成は派生レンダリング**（data-model→ER / architecture→コンポーネント / domain-map→ドメイン /
+  slice+architecture seam→シーケンス）。SoT でない・非ゲート・source 変更時に再生成（D42）。
+- **詳細設計の高度 = seam/契約まで**。内部実装は非ゲートの実装メモ（D43 = D34 の役適用）。
+- **着工単位 = epic / 整合単位 = global system 層**。big design up front 不採用（D45）。
+- **層別カデンツ（グラデーション）**: domain-map / data-model = **境界コンテキスト単位**（cross-epic 所有）/
+  architecture = モジュール境界 / slice = epic。ADR-0004 D31 の adaptive を層別カデンツへ拡張（D46）。
+- **DB/domain は lazy boundary / coherent within**: 触らない境界コンテキストは設計しないが、first touch で
+  その境界コンテキストのデータモデルを概念レベルで一貫設計し、物理は additive。2 番目以降の同コンテキスト
+  epic は read のみ＝二重設計を設計時に潰す（D47）。
+
 残 open:
 
-- system 層成果物の住処の粒度（domain-map を境界コンテキスト単位で分割するか1枚か）。M18 連動・ADR-0004 §6。
+- system 層成果物の住処の粒度（**ADR-0007 D48 で「境界コンテキストを単位にする」に決定**。`_system/<context>/`
+  分割の有無など住処の具体は M18 連動で残る）。
+- 4 役の実装形態（別エージェント or 本層内サブ役）・loop1 でどこまで薄くするか（ADR-0006 D3 連動・ADR-0007 §8）。
+- 図表のレンダリング機構（決定的 or AI）・保存場所・source との drift 検知の有無（ADR-0007 §8）。
+- first touch でどこまでモデル化するかの判断境界（speculative と piecemeal の間・観測から起こす・ADR-0007 §8）。
 - `design-delta.md` の最小スキーマの確定（拡張要素の記述粒度）。
 - `estimatedScope` の判定基準（暫定見積り。実超過は Generator 検知）。
 - system 要素 ID の採番接頭辞（global ゆえ epic prefix を持たない: DOM/DATA/ARCH-NNN）の最終確定。
