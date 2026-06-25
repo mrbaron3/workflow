@@ -4,9 +4,11 @@
 これらは確定仕様ではない。**正式 spec は to-spec スキルで生成する**（本ディレクトリはその Intake が
 読む上流決定 doc として扱う）。元は `docs/spec/` にあり、draft へ降格・移設した。
 
-- 要求の **正本** は リポジトリ直下の [`../../REQUIREMENTS.md`](../../REQUIREMENTS.md)。
-  本書および各モジュール仕様は常に正本を参照し、矛盾する場合は正本が優先する。
-- 現在の実装（`src/`・`agents/`・`docs/ARCHITECTURE.md` 等の AgentOps MVP）は
+- **最上位要求は北極星** [`../../docs/NORTH_STAR.md`](../../docs/NORTH_STAR.md)。**確定 SoT は to-spec スキルの
+  生成物**（`spec.md` + `acceptance.yaml`）であり、生成後はそれが拘束的に優先する（ハーネス自身の spec は未生成＝
+  現状は本 draft が作業台）。かつての root 正本 [`REQUIREMENTS.md`](REQUIREMENTS.md) は 2026-06-25 に本ディレクトリへ
+  **降格**し、to-spec Intake が読む**上流決定 doc / 参考**として同居する（正本ではない）。
+- 現在の実装（`src/`・`agents/`・`docs/ARCHITECTURE.md` 等の AgentOps MVP）も
   **参考** 扱い。仕様を実装に合わせるのではなく、実装を仕様に合わせる。
 - 本書は「大枠」を固定するための地図であり、各モジュールの中身は
   [`modules/`](modules/) 配下で一枚ずつ確定する（後述の優先順位順）。
@@ -14,10 +16,17 @@
 ## この文書の役割
 
 ```text
-REQUIREMENTS.md         ← 要求の正本（大枠 / 全FR）
-  └─ draft/_spec/README.md   ← 本書: モジュール地図・契約カタログ・優先順位（draft）
-       └─ draft/_spec/modules/<module>.md   ← 各モジュールの詳細仕様（draft・to-spec で正式化）
+docs/NORTH_STAR.md                       ← 最上位要求（北極星）
+  └─ (正式 spec = to-spec 生成物: spec.md + acceptance.yaml)  ← 確定後の拘束的 SoT（ハーネス自身は未生成）
+       └─ draft/_spec/README.md          ← 本書: モジュール地図・契約カタログ・優先順位（draft）
+            ├─ draft/_spec/REQUIREMENTS.md   ← 旧 root 正本。draft へ降格＝上流決定 doc / 参考（大枠 / 全FR）
+            └─ draft/_spec/modules/<module>.md   ← 各モジュールの詳細仕様（draft・to-spec で正式化）
 ```
+
+> **用語の注記（2026-06-25）**: REQUIREMENTS.md の降格に伴い、確定 SoT は「北極星＋to-spec 生成 spec」へ移った。
+> 本書・各 ADR（`decisions/`）・各 module 仕様に残る「正本（REQUIREMENTS.md）」「正本差分」「正本参照」の表記は、
+> **降格前の要求 baseline を指す歴史的表記**として読む（決定ログは打ち消さず原文を保つ方針）。新規記述では
+> REQUIREMENTS.md を「正本」と呼ばない。
 
 確定の進め方:
 
@@ -228,7 +237,7 @@ Claude Code headless mode。他部署は **sample 契約と interface のみ** �
 ```markdown
 # <ID> <モジュール名> 仕様
 
-- 正本参照: REQUIREMENTS.md §x（FR-IDを列挙）
+- 上流参照: draft/_spec/REQUIREMENTS.md §x（draft・FR-ID を列挙。確定 SoT は北極星＋to-spec 生成 spec）
 - 参考実装: <path>（流用 / 置換 / 破棄の別）
 - 仕様状態: 未着手 | 下書き | 確定
 - 最終更新: YYYY-MM-DD

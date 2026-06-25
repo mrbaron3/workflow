@@ -1,9 +1,10 @@
-# AI組織運用ハーネス 要求仕様書
+# AI組織運用ハーネス 要求仕様書（draft・参考）
 
-> この文書は要求仕様の **正本（source of truth）** です。各モジュールの詳細仕様は
-> `draft/_spec/` 配下（draft・正式 spec は to-spec で生成）で本書を参照しながら整理します。現在の実装
-> （`src/`・`agents/`・`docs/ARCHITECTURE.md` 等の AgentOps MVP）は **参考** であり、
-> 本書が優先します。文書全体の見出し階層のみ整形しています（内容は不変）。
+> **この文書は正本ではない。** 2026-06-25 に root から `draft/_spec/` へ降格した（旧 AgentOps 期の広域要求で、
+> 「今やりたいこと」の正本としては粗く、正本が複数あるように見える原因だったため）。
+> **最上位要求は北極星** [`../../docs/NORTH_STAR.md`](../../docs/NORTH_STAR.md)、**確定 SoT は to-spec スキルの生成物**
+> （`spec.md` + `acceptance.yaml`）。本書は to-spec の Intake が読む**上流決定 doc / 参考**として残す。現在の実装
+> （`src/`・`agents/`・`docs/ARCHITECTURE.md` 等の AgentOps MVP）も参考。見出し階層のみ整形済み（内容は不変）。
 
 ## 0. 文書の目的
 
@@ -294,6 +295,10 @@ Claude Code については以下を前提とする。
 - tmux などで常駐させてもよい
 - 自動化は prompt file、worktree、GitHub Issue / PR、hook、手動承認を通じて行う
 ```
+
+「headless mode は使わない」の一次理由は **従量課金の回避**。`claude -p` / Agent SDK 経由の起動は従量課金の対象であり
+（利用そのものの従量化も Anthropic がアナウンス済み — 当初 2026-06-15 予定・現在は延期）、定額枠の interactive session
+内で完結させてコストを固定する。
 
 ### 6.3 tmux の扱い
 
