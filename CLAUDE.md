@@ -13,6 +13,8 @@ AI 組織運用ハーネス。仕様の下書き（draft・正式 spec は to-sp
 
 新しい skill を作る / 既存 skill を編集するときは必ず守る。
 
+- **Anthropic の最新の公式ベストプラクティスに沿う**（[skills docs](https://code.claude.com/docs/en/skills.md)）。
+  記憶に頼らず着手時に最新版を確認し、本節の規約もそれに整合させる（乖離したら本節を更新する）。
 - **正本は `SKILL.md`**。ただし**必ず日本語訳 `SKILL.md.ja` を併設し、`SKILL.md` を変更したら同時に
   `SKILL.md.ja` も更新する**（同期を保つ）。`.ja` は人間向けで Claude Code はロードしない。
 - **`SKILL.md` の frontmatter `description` は日本語**で書く（トリガー文言を日本語の依頼に合わせる）。
