@@ -17,7 +17,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "test": "vitest run",
-    "bundle-skills": "tsx scripts/bundle-skills.ts"
+    "bundle-skills": "tsx scripts/bundle-skills.ts",
+    "prepare": "git config core.hooksPath githooks 2>/dev/null || true"
   },
   "dependencies": {
     "yaml": "^2.5.1",

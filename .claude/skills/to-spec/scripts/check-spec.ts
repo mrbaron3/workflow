@@ -1,41 +1,24 @@
 #!/usr/bin/env tsx
 /**
- * Signing-gate integrity check for an epic's authored spec (ADR-0005 D37): a thin
- * wrapper that parses spec.md + acceptance.yaml and delegates to the shared
- * deterministic lint in src/authoring/lint.ts. The skill calls this; the skill's
- * prose never re-implements the rules.
+ * Signing-gate integrity check for an epic's authored spec: a thin wrapper that parses
+ * spec.md + acceptance.yaml and delegates to the vendored deterministic lint in
+ * ./lib/authoring-lint.ts. The skill's prose never re-implements the rules.
  *
- * Run from the repo root:
- *   npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>
+ * Run from anywhere:
+ *   npx tsx <skill>/scripts/check-spec.ts <epic-dir>
  * Exit: 0 = passed, 1 = lint failed, 2 = usage / read error.
- *
- * The shared library is imported via a CWD-anchored absolute path (not a relative
- * path), so the script does not depend on its own depth under .claude/skills/.
  */
 
 import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
-
-interface LintInput {
-  specAcIds: string[];
-  acceptanceAcIds: string[];
-  methodsById: Record<string, string>;
-}
-interface LintResult {
-  ok: boolean;
-  errors: string[];
-}
+import { lintAuthoring } from './lib/authoring-lint.js';
 
 const dir = process.argv[2];
 if (!dir) {
   console.error('usage: check-spec <epic-dir>   (dir containing spec.md and acceptance.yaml)');
   process.exit(2);
 }
-
-const lintModuleUrl = pathToFileURL(resolve(process.cwd(), 'src/authoring/lint.ts')).href;
-const { lintAuthoring } = (await import(lintModuleUrl)) as { lintAuthoring: (i: LintInput) => LintResult };
 
 let specText: string;
 let acceptanceText: string;

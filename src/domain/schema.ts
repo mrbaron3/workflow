@@ -11,6 +11,7 @@
 
 import { z } from 'zod';
 import { ISSUE_STATUSES } from './states.js';
+import { VERIFICATION_METHODS } from '../authoring/lint.js';
 
 // --- small vocabularies ----------------------------------------------------
 
@@ -18,18 +19,7 @@ export const Severity = z.enum(['blocker', 'major', 'minor']);
 export type Severity = z.infer<typeof Severity>;
 
 /** How an acceptance criterion is checked. Maps onto a grader (see graders/). */
-export const VerificationMethod = z.enum([
-  'build',
-  'typecheck',
-  'unit_test',
-  'api_test',
-  'db_state_check',
-  'playwright',
-  'secrets_scan',
-  'scope_check',
-  'llm_rubric',
-  'manual',
-]);
+export const VerificationMethod = z.enum(VERIFICATION_METHODS);
 export type VerificationMethod = z.infer<typeof VerificationMethod>;
 
 export const IssueType = z.enum([

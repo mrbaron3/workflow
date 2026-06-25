@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Project pre-commit gate. Enabled via: git config core.hooksPath githooks
+set -euo pipefail
+
+# 1. Vendored skill libs must match their single source under src/ (no silent drift).
+npm run bundle-skills -- --check
+
+# 2. markdownlint on staged markdown (project rule: lint .md before commit).
+md=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.md$' || true)
+if [ -n "$md" ]; then
+  # shellcheck disable=SC2086
+  npx markdownlint-cli2 $md
+fi
