@@ -4,10 +4,10 @@
   ADR-0002（[0002](../decisions/0002-independent-design-review.md) D20-D25）,
   ADR-0003（[0003](../decisions/0003-spec-altitude-and-dry.md) D26-D29）,
   **ADR-0004（[0004](../decisions/0004-layered-design-and-global-review.md) D30-D35・設計三層化 / 大域整合）**,
-  **ADR-0007（[0007](../decisions/0007-design-layer-agents-and-cadence-gradient.md) D41-D43, D45-D48・文書種別4役 / 層別カデンツ / 図表派生）**,
+  **ADR-0007（[0007](../decisions/0007-design-layer-agents-and-cadence-gradient.md) D41-D43, D45-D48・文書種別4役 / 設計粒度のグラデーション / 図表派生）**,
   REQUIREMENTS.md §11/§12
 - 参考実装: [agents/issue-planner.md](../../../agents/issue-planner.md)（**分割元**）, `src/planning/planner.ts`（**置換**）
-- 仕様状態: 下書き（ADR-0004 で三層 system/epic/slice に改訂・ADR-0007 で文書種別4役分割と層別カデンツを追加）
+- 仕様状態: 下書き（ADR-0004 で三層 system/epic/slice に改訂・ADR-0007 で文書種別4役分割と設計粒度のグラデーションを追加）
 - 最終更新: 2026-06-24
 
 ## 1. 目的とスコープ境界
@@ -311,8 +311,8 @@ foundation drift。これらのうち**二層 spine は ADR-0004 で三層へ解
   slice+architecture seam→シーケンス）。SoT でない・非ゲート・source 変更時に再生成（D42）。
 - **詳細設計の高度 = seam/契約まで**。内部実装は非ゲートの実装メモ（D43 = D34 の役適用）。
 - **着工単位 = epic / 整合単位 = global system 層**。big design up front 不採用（D45）。
-- **層別カデンツ（グラデーション）**: domain-map / data-model = **境界コンテキスト単位**（cross-epic 所有）/
-  architecture = モジュール境界 / slice = epic。ADR-0004 D31 の adaptive を層別カデンツへ拡張（D46）。
+- **設計粒度のグラデーション**: domain-map / data-model = **境界コンテキスト単位**（cross-epic 所有）/
+  architecture = モジュール境界 / slice = epic。ADR-0004 D31 の adaptive を設計粒度のグラデーションへ拡張（D46）。
 - **DB/domain は lazy boundary / coherent within**: 触らない境界コンテキストは設計しないが、first touch で
   その境界コンテキストのデータモデルを概念レベルで一貫設計し、物理は additive。2 番目以降の同コンテキスト
   epic は read のみ＝二重設計を設計時に潰す（D47）。

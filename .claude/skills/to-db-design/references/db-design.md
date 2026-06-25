@@ -1,4 +1,4 @@
-# DB design (bounded-context cadence)
+# DB design (bounded-context granularity)
 
 You model the data of **one bounded context**. This layer is global and single-source-of-truth; you read
 the whole relevant data model and add to it. Cadence is coarser than a feature on purpose — the data model

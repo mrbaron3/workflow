@@ -1,7 +1,7 @@
-# Basic design (bounded-context cadence)
+# Basic design (bounded-context granularity)
 
 You model the domain and architecture of **one bounded context**. This layer is global and
-single-source-of-truth; you read the whole relevant context and add to it. Its cadence is coarser than a
+single-source-of-truth; you read the whole relevant context and add to it. Its granularity is coarser than a
 feature on purpose: a bounded context is designed/owned across features, not re-derived per feature.
 
 ## What you write

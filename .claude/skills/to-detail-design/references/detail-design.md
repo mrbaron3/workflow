@@ -1,4 +1,4 @@
-# Detail design (epic cadence)
+# Detail design (epic granularity)
 
 You decompose **one epic** (its signed `spec.md` + the system layer it touches) into PR-size slices.
 Slices are per-epic / per-PR — the fast-moving end of the gradient. You reference the system layer; you do
