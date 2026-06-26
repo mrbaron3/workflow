@@ -5,6 +5,10 @@
 - 影響モジュール: M21 Design Planner（文書種別で 3 専用エージェント: `to-basic-design` / `to-db-design` / `to-detail-design`・設計粒度のグラデーション・D49）/ M22 Design Reviewer（単一審査・派生図表は非ゲート・境界コンテキスト整合）/ M18 Storage（system層の住処 = 境界コンテキスト単位）/ M03 Coordinator（エージェント選択・first-touch 検知・並行時のロック単位 = 境界コンテキスト・loop2）/ 共有コード `src/design/lint.ts`（決定的 tier・各エージェントに vendor・進行管理も呼ぶ）/ ADR-0004（D31「adaptive」を「設計粒度のグラデーション」へ拡張・§6 open を解消）
 - 正本差分: REQUIREMENTS.md への上書きなし（設計層の内部構造をさらに精密化するもの。ADR-0004 を拡張し override しない）
 
+> ⚠️ **ADR-0008 で更新**: 本 ADR の設計粒度の「epic 単位」（D49 詳細設計）・「slice = epic / PR」（D46）の
+> "epic" は、ADR-0008（D54）で **spec** へ改名（spec = 粒度非依存の署名単位・epic は下流の grouping）。
+> 設計単位の実体（境界コンテキスト / spec / PR のグラデーション）は不変。原文は決定記録として保持する。
+
 ## 1. 背景
 
 [ADR-0004](0004-layered-design-and-global-review.md) が設計を三層（system / epic / slice）に解凍し、

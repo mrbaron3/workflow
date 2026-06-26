@@ -10,7 +10,6 @@ const AC = 'AC-TODODUE-001';
 function approvedSource(): ResolvedSource {
   return {
     issueType: 'feature',
-    epicId: 'EPIC-TODODUE',
     narrative: { productGoal: '期限を保存・編集できる', userStory: '期限を設定したい（忘れないため）' },
     acceptanceCriteriaIds: [AC],
     behaviorById: { [AC]: 'Given 作成/編集画面 When 期限を入力して保存 Then 永続化され未入力は null' },

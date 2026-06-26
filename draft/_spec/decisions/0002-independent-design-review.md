@@ -7,6 +7,10 @@
 - 正本差分: REQUIREMENTS.md §16 `failure_taxonomy` に `design_failure` を追加（**本 ADR では接続点のみ規定。
   正本追記は別途**。§4 参照）
 
+> ⚠️ **ADR-0008 で更新**: 本 ADR の「epic 状態機械」（D23: `designing → design-reviewed → decomposed`）の
+> "epic" は、ADR-0008（D50-D54）で **spec** へ改名（署名/設計の状態は spec 単位の「spec 状態オブジェクト」が
+> 持つ）。状態遷移そのものは不変。原文は決定記録として保持する。
+
 ## 1. 背景
 
 ADR-0001 で WHAT（オーサリング M20・人間署名）と HOW（設計 M21・実装 M06 以降・AI）を分離した。

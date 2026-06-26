@@ -47,5 +47,5 @@ aliasing. Deferred (lazy).
 ## Output / signal
 
 Produce the domain/architecture delta (rich Markdown + structured core) and record `reads` / `extends`
-(with affected AC-IDs) in the epic's `design-delta.md`. `check-basic-design` verifies the delta's
+(with affected AC-IDs) in the spec's `design-delta.md`. `check-basic-design` verifies the delta's
 referenced ids are present in the system layer. Signal completion; do not change workflow state or sign.

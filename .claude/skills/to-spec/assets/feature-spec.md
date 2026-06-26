@@ -1,7 +1,7 @@
 # <機能名> 受け入れ要件
 
 > このファイルは Development Department への入力契約であり、人間が機能の **WHAT（受け入れ基準）** を
-> 著す source of truth（オーサリング SoT）。frontmatter は持たない（meta・署名は epic 状態オブジェクト
+> 著す source of truth（オーサリング SoT）。frontmatter は持たない（meta・署名は spec 状態オブジェクト
 > ＝ ApprovedSpecRef が持つ）。
 >
 > 書くもの / 書かないもの / 参照するもの:

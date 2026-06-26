@@ -51,7 +51,7 @@ PR サイズの issue へ分解する層。AI が著者で人間 override は任
 
 前提条件:
 
-- epic 状態が `contract-approved`（署名済み）。未署名 spec には着手しない。
+- spec 状態が `contract-approved`（署名済み）。未署名 spec には着手しない。
 - 全 AC が acceptance.yaml に自動採点 method を持つ。
 
 ## 3. 出力契約 (produces)
@@ -159,7 +159,7 @@ IssueSpawnOrder:
 
 ## 4. 振る舞い / 処理フロー
 
-epic 状態 `contract-approved → designing → design-reviewed → decomposed`（**状態ラベルの書き込みは M03**）。
+spec 状態 `contract-approved → designing → design-reviewed → decomposed`（**状態ラベルの書き込みは M03**）。
 本層は LLM 著者ゆえ状態を直接書かず、各ステップ完了を**シグナル**する。
 
 1. **着手**: M03 が `designing` を書く。本層は ApprovedSpecRef ＋ **関連する system 層**を版固定で読む

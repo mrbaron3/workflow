@@ -39,5 +39,5 @@ Only the one column the AC needs is materialised; the rest of any scheduling sch
 ## Output / signal
 
 Produce the data-model delta (rich Markdown + structured core) and record `reads` / `extends` (with
-affected AC-IDs) in the epic's `design-delta.md`. `check-db-design` verifies the delta's referenced ids
+affected AC-IDs) in the spec's `design-delta.md`. `check-db-design` verifies the delta's referenced ids
 are present in the system layer. Signal completion; do not change workflow state or sign.

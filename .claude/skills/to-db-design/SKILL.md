@@ -2,7 +2,7 @@
 name: to-db-design
 description: DB設計（データモデル・スキーマ・永続化契約）を境界コンテキスト単位で著す・拡張する。DB設計・データモデル・スキーマ設計・テーブル設計・正規化・マイグレーションのときに使う。基本設計（ドメイン/アーキ）は to-basic-design、詳細設計（スライス）は to-detail-design を使う。
 allowed-tools: Read, Write, Edit, Bash
-arguments: epic_dir
+arguments: spec_dir
 context: fork
 hooks:
   Stop:
@@ -22,7 +22,7 @@ human owns the WHAT — never edit `spec.md` / `acceptance.yaml`.
 | | |
 | --- | --- |
 | **In** | signed `spec.md` + `acceptance.yaml`; the domain model for this context + the existing data model (read whole) |
-| **Out** | additive elements in `_system/<context>/data-model.md` (`DATA-NNN`); the epic's `design-delta.md` (`reads` / `extends`) |
+| **Out** | additive elements in `_system/<context>/data-model.md` (`DATA-NNN`); the spec's `design-delta.md` (`reads` / `extends`) |
 
 Fill the template: [data-model](assets/data-model.md).
 
@@ -39,7 +39,7 @@ Fill the template: [data-model](assets/data-model.md).
 ## Self-check, then stop
 
 ```bash
-npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-db-design.ts <epic_dir>
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-db-design.ts <spec_dir>
 ```
 
 The Stop hook re-runs this and blocks completion on failure. Signal completion — you do not change

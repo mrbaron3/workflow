@@ -115,7 +115,7 @@ lane ごとの `IssueSource` の組み立て元（本層の外。consume する�
 前提条件（lane 共通）:
 
 - source の behavior + verification + narrative + scope が **上流で著述・版固定済み**（M05 は著述しない: RSLV-FR-012）。
-- greenfield は epic 状態が `contract-approved` で `acceptanceCriteriaIds ⊆ approvedAcIds`。targeted は票が承認済み
+- greenfield は spec 状態が `contract-approved` で `acceptanceCriteriaIds ⊆ approvedAcIds`。targeted は票が承認済み
   （署名の所掌は起票 lane。本層は `acFingerprints` を gate に使うのみ）。
 - 全 AC が `verificationRef` に自動採点 method を持つ（manual 禁止。本層も assert: RSLV-FR-007）。
 - `behaviorRef` の AC-ID 集合と `verificationRef` のキー集合が双方向一致（上流が保証）。

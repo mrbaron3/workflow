@@ -56,23 +56,33 @@ roadmap / initiative（例: 「Todo アプリ」）         ← 上流（north-s
 - `to-spec` skill: carving 撤去 → 凝集指針、`<epic-dir>`→`<spec-dir>`、`references/edge-cases.md` 改訂。
 - ADR-0004 に本 ADR へのポインタ banner。
 
-follow-up（別タスク・承認制。本決定が射程を確定し、機械実装は既存ペンディングへ委譲）:
+追って実施済み（FU-1/2/3・同一作業で完了）:
 
-- 設計 skill 3種（`to-detail-design`/`to-basic-design`/`to-db-design`）の `epic_dir`→`spec_dir`・
-  「one epic per run」→「one spec per run」・description・`SLICE-<EPIC>-NNN` ID 体系・check スクリプト・
-  `design-lint.ts`「within the epic」。SKILL.md と `.ja`・vendored lib（bundle-skills）・テストを伴う。
-- 「epic 状態オブジェクト」→「spec 状態オブジェクト」: authoring-layer.md / design-planner.md /
-  design-reviewer.md / issue-contract-planner.md と M03/M18 の状態機械語彙。`ApprovedSpecRef.epicId`→`specId`。
-- src 任意整理: 未使用の `ResolvedSource.epicId` 削除。
+- **FU-1** 設計 skill 3種（`to-detail-design`/`to-basic-design`/`to-db-design`）: `epic_dir`→`spec_dir`・
+  「one epic per run」→「one spec per run」・description・`SLICE-<EPIC>-NNN`→`SLICE-<SPEC>-NNN`・check
+  スクリプト・`src/design/lint.ts` コメント（→ `bundle-skills` 再 vendor）。
+- **FU-2** 「epic 状態オブジェクト」→「spec 状態オブジェクト」: authoring-layer.md / design-planner.md /
+  design-reviewer.md / issue-contract-planner.md / `specs/authoring-layer/`（昇格 spec + acceptance.yaml）/
+  `to-spec` テンプレ。`ApprovedSpecRef.epicId`→`specId`。README §95・ADR-0001/0002/0007 banner。
+- **FU-3** src 整理: 未使用の `ResolvedSource.epicId`（+ test fixture）を削除。
 - ドッグフード findings（[2026-06-25](../../../docs/brainstorm/2026-06-25-dogfood-m20-to-spec-findings.md)）の
   DF1 解決（「`to-spec` に carving を教える」）は本 ADR D50-D53 が**置換**する。
 
-## 5. ADR-0001 / ADR-0004 / GLOSSARY の更新
+残 follow-up（別タスク・承認制）:
+
+- [`draft/_spec/loop1-walkthrough.md`](../loop1-walkthrough.md) は旧「epic = spec.md」フレームで全面記述
+  （`epicId=EPIC-TODODUE`・epic ライフサイクル・`DesignDelta(EPIC-…)` 等）。token 置換でなく概念的な
+  書き直しが要る。
+
+## 5. ADR-0001 / 0002 / 0004 / 0007 / GLOSSARY の更新
 
 - **ADR-0001**（O1/D4「Epic = 1 spec.md = 1 機能」）を「**spec = 粒度非依存の著述・署名単位。epic は下流の
   grouping**」へ更新（本 ADR が supersede）。「`contract-approved` は epic でなく **spec** に成立」。
 - **ADR-0004 D30**: 設計三層の「epic 層」→「**spec 層**」（D54）。tier の中身（design-delta + slices・
   被覆不変条件）は不変。
+- **ADR-0007 D46/D49**: 設計粒度の「epic 単位」「slice = epic / PR」を **spec** 単位へ（D54 と一体）。
+- **ADR-0002 D23**: 「epic 状態機械（`designing → design-reviewed → decomposed`）」を **spec 状態機械**へ
+  （状態遷移は不変）。
 - **GLOSSARY**: 「Epic = 1 spec.md」を外し、**Spec**（署名単位・任意粒度）を新設、**Epic**（下流の issue
   grouping）を再定義。
 

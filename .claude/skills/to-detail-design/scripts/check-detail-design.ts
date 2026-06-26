@@ -1,15 +1,15 @@
 #!/usr/bin/env tsx
 /**
- * Pre-spawn integrity check for an epic's slice decomposition: a thin wrapper that
- * parses the epic's slice files (+ spec.md AC anchors + the global _system element
+ * Pre-spawn integrity check for a spec's slice decomposition: a thin wrapper that
+ * parses the spec's slice files (+ spec.md AC anchors + the global _system element
  * ids) and delegates to the vendored deterministic tier in ./lib/design-lint.ts. The
  * skill's prose never re-implements these rules.
  *
  * Run from anywhere:
- *   npx tsx <skill>/scripts/check-detail-design.ts <epic-dir> [--system <dir>]
+ *   npx tsx <skill>/scripts/check-detail-design.ts <spec-dir> [--system <dir>]
  *
- * <epic-dir> holds spec.md and slices/SLICE-*.md. The global system layer is found at
- * <epic-dir>/../_system by default (override with --system <dir>).
+ * <spec-dir> holds spec.md and slices/SLICE-*.md. The global system layer is found at
+ * <spec-dir>/../_system by default (override with --system <dir>).
  * Exit: 0 = passed, 1 = lint failed, 2 = usage / read error.
  */
 
@@ -41,7 +41,7 @@ const systemFlagIdx = args.indexOf('--system');
 const systemDirArg = systemFlagIdx >= 0 ? args[systemFlagIdx + 1] : undefined;
 
 if (!dir) {
-  console.error('usage: check-detail-design <epic-dir> [--system <dir>]');
+  console.error('usage: check-detail-design <spec-dir> [--system <dir>]');
   process.exit(2);
 }
 

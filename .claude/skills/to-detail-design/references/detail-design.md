@@ -1,12 +1,12 @@
-# Detail design (epic granularity)
+# Detail design (spec granularity)
 
-You decompose **one epic** (its signed `spec.md` + the system layer it touches) into PR-size slices.
-Slices are per-epic / per-PR — the fast-moving end of the gradient. You reference the system layer; you do
+You decompose **one signed `spec.md`** (and the system layer it touches) into PR-size slices.
+Slices are per-spec / per-PR — the fast-moving end of the gradient. You reference the system layer; you do
 not author it.
 
 ## The structured core `check-detail-design` parses
 
-Each `slices/SLICE-<EPIC>-NNN.md` is rich Markdown prose **plus one** fenced ```yaml core block:
+Each `slices/SLICE-<SPEC>-NNN.md` is rich Markdown prose **plus one** fenced ```yaml core block:
 
 ```yaml
 sliceId: SLICE-TODODUE-002

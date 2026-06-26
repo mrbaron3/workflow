@@ -32,7 +32,6 @@ export interface SourceVerification {
 /** A version-pinned source with all refs already resolved to content (boundary's job). */
 export interface ResolvedSource {
   issueType: string;
-  epicId?: string | null;
   narrative: { productGoal: string; userStory: string };
   /** The canonical AC-ID set this source declares. */
   acceptanceCriteriaIds: string[];

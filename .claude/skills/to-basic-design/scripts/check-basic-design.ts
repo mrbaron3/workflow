@@ -1,15 +1,15 @@
 #!/usr/bin/env tsx
 /**
  * Integrity check for a basic-design contribution: a thin wrapper that parses the
- * epic's design-delta.md (reads/extends element ids) and verifies every referenced id
+ * spec's design-delta.md (reads/extends element ids) and verifies every referenced id
  * is present in the global system layer, delegating to the vendored deterministic tier
  * in ./lib/design-lint.ts.
  *
  * Run from anywhere:
- *   npx tsx <skill>/scripts/check-basic-design.ts <epic-dir> [--system <dir>]
+ *   npx tsx <skill>/scripts/check-basic-design.ts <spec-dir> [--system <dir>]
  *
- * <epic-dir> holds design-delta.md. The global system layer is found at
- * <epic-dir>/../_system by default (override with --system <dir>).
+ * <spec-dir> holds design-delta.md. The global system layer is found at
+ * <spec-dir>/../_system by default (override with --system <dir>).
  * Exit: 0 = passed, 1 = lint failed, 2 = usage / read error.
  */
 
@@ -48,7 +48,7 @@ const systemFlagIdx = args.indexOf('--system');
 const systemDirArg = systemFlagIdx >= 0 ? args[systemFlagIdx + 1] : undefined;
 
 if (!dir) {
-  console.error('usage: check-basic-design <epic-dir> [--system <dir>]');
+  console.error('usage: check-basic-design <spec-dir> [--system <dir>]');
   process.exit(2);
 }
 

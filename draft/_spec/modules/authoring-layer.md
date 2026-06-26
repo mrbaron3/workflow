@@ -42,7 +42,7 @@
 ## 3. 出力契約 (produces)
 
 人間が所有・編集する文書はリッチ Markdown（ADR-0004 D35）。**frontmatter は持たない**（meta・署名は
-epic 状態オブジェクト ＝ ApprovedSpecRef が持つ）。
+spec 状態オブジェクト ＝ ApprovedSpecRef が持つ）。
 
 ### 3.1 spec.md（オーサリング SoT・リポジトリ内・人間可読）
 
@@ -95,15 +95,15 @@ manualRequirements[]:
 ### 3.3 meta・署名の永続先（frontmatter を持たない）
 
 spec.md は frontmatter を持たない（実物のプロダクト spec も持たない・可読性のため）。meta（featureId / area /
-epicId）と署名状態（status / approvedAcIds）は **epic 状態オブジェクト（M18 store）が持つ**。`status` は
+specId）と署名状態（status / approvedAcIds）は **spec 状態オブジェクト（M18 store）が持つ**。`status` は
 `approvedAcIds` から導出する集約値（`approvedAcIds ⊇ 現 AC 全集合` で `approved`）。featureId は AC-ID の接頭辞・
 ディレクトリ名から導出できる。
 
-### 3.4 ApprovedSpecRef（contract-approved の実体・最初の永続先 = epic 状態オブジェクト）
+### 3.4 ApprovedSpecRef（contract-approved の実体・最初の永続先 = spec 状態オブジェクト）
 
 ```text
 ApprovedSpecRef:
-  epicId
+  specId
   featureId / area                     # meta（frontmatter でなくここが持つ）
   approvalCommitSha:                   # 署名 commit の SHA。真正性 / 監査用
   behaviorRef:       {path, gitSha}    # spec.md の版固定 ref。gitSha は blob SHA
@@ -116,7 +116,7 @@ ApprovedSpecRef:
 ```
 
 > 署名 commit の SHA・blob SHA は frontmatter に自己参照で焼けず、issue は decomposed 後にしか生まれないため、
-> **epic 状態オブジェクトを最初の永続先**とする。issue 投稿時（M03）に issue の `specRef` へ転記される。
+> **spec 状態オブジェクトを最初の永続先**とする。issue 投稿時（M03）に issue の `specRef` へ転記される。
 > `acFingerprints` のハッシュ対象は **GWT シナリオ（Given/When/Then）+ severity + verification** で、AC 単位
 > drift の基準。
 
@@ -133,7 +133,7 @@ ApprovedSpecRef:
 5. **コードが整合を検証**（AC-ID の存在・renumber/再利用なし・spec.md と acceptance.yaml の双方向被覆）。違反は
    署名ゲートで落とす。
 6. 人間が署名。**コード**が署名 commit の SHA・各ファイルの blob SHA・AC 単位ハッシュを ApprovedSpecRef に固定し、
-   epic 状態オブジェクトへ書く。`approvedAcIds` が全 AC を覆い status は派生的に `approved`。
+   spec 状態オブジェクトへ書く。`approvedAcIds` が全 AC を覆い status は派生的に `approved`。
 7. 設計・分解は設計立案役が担う（本層の境界外）。
 
 drift 検知は**二段**:
@@ -160,10 +160,10 @@ drift の各ケース: GWT/severity/verification の中身変更 → 当該 AC �
 - **AUTH-FR-004 manual 分離**: 非自動要件は manual-requirements.md に分離し `tier` を付す。
 - **AUTH-FR-005 協業 / ファイル分離**: 受け入れ基準（GWT behavior）は人間が spec.md に記述、`severity` +
   `verification` は AI が acceptance.yaml に提案 + 人間確定。
-- **AUTH-FR-006 署名ゲート / status 派生**: `status` は epic 状態オブジェクトの `approvedAcIds` から導出する集約値
+- **AUTH-FR-006 署名ゲート / status 派生**: `status` は spec 状態オブジェクトの `approvedAcIds` から導出する集約値
   （`approvedAcIds ⊇ 現 AC 全集合` で `approved`）。署名の SoT は `approvedAcIds`。
 - **AUTH-FR-007 gitSha pin / 永続先**: 署名 commit の SHA・各ファイルの blob SHA・AC 単位ハッシュ・参照した
-  system 要素を ApprovedSpecRef に固定し、**epic 状態オブジェクトを最初の永続先**とする。issue へは転記。
+  system 要素を ApprovedSpecRef に固定し、**spec 状態オブジェクトを最初の永続先**とする。issue へは転記。
 - **AUTH-FR-008 drift 二段検知**: path 単位で変更有無 → AC 単位の構造 diff（現ハッシュ vs `acFingerprints`）で
   変更 AC-ID を特定し `approvedAcIds` から外す。ハッシュ対象は GWT behavior + severity + verification。
 - **AUTH-FR-009 分割ヒント**: サブ機能一覧（ID + 優先度）を分割境界ヒントとして設計立案役へ提供（1:1 で issue
@@ -194,7 +194,7 @@ drift の各ケース: GWT/severity/verification の中身変更 → 当該 AC �
 - 実装後に受け入れ基準を緩めない。
 - AC-ID / MR-ID を renumber・再利用しない。
 - 受け入れ基準に `manual` メソッドを混ぜない（必ず MR へ）。
-- spec.md に frontmatter を持たせない（meta・署名は epic 状態オブジェクト）。
+- spec.md に frontmatter を持たせない（meta・署名は spec 状態オブジェクト）。
 - ドメイン/データ/アーキを spec.md に**埋め込まない**（system 層を参照する・ADR-0004 D31）。
 
 ## 8. 受け入れ条件 (testable)
@@ -202,7 +202,7 @@ drift の各ケース: GWT/severity/verification の中身変更 → 当該 AC �
 - サンプル spec.md（GWT 受け入れ基準・例: rin 決済相当）＋ acceptance.yaml がパースでき、AC-ID で join できる。
 - 受け入れ基準と manual 要件の混在がゼロ（全 AC が acceptance.yaml に自動採点 method を持つ）。
 - `approved` な spec.md / acceptance.yaml から版固定 ref + acFingerprints + systemRefs 付き ApprovedSpecRef を
-  生成し、**issue 生成前に epic 状態オブジェクトへ永続化**できる。
+  生成し、**issue 生成前に spec 状態オブジェクトへ永続化**できる。
 - 受け入れ基準シナリオの GWT を1つ変更（drift）→ AC 単位の構造 diff が**その AC-ID のみ**を再署名対象にし、
   未変更 AC の署名は保持される。
 - AC を1つ追加 → status が派生的に `co-authoring` に落ち、被覆漏れとして署名要求が立つ。
@@ -230,7 +230,7 @@ drift の各ケース: GWT/severity/verification の中身変更 → 当該 AC �
 
 - **受け入れ基準を Given/When/Then 名前付きシナリオに**（フラットチェックリスト / YAML を廃止）。各シナリオに
   AC-ID。ユーザーストーリー / 事前条件 / 完了条件を節として採用（参考: rin 決済 spec）。
-- **frontmatter 廃止**: meta・署名は epic 状態オブジェクト（ApprovedSpecRef）が持つ。
+- **frontmatter 廃止**: meta・署名は spec 状態オブジェクト（ApprovedSpecRef）が持つ。
 - **severity を acceptance.yaml へ**移動（採点属性ゆえ grader 側）。
 - **system 層参照（非埋め込み）**: ドメイン/データ/業務ステータスは system 層を参照（ADR-0004 D31）。AUTH-FR-011。
 - **採番・整合をコード強制**（AUTH-FR-013）。**ADR-0001 D19「skill 駆動」を「AI 補助 + コード強制」へ更新**

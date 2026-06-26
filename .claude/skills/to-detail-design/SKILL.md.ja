@@ -1,8 +1,8 @@
 ---
 name: to-detail-design
-description: 詳細設計（コンポーネント設計・スライス分解）を epic 単位で行う。詳細設計・スライス分解・コンポーネント設計・PR 分割・issue 分解のときに使う。基本設計（ドメイン/アーキ）は to-basic-design、DB設計は to-db-design を使う。
+description: 詳細設計（コンポーネント設計・スライス分解）を spec 単位で行う。詳細設計・スライス分解・コンポーネント設計・PR 分割・issue 分解のときに使う。基本設計（ドメイン/アーキ）は to-basic-design、DB設計は to-db-design を使う。
 allowed-tools: Read, Write, Edit, Bash
-arguments: epic_dir
+arguments: spec_dir
 context: fork
 hooks:
   Stop:
@@ -22,13 +22,13 @@ hooks:
 | | |
 | --- | --- |
 | **入力** | 署名済み `spec.md` + `acceptance.yaml`、触れる system 層（参照のみ・複製しない） |
-| **出力** | `slices/SLICE-<EPIC>-NNN.md`（スライスごと）+ スライスごとの `IssueSpawnOrder` |
+| **出力** | `slices/SLICE-<SPEC>-NNN.md`（スライスごと）+ スライスごとの `IssueSpawnOrder` |
 
 テンプレを埋める: [slice](assets/slice.md)。
 
 ## 規則
 
-- 1 起動 = 1 epic。いつ走るかは外側で決まる。system 要素は **参照**（`dependsOnSystem`）し、著述しない。
+- 1 起動 = 1 spec。いつ走るかは外側で決まる。system 要素は **参照**（`dependsOnSystem`）し、著述しない。
 - **被覆かつ排他・双方向**: 全スライスの `coversAcIds` の和集合が spec の AC 全集合に一致し、同じ AC を 2 つの
   スライスに入れない。PR サイズ超過の AC は著述層へ差し戻して分割し、スライス側で割らない。
 - **seam / contract altitude のみ** — 固定したいアルゴリズムは非ゲートの `implementationNotes` に置く。
@@ -38,7 +38,7 @@ hooks:
 ## セルフチェックして停止
 
 ```bash
-npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-detail-design.ts <epic_dir>
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-detail-design.ts <spec_dir>
 ```
 
 Stop フックがこれを再実行し、失敗なら完了をブロックする。完成をシグナルする — ワークフロー状態は書かず、

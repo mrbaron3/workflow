@@ -1,12 +1,12 @@
 <!--
-  One slice = one PR = one issue. Copy this file to slices/SLICE-<EPIC>-NNN.md per slice.
+  One slice = one PR = one issue. Copy this file to slices/SLICE-<SPEC>-NNN.md per slice.
   - Fill <…> and delete this comment.
   - Rich prose PLUS the one ```yaml core block below (the join-key surface the checks parse).
   - Seam / contract altitude only. Internal algorithms go in implementationNotes (not gated).
   - Reference system elements by id in dependsOnSystem; never copy their content here.
 -->
 
-# <SLICE-EPIC-NNN — short title>
+# <SLICE-SPEC-NNN — short title>
 
 **Narrative** — productGoal: <user-facing goal>; userStory: <as a … I want … so that …>.
 
@@ -19,8 +19,8 @@
 **Estimated scope** — <S / M / L>
 
 ```yaml
-sliceId: SLICE-<EPIC>-NNN
-coversAcIds: [AC-<EPIC>-NNN]
+sliceId: SLICE-<SPEC>-NNN
+coversAcIds: [AC-<SPEC>-NNN]
 dependsOnSlices: []
 dependsOnSystem: [DATA-NNN, ARCH-NNN]
 ```

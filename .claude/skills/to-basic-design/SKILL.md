@@ -2,7 +2,7 @@
 name: to-basic-design
 description: 基本設計（ドメインモデルとアーキテクチャ）を境界コンテキスト単位で著す・拡張する。基本設計・方式設計・アーキテクチャ・ドメインモデル・モジュール境界・seam を作るときに使う。DB設計は to-db-design、詳細設計（スライス）は to-detail-design を使う。
 allowed-tools: Read, Write, Edit, Bash
-arguments: epic_dir
+arguments: spec_dir
 context: fork
 hooks:
   Stop:
@@ -22,7 +22,7 @@ structural invariants. The human owns the WHAT — never edit `spec.md` / `accep
 | | |
 | --- | --- |
 | **In** | signed `spec.md` + `acceptance.yaml`; the existing system layer for this context (read it whole) |
-| **Out** | additive elements in `_system/<context>/domain-map.md` (`DOM-NNN`) + `architecture.md` (`ARCH-NNN`); the epic's `design-delta.md` (`reads` / `extends`) |
+| **Out** | additive elements in `_system/<context>/domain-map.md` (`DOM-NNN`) + `architecture.md` (`ARCH-NNN`); the spec's `design-delta.md` (`reads` / `extends`) |
 
 Fill the templates: [domain-map](assets/domain-map.md), [architecture](assets/architecture.md).
 
@@ -37,7 +37,7 @@ Fill the templates: [domain-map](assets/domain-map.md), [architecture](assets/ar
 ## Self-check, then stop
 
 ```bash
-npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-basic-design.ts <epic_dir>
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-basic-design.ts <spec_dir>
 ```
 
 The Stop hook re-runs this and blocks completion on failure. Signal completion — you do not change

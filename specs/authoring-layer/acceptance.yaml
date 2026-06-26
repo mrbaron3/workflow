@@ -3,7 +3,7 @@
 # grader 向けの verification + severity を spec.md から分離した SoT（ADR-0001 D15）。
 # spec.md の各受け入れ基準シナリオに付した AC-ID をキーに join する。
 #
-# 注: 本 epic は loop 1 未ブートストラップ。AUTH-C/D の method は store／drift 実装後に実際に走る
+# 注: 本 spec は loop 1 未ブートストラップ。AUTH-C/D の method は store／drift 実装後に実際に走る
 #     「目標挙動」を述べる（実装状況に依存しない）。AUTH-A/B は既存 lint（check-spec.ts / src）で実行検証可能。
 #     manual は使わない（自動採点不能な要件はチャットで人間に指摘・人間が判断）。
 
@@ -51,7 +51,7 @@ verifications:
     severity: blocker
     method: db_state_check
     expected:
-      - "署名後、epic 状態オブジェクトに ApprovedSpecRef が存在し approvalCommitSha・behaviorRef.gitSha・verificationRef.gitSha が非空"
+      - "署名後、spec 状態オブジェクトに ApprovedSpecRef が存在し approvalCommitSha・behaviorRef.gitSha・verificationRef.gitSha が非空"
       - "acFingerprints が各 AC-ID をキーに持ち、systemRefs[] が版固定 gitSha 付き、approvedAcIds が現 AC 全集合を被覆"
 
   AC-AUTH-008:

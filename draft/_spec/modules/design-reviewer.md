@@ -55,7 +55,7 @@
 
 前提条件:
 
-- epic 状態が `designing` で、設計立案役が設計完成をシグナル済み。
+- spec 状態が `designing` で、設計立案役が設計完成をシグナル済み。
 - 入力はすべて gitSha pin（審査の決定性の基盤）。
 - 審査者の AI コンテキストは**設計立案役と共有しない**（自己評価の排除）。
 
@@ -126,7 +126,7 @@ DesignScorecard:
 
 ## 4. 振る舞い / 処理フロー
 
-epic 状態 `designing → design-reviewed → decomposed`。状態書き込みは M03。本層は審査完了を**シグナル**のみ。
+spec 状態 `designing → design-reviewed → decomposed`。状態書き込みは M03。本層は審査完了を**シグナル**のみ。
 
 1. **着手**: 設計立案役がシグナル → M03 が M22 を dispatch。入力 §2 を gitSha で pin して読む
    （**system 層は全体**を読む = 大域整合の基準）。

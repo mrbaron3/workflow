@@ -13,7 +13,7 @@
  * markdown is the wrapper's concern, so this module is format-agnostic.
  */
 
-// --- slice tier (slice mode, epic cadence) ----------------------------------
+// --- slice tier (slice mode, spec cadence) ----------------------------------
 
 /** The machine-extractable core of one DesignSlice (the prose lives in the .md). */
 export interface SliceCore {
@@ -57,7 +57,7 @@ export interface UniqueResult {
   duplicates: string[];
 }
 
-/** sliceId must be unique within the epic (renumber/reuse is forbidden). */
+/** sliceId must be unique within the spec (renumber/reuse is forbidden). */
 export function checkSliceIdUnique(slices: SliceCore[]): UniqueResult {
   const seen = new Set<string>();
   const dup = new Set<string>();

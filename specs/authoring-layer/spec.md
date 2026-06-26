@@ -2,7 +2,7 @@
 
 > このファイルは Development Department への入力契約であり、人間が機能の **WHAT（成果物契約の
 > 観測可能な挙動）** を著す source of truth（オーサリング SoT）。frontmatter は持たない（meta・署名は
-> epic 状態オブジェクト ＝ ApprovedSpecRef が持つ）。
+> spec 状態オブジェクト ＝ ApprovedSpecRef が持つ）。
 >
 > **WHAT/HOW 境界**: 本 spec が定義するのは「署名済み・ドリフト保護された受け入れ契約を人間＋AI で
 > 産む協業プロセスの、**成果物の性質とゲート挙動**」である。契約の**スキーマ**（spec.md / acceptance.yaml
@@ -128,7 +128,7 @@
 **事前条件**
 
 - AUTH-B の整合チェックが通過済み（lint 通過＝署名可能水準）。
-- 署名状態の最初の永続先は **epic 状態オブジェクト**（issue は decomposed 後にしか生まれないため）。
+- 署名状態の最初の永続先は **spec 状態オブジェクト**（issue は decomposed 後にしか生まれないため）。
 - **目標挙動**: store／署名ゲートは loop 1 未ブートストラップで未実装。本 AC は実装状況に依存しない目標挙動を述べる。
 
 **受け入れ基準**
@@ -136,7 +136,7 @@
 - **[AC-AUTH-007] 正常系: 署名が ApprovedSpecRef を版固定で永続する**
   - Given 整合チェック通過済みの spec.md ＋ acceptance.yaml と、人間の署名行為
   - When 署名が成立する
-  - Then ApprovedSpecRef が epic 状態オブジェクトに永続し、署名 commit の SHA・spec.md / acceptance.yaml の
+  - Then ApprovedSpecRef が spec 状態オブジェクトに永続し、署名 commit の SHA・spec.md / acceptance.yaml の
     blob gitSha・AC 単位の acFingerprints（GWT behavior ＋ severity ＋ verification のハッシュ）・参照した
     system 要素の systemRefs（版固定）を含み、approvedAcIds が現 AC 全集合を覆う
 
@@ -153,7 +153,7 @@
 
 **完了条件**
 
-- 自動テスト: 署名後の epic 状態オブジェクトに ApprovedSpecRef の全フィールドが揃う db_state_check／
+- 自動テスト: 署名後の spec 状態オブジェクトに ApprovedSpecRef の全フィールドが揃う db_state_check／
   status 派生の unit_test（目標挙動・store 実装後に実行検証）。
 
 ## AUTH-D ドリフト二段検知
@@ -205,5 +205,5 @@
 - 実装後に受け入れ基準を緩めない。
 - AC-ID を renumber・再利用しない（join キーかつ署名の単位）。
 - acceptance.yaml に manual（非自動採点）method を混ぜない。自動採点不能はチャット指摘へ。
-- spec.md に frontmatter を持たせない（meta・署名は epic 状態オブジェクト ＝ ApprovedSpecRef）。
+- spec.md に frontmatter を持たせない（meta・署名は spec 状態オブジェクト ＝ ApprovedSpecRef）。
 - ドメイン／データ／契約スキーマを spec.md に**埋め込まない**。system 層 data-model を前方参照する（ADR-0004 D31）。
