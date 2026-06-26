@@ -1,11 +1,5 @@
 # Glossary
 
-> ⚠️ ADR-0001 で二層モデル（オーサリング層 / 実行層）を導入。下記の階層図は旧モデル。新設計では
-> **spec が粒度非依存の著述・署名単位**（`spec.md` + `acceptance.yaml`・人間署名 = `contract-approved`）で、
-> **Epic は下流のロードマップ/進捗グルーピング**（1 spec ≠ 1 epic・ADR-0008）。**Issue Contract は M05 resolve の
-> 派生物**（手書きせず spec.md@gitSha + acceptance.yaml + Tier2 スライスから生成）。新設計の下書きは
-> [draft/_spec/](../draft/_spec/)（draft）+ ADR-0001 / ADR-0008。新語は下表末尾に追加。
-
 The brief's most important early fix: stop overloading "Sprint" to mean "one feature".
 A Sprint is a **time-box**; the unit of agent work is an **Issue Contract**.
 
