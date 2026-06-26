@@ -50,7 +50,7 @@ surface it in chat (which requirement, why) and let the human decide how to hand
 ### 4. Self-check before handoff
 
 Run the same deterministic lint the signing gate / pre-commit enforce, from the repo root, and fix
-until it passes. The skill doesn't own this gate — code does (skill-independent, ADR-0005 D37); you
+until it passes. The skill doesn't own this gate — code does (skill-independent); you
 run it early only to catch AC-ID coverage / numbering breaks before a human reviews.
 
 ```bash
