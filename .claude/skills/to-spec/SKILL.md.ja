@@ -9,13 +9,13 @@ allowed-tools: Read, Write, Edit, Bash
 # to-spec
 
 **すでに方向性の決まった機能**を、設計層への入力契約として妥当な機能仕様に落とし込むのを助ける。
-あなたは補助し、整合の強制はコードが行う（check-spec.ts / ADR-0005）。WHAT を所有し署名するのは人間。
+あなたは補助し、整合の強制はコードが行う（check-spec.ts）。WHAT を所有し署名するのは人間。
 
 ## 何をするか
 
 ### 1. Intake — 決定を再ヒアリングせず取り込む
 
-上流に決定 doc（ブレスト結果・draft・メモ等）があれば、パスを尋ねるか `draft/_brainstorm/` を探して読み、
+上流に決定 doc（ブレスト結果・draft・メモ等）があれば、パスを尋ねるか `docs/draft/_brainstorm/` を探して読み、
 決定済み内容を SoT として扱う。spec へは次のように写像する。
 
 | 上流 doc の要素 | spec の写像先 |

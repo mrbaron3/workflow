@@ -7,7 +7,7 @@ allowed-tools: Read, Write, Edit, Bash
 # To spec
 
 Help a human turn an already-decided feature direction into a feature spec that is a valid input
-contract for the design layer. You assist; code enforces integrity (check-spec.ts / ADR-0005).
+contract for the design layer. You assist; code enforces integrity (check-spec.ts).
 The human owns the WHAT and signs.
 
 ## What to do
@@ -15,7 +15,7 @@ The human owns the WHAT and signs.
 ### 1. Intake — consume the decision, don't re-elicit it
 
 If an upstream decision doc exists (brainstorm result, draft, or notes — ask for the path, or look
-under `draft/_brainstorm/`), read it and treat its decided content as the source. Project it into the
+under `docs/draft/_brainstorm/`), read it and treat its decided content as the source. Project it into the
 spec along these lines:
 
 | Upstream doc element | Maps to in spec |
