@@ -19,6 +19,7 @@ import type {
   Issue,
   PR,
   Roadmap,
+  SpecState,
 } from '../domain/schema.js';
 import { assertTransition, type IssueStatus } from '../domain/states.js';
 
@@ -132,6 +133,20 @@ export class Store {
 
   prForIssue(issueId: string): PR | undefined {
     return this.db.prs.find((p) => p.issueId === issueId);
+  }
+
+  // --- spec states (M20 signing) -------------------------------------------
+
+  getSpecState(specPath: string): SpecState | undefined {
+    return this.db.specStates.find((s) => s.path === specPath);
+  }
+
+  /** Insert or replace the spec state for a path (identity = the spec dir path). */
+  upsertSpecState(s: SpecState): SpecState {
+    const i = this.db.specStates.findIndex((x) => x.path === s.path);
+    if (i >= 0) this.db.specStates[i] = s;
+    else this.db.specStates.push(s);
+    return s;
   }
 
   // --- eval runs / tasks ---------------------------------------------------

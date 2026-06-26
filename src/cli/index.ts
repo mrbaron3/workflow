@@ -12,17 +12,22 @@
  *   demo      end-to-end: init + plan + run + curate + analyze + dashboard
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Verdict, emptyDB } from '../domain/schema.js';
+import { Store, nowISO } from '../store/store.js';
+import { parseSpecScenarios, parseAcceptance } from '../authoring/source.js';
+import { buildApprovedSpecRef } from '../authoring/sign.js';
+import { lintAuthoring } from '../authoring/lint.js';
+import { deriveStatus } from '../authoring/drift.js';
+import { recheckSpec } from '../authoring/recheck.js';
 import {
   DEFAULT_CONFIG,
   loadConfig,
   saveConfig,
   type HarnessConfig,
 } from '../config.js';
-import { Store } from '../store/store.js';
 import { pkgPath } from '../agents/prompts.js';
 import { loadSeedFile, planFromSeed } from '../planning/planner.js';
 import { runAll, runIssue } from '../pipeline/coordinator.js';
@@ -93,6 +98,21 @@ function openFile(file: string): void {
   spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
 }
 
+/** Run git in the repo root and return stdout (throws loudly on non-zero exit). */
+function git(args: string[]): string {
+  return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' });
+}
+
+/** Repo-root-relative, forward-slash path — git's pathspec form. */
+function gitRel(abs: string): string {
+  return path.relative(ROOT, abs).split(path.sep).join('/');
+}
+
+/** Blob SHA of a file's current on-disk content (working tree) — the coarse drift signal. */
+function gitHashObject(abs: string): string {
+  return git(['hash-object', abs]).trim();
+}
+
 // --- commands ---------------------------------------------------------------
 
 function cmdInit(flags: Args['flags']): void {
@@ -107,6 +127,108 @@ function cmdInit(flags: Args['flags']): void {
   log(`  db:     ${c.dim(store.dbPath)}`);
   log(`  config: ${c.dim(path.join(store.dir, 'config.json'))} (generator=${DEFAULT_CONFIG.generator})`);
   log(`\nNext: ${c.b('agentops plan')} then ${c.b('agentops run')}.`);
+}
+
+function cmdSign(pos: string[]): void {
+  const store = requireInit();
+  const dir = pos[0];
+  if (!dir) {
+    log(c.red('usage: agentops sign <spec-dir>') + c.dim('   (dir with spec.md + acceptance.yaml)'));
+    process.exit(1);
+  }
+  const specAbs = path.resolve(ROOT, dir, 'spec.md');
+  const accAbs = path.resolve(ROOT, dir, 'acceptance.yaml');
+  if (!fs.existsSync(specAbs) || !fs.existsSync(accAbs)) {
+    log(c.red(`✗ ${dir} must contain both spec.md and acceptance.yaml`));
+    process.exit(1);
+  }
+  const scenarios = parseSpecScenarios(fs.readFileSync(specAbs, 'utf8'));
+  const verifications = parseAcceptance(fs.readFileSync(accAbs, 'utf8'));
+
+  // 1. AUTH-B gate must pass before a signature can be taken (AUTH-C precondition).
+  const lint = lintAuthoring({
+    specAcIds: scenarios.map((s) => s.id),
+    acceptanceAcIds: Object.keys(verifications),
+    methodsById: Object.fromEntries(Object.entries(verifications).map(([id, v]) => [id, v.method])),
+  });
+  if (!lint.ok) {
+    log(c.red('✗ cannot sign — authoring lint failed:'));
+    for (const e of lint.errors) log(`  - ${e}`);
+    process.exit(1);
+  }
+
+  // 2. Signature pins committed HEAD blobs (AC-AUTH-007): the files must be clean.
+  const dirty = git(['status', '--porcelain', '--', gitRel(specAbs), gitRel(accAbs)]).trim();
+  if (dirty) {
+    log(c.red('✗ commit spec.md / acceptance.yaml before signing (the signature pins committed blobs):'));
+    log(c.dim(dirty));
+    process.exit(1);
+  }
+  const facts = {
+    signedCommitSha: git(['rev-parse', 'HEAD']).trim(),
+    specBlobGitSha: git(['rev-parse', `HEAD:${gitRel(specAbs)}`]).trim(),
+    acceptanceBlobGitSha: git(['rev-parse', `HEAD:${gitRel(accAbs)}`]).trim(),
+  };
+
+  // 3. Build + persist the ApprovedSpecRef. status derives, it is never written.
+  const approved = buildApprovedSpecRef({ scenarios, verifications, git: facts });
+  const now = nowISO();
+  const existing = store.getSpecState(dir);
+  store.upsertSpecState({
+    path: dir,
+    approved,
+    signedAt: now,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  });
+  store.save();
+
+  const status = deriveStatus(approved.approvedAcIds, scenarios.map((s) => s.id));
+  log(c.green('✓ signed') + ` ${c.b(dir)} @ ${c.dim(facts.signedCommitSha.slice(0, 8))}`);
+  log(`  ${approved.approvedAcIds.length} AC approved · status=${c.b(status)}`);
+}
+
+function cmdSpecs(pos: string[]): void {
+  const store = requireInit();
+  const states = pos[0] ? store.db.specStates.filter((s) => s.path === pos[0]) : store.db.specStates;
+  if (states.length === 0) {
+    log(c.dim(pos[0] ? `no signed spec at ${pos[0]}` : 'no signed specs yet — sign one with `agentops sign <spec-dir>`'));
+    return;
+  }
+  for (const st of states) {
+    if (!st.approved) {
+      log(`${c.b(st.path)}  ${c.yellow('co-authoring')} ${c.dim('(never signed)')}`);
+      continue;
+    }
+    const specAbs = path.resolve(ROOT, st.path, 'spec.md');
+    const accAbs = path.resolve(ROOT, st.path, 'acceptance.yaml');
+    if (!fs.existsSync(specAbs) || !fs.existsSync(accAbs)) {
+      log(`${c.b(st.path)}  ${c.red('broken')} ${c.dim('(spec.md / acceptance.yaml missing)')}`);
+      continue;
+    }
+    const r = recheckSpec({
+      approved: st.approved,
+      specText: fs.readFileSync(specAbs, 'utf8'),
+      acceptanceText: fs.readFileSync(accAbs, 'utf8'),
+      currentSpecBlobSha: gitHashObject(specAbs),
+      currentAcceptanceBlobSha: gitHashObject(accAbs),
+    });
+    const color = r.status === 'approved' ? c.green : c.yellow;
+    log(`${c.b(st.path)}  ${color(r.status)}  ${c.dim(`signed@${st.approved.signedCommitSha.slice(0, 8)}`)}`);
+    if (!r.coarseChanged) {
+      log(c.dim('  no change since signing'));
+      continue;
+    }
+    if (r.changed.length) log(`  ${c.yellow('changed')} ${r.changed.join(', ')} ${c.dim('→ re-sign required')}`);
+    if (r.added.length) log(`  ${c.yellow('added')}   ${r.added.join(', ')} ${c.dim('→ not yet signed')}`);
+    if (r.removed.length) log(`  ${c.blue('removed')} ${r.removed.join(', ')} ${c.dim('→ check design slices for orphans')}`);
+    if (!r.changed.length && !r.added.length && !r.removed.length) {
+      // Coarse blob moved but no AC meaning changed (prose outside the AC scenarios):
+      // the signature still holds — stage ② is what keeps cosmetic edits from failing it.
+      log(c.dim('  blob changed but no AC drift (prose-only) — re-sign to re-pin the blob'));
+    }
+    if (r.status === 'co-authoring') log(c.dim(`  → re-sign with \`agentops sign ${st.path}\` after committing`));
+  }
 }
 
 function cmdPlan(flags: Args['flags']): void {
@@ -271,6 +393,8 @@ ${c.b('Usage')}  npm run harness -- <command> [flags]   (or: agentops <command>)
 
 ${c.b('Commands')}
   init                 scaffold .harness/ (db + config)
+  sign <spec-dir>      sign a spec's contract: pin ApprovedSpecRef (AUTH-B gate first)
+  specs [<spec-dir>]   show signed specs + drift / derived status since signing
   plan [--seed F]      ingest a seed roadmap into epics + Issue Contracts
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
        [--agent A] [--samples N] [--max-repairs N]
@@ -287,10 +411,14 @@ ${c.b('Quick start')}   ${c.green('npm run demo')}
 }
 
 async function main(): Promise<void> {
-  const { cmd, flags } = parseArgs(process.argv);
+  const { cmd, flags, pos } = parseArgs(process.argv);
   switch (cmd) {
     case 'init':
       return cmdInit(flags);
+    case 'sign':
+      return cmdSign(pos);
+    case 'specs':
+      return cmdSpecs(pos);
     case 'plan':
       return cmdPlan(flags);
     case 'run':

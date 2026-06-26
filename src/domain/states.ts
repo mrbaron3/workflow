@@ -70,3 +70,13 @@ export function assertTransition(from: IssueStatus, to: IssueStatus): void {
     );
   }
 }
+
+// --- spec authoring status (M20) -------------------------------------------
+
+/**
+ * Spec signing status. Unlike IssueStatus this is NOT a writable state machine —
+ * it is *derived* from whether a spec's signed approvedAcIds still cover its
+ * current AC set (AC-AUTH-008; derivation lives in src/authoring/drift.ts).
+ */
+export const SPEC_STATUSES = ['approved', 'co-authoring'] as const;
+export type SpecStatus = (typeof SPEC_STATUSES)[number];

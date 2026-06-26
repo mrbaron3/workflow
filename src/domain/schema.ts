@@ -201,6 +201,44 @@ export const EvalTask = z.object({
 });
 export type EvalTask = z.infer<typeof EvalTask>;
 
+// --- spec authoring (M20 signing) ------------------------------------------
+
+/**
+ * The pinned, tamper-evident record a human signature produces (AC-AUTH-007).
+ * This is the *version pin*: the signed commit + blob SHAs make the approval
+ * auditable, the per-AC fingerprints let drift be detected at AC granularity.
+ */
+export const ApprovedSpecRef = z.object({
+  /** Commit the signature was taken against (`git rev-parse HEAD`). */
+  signedCommitSha: z.string(),
+  /** Blob gitSha of spec.md at the signed commit (`HEAD:<dir>/spec.md`). */
+  specBlobGitSha: z.string(),
+  /** Blob gitSha of acceptance.yaml at the signed commit. */
+  acceptanceBlobGitSha: z.string(),
+  /** AC-ID -> content fingerprint pinned at signing (see authoring/fingerprint.ts). */
+  acFingerprints: z.record(z.string()),
+  /** Version-pinned system-layer elements referenced (empty on greenfield — not yet seeded). */
+  systemRefs: z.array(z.string()).default([]),
+  /** AC-IDs this signature covers; status derives from their coverage of the current set. */
+  approvedAcIds: z.array(z.string()),
+});
+export type ApprovedSpecRef = z.infer<typeof ApprovedSpecRef>;
+
+/**
+ * The spec state object: the first persistence target for a signature (issues
+ * only exist post-decomposition). Identity is the spec dir path. `status` is
+ * never stored — it is *derived* from approved.approvedAcIds vs the current AC
+ * set (AC-AUTH-008, see authoring/drift.ts deriveStatus).
+ */
+export const SpecState = z.object({
+  path: z.string(), // spec dir, e.g. docs/specs/authoring-layer — the identity
+  approved: ApprovedSpecRef.nullable().default(null), // null until first signed
+  signedAt: z.string().nullable().default(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type SpecState = z.infer<typeof SpecState>;
+
 // --- the whole database ----------------------------------------------------
 
 export const DB = z.object({
@@ -212,6 +250,7 @@ export const DB = z.object({
   prs: z.array(PR).default([]),
   evalRuns: z.array(EvalRun).default([]),
   evalTasks: z.array(EvalTask).default([]),
+  specStates: z.array(SpecState).default([]),
 });
 export type DB = z.infer<typeof DB>;
 

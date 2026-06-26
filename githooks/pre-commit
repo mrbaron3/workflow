@@ -11,3 +11,15 @@ if [ -n "$md" ]; then
   # shellcheck disable=SC2086
   npx markdownlint-cli2 $md
 fi
+
+# 3. Authoring signing-gate lint (AUTH-B): any spec dir with a staged spec.md /
+#    acceptance.yaml must pass coverage / no-renumber / no-manual before commit.
+#    Code enforces integrity here, not the to-spec skill (skill-independent).
+specdirs=$(git diff --cached --name-only --diff-filter=ACM \
+  | grep -E '/(spec\.md|acceptance\.yaml)$' \
+  | xargs -r -n1 dirname | sort -u || true)
+for d in $specdirs; do
+  if [ -f "$d/spec.md" ] && [ -f "$d/acceptance.yaml" ]; then
+    npx tsx .claude/skills/to-spec/scripts/check-spec.ts "$d"
+  fi
+done
