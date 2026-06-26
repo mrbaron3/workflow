@@ -1,7 +1,7 @@
 # <機能名> 受け入れ検証 (acceptance.yaml)
 #
 # grader 向けの verification + severity を spec.md から分離した SoT（ADR-0001 D15）。
-# spec.md の各受け入れ基準シナリオに付した AC-ID をキーに join する。両ファイルとも同じ epic
+# spec.md の各受け入れ基準シナリオに付した AC-ID をキーに join する。両ファイルとも同じ spec
 # ディレクトリの repo 内に置き Git 追跡する。
 #
 # 役割分担:

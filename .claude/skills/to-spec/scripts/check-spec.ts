@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Signing-gate integrity check for an epic's authored spec: a thin wrapper that parses
+ * Signing-gate integrity check for a spec's authored contract: a thin wrapper that parses
  * spec.md + acceptance.yaml and delegates to the vendored deterministic lint in
  * ./lib/authoring-lint.ts. The skill's prose never re-implements the rules.
  *
