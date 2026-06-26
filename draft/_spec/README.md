@@ -279,7 +279,7 @@ open question と、解消した決定の記録（日付つき）。
 優先順位は §8 推奨優先順位（提案）の初期値。確定のたびに状態を更新する。
 
 - [ ] M20 オーサリング層 / spec.md 契約（下書き v2・O1 反転完了 / 敵対レビューで drift 二段化・gitSha 永続先・status 派生を再修正）
-- [ ] M21 Design Planner（ADR-0004・三層設計 system/epic/slice + 分解 / 下書き）
+- [ ] M21 Design Planner（ADR-0004・三層設計 system/spec/slice + 分解 / 下書き）
 - [ ] M22 Design Reviewer（ADR-0002・独立設計レビュ + DesignScorecard / 下書き）
 - [ ] M01 共通契約モデル
 - [ ] M02 Hermes-agent（ADR-0001 で進捗集約に縮小・dispatch 不在）

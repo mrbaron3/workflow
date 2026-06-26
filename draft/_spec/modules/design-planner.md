@@ -7,27 +7,27 @@
   **ADR-0007（[0007](../decisions/0007-design-layer-agents-and-cadence-gradient.md) D41-D43, D45-D48・文書種別4役 / 設計粒度のグラデーション / 図表派生）**,
   REQUIREMENTS.md §11/§12
 - 参考実装: [agents/issue-planner.md](../../../agents/issue-planner.md)（**分割元**）, `src/planning/planner.ts`（**置換**）
-- 仕様状態: 下書き（ADR-0004 で三層 system/epic/slice に改訂・ADR-0007 で文書種別4役分割と設計粒度のグラデーションを追加）
+- 仕様状態: 下書き（ADR-0004 で三層 system/spec/slice に改訂・ADR-0007 で文書種別4役分割と設計粒度のグラデーションを追加）
 - 最終更新: 2026-06-24
 
 ## 1. 目的とスコープ境界
 
-`contract-approved` な spec.md（オーサリング SoT）を入力に、**設計を三層（system / epic / slice）で著し**、
+`contract-approved` な spec.md（オーサリング SoT）を入力に、**設計を三層（system / spec / slice）で著し**、
 PR サイズの issue へ分解する層。AI が著者で人間 override は任意。設計成果物は spawn 前に設計審査役の
 **層別・大域整合**の独立審査を通る。本層は設計の**著者・修正者**であり審査者ではない（自己評価しない）。
 
 三層（ADR-0004 D30）:
 
 - **system 層**（ドメインマップ / データ設計 / アーキ）: **全体で単一の生きた SoT**。本層はこれを**読み、
-  必要時だけ追加的に拡張するデルタ**を出す。所有は全体であり epic ではない（D31）。
-- **epic 層**: 本 epic の設計判断 = どの system 層をどう拡張したか（design-delta）＋ コンポーネント設計。
+  必要時だけ追加的に拡張するデルタ**を出す。所有は全体であり spec ではない（D31）。
+- **spec 層**: 本 spec の設計判断 = どの system 層をどう拡張したか（design-delta）＋ コンポーネント設計。
 - **slice 層**: PR サイズの seam 設計。
 
 担う:
 
 - system 層成果物の **追加的拡張デルタ**（ドメイン/データ/アーキへ新要素を additive 追加。既存を
   renumber・巻き戻ししない）
-- epic の `design-delta.md`（読んだ／拡張した system 要素の版固定参照 ＋ 追加要素の最小記述 ＋ affectsAcIds）
+- spec の `design-delta.md`（読んだ／拡張した system 要素の版固定参照 ＋ 追加要素の最小記述 ＋ affectsAcIds）
 - コンポーネント/スライス（被覆かつ排他・PR サイズ・依存順）
 - `IssueSpawnOrder`（参照集合・版固定）= M05 への handoff 契約
 - 設計の human_review タグ点（D17）の決定・drift 時の層別再設計（逆引き）
@@ -57,24 +57,24 @@ PR サイズの issue へ分解する層。AI が著者で人間 override は任
 ## 3. 出力契約 (produces)
 
 文書（人間が所有・編集）は**リッチ Markdown**、handoff（機械が受け渡す）は**構造化データ**（ADR-0004 D35）。
-epic ディレクトリと system 層のレイアウト:
+spec ディレクトリと system 層のレイアウト:
 
 ```text
 specs/
-  _system/                        # system 層（global・単一 SoT・追加のみ・全 epic が参照）
+  _system/                        # system 層（global・単一 SoT・追加のみ・全 spec が参照）
     domain-map.md                 # 要素 ID: DOM-NNN
     data-model.md                 # 要素 ID: DATA-NNN
     architecture.md               # 要素 ID: ARCH-NNN
-  <epic>/
+  <spec>/
     spec.md / acceptance.yaml / manual-requirements.md   # オーサリング層
-    design-delta.md               # 本層: 本 epic が system 層へ加えた拡張の記録
-    slices/SLICE-<EPIC>-NNN.md     # 本層: コンポーネント設計（PR サイズ・1:1 で issue）
+    design-delta.md               # 本層: 本 spec が system 層へ加えた拡張の記録
+    slices/SLICE-<SPEC>-NNN.md     # 本層: コンポーネント設計（PR サイズ・1:1 で issue）
 ```
 
 ### 3.1 system 層成果物（global・リッチ Markdown・追加のみ）
 
 各成果物は人間可読の Markdown 本文 ＋ **全体で一意・安定な要素 ID**。本層は既存を読み、必要なら新要素を
-additive 追加する（本層が単独で「所有」するのではなく、全 epic が共有する単一物を拡張する）。
+additive 追加する（本層が単独で「所有」するのではなく、全 spec が共有する単一物を拡張する）。
 
 - **domain-map.md**（`DOM-NNN`）: ユビキタス言語・エンティティ/集約・関係・境界づけられたコンテキスト・
   ドメイン不変条件。
@@ -92,16 +92,16 @@ additive 追加する（本層が単独で「所有」するのではなく、�
   判定し Yes のみ書く。内部実装（アルゴリズム・内部データ構造）は書かない。共有基盤は公開シェイプ
   （signature・契約）まで・内部表現は実装に委ねる。
 
-### 3.2 design-delta.md（epic 層・本 epic の拡張記録・リッチ Markdown）
+### 3.2 design-delta.md（spec 層・本 spec の拡張記録・リッチ Markdown）
 
-本 epic が system 層に加えた拡張を1枚に集約する（監査・drift 逆引き・審査入力）。
+本 spec が system 層に加えた拡張を1枚に集約する（監査・drift 逆引き・審査入力）。
 
 ```text
 DesignDelta:
-  epicId
-  reads[]:                # 本 epic が前提として読んだ system 要素（版固定参照）
+  specId
+  reads[]:                # 本 spec が前提として読んだ system 要素（版固定参照）
     - { artifact, elementId, gitSha }     # artifact ∈ {domain-map, data-model, architecture}
-  extends[]:              # 本 epic が additive 追加した system 要素
+  extends[]:              # 本 spec が additive 追加した system 要素
     - artifact
       elementId:          新採番（DOM/DATA/ARCH-NNN）
       summary:            追加した概念/テーブル/決定の要約（本文は当該成果物に置く）
@@ -116,7 +116,7 @@ DesignDelta:
 
 ```text
 DesignSlice:
-  sliceId:            SLICE-<EPIC>-NNN     # 安定・不変。issue / IssueContract の join キー
+  sliceId:            SLICE-<SPEC>-NNN     # 安定・不変。issue / IssueContract の join キー
   parentSliceId:      split 時の親（なければ null）
   title
   narrative:          { productGoal, userStory }   # M05 が IssueContract へ copy 投影する源泉
@@ -144,12 +144,12 @@ issue 投稿のための指示。**参照のみ**を持ち契約本体は埋め�
 
 ```text
 IssueSpawnOrder:
-  epicId / sliceId:       SLICE-<EPIC>-NNN
+  specId / sliceId:       SLICE-<SPEC>-NNN
   specRef:                { path, gitSha }      # spec.md（blob 版固定）
   verificationRef:        { path, gitSha }      # acceptance.yaml（blob 版固定）
   acceptanceCriteriaIds[] / manualRequirementIds[]
   sliceRef:               { path, gitSha }      # Tier slice（版固定）
-  designDeltaRef:         { path, gitSha }      # epic デルタ（版固定）
+  designDeltaRef:         { path, gitSha }      # spec デルタ（版固定）
   systemRefs[]:           { artifact, elementId, gitSha }   # 依存する system 要素（tech_stack 等の投影元）
   dependsOn[]:            先行 issue（dependsOnSlices 由来）
 ```
@@ -171,7 +171,7 @@ spec 状態 `contract-approved → designing → design-reviewed → decomposed`
 5. **human_review タグ判定**: `humanReview` な拡張 / `tier: human_review` の MR を含むスライスに review トリガ。
 6. **IssueSpawnOrder 出力** = 設計完成をシグナル。
 7. **設計審査役の独立審査**（本層の外・ADR-0004 D32/D33）: M03 が dispatch。審査役が **層別観点（ドメイン/
-   データ/アーキ = 全体に対して、スライス = epic 内）を1パスで**審査し DesignScorecard を産出。`pass` なら
+   データ/アーキ = 全体に対して、スライス = spec 内）を1パスで**審査し DesignScorecard を産出。`pass` なら
    M03 が `design-reviewed → decomposed` を書き投稿、resolve は M05。`changes-requested` なら `designing` へ
    差し戻し、本層が逆引きで該当のみ再設計。
 
@@ -180,7 +180,7 @@ spec 状態 `contract-approved → designing → design-reviewed → decomposed`
 - **AC drift**（オーサリング起因）: 変更/追加/削除 AC-ID を `affectsAcIds`（system 拡張）/ `coversAcIds`
   （スライス）で逆引きし、影響する拡張/スライスのみ再設計。
 - **system 層 drift（global・新規）**: 変更/拡張された system 要素 ID を `dependsOnSystem` で逆引きし、
-  影響スライスを**全 epic 横断**で再検証（大域整合・D32）。system 層は global ゆえ影響範囲も global。
+  影響スライスを**全 spec 横断**で再検証（大域整合・D32）。system 層は global ゆえ影響範囲も global。
 - **foundation drift**: 共有基盤の遡及的切り出し。新要素を additive 追加し前向き逆引きで依存辺を張る
   （既存原則どおり・既存 ID を renumber せず）。
 - **設計審査差し戻し**: finding の逆引きキー（要素 ID / sliceId / AC-ID）で該当のみ再設計。
@@ -192,7 +192,7 @@ spec 状態 `contract-approved → designing → design-reviewed → decomposed`
 
 `DSGN-FR-xxx`（ADR-0004 で三層化に改訂）。
 
-- **DSGN-FR-001 着手前提**: `contract-approved` の epic にのみ着手し、ApprovedSpecRef と**関連 system 層**の
+- **DSGN-FR-001 着手前提**: `contract-approved` の spec にのみ着手し、ApprovedSpecRef と**関連 system 層**の
   gitSha で入力を pin する。
 - **DSGN-FR-002 三層出力**: system 層デルタ（必要時）/ design-delta.md / DesignSlice 群を分けて産出する（D30）。
 - **DSGN-FR-003 system 層 = global 単一 SoT・additive**: ドメイン/データ/アーキは全体で単一の生きた成果物。
@@ -210,7 +210,7 @@ spec 状態 `contract-approved → designing → design-reviewed → decomposed`
 - **DSGN-FR-010 AC drift 影響局所化（双方向）**: 変更/追加/削除 AC-ID を逆引きし、該当する system 拡張 /
   スライスのみ再設計。無関係は不変。
 - **DSGN-FR-011 system 層 drift 局所化（global）**: 変更/拡張された system 要素 ID を `dependsOnSystem` で
-  **全 epic 横断**に逆引きし、影響スライスを再検証対象に挙げる（大域・D32）。
+  **全 spec 横断**に逆引きし、影響スライスを再検証対象に挙げる（大域・D32）。
 - **DSGN-FR-012 状態シグナル（書き込みは M03）**: 設計成果物の完成をシグナルするのみ。状態ラベル・resolve・
   投稿は行わない。
 - **DSGN-FR-013 contract altitude（tier 別）＋ 実装メモ非ゲート（γ）**: 各 tier は決定 + モジュール間契約 /
@@ -221,7 +221,7 @@ spec 状態 `contract-approved → designing → design-reviewed → decomposed`
   審査役、実装レベル重複は評価役が実コードに対して検出（ADR-0003 D27）。
 - **DSGN-FR-015 foundation drift の additive 処理**: 抽出 work order を受けたら新共有基盤要素＋抽出/refactor
   スライスを**新採番で additive 追加**し、前向き逆引きで依存辺を張る。既存 ID を renumber しない。
-- **DSGN-FR-016 adaptive（subset 拡張・整合は global）**: epic がデルタを出す system 層は subset でよい。
+- **DSGN-FR-016 adaptive（subset 拡張・整合は global）**: spec がデルタを出す system 層は subset でよい。
   しかし整合判断のため**関連 system 層は global に読む**。「触らない」と「整合を見ない」は別（D31）。
 - **DSGN-FR-017 文書 / 機械の線引き**: 人間所有文書（system 層成果物・design-delta・slices）はリッチ
   Markdown、機械 handoff（IssueSpawnOrder）は構造化データ（D35）。
@@ -262,7 +262,7 @@ spec 状態 `contract-approved → designing → design-reviewed → decomposed`
 - system 要素を1つ拡張 → design-delta の `extends` に新要素 ID が記録され、スライスが `dependsOnSystem` で
   参照し、内容を複製していないことを検証できる。
 - spec.md の AC を1つ変更（drift）→ 影響する system 拡張 / スライスのみ再設計対象に挙がり、無関係は不変。
-- system 要素を1つ変更（global drift）→ `dependsOnSystem` 逆引きで影響スライスが**epic を跨いで**挙がる。
+- system 要素を1つ変更（global drift）→ `dependsOnSystem` 逆引きで影響スライスが**spec を跨いで**挙がる。
 - 各スライスから IssueSpawnOrder（spec/verification/slice/design-delta/system 参照 ＋ AC/MR 群）を生成でき、
   契約本体・設計本文が**埋め込まれていない**ことを検証できる。
 - 設計文書（system/design-delta/slice）が contract altitude を超えず、クラス内部設計を本文に焼き込んでいない
@@ -275,8 +275,8 @@ spec 状態 `contract-approved → designing → design-reviewed → decomposed`
   設計判断（三層）と分解を本層へ、resolve（機械投影）を M05 へ。
 - `src/planning/planner.ts`: seed YAML → contract 直接生成を**置換**。spec.md → 三層設計 → IssueSpawnOrder
   （参照）→ M05 resolve に組み替える。`Issue.contract` 埋め込み廃止と連動。
-- **二層 → 三層の移行**: 旧 `ArchitectureSpine`（epic 共有 spine）を解体し、ドメイン/データ/アーキを
-  `_system/` の global 成果物へ昇格。epic は spine を持たず `design-delta.md`（system へのデルタ）を持つ。
+- **二層 → 三層の移行**: 旧 `ArchitectureSpine`（spec 共有 spine）を解体し、ドメイン/データ/アーキを
+  `_system/` の global 成果物へ昇格。spec は spine を持たず `design-delta.md`（system へのデルタ）を持つ。
 - **M05 への影響（cross-module・要追従）**: 旧 `tier1SpineRef` → `systemRefs[]`（architecture 等への版固定参照）。
   M05 は `tech_stack` を spine でなく `systemRefs` の architecture 要素から copy 投影する。M05 改訂時に反映
   （README §4.4 / 決定スタックで追跡）。
@@ -290,9 +290,9 @@ foundation drift。これらのうち**二層 spine は ADR-0004 で三層へ解
 
 本改訂で確定（ADR-0004 D30-D35・2026-06-18）:
 
-- **設計を三層化**（system / epic / slice）。ドメイン/データ/アーキを epic 共有 spine から **global 単一 SoT**
+- **設計を三層化**（system / spec / slice）。ドメイン/データ/アーキを spec 共有 spine から **global 単一 SoT**
   （`_system/`）へ昇格（D30/D31）。
-- epic の設計 = system 層への **additive デルタ**（`design-delta.md`）＋ コンポーネント（D31）。
+- spec の設計 = system 層への **additive デルタ**（`design-delta.md`）＋ コンポーネント（D31）。
 - **大域整合審査**は設計審査役の所掌（本層は global に整合するよう著す・D32）。
 - 審査は **1パス＋層別セクション**、上流層は後で先行ゲート（D33）。
 - **γ**: 強制は contract altitude のみ・固定は非ゲートの実装メモ（D34）。
@@ -304,18 +304,18 @@ foundation drift。これらのうち**二層 spine は ADR-0004 で三層へ解
   図表生成=派生）。本層の専門化であり層/高度規律は不変（D41）。
 - **実装は文書種別で 3 専用エージェントに分割**（D49・2 skill を実装して実態確認の上で確定）:
   `to-basic-design`（domain-map + architecture・境界コンテキスト）/ `to-db-design`（data-model・境界
-  コンテキスト）/ `to-detail-design`（slice・epic）。各々 `context: fork` 隔離・`assets/` 出力テンプレ・
+  コンテキスト）/ `to-detail-design`（slice・spec）。各々 `context: fork` 隔離・`assets/` 出力テンプレ・
   frontmatter `hooks`（Stop）で検査強制。図表は skill でなく下流レンダラ。決定的 tier は単一ソース
   `src/design/lint.ts` を各エージェントに vendor（`npm run bundle-skills`）し、M03 も同じ src を呼ぶ（D37）。
 - **図表生成は派生レンダリング**（data-model→ER / architecture→コンポーネント / domain-map→ドメイン /
   slice+architecture seam→シーケンス）。SoT でない・非ゲート・source 変更時に再生成（D42）。
 - **詳細設計の高度 = seam/契約まで**。内部実装は非ゲートの実装メモ（D43 = D34 の役適用）。
-- **着工単位 = epic / 整合単位 = global system 層**。big design up front 不採用（D45）。
-- **設計粒度のグラデーション**: domain-map / data-model = **境界コンテキスト単位**（cross-epic 所有）/
-  architecture = モジュール境界 / slice = epic。ADR-0004 D31 の adaptive を設計粒度のグラデーションへ拡張（D46）。
+- **着工単位 = spec / 整合単位 = global system 層**。big design up front 不採用（D45）。
+- **設計粒度のグラデーション**: domain-map / data-model = **境界コンテキスト単位**（cross-spec 所有）/
+  architecture = モジュール境界 / slice = spec。ADR-0004 D31 の adaptive を設計粒度のグラデーションへ拡張（D46）。
 - **DB/domain は lazy boundary / coherent within**: 触らない境界コンテキストは設計しないが、first touch で
   その境界コンテキストのデータモデルを概念レベルで一貫設計し、物理は additive。2 番目以降の同コンテキスト
-  epic は read のみ＝二重設計を設計時に潰す（D47）。
+  spec は read のみ＝二重設計を設計時に潰す（D47）。
 
 残 open:
 
@@ -326,5 +326,5 @@ foundation drift。これらのうち**二層 spine は ADR-0004 で三層へ解
 - first touch でどこまでモデル化するかの判断境界（speculative と piecemeal の間・観測から起こす・ADR-0007 §8）。
 - `design-delta.md` の最小スキーマの確定（拡張要素の記述粒度）。
 - `estimatedScope` の判定基準（暫定見積り。実超過は Generator 検知）。
-- system 要素 ID の採番接頭辞（global ゆえ epic prefix を持たない: DOM/DATA/ARCH-NNN）の最終確定。
+- system 要素 ID の採番接頭辞（global ゆえ spec prefix を持たない: DOM/DATA/ARCH-NNN）の最終確定。
 - M05 `tier1SpineRef → systemRefs` 追従（cross-module）。

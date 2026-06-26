@@ -84,7 +84,7 @@
 
 **事前条件**
 
-- spec.md と acceptance.yaml が同じ epic ディレクトリに存在し、ともにパース可能。
+- spec.md と acceptance.yaml が同じ spec ディレクトリに存在し、ともにパース可能。
 - 採番・整合の不変条件の SoT は**コード**（check-spec.ts / src の lint）であり、散文に再実装しない（ADR-0005 D37）。
 
 **受け入れ基準**

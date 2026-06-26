@@ -16,13 +16,13 @@
 ある以上、自己評価でない独立審査を必須とする。
 
 主務は **層別の整合審査**であり、特に **system 層（ドメイン/データ/アーキ）への拡張は全体に対する大域整合**で
-見る（ADR-0004 D32）。局所品質の採点ではない。epic ライフサイクルの `designing → design-reviewed`（合格）/
+見る（ADR-0004 D32）。局所品質の採点ではない。spec ライフサイクルの `designing → design-reviewed`（合格）/
 `→ designing` 差し戻し（不合格）を担う。
 
 担う:
 
 - 設計成果物の **決定的検証**（被覆かつ排他・ID 安定・参照実在・DAG・名前衝突・additive・埋め込み禁止）
-- **層別の整合審査**（ドメイン/データ/アーキ = 全体に対して、スライス = epic 内）= 大域 coherence
+- **層別の整合審査**（ドメイン/データ/アーキ = 全体に対して、スライス = spec 内）= 大域 coherence
 - `DesignScorecard`（blocking / non-blocking・finding は要素 ID / sliceId / AC-ID を参照）の産出
 - 設計起因失敗を層3（`design_failure` taxonomy）へ携帯する観測点の供給
 
@@ -47,7 +47,7 @@
 
 - **system 層成果物（global）@gitSha**: `_system/domain-map.md`（DOM-NNN）/ `data-model.md`（DATA-NNN）/
   `architecture.md`（ARCH-NNN）。**拡張の大域整合を判定する基準**ゆえ全体を読む。
-- **design-delta.md@gitSha**: 本 epic の `reads[]` / `extends[]`（affectsAcIds 付き）。
+- **design-delta.md@gitSha**: 本 spec の `reads[]` / `extends[]`（affectsAcIds 付き）。
 - **DesignSlice[]@gitSha**: sliceId / coversAcIds / coversMrIds / dependsOnSystem / dependsOnSlices /
   componentDesign / implementationNotes / testApproach。
 - **IssueSpawnOrder[]**: spawn order 群（参照集合・版固定）。
@@ -70,13 +70,13 @@
 | ドメイン | **global**（全体 or 境界コンテキスト） | 拡張した概念がドメインマップ全体と整合するか（既存概念の別名重複・境界侵犯・不変条件矛盾の有無） | 概念重複・境界侵犯・不変条件矛盾は blocking |
 | データ | **global** | 拡張したスキーマがデータモデル全体・ドメインマップと整合するか（所有・正規化・移行後方互換・永続化契約） | 既存スキーマとの矛盾・後方互換破壊・ドメイン不整合は blocking |
 | アーキ | **global** | 拡張した境界/seam/共有基盤が全体と整合するか（境界 coherence・seam 噛み合い・共有基盤の意味的重複） | 境界矛盾・seam 不一致・契約レベル重複は blocking |
-| スライス | **epic 内** | 被覆を超えて componentDesign が依存 system 要素に反しないか / cross-slice 前提供給 / AC 意図充足 / redLine 不侵犯 | 参照背反・前提供給欠落・AC 意図取りこぼし・redLine 侵犯は blocking |
+| スライス | **spec 内** | 被覆を超えて componentDesign が依存 system 要素に反しないか / cross-slice 前提供給 / AC 意図充足 / redLine 不侵犯 | 参照背反・前提供給欠落・AC 意図取りこぼし・redLine 侵犯は blocking |
 
 **整合性 tier の rubric は contract altitude で書く（層ごとチェックリストを作らない・D34/D29⑤）。** 全層に一様に適用する2要素を固定する:
 
 - **証拠要件（finding の falsifiability）**: finding は違反の**具体物**（別名重複する概念の対 / 矛盾するスキーマ /
   背反する要素 ID / 満たされない AC 意図）を引用しなければ無効。
-- **blocking 判定の単一手続き**: 実装を**待たずに**違反と確定でき、かつ**独立ユニット（他 epic / 他スライス /
+- **blocking 判定の単一手続き**: 実装を**待たずに**違反と確定でき、かつ**独立ユニット（他 spec / 他スライス /
   他 PR）を非整合にする**なら blocking。一部でも実装まで不可知なら non-blocking。
 
 > **γ（D34）**: `implementationNotes`（アルゴリズム/最適化）は審査の**対象外・非ゲート**。本層は契約 altitude
@@ -89,12 +89,12 @@
 
 ```text
 DesignScorecard:
-  epicId
+  specId
   reviewedRefs:               # 審査対象の版固定参照（決定性・監査）
     systemRefs[]:    { artifact, elementId, gitSha }
     designDeltaRef:  { path, gitSha }
     sliceRefs[]:     { sliceId, path, gitSha }
-    spawnOrderIds[]: SLICE-<EPIC>-NNN
+    spawnOrderIds[]: SLICE-<SPEC>-NNN
     specRef:         { path, gitSha }
   graderTiers:
     deterministic:   pass | fail   # 層1: 被覆/排他・ID・参照・DAG・名前衝突・additive・埋め込み（§3.3）
@@ -154,7 +154,7 @@ spec 状態 `designing → design-reviewed → decomposed`。状態書き込み�
 - **DREV-FR-001 独立性**: 設計立案役と AI コンテキストを共有しない（自己評価の排除）。
 - **DREV-FR-002 spawn 前審査**: issue spawn の前に審査。`decomposed` 遷移は `verdict: pass` を条件とする。
 - **DREV-FR-003 層別・大域整合が主務**: ドメイン/データ/アーキの拡張は**全体に対して**整合を見る（D32）。
-  スライスは epic 内。局所品質は blocking にしない（最大 non-blocking）。
+  スライスは spec 内。局所品質は blocking にしない（最大 non-blocking）。
 - **DREV-FR-004 決定的 tier**: §3.3（被覆/排他・ID・additive・参照・DAG・名前衝突・埋め込み）を機械検査し fail を
   blocking 化。
 - **DREV-FR-005 blocking 基準 = 整合性違反**: 実装を待たず確定できる整合性違反に限定（概念重複・スキーマ矛盾・
@@ -232,7 +232,7 @@ D25 層1=決定的・層3=design_failure。
 本改訂で確定（ADR-0004 D30-D35・2026-06-18）:
 
 - **5軸の単一審査 → 三層 + global の層別審査**（D30/D32）。ドメイン/データ/アーキの拡張は**全体に対する大域
-  整合**で見る。スライスは epic 内。
+  整合**で見る。スライスは spec 内。
 - **審査は1パス + 層別セクション**、上流層は後で先行ゲート（D33）。
 - **γ**: `implementationNotes` は非ゲート・審査対象外（D34）。本層は契約 altitude のみをゲートする。
 - **DesignScorecard は構造化データのまま**（機械成果物・D35）。`layer` / `systemRefs` を追加。

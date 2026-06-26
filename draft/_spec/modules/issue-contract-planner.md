@@ -18,8 +18,8 @@ M03 Coordinator が issue を dispatch する時点で呼ばれ、Generator / Ev
 
 本層は **全 lane 共通の「組み立て + validation コア」**である。issue の発生源（lane）は複数ある:
 
-- **greenfield 分解**: 承認済み epic spec.md を M21 が Tier1/Tier2 設計して PR サイズに分解した 1 スライス。
-- **issue 粒度の票**: bug / tech-debt / harness / eval / 既存プロジェクト導入（brownfield）など、epic を経由せず
+- **greenfield 分解**: 承認済み spec.md を M21 が Tier1/Tier2 設計して PR サイズに分解した 1 スライス。
+- **issue 粒度の票**: bug / tech-debt / harness / eval / 既存プロジェクト導入（brownfield）など、spec を経由せず
   最初から 1 issue 粒度で著述された票（[schema.ts:35-43](../../../src/domain/schema.ts#L35-L43) の `IssueType` が
   これらを既定する: `bug` / `tech-debt` / `harness` / `eval`）。
 
@@ -75,17 +75,17 @@ resolve の唯一の入力は **`IssueSource`**——複数 lane を正規化し
 ```text
 IssueSource（版固定・承認済み）:
   issueType:               feature | bug | tech-debt | harness | eval ...（IssueType）
-  epicRef?:                {path, gitSha}      任意（targeted/brownfield は null 可。Issue.epicId も nullable）
+  specRef?:                {path, gitSha}      任意（targeted/brownfield は null 可。Issue.epicId も nullable）
   narrative:               { productGoal, userStory }   上流が著述（§3 出力へ copy）
   behaviorRef:             {path, gitSha}      AC behavior + severity の SoT
-                                               （greenfield = epic spec.md / targeted = issue 票）
+                                               （greenfield = spec.md / targeted = issue 票）
   verificationRef:         {path, gitSha}      AC verification の SoT（acceptance.yaml 形）
   acceptanceCriteriaIds[]: この source が宣言する AC-ID 集合
   scope:                   { include[], exclude[] }
   redLines[]
   systemRefs[]?:           {artifact, elementId, gitSha}   任意（greenfield のみ。依存する system 層要素
                                                （architecture.md の ARCH-NNN 等）の版固定参照。`tech_stack` の投影元。
-                                               targeted は epic 非経由ゆえ無し）
+                                               targeted は spec 非経由ゆえ無し）
   tier2SliceRef?:          {path, gitSha}      任意（greenfield のみ。targeted は issue 粒度で既にスライス済み）
   acFingerprints:          AC-ID → 承認時ハッシュ（behavior + verification）。drift gate の基準
   dependsOn[]:             先行スライス/issue（dependsOnSlices。再利用順序）
@@ -97,14 +97,13 @@ IssueSource（版固定・承認済み）:
 
 lane ごとの `IssueSource` の組み立て元（本層の外。consume するのは正規化後の形のみ）:
 
-- **greenfield**: M21 が IssueSpawnOrder（design-planner.md §3.3）の 1 要素として供給。`behaviorRef` = epic
-  spec.md@gitSha、`verificationRef` = acceptance.yaml@gitSha、`systemRefs` = 依存する system 層要素
+- **greenfield**: M21 が IssueSpawnOrder（design-planner.md §3.3）の 1 要素として供給。`behaviorRef` = spec.md@gitSha、`verificationRef` = acceptance.yaml@gitSha、`systemRefs` = 依存する system 層要素
   （architecture.md の ARCH-NNN 等。`tech_stack` の投影元・ADR-0004 D31）の版固定参照、`tier2SliceRef` = Tier2
   DesignSlice@gitSha、`narrative` = M21 が著す per-slice goal/userStory（§10 決定）、`acFingerprints` =
   ApprovedSpecRef（M20 §3.4）由来。
 - **targeted lane（bug/tech-debt/harness/eval 票 + brownfield intake）**: triage / M02 / M10 / M12 が、1 issue
   粒度の票（behavior + verification を M20 と同じ著述形で版固定）を供給。`systemRefs` / `tier2SliceRef` は
-  無し（epic 非経由・既に issue 粒度。`tech_stack` を持たない）、`epicRef` は任意（brownfield は合成 epic or null）。
+  無し（spec 非経由・既に issue 粒度。`tech_stack` を持たない）、`specRef` は任意（brownfield は合成 spec or null）。
   `narrative` は票が直接持つ。
 
 > **`brownfield` は IssueType ではなく intake lane（source 種別）**。`IssueType`（schema.ts）は
@@ -229,7 +228,7 @@ resolve は M03 が dispatch 可能 issue を処理する時点で呼ばれる�
 - **RSLV-FR-010 全 Ref 版固定の強制**: `IssueSource` の全 Ref は `{path, gitSha}`。gitSha 無しの可変参照を
   受け取らない。
 - **RSLV-FR-011 lane 非依存（uniform IssueSource）**: resolve は `issueType` / lane に依らず同一処理。
-  `systemRefs` / `tier2SliceRef` / `epicRef` は任意。slice 無し（targeted）の場合は被覆を source/output の
+  `systemRefs` / `tier2SliceRef` / `specRef` は任意。slice 無し（targeted）の場合は被覆を source/output の
   二者で検証する。greenfield も targeted（bug/tech-debt/harness/eval 票・brownfield lane）も同じコードパスを通る。
 - **RSLV-FR-012 著述は上流・合成しない**: `narrative` / `behavior` / `verification` / `scope` は `IssueSource` が
   供給する。M05 はこれらを copy/join するのみで、自由文や NL から AC・narrative を**合成しない**（決定性保持）。
@@ -283,7 +282,7 @@ resolve は M03 が dispatch 可能 issue を処理する時点で呼ばれる�
   `planFromSeed` を**置換**。`IssueSource → resolve` に組み替える。`SeedRoadmap` schema は廃止 / 再定義
   （M20 §9 と連動）。schema validation（L69）の「invalid は緩めず落とす」精神は継承。
 - **targeted lane の供給元**: bug/tech-debt/harness/eval/brownfield の `IssueSource` は triage / M02 Hermes /
-  M10 Eval Curator / M12 Harness Analyst が emit する。これらは epic spec.md を経由せず、M20 と同じ著述形
+  M10 Eval Curator / M12 Harness Analyst が emit する。これらは spec.md を経由せず、M20 と同じ著述形
   （behavior + verification を版固定）で 1 issue 粒度の票を起票する。本層はその正規化済み `IssueSource` を
   consume するのみ（lane 個別の起票 spec は各モジュール側）。
 - [src/domain/schema.ts](../../../src/domain/schema.ts): `Issue.contract` 埋め込み（L108）→ source refs 参照へ
@@ -317,14 +316,14 @@ D29 foundation drift（spawn 後 merge 前は `dependsOn` 辺追加 + gitSha 更
   判断を要さない（要するなら上流の欠落）。D28 / D26 §3 に整合し、M16 モデル独立性も自動充足。
 - **drift は検知して差し戻すのみ・再署名はしない**。再署名は人間（著述層・O4）。本層は dispatch 時の gate。
 - **lane 非依存の uniform `IssueSource`（§2）**: greenfield 分解と issue 粒度の票（bug/tech-debt/harness/eval 票
-  および brownfield lane）を同一の `IssueSource` に正規化し、`systemRefs`/`tier2SliceRef`/`epicRef` を任意化。M05 を**全 lane 共通の
+  および brownfield lane）を同一の `IssueSource` に正規化し、`systemRefs`/`tier2SliceRef`/`specRef` を任意化。M05 を**全 lane 共通の
   resolve + validation コア**に確定。被覆は slice 有無で三者/二者に degrade。理由: スキーマが既に bug/tech-debt/
-  harness/eval を持ち、M10/M12 が epic を経由しない issue を生むため、resolve を greenfield 専用にすると
+  harness/eval を持ち、M10/M12 が spec を経由しない issue を生むため、resolve を greenfield 専用にすると
   これらが契約に乗らない（B 級・変更コスト高ゆえ今確定）。
 - **productGoal / userStory / scope の源泉 = `IssueSource` 供給必須**（旧 open を解消）: narrative / scope は
   resolve が著述せず source から copy する。greenfield では **M21 が per-slice narrative を著す**（design-planner.md
   §3.2 DesignSlice に narrative フィールドの追加が要る・cross-module 調整・M21 確定時に反映）、targeted では票が
-  直接持つ。これにより「epic 粒度の自由文を純機械 join に乗せられない」問題が、authoring を上流へ寄せることで
+  直接持つ。これにより「spec 粒度の自由文を純機械 join に乗せられない」問題が、authoring を上流へ寄せることで
   消える（決定性を保つ）。
 - **standalone の閉じ方 = 境界 pre-resolve + 共有純粋 `fingerprint()`（`SourceResolver` port は採らない）**:
   resolve コアを `(ResolvedSource, acFingerprints) → IssueContract` の純関数とし、ref→content 解決は境界

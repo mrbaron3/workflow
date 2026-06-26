@@ -19,7 +19,7 @@
 | ID | 名前 | 一行で | loop 1 の spec |
 | --- | --- | --- | --- |
 | M20 | オーサリング層 | 人間+AI で spec.md / acceptance.yaml を共著し、人間が署名する | 下書き(v2) |
-| M21 | Design Planner | 承認済み spec から三層設計（system/epic/slice）を著し、PR サイズに分解する | 下書き |
+| M21 | Design Planner | 承認済み spec から三層設計（system/spec/slice）を著し、PR サイズに分解する | 下書き |
 | M22 | Design Reviewer | M21 の設計を **spawn 前**に独立審査し DesignScorecard を出す | 下書き |
 | M05 | Issue Contract Planner | 版固定された承認物を **機械的に** IssueContract へ投影（resolve）する | 下書き |
 | M03 | Coordinator | 状態機械・dispatch・ロック・worktree を持つ **決定的コード**の背骨 | **未着手（穴）** |
@@ -50,12 +50,12 @@ flow を追う前に、**真実（source of truth）が二か所に分かれて�
 
 ## 3. 二つの状態機械（loop 1 の骨格）
 
-loop 1 は **epic（spec.md 1 枚）** と **issue（work order）** の二段ライフサイクルで動く（ADR-0001 D9/§5）。
+loop 1 は **spec（spec.md 1 枚）** と **issue（work order）** の二段ライフサイクルで動く（ADR-0001 D9/§5）。
 **状態ラベルを書くのは常に M03（決定的コード）**。M21/M22 などの LLM は「完成したよ」と**シグナルするだけ**で、
 状態は書かない（「状態遷移を LLM にやらせない」原則）。
 
 ```text
-epic（spec.md）ライフサイクル — オーサリング + 設計。issue 化の前:
+spec（spec.md）ライフサイクル — オーサリング + 設計。issue 化の前:
   planned → ready-for-contract → contract-drafting(協業) → contract-approved(人間署名)
           → designing(M21) → design-reviewed(M22 pass) → decomposed(issue 群を spawn)
                 ↑__________________________|  M22 changes-requested は designing へ差し戻し（設計内側ループ）
@@ -96,7 +96,7 @@ issue（work order）ライフサイクル — spawn 時に生成:
 ```markdown
 # Todo に期限(dueDate)を追加 受け入れ要件
 
-<!-- meta(featureId=TODODUE / area=fullstack / epicId=EPIC-TODODUE)・署名は epic 状態オブジェクト(M18)が持つ -->
+<!-- meta(featureId=TODODUE / area=fullstack / specId=SPEC-TODODUE)・署名は spec 状態オブジェクト(M18)が持つ -->
 <!-- ドメイン概念・業務ステータスは system 層(_system/)を固定制約として参照する -->
 
 ## サブ機能一覧
@@ -147,7 +147,7 @@ issue（work order）ライフサイクル — spawn 時に生成:
 > AC-ID は `**AC-TODODUE-001**` のように行頭の太字アンカーで埋め込むだけ。正規表現で抽出でき、
 > 被覆/排他チェックと acceptance.yaml への join が成立する一方、文書は人間向けの読み物のまま保てる。
 > severity は採点属性ゆえ spec.md でなく acceptance.yaml に置く（下記）。meta・署名は frontmatter ではなく
-> epic 状態オブジェクト（ApprovedSpecRef）が持つ（実物の spec.md にも frontmatter は無い）。
+> spec 状態オブジェクト（ApprovedSpecRef）が持つ（実物の spec.md にも frontmatter は無い）。
 
 `specs/todo-due/acceptance.yaml`（AI 協業・grader 向け。AC-ID をキーに join）:
 
@@ -182,12 +182,12 @@ manualRequirements:
     verifier: 人間
 ```
 
-署名すると M20 tooling が **ApprovedSpecRef** を作り、**epic 状態オブジェクト（M18 store）へ永続**する
+署名すると M20 tooling が **ApprovedSpecRef** を作り、**spec 状態オブジェクト（M18 store）へ永続**する
 （issue はまだ無いので、issue には置けない＝O2 の核心）。これが「どの版を承認したか」の権威ある記録:
 
 ```text
 ApprovedSpecRef:
-  epicId:            EPIC-TODODUE
+  specId:            SPEC-TODODUE
   featureId: TODODUE / area: fullstack    # meta（frontmatter でなくここが持つ）
   approvalCommitSha: a1b2c3…              # 署名 commit。真正性/監査用
   behaviorRef:       { path: specs/todo-due/spec.md,             gitSha: <blob-sha> }
@@ -207,8 +207,8 @@ ApprovedSpecRef:
 
 ### Hop 2 — M21 Design Planner（三層で設計し PR サイズに割る・AI）
 
-M03 が epic を `designing` にする。M21 は承認物と **関連する system 層**を gitSha で pin して読み、三層で著す:
-**system 層**（全体で単一・必要分だけ additive 拡張）/ **epic の design-delta**（拡張の記録）/ **slice**（PR サイズ）。
+M03 が spec を `designing` にする。M21 は承認物と **関連する system 層**を gitSha で pin して読み、三層で著す:
+**system 層**（全体で単一・必要分だけ additive 拡張）/ **spec の design-delta**（拡張の記録）/ **slice**（PR サイズ）。
 この Todo はドメイン概念を増やさず、**データに1カラム**と判定/ソートの**共有基盤**を足すだけ（domain-map は触らない＝adaptive）。
 
 system 層への追加（global・追加のみ）。`specs/_system/data-model.md` と `architecture.md` に各1要素を additive 追加:
@@ -221,10 +221,10 @@ architecture.md + ARCH-031  共有モジュール core/dueDate（公開シェイ
                             期限の「意味」を各所で二重実装しないための共有 seam。
 ```
 
-`specs/todo-due/design-delta.md`（epic がどの system 層をどう拡張したか）:
+`specs/todo-due/design-delta.md`（spec がどの system 層をどう拡張したか）:
 
 ```text
-DesignDelta (EPIC-TODODUE):
+DesignDelta (SPEC-TODODUE):
   reads:   []                                   # 既存 system 要素は前提にしていない
   extends:
     - { artifact: data-model,   elementId: DATA-014, affectsAcIds: [AC-TODODUE-001,002,003] }
@@ -268,7 +268,7 @@ DesignSlice (SLICE-TODODUE-002  期限切れ表示と並べ替え):
 
 ```text
 IssueSpawnOrder (SLICE-TODODUE-002):
-  epicId: EPIC-TODODUE / sliceId: SLICE-TODODUE-002
+  specId: SPEC-TODODUE / sliceId: SLICE-TODODUE-002
   specRef:         { path: specs/todo-due/spec.md,         gitSha: <blob> }
   verificationRef: { path: specs/todo-due/acceptance.yaml, gitSha: <blob> }
   acceptanceCriteriaIds: [AC-TODODUE-002, AC-TODODUE-003]
@@ -294,7 +294,7 @@ M03 が M22 を dispatch。M22 は M21 と **AI コンテキストを共有し�
 
 ```text
 DesignScorecard:
-  epicId: EPIC-TODODUE
+  specId: SPEC-TODODUE
   graderTiers: { deterministic: pass, consistency: fail }
   findings:
     - id: F1
@@ -307,7 +307,7 @@ DesignScorecard:
   failureClass: design_failure
 ```
 
-**内側ループが回る**: M03 が epic を `designing` へ差し戻す → M21 が finding の逆引きキー
+**内側ループが回る**: M03 が spec を `designing` へ差し戻す → M21 が finding の逆引きキー
 （`SLICE-TODODUE-002`, `ARCH-031`）で **その 1 スライスだけ** 再設計（全体は触らない）→ 公開シェイプに
 合わせて修正 → 再シグナル → M22 再審査 → 今度は blocking 空で `verdict: pass`。M03 が
 `design-reviewed → decomposed` を書く。
@@ -376,7 +376,7 @@ loop 1 を理解する上で「**承認した版と現版がズレたらどう�
 | drift | 何が起きた | 誰が検知 | どう畳む |
 | --- | --- | --- | --- |
 | AC drift | 署名後に spec.md/acceptance.yaml が変わった | M20（二段検知）/ M05（dispatch 時 gate） | 変更 AC-ID を `approvedAcIds` から外す → 該当スライスだけ再設計・再署名 |
-| system 層 drift | system 要素（ドメイン/データ/アーキ）が変わった | M21 | 変更要素 ID を `dependsOnSystem` に持つスライスを**全 epic 横断**で再検証 |
+| system 層 drift | system 要素（ドメイン/データ/アーキ）が変わった | M21 | 変更要素 ID を `dependsOnSystem` に持つスライスを**全 spec 横断**で再検証 |
 | foundation drift | 共有基盤が後から必要と判明 | M07/監査が**事実**、M10/M21 が**抽出判断** | 新 `sharedFoundations` を **additive** 追加・既存 ID は renumber しない |
 
 > 例（AC drift）: 誰かが `AC-TODODUE-002` の behavior を「赤」→「太字」に変えると、M20 が `acFingerprints`

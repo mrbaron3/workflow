@@ -26,7 +26,7 @@
 
 - **ドメインマップ / データ設計 / アーキ（system 層）の著述** → 設計立案役（本層は system 層を**固定制約として
   参照**するのみ・埋め込まない・ADR-0004 D31）
-- 詳細設計（system / epic / slice 三層）と PR サイズ分解 → 設計立案役
+- 詳細設計（system / spec / slice 三層）と PR サイズ分解 → 設計立案役
 - spec.md → IssueContract の resolve 実体 → M05
 - 子 issue へのディスパッチ・状態機械の後半 → M03 Coordinator
 - 実装 → M06 Generator

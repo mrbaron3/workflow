@@ -65,14 +65,15 @@ roadmap / initiative（例: 「Todo アプリ」）         ← 上流（north-s
   design-reviewer.md / issue-contract-planner.md / `specs/authoring-layer/`（昇格 spec + acceptance.yaml）/
   `to-spec` テンプレ。`ApprovedSpecRef.epicId`→`specId`。README §95・ADR-0001/0002/0007 banner。
 - **FU-3** src 整理: 未使用の `ResolvedSource.epicId`（+ test fixture）を削除。
+- **FU-4** [`draft/_spec/loop1-walkthrough.md`](../loop1-walkthrough.md): 旧「epic = spec.md」フレーム
+  （epic ≡ spec の 1:1）を `EPIC-TODODUE`→`SPEC-TODODUE`・`epicId`→`specId`・epic→spec へ改名（narrative 不変）。
 - ドッグフード findings（[2026-06-25](../../../docs/brainstorm/2026-06-25-dogfood-m20-to-spec-findings.md)）の
   DF1 解決（「`to-spec` に carving を教える」）は本 ADR D50-D53 が**置換**する。
 
-残 follow-up（別タスク・承認制）:
+残 follow-up（別タスク・承認制・本 ADR の圏外）:
 
-- [`draft/_spec/loop1-walkthrough.md`](../loop1-walkthrough.md) は旧「epic = spec.md」フレームで全面記述
-  （`epicId=EPIC-TODODUE`・epic ライフサイクル・`DesignDelta(EPIC-…)` 等）。token 置換でなく概念的な
-  書き直しが要る。
+- **MR 廃止（DF5）の反映**: loop1-walkthrough.md / authoring-layer.md 等に残る `manual-requirements.md` /
+  `MR-ID` / `coversMrIds` 機構は 2026-06-19 の MR 廃止が未反映。epic→spec とは別の決定ゆえ別タスク。
 
 ## 5. ADR-0001 / 0002 / 0004 / 0007 / GLOSSARY の更新
 
