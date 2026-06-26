@@ -28,10 +28,15 @@ spec along these lines:
 Re-elicit only what the doc leaves open. If there is no such doc, draw the WHAT out from scratch
 (who / what / why, sub-features, preconditions). Either way: **WHAT only, never HOW.**
 
+A spec is **granularity-independent** — it can be a one-field feature or a whole subsystem. Don't carve
+it into epics or slices; that decomposition is downstream (ADR-0008). Keep one spec to a single
+**coherent, human-signable capability**: if the ask is roadmap-sized (a whole product), say so and split
+it into several specs upstream (north-star / roadmap), don't force it into one spec.
+
 ### 2. Write `spec.md` from `assets/feature-spec.md`
 
-Write into the epic's directory — call it `<epic-dir>` — alongside the `acceptance.yaml` of step 3.
-(The epic dir is the home of this epic's authored contract; the epic state object pins its files on
+Write into the spec's directory — call it `<spec-dir>` — alongside the `acceptance.yaml` of step 3.
+(The spec dir is the home of this spec's authored contract; the spec state object pins its files on
 signing.) The genuine work is contract-shaping the decided content: named Given/When/Then scenarios
 with stable AC-IDs, covering the error / resilience paths an exploratory doc rarely has — not just the
 happy path. The template is self-documenting; follow its leading comments, don't restate them here.
@@ -49,7 +54,7 @@ until it passes. The skill doesn't own this gate — code does (skill-independen
 run it early only to catch AC-ID coverage / numbering breaks before a human reviews.
 
 ```bash
-npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>
+npx tsx .claude/skills/to-spec/scripts/check-spec.ts <spec-dir>
 ```
 
 ### 5. Stop
@@ -60,3 +65,6 @@ The human reviews and signs the acceptance criteria (`contract-approved`). You d
 
 Templates live next to this skill under `assets/` and are self-documenting. Integrity invariants are
 the source of truth in `scripts/check-spec.ts` (and `src/authoring/lint.ts`), not in any prose doc.
+Non-obvious judgment calls the template doesn't cover — spec scope (cohesion, not carving), meta-features
+that define a contract, greenfield forward-references, process-vs-AC altitude — live in
+[references/edge-cases.md](references/edge-cases.md), loaded on demand.

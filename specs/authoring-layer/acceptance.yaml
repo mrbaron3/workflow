@@ -1,0 +1,82 @@
+# M20 オーサリング層 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT（ADR-0001 D15）。
+# spec.md の各受け入れ基準シナリオに付した AC-ID をキーに join する。
+#
+# 注: 本 epic は loop 1 未ブートストラップ。AUTH-C/D の method は store／drift 実装後に実際に走る
+#     「目標挙動」を述べる（実装状況に依存しない）。AUTH-A/B は既存 lint（check-spec.ts / src）で実行検証可能。
+#     manual は使わない（自動採点不能な要件はチャットで人間に指摘・人間が判断）。
+
+verifications:
+  AC-AUTH-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "spec.md が サブ機能一覧 ＋ 各サブ機能（US/事前条件/受け入れ基準/非機能/完了条件）＋ レッドライン に構造パースできる"
+      - "各受け入れ基準シナリオから機械抽出される AC-ID がシナリオ数と一致し、各シナリオちょうど1つを持つ"
+
+  AC-AUTH-002:
+    severity: major
+    method: unit_test
+    expected:
+      - "spec.md に grading を構造化した行（`severity:` / `method:` / `expected:` の YAML キー行）が無い（散文での語の言及は可）"
+      - "acceptance.yaml の全キーが各 severity ＋ method ＋ expected を持ち、spec.md の AC-ID と双方向一致し、GWT 散文を含まない"
+
+  AC-AUTH-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "被覆一致・重複なし・全 method 自動 の入力に対し lintAuthoring が ok=true（check-spec.ts exit 0）"
+
+  AC-AUTH-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "spec.md の AC-ID 配列に重複を含めると ok=false かつ errors に 'duplicate AC-IDs: <id>' を含む"
+
+  AC-AUTH-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "spec のみに在る AC-ID で 'AC in spec.md but not acceptance.yaml: <id>' を出して fail"
+      - "acceptance のみに在る AC-ID で 'AC in acceptance.yaml but not spec.md: <id>' を出して fail"
+
+  AC-AUTH-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "method=manual（非 AUTO_METHODS）を含むと ok=false かつ errors に 'manual method not allowed in acceptance.yaml: <id>' を含む"
+
+  AC-AUTH-007:
+    severity: blocker
+    method: db_state_check
+    expected:
+      - "署名後、epic 状態オブジェクトに ApprovedSpecRef が存在し approvalCommitSha・behaviorRef.gitSha・verificationRef.gitSha が非空"
+      - "acFingerprints が各 AC-ID をキーに持ち、systemRefs[] が版固定 gitSha 付き、approvedAcIds が現 AC 全集合を被覆"
+
+  AC-AUTH-008:
+    severity: major
+    method: unit_test
+    expected:
+      - "deriveStatus(approvedAcIds, currentAcIds) は approvedAcIds ⊇ currentAcIds のとき 'approved'、不足時 'co-authoring'"
+      - "status は永続フィールドとして直接書かれず、approvedAcIds からの派生値である"
+
+  AC-AUTH-009:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "1 AC の GWT を変更し fingerprint を再計算すると、当該 AC-ID のみが approvedAcIds から外れる"
+      - "未変更 AC は approvedAcIds に残り、status は 'co-authoring' に落ちる"
+
+  AC-AUTH-010:
+    severity: major
+    method: unit_test
+    expected:
+      - "現 AC 全集合に1件追加すると approvedAcIds ⊉ currentAcIds となり deriveStatus が 'co-authoring' を返す"
+
+  AC-AUTH-011:
+    severity: minor
+    method: unit_test
+    expected:
+      - "AC を1件削除すると当該 AC-ID が approvedAcIds と acFingerprints の双方から除去される"
+      - "残存 AC の被覆が満ちていれば status は 'approved' を保ち、削除 ID は孤児検知へ通知される"

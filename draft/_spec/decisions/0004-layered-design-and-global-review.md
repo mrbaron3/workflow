@@ -6,6 +6,10 @@
   M18 Storage（system 層成果物の住処）/ ADR-0003（contract altitude を tier 別適用へ精密化）
 - 正本差分: REQUIREMENTS.md への上書きなし（設計層の内部構造を精密化するもの）
 
+> ⚠️ **ADR-0008 で更新**: 本 ADR の設計 tier「epic 層（1 spec.md = 1 epic）」は **「spec 層」へ改名**
+> （著述・署名単位は粒度非依存の **spec**・epic は下流のロードマップ grouping）。tier の中身（design-delta +
+> slices・被覆不変条件）は不変。原文は決定記録として保持する。
+
 ## 1. 背景
 
 [ADR-0001](0001-authoring-execution-split.md) が WHAT（オーサリング）と HOW（設計・実装）を分離し、

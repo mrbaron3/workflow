@@ -5,8 +5,9 @@
 読む上流決定 doc として扱う）。元は `docs/spec/` にあり、draft へ降格・移設した。
 
 - **最上位要求は北極星** [`../../docs/NORTH_STAR.md`](../../docs/NORTH_STAR.md)。**確定 SoT は to-spec スキルの
-  生成物**（`spec.md` + `acceptance.yaml`）であり、生成後はそれが拘束的に優先する（ハーネス自身の spec は未生成＝
-  現状は本 draft が作業台）。かつての root 正本 [`REQUIREMENTS.md`](REQUIREMENTS.md) は 2026-06-25 に本ディレクトリへ
+  生成物**（`spec.md` + `acceptance.yaml`）であり、生成後はそれが拘束的に優先する（ハーネス自身の spec は M20 認可層を
+  [`../../specs/authoring-layer/`](../../specs/authoring-layer/) に初出生成・ただし**未署名**で拘束的 SoT には未昇格。
+  他モジュールは未生成で本 draft が作業台）。かつての root 正本 [`REQUIREMENTS.md`](REQUIREMENTS.md) は 2026-06-25 に本ディレクトリへ
   **降格**し、to-spec Intake が読む**上流決定 doc / 参考**として同居する（正本ではない）。
 - 現在の実装（`src/`・`agents/`・`docs/ARCHITECTURE.md` 等の AgentOps MVP）も
   **参考** 扱い。仕様を実装に合わせるのではなく、実装を仕様に合わせる。
@@ -17,7 +18,7 @@
 
 ```text
 docs/NORTH_STAR.md                       ← 最上位要求（北極星）
-  └─ (正式 spec = to-spec 生成物: spec.md + acceptance.yaml)  ← 確定後の拘束的 SoT（ハーネス自身は未生成）
+  └─ (正式 spec = to-spec 生成物: spec.md + acceptance.yaml)  ← 確定後の拘束的 SoT（M20 認可層を specs/ に初出生成・未署名／他は未生成）
        └─ draft/_spec/README.md          ← 本書: モジュール地図・契約カタログ・優先順位（draft）
             ├─ draft/_spec/REQUIREMENTS.md   ← 旧 root 正本。draft へ降格＝上流決定 doc / 参考（大枠 / 全FR）
             └─ draft/_spec/modules/<module>.md   ← 各モジュールの詳細仕様（draft・to-spec で正式化）

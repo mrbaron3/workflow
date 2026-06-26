@@ -5,7 +5,7 @@
  * ./lib/authoring-lint.ts. The skill's prose never re-implements the rules.
  *
  * Run from anywhere:
- *   npx tsx <skill>/scripts/check-spec.ts <epic-dir>
+ *   npx tsx <skill>/scripts/check-spec.ts <spec-dir>
  * Exit: 0 = passed, 1 = lint failed, 2 = usage / read error.
  */
 
@@ -16,7 +16,7 @@ import { lintAuthoring } from './lib/authoring-lint.js';
 
 const dir = process.argv[2];
 if (!dir) {
-  console.error('usage: check-spec <epic-dir>   (dir containing spec.md and acceptance.yaml)');
+  console.error('usage: check-spec <spec-dir>   (dir containing spec.md and acceptance.yaml)');
   process.exit(2);
 }
 

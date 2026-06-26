@@ -28,11 +28,14 @@ allowed-tools: Read, Write, Edit, Bash
 - doc が空けている所**だけ**を再ヒアリングする。
 - 上流 doc が無ければ WHAT をゼロから引き出す（誰が / 何を / なぜ・サブ機能・事前条件）。
 - いずれにせよ **WHAT のみ・HOW は書かない。**
+- spec は**粒度非依存**（1フィールドの機能でもサブシステム丸ごとでもよい）。epic や slice に carve しない
+  ＝分解は下流（ADR-0008）。1 spec は「**人間が一度に署名できる凝集した capability**」1つに保つ。ロードマップ
+  規模（プロダクト丸ごと）なら、その旨を指摘し**上流**（北極星/ロードマップ）で複数 spec に割る。
 
 ### 2. テンプレートを写経して `spec.md` を書く
 
-テンプレートは `assets/feature-spec.md`。書き出し先は **この epic のディレクトリ（`<epic-dir>`）**で、step 3 の
-`acceptance.yaml` と同居させる（epic dir はこの epic の著述契約の住処。署名時に epic 状態オブジェクトがファイルを
+テンプレートは `assets/feature-spec.md`。書き出し先は **この spec のディレクトリ（`<spec-dir>`）**で、step 3 の
+`acceptance.yaml` と同居させる（spec dir はこの spec の著述契約の住処。署名時に spec 状態オブジェクトがファイルを
 版固定する）。本質的な仕事は決定内容の契約化：
 
 - 名前付き Given/When/Then シナリオ＋安定 AC-ID に整える。
@@ -54,7 +57,7 @@ allowed-tools: Read, Write, Edit, Bash
 AC-ID の被覆漏れ・採番崩れを潰すため。
 
 ```bash
-npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>
+npx tsx .claude/skills/to-spec/scripts/check-spec.ts <spec-dir>
 ```
 
 ### 5. 止める
@@ -65,3 +68,6 @@ npx tsx .claude/skills/to-spec/scripts/check-spec.ts <epic-dir>
 
 テンプレートは本 skill 直下の `assets/` にあり、自己説明的。整合の不変条件は `scripts/check-spec.ts`
 （と `src/authoring/lint.ts`）が SoT であり、散文 doc には置かない。
+テンプレートが扱わない非自明な判断 — spec の scope（凝集・carving しない）・契約/形式そのものを定義するメタ機能・
+greenfield の前方参照・プロセス vs AC の altitude — は [references/edge-cases.md](references/edge-cases.md) に置き、
+必要時に読み込む。
