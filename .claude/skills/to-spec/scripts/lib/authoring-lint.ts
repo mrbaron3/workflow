@@ -4,7 +4,7 @@
 /**
  * Deterministic AC-ID integrity checks enforced at the signing gate (M20) and
  * re-asserted at resolve (M05). This is the "厳格さはコードで強制" half of the
- * authoring layer (ADR-0005): the human writes WHAT, the code guarantees that the
+ * authoring layer: the human writes WHAT, the code guarantees that the
  * acceptance criteria are well-formed before anything downstream consumes them.
  *
  * These are pure functions over *already-parsed* AC-IDs and methods — parsing the

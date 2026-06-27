@@ -31,7 +31,7 @@ Re-elicit only what the doc leaves open. With no such doc, draw the WHAT out fro
 / why, sub-features, preconditions). Either way: **WHAT only, never HOW.**
 
 A spec is **granularity-independent** — it can be a one-field feature or a whole subsystem. Don't carve
-it into epics or slices; that decomposition is downstream (ADR-0008). Keep one spec to a single
+it into epics or slices; that decomposition is downstream. Keep one spec to a single
 **coherent, human-signable capability**: if the ask is roadmap-sized (a whole product), say so and split
 it into several specs upstream (north-star / roadmap), don't force it into one spec.
 

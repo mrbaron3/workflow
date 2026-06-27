@@ -23,7 +23,7 @@ AI 組織運用ハーネス。仕様の下書き（draft・正式 spec は to-sp
   （例: `templates/labels.yaml`）で参照する。**skill 自身がバンドルする資源は skill 相対パスで参照する**
   （自己完結・可搬性のため）: `assets/` の出力テンプレ（例: `assets/feature-spec.md`）、および `scripts/` から
   `scripts/lib/` の **vendored lib**（例: `./lib/design-lint.js`）。skill の script は実行時に `src/` を読まない。
-- skill は薄く保つ（ADR-0005）。rubric/手順を焼き込まず、確定処理は `scripts/`（共有ライブラリの薄い
+- skill は薄く保つ。rubric/手順を焼き込まず、確定処理は `scripts/`（共有ライブラリの薄い
   ラッパ）に委譲し、詳細は `references/` に逃がす。
 
 ## 資源の住処
@@ -33,7 +33,7 @@ AI 組織運用ハーネス。仕様の下書き（draft・正式 spec は to-sp
   例: `to-spec` の `assets/feature-spec.md`・`assets/acceptance.yaml`）。コードや複数 consumer が共有する
   テンプレ（`labels.yaml`・`roadmap.yaml`・`issue-contract.md`・`scorecard.yaml`・`epic.md` 等）は root に置く。
 - **共有決定的ライブラリ**（`fingerprint` / lint / resolve 等）は **`src/` に単一ソース**を置く（重複実装
-  しない・ADR-0005 D37）。進行管理役は src を直接呼び、**skill へは vendor して自己完結**させる（手で複製
+  しない）。進行管理役は src を直接呼び、**skill へは vendor して自己完結**させる（手で複製
   しない・実行時に外部を import しない）。vendored lib ＋ `assets/` テンプレで配布可能プラグインへ切り出せる。
 
 ## テスト / lint

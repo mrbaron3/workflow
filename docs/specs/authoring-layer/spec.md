@@ -8,15 +8,14 @@
 > 産む協業プロセスの、**成果物の性質とゲート挙動**」である。契約の**スキーマ**（spec.md / acceptance.yaml
 > の形式・AC-ID / GWT 規約・verification method の enum・join キー）は本 spec には埋めない。それは
 > **system 層 data-model** が定義する（greenfield 初回は未整備のため **前方参照**・AUTH-FR-011）。slice 分解・
-> PR サイズは設計層が三層設計として生成する（ADR-0004）。
+> PR サイズは設計層が三層設計として生成する。
 >
 > **自己参照の解消**: 著述層自身の spec が「spec 形式そのもの」を定義すると循環する。これを避けるため
 > **スキーマは system 層へ、プロセス／ゲート挙動は本 spec へ**と層を分ける。本 spec の AC が語るのは
 > 「ゲートが何を通し何を落とすか」「署名が何を永続するか」であって、「AC-ID とは何か」ではない。
 >
-> **参照する固定制約**: ADR-0001（authoring/execution 分離）, ADR-0003（contract altitude）,
-> ADR-0004 D31/D35（system 層参照・人間可読文書）, ADR-0005 D37（厳格さはコードで強制）,
-> ADR-0007 D46-47（lazy-but-coherent）。system 層 data-model（契約スキーマ）は seed 予定として前方参照する。
+> **参照する固定制約**: authoring/execution 分離・contract altitude・system 層参照・人間可読文書・
+> 厳格さはコードで強制・lazy-but-coherent。system 層 data-model（契約スキーマ）は seed 予定として前方参照する。
 >
 > **チャットで指摘（自動採点不能）**: AI 補助の質・分担の良し悪し・人間可読性の主観評価は契約化できない
 > （contract altitude）。別票に分けず、必要時にチャットで人間に指摘し、人間が扱いを判断する。
@@ -65,7 +64,7 @@
 
 - 人間可読性: spec.md は人間が編集する Markdown（表・GWT 可）。grader 向け詳細は acceptance.yaml に逃がす。
 - AI 補助 ＋ コード強制: 著述は人間 ＋ 任意の AI 補助。契約形式・整合の**強制はコード**が担い、特定 skill を
-  必須にしない（ADR-0003 D28・ADR-0005 D37）。
+  必須にしない。
 
 > 上記のうち「AI 補助の質」「人間可読性の主観評価」は自動採点できない。チャットで人間に指摘し人間が判断する。
 
@@ -85,7 +84,7 @@
 **事前条件**
 
 - spec.md と acceptance.yaml が同じ spec ディレクトリに存在し、ともにパース可能。
-- 採番・整合の不変条件の SoT は**コード**（check-spec.ts / src の lint）であり、散文に再実装しない（ADR-0005 D37）。
+- 採番・整合の不変条件の SoT は**コード**（check-spec.ts / src の lint）であり、散文に再実装しない。
 
 **受け入れ基準**
 
@@ -206,4 +205,4 @@
 - AC-ID を renumber・再利用しない（join キーかつ署名の単位）。
 - acceptance.yaml に manual（非自動採点）method を混ぜない。自動採点不能はチャット指摘へ。
 - spec.md に frontmatter を持たせない（meta・署名は spec 状態オブジェクト ＝ ApprovedSpecRef）。
-- ドメイン／データ／契約スキーマを spec.md に**埋め込まない**。system 層 data-model を前方参照する（ADR-0004 D31）。
+- ドメイン／データ／契約スキーマを spec.md に**埋め込まない**。system 層 data-model を前方参照する。

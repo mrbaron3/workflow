@@ -8,7 +8,7 @@ the decision point; the human decides.
 
 A spec is **granularity-independent**: it can be a one-field feature or a whole subsystem. You do
 **not** carve it into epics or slices — that decomposition is downstream (the design layer slices a
-spec into issues; ADR-0008). Two rules of thumb instead:
+spec into issues). Two rules of thumb instead:
 
 - **Keep one spec to a single coherent, human-signable capability.** The test is whether a person can
   review and sign it as *one* contract.
@@ -23,7 +23,7 @@ Mechanically `to-spec` never rejects a large spec; this is guidance, not a gate.
 The "サブ機能一覧" table hints at split boundaries for the design layer (to-detail-design), which
 slices the whole spec into issues. It is **not** a list of independently-shippable slices, and its rows
 **may depend on each other**. Don't pre-slice the spec into standalone issues yourself — that
-decomposition is the design layer's job (ADR-0004 / ADR-0008). Leaking slice decomposition up into the
+decomposition is the design layer's job. Leaking slice decomposition up into the
 spec over-constrains the solution space.
 
 ## Meta-features: layer the schema away from the process
@@ -46,7 +46,7 @@ it stays a reference, not a duplication:
 
 1. **Precondition** — note the artifact is pending / seed-planned, and the ordering (design layer
    seeds it before signing).
-2. **Red line** — forbid embedding the domain / data / schema into `spec.md` (ADR-0004 D31).
+2. **Red line** — forbid embedding the domain / data / schema into `spec.md`.
 3. **Acceptance criterion** — pin the referenced elements (e.g. `systemRefs` with version-pinned
    gitSha) as **target behavior**, valid even before the upstream exists.
 
@@ -55,7 +55,7 @@ it stays a reference, not a duplication:
 Acceptance criteria grade **observable artifact properties**. Collaboration quality, who-writes-what
 division of labour, and subjective readability are **process** — not auto-gradable. Keep them in
 preconditions / non-functional prose, surface non-gradable requirements in chat, and don't lift them
-into ACs (contract altitude, ADR-0003).
+into ACs (contract altitude).
 
 When you *do* lift a separation rule into an AC, grade the **structural** property, not word
 occurrence. Watch for **self-tension**: a spec that forbids `X` in its artifacts usually has to

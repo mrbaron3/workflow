@@ -1,6 +1,6 @@
 /**
  * M05 resolve: project a version-pinned, approved `ResolvedSource` into one
- * `IssueContract` by pure join/copy — no judgement (ADR-0001 D13, ADR-0003 D28).
+ * `IssueContract` by pure join/copy — no judgement.
  *
  * The core is a pure function `(ResolvedSource, acFingerprints) -> IssueContract`.
  * Reference -> content resolution (git/file I/O) happens at the boundary and hands

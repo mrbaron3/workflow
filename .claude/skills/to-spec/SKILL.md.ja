@@ -36,7 +36,7 @@ allowed-tools: Read, Write, Edit, Bash
   （誰が / 何を / なぜ・サブ機能・事前条件）。
 - いずれにせよ **WHAT のみ・HOW は書かない。**
 - spec は**粒度非依存**（1フィールドの機能でもサブシステム丸ごとでもよい）。epic や slice に carve しない
-  ＝分解は下流（ADR-0008）。1 spec は「**人間が一度に署名できる凝集した capability**」1つに保つ。ロードマップ
+  ＝分解は下流。1 spec は「**人間が一度に署名できる凝集した capability**」1つに保つ。ロードマップ
   規模（プロダクト丸ごと）なら、その旨を指摘し**上流**（北極星/ロードマップ）で複数 spec に割る。
 
 既存の **system 層**（`_system/<context>/domain-map.md`・`data-model.md`・`architecture.md`）を読み、
