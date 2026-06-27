@@ -1,22 +1,24 @@
 ---
 name: to-spec
-description: 機能の受け入れ要件を著すのを助ける。新機能の定義、受け入れ基準（spec.md）と採点定義（acceptance.yaml）の作成・編集、設計・署名前の機能整備のときに使う。
+description: 機能の受け入れ要件（spec.md / acceptance.yaml）を著すのを助ける。新機能の定義、受け入れ基準の作成・編集、設計・署名前の機能整備のときに使う。
+when_to_use: 「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える / 機能を定義する / 設計・署名の前に詰める」といった依頼のとき。設計層（ドメイン/アーキは to-basic-design、DB は to-db-design、スライス分解は to-detail-design）には使わない。
+argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
 ---
 
 # To spec
 
-Help a human turn an already-decided feature direction into a feature spec that is a valid input
-contract for the design layer. You assist; code enforces integrity (check-spec.ts).
-The human owns the WHAT and signs.
+Help a human turn an **already-decided** feature direction into a feature spec that is a valid input
+contract for the design layer. You assist; code enforces integrity (check-spec.ts / the signing gate).
+The human owns the WHAT and signs — never sign, and never relax a criterion, yourself.
 
-## What to do
+This is a collaborative loop, not a one-shot generation: propose, surface what you cannot grade, let
+the human confirm. Keep `spec.md` human-readable; push grader detail into `acceptance.yaml`.
 
-### 1. Intake — consume the decision, don't re-elicit it
+## 1. Intake — consume the decision, don't re-elicit it
 
 If an upstream decision doc exists (brainstorm result, draft, or notes — ask for the path, or look
-under `docs/draft/_brainstorm/`), read it and treat its decided content as the source. Project it into the
-spec along these lines:
+under `docs/draft/_brainstorm/`), read it and treat its decided content as the source. Project it:
 
 | Upstream doc element | Maps to in spec |
 | --- | --- |
@@ -25,46 +27,67 @@ spec along these lines:
 | constraints / assumptions | preconditions / red lines |
 | open questions | gaps to close before signing |
 
-Re-elicit only what the doc leaves open. If there is no such doc, draw the WHAT out from scratch
-(who / what / why, sub-features, preconditions). Either way: **WHAT only, never HOW.**
+Re-elicit only what the doc leaves open. With no such doc, draw the WHAT out from scratch (who / what
+/ why, sub-features, preconditions). Either way: **WHAT only, never HOW.**
 
 A spec is **granularity-independent** — it can be a one-field feature or a whole subsystem. Don't carve
 it into epics or slices; that decomposition is downstream (ADR-0008). Keep one spec to a single
 **coherent, human-signable capability**: if the ask is roadmap-sized (a whole product), say so and split
 it into several specs upstream (north-star / roadmap), don't force it into one spec.
 
-### 2. Write `spec.md` from `assets/feature-spec.md`
+Read the existing **system layer** (`_system/<context>/domain-map.md`, `data-model.md`,
+`architecture.md`) and treat it as fixed constraints: **reference** the ubiquitous language, business
+statuses, and shared domain/data — never copy them into the spec. Duplication drifts, and HOW (schema,
+API, algorithm) belongs to the design layer, not here.
 
-Write into the spec's directory — call it `<spec-dir>` — alongside the `acceptance.yaml` of step 3.
-(The spec dir is the home of this spec's authored contract; the spec state object pins its files on
-signing.) The genuine work is contract-shaping the decided content: named Given/When/Then scenarios
-with stable AC-IDs, covering the error / resilience paths an exploratory doc rarely has — not just the
-happy path. The template is self-documenting; follow its leading comments, don't restate them here.
+## 2. Write `spec.md` from the template
 
-### 3. Propose grading in `acceptance.yaml`
+Template: [assets/feature-spec.md](assets/feature-spec.md). Write it into the spec's directory
+(`<spec-dir>`), beside the `acceptance.yaml` of step 3 — that directory is this spec's authored
+contract, version-pinned on signing.
 
-For each AC-ID, propose `severity` + `verification` (auto grader `method` + `expected`), using
-`assets/acceptance.yaml`. When a requirement resists auto-grading, don't file it away silently —
-surface it in chat (which requirement, why) and let the human decide how to handle it.
+The real work is contract-shaping the decided content into named Given/When/Then scenarios, each with
+a stable AC-ID. An exploratory doc almost always hands you only the happy path; the value you add is
+the paths money and trust hinge on — **error, resilience, boundary, and concurrency** (timeout
+recovery, double-credit prevention, reconnect, partial failure). The template is self-documenting;
+follow its leading comments rather than restating them.
 
-### 4. Self-check before handoff
+Phrase every scenario as what an outside observer — or an automated grader — can see: a notification
+arrives, a status becomes X, an amount is credited exactly once. Describe the observed *effect*, not
+the machinery that produces it (scheduling, enqueueing, the provider call, the worker). Naming the
+mechanism is HOW: it dates the spec and pre-decides the design.
 
-Run the same deterministic lint the signing gate / pre-commit enforce, from the repo root, and fix
-until it passes. The skill doesn't own this gate — code does (skill-independent); you
-run it early only to catch AC-ID coverage / numbering breaks before a human reviews.
+## 3. Propose grading in `acceptance.yaml`
+
+Template: [assets/acceptance.yaml](assets/acceptance.yaml). For each AC-ID propose a `severity` and a
+`verification` whose `method` is from the auto-gradable set — build, typecheck, unit_test, api_test,
+db_state_check, playwright, secrets_scan, scope_check, llm_rubric — with a concrete, checkable
+`expected`. When a requirement genuinely resists auto-grading, don't quietly drop it: name it in chat
+(which AC, why) and let the human decide how to handle it — the auto-gradable set is the whole menu, so
+anything that doesn't fit belongs in that conversation, not forced into a row.
+
+A completion proof only a human eye can confirm — a visual demo, "check it on a real device" — is an
+ungradeable requirement, not an acceptance criterion. Surface it like any other ungradeable item; never
+let it sit in the spec's completion conditions as if it were a passing gate.
+
+## 4. Self-check before handoff
+
+Run the same deterministic lint the signing gate / pre-commit enforce, until it passes. The skill
+doesn't own this gate — code does (skill-independent); you run it early to catch AC-ID
+coverage / numbering breaks before a human reviews.
 
 ```bash
-npx tsx .claude/skills/to-spec/scripts/check-spec.ts <spec-dir>
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-spec.ts <spec-dir>
 ```
 
-### 5. Stop
+## 5. Stop
 
 The human reviews and signs the acceptance criteria (`contract-approved`). You do not sign.
 
 ---
 
-Templates live next to this skill under `assets/` and are self-documenting. Integrity invariants are
-the source of truth in `scripts/check-spec.ts` (and `src/authoring/lint.ts`), not in any prose doc.
-Non-obvious judgment calls the template doesn't cover — spec scope (cohesion, not carving), meta-features
-that define a contract, greenfield forward-references, process-vs-AC altitude — live in
-[references/edge-cases.md](references/edge-cases.md), loaded on demand.
+Templates live beside this skill under `assets/` and are self-documenting. The integrity invariants
+are owned by `scripts/check-spec.ts` (which vendors `src/authoring/lint.ts`), not by any prose doc —
+so this file never restates the rules. Non-obvious judgment calls the template doesn't cover — spec
+scope (cohesion, not carving), meta-features that define a contract, greenfield forward-references,
+process-vs-AC altitude — live in [references/edge-cases.md](references/edge-cases.md), loaded on demand.

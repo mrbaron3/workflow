@@ -1,0 +1,38 @@
+{
+  "skill_name": "to-spec",
+  "notes": "to-spec is an authoring-assist skill: consume an already-decided feature direction and produce spec.md (named Given/When/Then acceptance criteria with stable AC-IDs) + acceptance.yaml (severity + auto-gradable verification). The deterministic check-spec.ts (vendoring src/authoring/lint.ts) gives objective grading anchors: bidirectional AC-ID coverage, no AC-ID reuse, no 'manual' method. Assertions 6 and 7 deliberately probe the dimension the lint is BLIND to: observable-behavior vs implementation-mechanism vocabulary, and ungradeable 'eyeball it' proof masquerading as a passing criterion. The human value-add over an exploratory doc is the error/resilience/boundary/concurrency paths.",
+  "evals": [
+    {
+      "id": 0,
+      "name": "qr-collect-payment-from-decided-doc",
+      "prompt": "店舗向けの QR 決済（collect 型）を入れることに決めた。方向性はこのメモにまとめてある: .claude/skills/to-spec/evals/files/decided-qr-collect-payment.md 。これを入力に、受け入れ要件(spec.md)と採点定義(acceptance.yaml)を書いてほしい。メモの未解決の問い(離脱タイムアウト・着金額不一致・Webhook 二重)も詰めたい。",
+      "expected_output": "spec.md + acceptance.yaml in the given epic dir. spec.md projects the decided direction into named Given/When/Then scenarios with stable AC-IDs, ADDS error/resilience/concurrency scenarios for the three open questions (timeout abandonment, amount mismatch, duplicate at-least-once webhook), references the system layer for transaction/merchant concepts instead of re-defining them, stays WHAT-only (no schema/API/algorithm AND no mechanism vocabulary), and does not bury a human-eye demo as a passing criterion. acceptance.yaml proposes severity + an auto-gradable method per AC-ID. check-spec.ts passes.",
+      "files": ["evals/files/decided-qr-collect-payment.md"],
+      "assertions": [
+        {"id": "check_passes", "text": "Running check-spec.ts on the output dir exits 0 (bidirectional AC-ID coverage, no reuse, no manual method)"},
+        {"id": "no_frontmatter", "text": "spec.md has no YAML frontmatter (meta/signature live in the epic state object, AUTH-FR-001)"},
+        {"id": "gwt_ac_ids", "text": "Every acceptance scenario is a named Given/When/Then with a stable AC-ID matching AC-[A-Z0-9]+-\\d+"},
+        {"id": "resilience_added", "text": "spec.md adds scenarios beyond the happy path for ALL THREE open questions: customer/QR timeout-abandonment, payment amount mismatch (under/over), and duplicate at-least-once webhook (idempotent settlement)"},
+        {"id": "observable_not_mechanism", "text": "spec.md describes observable behavior only: no DB schema/DDL, no concrete API endpoint/signature, no internal algorithm pseudocode, AND no delivery/implementation-mechanism vocabulary (enqueue, queue, scheduler, cron, worker, dispatch, provider SDK/API call) used to describe WHAT happens"},
+        {"id": "system_layer_referenced", "text": "spec.md references the system layer for transaction/merchant domain concepts and statuses rather than re-defining them"},
+        {"id": "no_ungradeable_as_criterion", "text": "No ungradeable proof masquerades as a passing criterion: every acceptance.yaml method is auto-gradable (no 'manual'), AND spec.md's completion conditions do not present a human visual/demo check (実機で目視, 手動確認, eyeball, デモで目視) as an acceptance gate"}
+      ]
+    },
+    {
+      "id": 1,
+      "name": "habit-reminder-inline-decision",
+      "prompt": "個人向け習慣トラッカーに『リマインド』を足すと決めた。方向性: ユーザーは習慣ごとに通知時刻を1つ設定でき、その時刻に未達成ならプッシュ通知が届く。達成済みならその日は通知しない。スヌーズは10分単位で最大3回。確定済みの成功基準は『設定時刻の±1分以内に通知が届く』『達成済みの日は通知が来ない』。端末がオフライン/通知不許可の扱いと、時刻変更が当日分に効くかは未確定。この方向性から受け入れ要件(spec.md)と acceptance.yaml を書いてほしい。",
+      "expected_output": "spec.md + acceptance.yaml for the reminder feature. Named Given/When/Then ACs covering the happy path (notify at time when incomplete; suppress when done) PLUS the resilience/boundary paths the decision leaves open (offline/permission-denied delivery, snooze cap of 3, same-day effect of a time change). WHAT-only, no HOW and no mechanism vocabulary, no human-eye demo posing as a criterion. acceptance.yaml severity + auto-gradable methods. check-spec.ts passes.",
+      "files": [],
+      "assertions": [
+        {"id": "check_passes", "text": "Running check-spec.ts on the output dir exits 0"},
+        {"id": "no_frontmatter", "text": "spec.md has no YAML frontmatter"},
+        {"id": "gwt_ac_ids", "text": "Every acceptance scenario is a named Given/When/Then with a stable AC-ID matching AC-[A-Z0-9]+-\\d+"},
+        {"id": "happy_and_suppress", "text": "Covers both happy-path notify-when-incomplete AND suppress-when-already-done"},
+        {"id": "boundary_added", "text": "Adds the open/boundary paths: offline or notification-permission-denied delivery, snooze capped at 3, and whether a time change takes effect same-day"},
+        {"id": "observable_not_mechanism", "text": "spec.md stays WHAT-only and observable: no scheduler/cron internals, no push-service API/SDK, no table schema, AND no delivery-mechanism vocabulary (enqueue, queue, schedule, worker, dispatch) used to describe the notification behavior"},
+        {"id": "no_ungradeable_as_criterion", "text": "No ungradeable proof masquerades as a passing criterion: every acceptance.yaml method is auto-gradable (no 'manual'), AND spec.md's completion conditions do not present a human/device visual check (実機で目視, 手動確認, eyeball) as an acceptance gate"}
+      ]
+    }
+  ]
+}

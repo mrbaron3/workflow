@@ -1,19 +1,26 @@
 ---
 name: to-spec
 description:
-   機能の受け入れ要件を著すのを助ける。
-   新機能の定義、受け入れ基準（spec.md）と採点定義（acceptance.yaml）の作成・編集、設計・署名前の機能整備のときに使う。
+   機能の受け入れ要件（spec.md / acceptance.yaml）を著すのを助ける。
+   新機能の定義、受け入れ基準の作成・編集、設計・署名前の機能整備のときに使う。
+when_to_use:
+   「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える /
+   機能を定義する / 設計・署名の前に詰める」といった依頼のとき。
+   設計層（ドメイン/アーキは to-basic-design、DB は to-db-design、スライス分解は to-detail-design）には使わない。
+argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
 ---
 
 # to-spec
 
 **すでに方向性の決まった機能**を、設計層への入力契約として妥当な機能仕様に落とし込むのを助ける。
-あなたは補助し、整合の強制はコードが行う（check-spec.ts）。WHAT を所有し署名するのは人間。
+あなたは補助し、整合の強制はコードが行う（check-spec.ts / 署名ゲート）。WHAT を所有し署名するのは
+人間。**あなたは署名せず、合格基準を緩めない。**
 
-## 何をするか
+これは一発生成でなく協業ループ：提案する → 自動採点できないものはチャットで指摘する → 人間が確定する。
+`spec.md` は人間可読に保ち、grader 向けの詳細は `acceptance.yaml` へ逃がす。
 
-### 1. Intake — 決定を再ヒアリングせず取り込む
+## 1. Intake — 決定を再ヒアリングせず取り込む
 
 上流に決定 doc（ブレスト結果・draft・メモ等）があれば、パスを尋ねるか `docs/draft/_brainstorm/` を探して読み、
 決定済み内容を SoT として扱う。spec へは次のように写像する。
@@ -25,49 +32,62 @@ allowed-tools: Read, Write, Edit, Bash
 | 制約 / 前提 | 事前条件・レッドライン |
 | 未解決の問い | 署名前に解消すべき穴 |
 
-- doc が空けている所**だけ**を再ヒアリングする。
-- 上流 doc が無ければ WHAT をゼロから引き出す（誰が / 何を / なぜ・サブ機能・事前条件）。
+- doc が空けている所**だけ**を再ヒアリングする。上流 doc が無ければ WHAT をゼロから引き出す
+  （誰が / 何を / なぜ・サブ機能・事前条件）。
 - いずれにせよ **WHAT のみ・HOW は書かない。**
 - spec は**粒度非依存**（1フィールドの機能でもサブシステム丸ごとでもよい）。epic や slice に carve しない
   ＝分解は下流（ADR-0008）。1 spec は「**人間が一度に署名できる凝集した capability**」1つに保つ。ロードマップ
   規模（プロダクト丸ごと）なら、その旨を指摘し**上流**（北極星/ロードマップ）で複数 spec に割る。
 
-### 2. テンプレートを写経して `spec.md` を書く
+既存の **system 層**（`_system/<context>/domain-map.md`・`data-model.md`・`architecture.md`）を読み、
+固定制約として扱う：ユビキタス言語・業務ステータス・共有のドメイン/データは**参照**し、spec に複製しない。
+複製は drift し、HOW（スキーマ・API・アルゴリズム）は設計層の担当でここには書かない。
 
-テンプレートは `assets/feature-spec.md`。書き出し先は **この spec のディレクトリ（`<spec-dir>`）**で、step 3 の
-`acceptance.yaml` と同居させる（spec dir はこの spec の著述契約の住処。署名時に spec 状態オブジェクトがファイルを
-版固定する）。本質的な仕事は決定内容の契約化：
+## 2. テンプレートから `spec.md` を書く
 
-- 名前付き Given/When/Then シナリオ＋安定 AC-ID に整える。
-- 探索 doc にまず無い**異常系・耐障害性**のパスを補う（正常系だけにしない）。
+テンプレートは [assets/feature-spec.md](assets/feature-spec.md)。書き出し先は **この spec のディレクトリ
+（`<spec-dir>`）**で、step 3 の `acceptance.yaml` と同居させる（このディレクトリがこの spec の著述契約の住処。
+署名時に版固定される）。
 
-テンプレートは自己説明的（書式規約は冒頭コメントにある）。それに従い、ここで再掲しない。
+本質的な仕事は、決定内容を**名前付き Given/When/Then シナリオ＋安定 AC-ID** に契約化すること。探索 doc は
+たいてい正常系しか渡してこない。あなたの価値は、金と信頼がかかるパス—— **異常系・耐障害性・境界・並列**
+（タイムアウト復旧・二重計上防止・再接続・部分失敗）——を補うこと。テンプレートは自己説明的（書式は冒頭
+コメントにある）。それに従い、ここで再掲しない。
 
-### 3. `acceptance.yaml` に採点を提案する
+各シナリオは、外部の観測者—— あるいは自動 grader —— が見えるものとして書く：通知が届く・ステータスが X に
+なる・金額がちょうど1回計上される。観測される**結果**を書き、それを生む機構（スケジュール・enqueue・
+プロバイダ呼び出し・ワーカー）は書かない。機構を名指すのは HOW であり、spec を陳腐化させ設計を先取りする。
 
-テンプレートは `assets/acceptance.yaml`。
+## 3. `acceptance.yaml` に採点を提案する
 
-- 各 AC-ID に `severity` ＋ `verification`（自動採点 `method` ＋ `expected`）を提案する。
-- 自動採点できない要件は**黙って振り分けず、チャットで指摘する**（どれが・なぜ）。扱いは人間が判断する。
+テンプレートは [assets/acceptance.yaml](assets/acceptance.yaml)。各 AC-ID に `severity` と、**自動採点集合**
+（build・typecheck・unit_test・api_test・db_state_check・playwright・secrets_scan・scope_check・llm_rubric）
+の `method` ＋ 具体的で検証可能な `expected` を提案する。自動採点できない要件は**黙って落とさず**、チャットで
+指摘し（どれが・なぜ）人間に委ねる—— 自動採点集合がメニューの全てなので、収まらないものは票に押し込まず
+その会話へ回す。
 
-### 4. 人間へ渡す前の自己検証
+人間の目でしか確認できない完了の証—— ビジュアルなデモ・「実機で目視確認」——は受け入れ基準ではなく
+自動採点できない要件である。他の自動採点不能項目と同じくチャットで指摘し、合格ゲートのように spec の
+完了条件へ居座らせない。
 
-署名ゲート / pre-commit が強制するのと**同じ決定的 lint** を、リポジトリ直下で通るまで走らせる。このゲートを
-所有するのは skill ではなく**コード**（skill 非依存）。ここで早回しするのは、人間レビュー前に
-AC-ID の被覆漏れ・採番崩れを潰すため。
+## 4. 人間へ渡す前の自己検証
+
+署名ゲート / pre-commit が強制するのと**同じ決定的 lint** を、通るまで走らせる。このゲートを所有するのは
+skill ではなく**コード**（skill 非依存）。ここで早回しするのは、人間レビュー前に AC-ID の
+被覆漏れ・採番崩れを潰すため。
 
 ```bash
-npx tsx .claude/skills/to-spec/scripts/check-spec.ts <spec-dir>
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-spec.ts <spec-dir>
 ```
 
-### 5. 止める
+## 5. 止める
 
 人間が受け入れ基準をレビューし署名する（`contract-approved`）。あなたは署名しない。
 
 ---
 
 テンプレートは本 skill 直下の `assets/` にあり、自己説明的。整合の不変条件は `scripts/check-spec.ts`
-（と `src/authoring/lint.ts`）が SoT であり、散文 doc には置かない。
+（`src/authoring/lint.ts` を vendor）が SoT であり、散文 doc には置かない。
 テンプレートが扱わない非自明な判断 — spec の scope（凝集・carving しない）・契約/形式そのものを定義するメタ機能・
 greenfield の前方参照・プロセス vs AC の altitude — は [references/edge-cases.md](references/edge-cases.md) に置き、
 必要時に読み込む。
