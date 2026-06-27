@@ -1,0 +1,59 @@
+---
+name: to-system-design
+description:
+   設計層の system 層（ドメインモデル・アーキテクチャ・データモデル）を境界コンテキスト単位で著す・拡張する。
+when_to_use:
+   基本設計・方式設計・アーキテクチャ・ドメインモデル・モジュール境界・seam・
+   DB設計・データモデル・スキーマ設計・正規化・マイグレーションを作るとき。
+   署名済み spec を slice/PR に分解するのは to-detail-design を使う。
+argument-hint: [spec-dir]
+allowed-tools: Read, Write, Edit, Bash
+arguments: spec_dir
+---
+
+# To system design（日本語訳 — 正本は SKILL.md）
+
+署名済み `spec.md` が触れる境界コンテキストについて、**global・単一正本の system 層**——ドメイン・
+アーキテクチャ・データ——を著す/拡張する。あなたは補助で、構造的不変条件は
+`scripts/check-system-design.ts` が強制する。WHAT の所有者は人間 — `spec.md` / `acceptance.yaml` は
+編集せず、署名もしない。
+
+この層は **spec より粗い**：境界コンテキストは spec をまたいで設計・所有され、毎回引き直さない。
+関連コンテキスト全体を読み、それに追記する。
+
+## 2つの観点・1つの順序 — データはドメインに従う
+
+1. **ドメイン** → `domain-map.md`（`DOM-NNN`）＋ `architecture.md`（`ARCH-NNN`）：ユビキタス言語・
+   エンティティ/集約・関係・コンテキスト境界、その上にモジュール境界と seam。
+   ブリーフと実例: [references/domain.md](references/domain.md)。
+2. **データ** → `data-model.md`（`DATA-NNN`）：ドメインのエンティティを**実体化**する論理モデル→スキーマ
+   （新概念は作らない）。ブリーフと実例: [references/data.md](references/data.md)。
+
+ドメインを先に行い、データはその境界の上に建てる。spec が実際に触れる観点だけ走らせる——新しい
+ドメイン/データを足さない spec はその段を飛ばす。
+
+## 共通の規律（両観点）
+
+- **lazy boundary / coherent within** — 触れていないコンテキストは設計しない。最初に触れた時点で集約の
+  閉包を概念レベルで設計し、物理は当面の AC が要る分だけ具体化する。
+- **追加のみ** — `DOM/ARCH/DATA-NNN` は一意・安定。変更は「新要素＋マイグレーション」で、renumber・
+  書き換えしない。
+- **contract altitude** — public な形だけ。内部アルゴリズム/表現は実装者のもの。共有 id は**参照**し
+  内容を複製しない。図表は下流で派生し、ここでは著述しない。
+
+## セルフチェックして停止
+
+spec の `design-delta.md` に `reads` / `extends`（影響 AC-ID 付き）を記録し、進行管理役が権威的に
+再実行するのと同じ決定的 lint を、通るまで走らせる（skill 非依存）:
+
+```bash
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-system-design.ts <spec-dir>
+```
+
+完成をシグナルする — ワークフロー状態は書かず、署名もしない。境界コンテキスト全体に対する拡張の独立
+レビューが続く。
+
+---
+
+観点別ブリーフは `references/`、出力テンプレは `assets/`（domain-map / architecture / data-model）。
+整合の不変条件は `scripts/check-system-design.ts`（`src/design/lint.ts` を vendor）が SoT。

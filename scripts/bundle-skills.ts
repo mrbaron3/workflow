@@ -30,8 +30,7 @@ const JOBS: Job[] = [
   {
     source: 'src/design/lint.ts',
     targets: [
-      '.claude/skills/to-basic-design/scripts/lib/design-lint.ts',
-      '.claude/skills/to-db-design/scripts/lib/design-lint.ts',
+      '.claude/skills/to-system-design/scripts/lib/design-lint.ts',
       '.claude/skills/to-detail-design/scripts/lib/design-lint.ts',
     ],
   },

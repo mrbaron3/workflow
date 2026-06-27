@@ -1,12 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Integrity check for a DB-design contribution: a thin wrapper that parses the spec's
- * design-delta.md (reads/extends element ids) and verifies every referenced id is
- * present in the global system layer, delegating to the vendored deterministic tier in
- * ./lib/design-lint.ts.
+ * Integrity check for a system-design contribution (domain-map + architecture + data-model):
+ * a thin wrapper that parses the spec's design-delta.md (reads/extends element ids) and verifies
+ * every referenced id is present in the global system layer, delegating to the vendored
+ * deterministic tier in ./lib/design-lint.ts. The skill's prose never re-implements the rules.
  *
  * Run from anywhere:
- *   npx tsx <skill>/scripts/check-db-design.ts <spec-dir> [--system <dir>]
+ *   npx tsx <skill>/scripts/check-system-design.ts <spec-dir> [--system <dir>]
  *
  * <spec-dir> holds design-delta.md. The global system layer is found at
  * <spec-dir>/../_system by default (override with --system <dir>).
@@ -48,7 +48,7 @@ const systemFlagIdx = args.indexOf('--system');
 const systemDirArg = systemFlagIdx >= 0 ? args[systemFlagIdx + 1] : undefined;
 
 if (!dir) {
-  console.error('usage: check-db-design <spec-dir> [--system <dir>]');
+  console.error('usage: check-system-design <spec-dir> [--system <dir>]');
   process.exit(2);
 }
 
@@ -75,9 +75,9 @@ for (const f of readdirSync(systemDir).filter((x) => x.endsWith('.md'))) {
 const r = checkReferencesPresent(referenced, uniq(present));
 
 if (r.ok) {
-  console.log(`check-db-design: OK (${referenced.length} referenced ids, all present)`);
+  console.log(`check-system-design: OK (${referenced.length} referenced ids, all present)`);
   process.exit(0);
 }
-console.error('check-db-design: FAILED');
+console.error('check-system-design: FAILED');
 console.error(`  - delta references element not present in system layer: ${r.dangling.join(', ')}`);
 process.exit(1);

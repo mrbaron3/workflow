@@ -1,14 +1,10 @@
 ---
 name: to-detail-design
-description: 詳細設計（コンポーネント設計・スライス分解）を spec 単位で行う。詳細設計・スライス分解・コンポーネント設計・PR 分割・issue 分解のときに使う。基本設計（ドメイン/アーキ）は to-basic-design、DB設計は to-db-design を使う。
+description: 署名済み spec を PR サイズのスライスに分解する詳細設計（コンポーネント設計・スライス分解）。
+when_to_use: 詳細設計・スライス分解・コンポーネント設計・PR 分割・issue 分解のとき。system 層（ドメイン/アーキ/データ）の設計は to-system-design を使う。
+argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
 arguments: spec_dir
-context: fork
-hooks:
-  Stop:
-    - hooks:
-        - type: command
-          command: '[ -d "$1" ] && npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-detail-design.ts "$1" || exit 0'
 ---
 
 # To detail design
@@ -40,9 +36,11 @@ Fill the template: [slice](assets/slice.md).
 
 ## Self-check, then stop
 
+Run the same deterministic lint the orchestrator re-runs authoritatively (skill-independent); fix until
+it passes, to catch coverage / id breaks before a reviewer sees them:
+
 ```bash
-npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-detail-design.ts <spec_dir>
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-detail-design.ts <spec-dir>
 ```
 
-The Stop hook re-runs this and blocks completion on failure. Signal completion — you do not change
-workflow state and do not sign; an independent review follows.
+Signal completion — you do not change workflow state and do not sign; an independent review follows.

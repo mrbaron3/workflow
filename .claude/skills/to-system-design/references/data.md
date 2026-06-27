@@ -1,8 +1,8 @@
-# DB design (bounded-context granularity)
+# Data model (system layer · bounded-context granularity)
 
 You model the data of **one bounded context**. This layer is global and single-source-of-truth; you read
-the whole relevant data model and add to it. Cadence is coarser than a feature on purpose — the data model
-is owned across features, so two features that touch the same concept must not model it twice.
+the whole relevant data model and add to it. Cadence is coarser than a spec on purpose — the data model is
+owned across specs, so two specs that touch the same concept must not model it twice.
 
 ## What you write
 
@@ -11,16 +11,17 @@ is owned across features, so two features that touch the same concept must not m
 | `data-model.md` | `DATA-NNN` | logical model → schema (tables/columns), ownership, keys, migration, persistence contract |
 
 **Data follows the domain.** Read `domain-map.md` first; your tables/columns realise the domain entities,
-they do not invent new concepts. If you find yourself naming a new concept, that belongs in basic design.
+they do not invent new concepts. If you find yourself naming a new concept, that belongs in the **domain
+perspective** ([references/domain.md](domain.md)).
 
 ## Lazy boundary / coherent within
 
 - **Coherent** — model the touched aggregate's data coherently (ownership, keys, relations) so a later
-  feature cannot add the same entity under a different table/name.
+  spec cannot add the same entity under a different table/name.
 - **Lazy** — materialise only the physical columns the current acceptance criteria need. Defer the rest;
   add them additively when an AC requires them.
-- **Falsifiable test** for a column/table: *"If I omit this, can a future feature re-introduce the same
-  data under a different name?"* Yes → model now. No → defer.
+- **Falsifiable test** for a column/table: *"If I omit this, can a future spec re-introduce the same data
+  under a different name?"* Yes → model now. No → defer.
 
 ## Additive only / migration
 
@@ -39,5 +40,5 @@ Only the one column the AC needs is materialised; the rest of any scheduling sch
 ## Output / signal
 
 Produce the data-model delta (rich Markdown + structured core) and record `reads` / `extends` (with
-affected AC-IDs) in the spec's `design-delta.md`. `check-db-design` verifies the delta's referenced ids
+affected AC-IDs) in the spec's `design-delta.md`. `check-system-design` verifies the delta's referenced ids
 are present in the system layer. Signal completion; do not change workflow state or sign.

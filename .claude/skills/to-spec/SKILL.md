@@ -1,7 +1,7 @@
 ---
 name: to-spec
 description: 機能の受け入れ要件（spec.md / acceptance.yaml）を著すのを助ける。新機能の定義、受け入れ基準の作成・編集、設計・署名前の機能整備のときに使う。
-when_to_use: 「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える / 機能を定義する / 設計・署名の前に詰める」といった依頼のとき。設計層（ドメイン/アーキは to-basic-design、DB は to-db-design、スライス分解は to-detail-design）には使わない。
+when_to_use: 「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える / 機能を定義する / 設計・署名の前に詰める」といった依頼のとき。設計層（system 層＝ドメイン/アーキ/データは to-system-design、spec の slice 分解は to-detail-design）には使わない。
 argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
 ---
