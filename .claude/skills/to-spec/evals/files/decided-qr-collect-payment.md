@@ -25,7 +25,7 @@
 - 金額は 1〜500,000 円。0 円・負数は起票不可。
 - 1 請求 = 1 決済（分割払い・追加課金はこの機能では扱わない）。
 - 既存の「取引（transaction）」「店舗（merchant）」のドメイン概念・業務ステータスは
-  system 層（`_system/payments/domain-map.md` 等）に既にある。ここで再定義しない。
+  system 層（`_system/payments/domain-model.md` 等）に既にある。ここで再定義しない。
 - PSP の Webhook は最低1回配送（at-least-once）で、重複・順序入れ替え・遅延がありうる。
 
 ## 未解決の問い（open・署名前に詰める）

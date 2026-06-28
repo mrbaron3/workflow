@@ -13,8 +13,9 @@
 >   設計層が三層設計（system / spec / slice）として生成する。人間が先に書くと解空間を縛り、
 >   二重管理になる。
 > - **参照する（固定制約）**: ドメイン概念・ユビキタス言語・業務ステータス・データ/アーキの全体共有事項は
->   **system 層**（`_system/domain-map.md` ・`data-model.md` ・`architecture.md`）を参照し、本ファイルに
->   重複させない。
+>   **system 層**（`_system/<context>/ubiquitous-language.md` ・`domain-model.md` ・`data-model.md` ・
+>   `architecture.md`）を参照し、本ファイルに重複させない。参照する id（dependsOn）と、この spec が置換
+>   する過去 AC（supersedes）は **acceptance.yaml** に構造化して置く（spec.md を `[AC-…]` の括弧で汚さない）。
 > - **チャットで指摘（自動採点不能）**: 原子性・再入防止・人間監査前提など自動採点できない要件は、別票に分けず
 >   チャットで人間に指摘し、人間が扱いを判断する。
 >

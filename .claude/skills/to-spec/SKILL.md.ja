@@ -39,8 +39,10 @@ allowed-tools: Read, Write, Edit, Bash
   ＝分解は下流。1 spec は「**人間が一度に署名できる凝集した capability**」1つに保つ。ロードマップ
   規模（プロダクト丸ごと）なら、その旨を指摘し**上流**（北極星/ロードマップ）で複数 spec に割る。
 
-既存の **system 層**（`_system/<context>/domain-map.md`・`data-model.md`・`architecture.md`）を読み、
-固定制約として扱う：ユビキタス言語・業務ステータス・共有のドメイン/データは**参照**し、spec に複製しない。
+既存の **system 層**（`_system/<context>/ubiquitous-language.md`・`domain-model.md`・`data-model.md`・
+`architecture.md`）を読み、固定制約として扱う：ユビキタス言語・業務ステータス・共有のドメイン/データは
+**参照**し、spec に複製しない。参照する id（dependsOn）と、この spec が置換する過去 AC（supersedes）は
+`spec.md` でなく `acceptance.yaml` に置く——被覆/署名パーサが走査する散文に `[AC-…]` の括弧を混ぜないため。
 複製は drift し、HOW（スキーマ・API・アルゴリズム）は設計層の担当でここには書かない。
 
 ## 2. テンプレートから `spec.md` を書く

@@ -33,13 +33,22 @@ try {
 // AC-IDs from spec.md scenario anchors: `- **[AC-FOO-001] ...**` (keep order + duplicates for the lint).
 const specAcIds = [...specText.matchAll(/\[(AC-[A-Z0-9]+-\d+)\]/g)].map((m) => m[1]!);
 
-const acc = (parseYaml(acceptanceText) ?? {}) as { verifications?: Record<string, { method?: string }> };
+const acc = (parseYaml(acceptanceText) ?? {}) as {
+  verifications?: Record<string, { method?: string; supersedes?: string[] }>;
+  dependsOn?: string[];
+};
 const verifications = acc.verifications ?? {};
 const acceptanceAcIds = Object.keys(verifications);
 const methodsById: Record<string, string> = {};
-for (const [id, v] of Object.entries(verifications)) methodsById[id] = v?.method ?? '(missing)';
+const supersedes: string[] = [];
+for (const [id, v] of Object.entries(verifications)) {
+  methodsById[id] = v?.method ?? '(missing)';
+  if (Array.isArray(v?.supersedes)) supersedes.push(...v.supersedes);
+}
+// dependsOn is spec-level (the source of ApprovedSpecRef.systemRefs); supersedes is per-AC, flattened.
+const dependsOn = Array.isArray(acc.dependsOn) ? acc.dependsOn : [];
 
-const res = lintAuthoring({ specAcIds, acceptanceAcIds, methodsById });
+const res = lintAuthoring({ specAcIds, acceptanceAcIds, methodsById, dependsOn, supersedes });
 if (res.ok) {
   console.log(`✓ authoring lint passed: ${acceptanceAcIds.length} acceptance criteria, coverage OK`);
   process.exit(0);

@@ -35,10 +35,12 @@ it into epics or slices; that decomposition is downstream. Keep one spec to a si
 **coherent, human-signable capability**: if the ask is roadmap-sized (a whole product), say so and split
 it into several specs upstream (north-star / roadmap), don't force it into one spec.
 
-Read the existing **system layer** (`_system/<context>/domain-map.md`, `data-model.md`,
-`architecture.md`) and treat it as fixed constraints: **reference** the ubiquitous language, business
-statuses, and shared domain/data — never copy them into the spec. Duplication drifts, and HOW (schema,
-API, algorithm) belongs to the design layer, not here.
+Read the existing **system layer** (`_system/<context>/ubiquitous-language.md`, `domain-model.md`,
+`data-model.md`, `architecture.md`) and treat it as fixed constraints: **reference** the ubiquitous
+language, business statuses, and shared domain/data — never copy them into the spec. Record the ids you
+reference (`dependsOn`) and any past AC this spec replaces (`supersedes`) in `acceptance.yaml`, not in
+`spec.md` — keeping `[AC-…]` brackets out of the prose the coverage/signing parsers scan. Duplication
+drifts, and HOW (schema, API, algorithm) belongs to the design layer, not here.
 
 ## 2. Write `spec.md` from the template
 

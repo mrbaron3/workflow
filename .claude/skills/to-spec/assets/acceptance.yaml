@@ -6,7 +6,9 @@
 #
 # 役割分担:
 #   - spec.md         : 人間が受け入れ基準を Given/When/Then（観測可能な WHAT）で書く（人間可読）
-#   - acceptance.yaml : AI が協業で severity + verification（method + expected）を提案 → 人間が確定（grader 向け）
+#   - acceptance.yaml : AI が協業で severity + verification（method + expected）を提案 → 人間が確定（grader 向け）。
+#                       構造化メタ（dependsOn / supersedes）もここに置く——spec.md を `[AC-…]` の括弧で汚すと
+#                       被覆 lint・署名パーサと衝突するため、構造データは構造ファイル側に集約する。
 #
 # 制約:
 #   - severity は blocker | major | minor。blocking 判定（落ちたら出荷不可か）に使う。
@@ -16,12 +18,22 @@
 #   - spec.md の全 AC-ID が、ここに過不足なく対応する（被覆。双方向一致をコードが強制）。
 #   - expected は grader が実際に判定できる具体値を最低 1 行。
 
+# dependsOn（任意・spec 全体）: この spec が参照する system 層の要素 id（複製禁止・参照のみ）。
+# 形式: LANG/DOM/ARCH/DATA/CONTRACT-<ctx>-NNN または NFR-NNN。署名時に systemRefs として版固定される。
+# greenfield（system 層が未 seed）なら空でよい。書く場合のみ形式をコードが検査する。
+# dependsOn:
+#   - DOM-<ctx>-NNN
+#   - DATA-<ctx>-NNN
+
 verifications:
   AC-<FEATURE>-001:
     severity: blocker
     method: playwright
     expected:
       - "<具体的・検証可能な期待値。例: QR 表示後に該当決済が PENDING 状態で開始する>"
+    # supersedes（任意・この AC が置換する過去 AC-ID）: 現在仕様を畳む鍵（DOC_LIFECYCLE）。
+    # 過去の AC-ID のみ・この spec 自身の AC は不可。書く場合のみ形式をコードが検査する。
+    # supersedes: [AC-<OLDFEATURE>-NNN]
 
   AC-<FEATURE>-002:
     severity: major

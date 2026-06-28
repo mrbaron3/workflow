@@ -50,6 +50,24 @@ it stays a reference, not a duplication:
 3. **Acceptance criterion** — pin the referenced elements (e.g. `systemRefs` with version-pinned
    gitSha) as **target behavior**, valid even before the upstream exists.
 
+## supersedes & dependsOn live in acceptance.yaml (lineage, not prose)
+
+Two structured fields express how a spec relates to the rest of the system. Both live in
+`acceptance.yaml`, never in `spec.md` — a bracketed `[AC-…]` anywhere in `spec.md` is read as a
+*current* AC by both the coverage lint and the signing parser, so lineage written there would corrupt
+coverage. Keep the prose clean; put the structure in the structured file.
+
+- **`dependsOn`** (spec-level, top of `acceptance.yaml`) — the system-layer ids this spec references
+  (`LANG/DOM/ARCH/DATA/CONTRACT-<ctx>-NNN`, or `NFR-NNN`). This is the authoring-side source of the
+  version-pinned `systemRefs` the signature records. Reference, don't copy. On greenfield it is empty —
+  the elements are not seeded yet (see *Greenfield forward-references* above); the lint only checks the
+  shape of what you do write, never existence.
+- **`supersedes`** (per-AC, under each verification) — the *past* AC-IDs this AC replaces. This is the
+  fold key: it lets the current-spec view be re-derived from the signed-spec history (DOC_LIFECYCLE).
+  Judgment call: name only the AC a new behavior genuinely *replaces* (not merely relates to), and never
+  this spec's own AC — you supersede history, not yourself. The fold itself is a separate, deferred
+  mechanism; here you only record the edge.
+
 ## Process belongs in prose, not in ACs
 
 Acceptance criteria grade **observable artifact properties**. Collaboration quality, who-writes-what
