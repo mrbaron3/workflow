@@ -1,10 +1,7 @@
 ---
 name: to-detail-design
-description:
-   署名済み spec を PR サイズのスライスに分解する詳細設計（コンポーネント設計・スライス分解）。
-when_to_use:
-   詳細設計・スライス分解・コンポーネント設計・PR 分割・issue 分解のとき。
-   system 層（ドメイン/アーキ/データ）の設計は to-system-design を使う。
+description: 署名済み spec を PR サイズの Issue 集合に分解する詳細設計（コンポーネント設計・Issue 分解）。
+when_to_use: 詳細設計・Issue 分解・スライス分解・コンポーネント設計・PR 分割のとき。system 層（ドメイン/アーキ/データ）の設計は to-system-design を使う。
 argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
 arguments: spec_dir
@@ -12,35 +9,41 @@ arguments: spec_dir
 
 # To detail design（日本語訳 — 正本は SKILL.md）
 
-署名済みの `spec.md` を、system 層を参照する PR サイズのスライスへ分解する。あなたは補助で、不変条件は
-`scripts/check-detail-design.ts` が強制する。WHAT の所有者は人間 — `spec.md` / `acceptance.yaml` は
-編集しない。
+署名済みの `spec.md` を、system 層を参照する **PR サイズの Issue 集合**へ分解する。あなたは補助で、
+不変条件は `scripts/check-detail-design.ts` が強制する。WHAT の所有者は人間 — `spec.md` /
+`acceptance.yaml` は編集しない。
 
 ## 入出力
 
 | | |
 | --- | --- |
 | **入力** | 署名済み `spec.md` + `acceptance.yaml`、触れる system 層（参照のみ・複製しない） |
-| **出力** | `slices/SLICE-<SPEC>-NNN.md`（スライスごと）+ スライスごとの `IssueSpawnOrder` |
+| **出力** | `issues.yaml` — spawn マニフェスト：1 エントリ = 1 つの PR サイズ Issue |
 
-テンプレを埋める: [slice](assets/slice.md)。
+`issues.yaml` は**著述文書ではなく spawn マニフェスト**。決定論的な取込が各 `ISSUE-NNNN` を採番し、
+feature/spec へリンクし、store に着地させる — nano の状態は store に住む（markdown の slice 文書は
+持たない）。テンプレを埋める: [issues.yaml](assets/issues.yaml)。
 
 ## 規則
 
 - 1 起動 = 1 spec。いつ走るかは外側で決まる。system 要素は **参照**（`dependsOnSystem`）し、著述しない。
-- **被覆かつ排他・双方向**: 全スライスの `coversAcIds` の和集合が spec の AC 全集合に一致し、同じ AC を 2 つの
-  スライスに入れない。PR サイズ超過の AC は著述層へ差し戻して分割し、スライス側で割らない。
-- **seam / contract altitude のみ** — 固定したいアルゴリズムは非ゲートの `implementationNotes` に置く。
-- 詳細・```yaml 構造コアの書式・実例は [references/detail-design.md](references/detail-design.md)。
+- **被覆かつ排他・双方向**: 全 issue の `coversAcIds` の和集合が spec の AC 全集合に一致し、同じ AC を 2 つの
+  issue に入れない。大きすぎる AC は著述層へ差し戻して分割し、issue 側で割らない。
+- **1 Issue = 1 PR**: 1 体のエージェントが 1 つのレビュー可能な PR として着地できる大きさにする。
+- **seam / contract altitude のみ** — 他ユニットが噛み合う seam（と固定したいアルゴリズム）は非ゲートの
+  `implementationNotes` に置く。クラス内部は書かない。
+- `key` は draft ローカルのハンドル（store の `ISSUE-NNNN` は spawn 時に採番）。集合内で安定・一意に保つ。
+  マニフェスト書式・ID・実例は [references/detail-design.md](references/detail-design.md)。
   シーケンス図は下流で派生し、ここでは著述しない。
 
 ## セルフチェックして停止
 
 進行管理役が権威的に再実行するのと同じ決定的 lint を、通るまで走らせる（skill 非依存）。レビュー前に
-被覆 / ID の破れを潰すため。
+被覆 / key / 参照の破れを潰すため。
 
 ```bash
 npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-detail-design.ts <spec-dir>
 ```
 
-完成をシグナルする — ワークフロー状態は書かず、署名もしない。独立レビューが続く。
+完成をシグナルする — マニフェストを出力するだけで、ワークフロー状態は書かず署名もしない。独立レビューと
+決定論的な spawn が続く。

@@ -1,0 +1,17 @@
+# Issue spawn manifest — to-detail-design output (DOC_TAXONOMY §NANO).
+# Copy to <spec-dir>/issues.yaml. One entry = one PR-size Issue.
+#   - This is a spawn manifest, NOT an authored document: a deterministic ingest allocates each
+#     store ISSUE-NNNN id, links it to the feature/spec, and lands it in the store (nano state lives
+#     there — there are no markdown slice docs). The check validates this set before ingest.
+#   - Reference system elements by id in dependsOnSystem; never copy their content here.
+#   - Seam / contract altitude only. Internal algorithms go in implementationNotes (not gated).
+issues:
+  - key: ISSUE-<SPEC>-NNN            # draft-local stable handle; store ISSUE-NNNN id allocated at spawn
+    title: <short imperative title>
+    area: <frontend|backend|fullstack|infra|docs|eval|harness>
+    type: story                      # optional (default story): story|bug|tech-debt|harness|eval
+    coversAcIds: [AC-<SPEC>-NNN]     # spec AC-IDs this issue satisfies (被覆×排他: each AC in exactly one issue)
+    dependsOnIssues: []              # predecessor keys in this manifest (DAG; no cycles)
+    dependsOnSystem: [DATA-<CTX>-NNN, ARCH-<CTX>-NNN]   # system element ids referenced, never copied
+    implementationNotes:             # optional, NOT gated — seams another unit meshes with; test approach; algorithm pins
+      - <the seam/contract surface another unit needs, or an algorithm you want fixed>
