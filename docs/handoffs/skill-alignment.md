@@ -36,6 +36,24 @@ lockstep** で動かす。スキル文だけ直しても check が旧不変条�
 - **レガシー温存**: `src/planning/planner.ts` の `planFromSeed`＋`seed/sample-roadmap.yaml`（AC インライン）は
   pre-M20。`planFromSeedLegacy` として残し、オフライン `agentops demo` を壊さない。新配線を主経路にする。
 
+## A/B/C：作業の区別（planning-tree はスキル修正ではない）
+
+本ハンドオフ §スキル別 が扱うのは **A のみ**。planning-tree は別物（**B/C**）で、A の上に乗る。
+
+| | 作業 | 中身 | 種別 |
+|---|---|---|---|
+| **A** | 既存スキル修正 | to-detail-design / to-system-design / to-spec ＋ vendored check/lint ＋ 共有 schema デルタ | スキル修正（**ここから始める**・本書 §スキル別＝これ） |
+| **B** | planning-tree 実装 | `Feature` / `planRoadmap` / `spawnSpecs` の**新規 src/ コード** ＋ `agents/roadmap-planner.md` の出力契約更新（SeedRoadmap → AC 不可の v2） | **新規機能**（スキル修正ではない） |
+| **C** | planning-tree を通す | 署名 spec を**修正後のスキルで消費**：to-system-design が data-model seed（AC-PLAN-008）→ to-detail-design が issue 化 → B を実装 | スキルの**利用** |
+
+**関係（bootstrap）**:
+
+- 共有の最初の一歩 = **schema デルタ**（`Feature`・`Issue.featureId/specPath/coversAcIds`）。A の to-detail-design も
+  B の実装も依存する → §推奨シーケンス 1 を最初に置く理由。
+- 鶏卵: planning-tree の署名 spec を issue に分解するには、先に to-detail-design を issue 化しておく必要がある。
+  よって **schema → to-detail-design（＋他スキル）修正〔A〕→ planning-tree 実装〔B/C〕** の順。
+- 注意: planning-tree を「スキル修正」と捉えると B の**新規 src/ 実装**を見落とす。A と B/C は別工程。
+
 ## スキル別 ギャップと目標
 
 ### 1. to-detail-design（最大の変更：slice 文書 → Issue）
