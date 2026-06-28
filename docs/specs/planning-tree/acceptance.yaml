@@ -1,0 +1,70 @@
+# 計画の木（roadmap → feature → spec spawn）配線 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+verifications:
+  AC-PLAN-001:
+    severity: blocker
+    method: db_state_check
+    expected:
+      - "取込後の計画の木に、roadmap の epic 数と feature 数が一致して存在する"
+      - "各 feature レコードがちょうど 1 つの epic を指し、各 epic が roadmap に属する"
+      - "どの feature にも受け入れ基準フィールドが存在しない（空でなく不在）"
+
+  AC-PLAN-002:
+    severity: major
+    method: unit_test
+    expected:
+      - "outcome が空の feature を含む roadmap の取込が、違反 feature を示してエラーになる"
+      - "取込失敗後、計画の木は取込前と同一（何も追加されない）"
+
+  AC-PLAN-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "未 spawn の feature N 件を spawn すると spec dir が N 件生成される"
+      - "各 feature に対応する未署名 spec state が 1 件登録され、feature がその spec を参照する"
+      - "生成された stub に受け入れ基準（AC-ID 行）が含まれない"
+
+  AC-PLAN-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "題目が同一スラグになりうる 2 feature を spawn すると、異なる 2 つの spec dir ができる"
+      - "各 spec state はちょうど 1 つの feature に対応する（1 spec を 2 feature が共有しない）"
+
+  AC-PLAN-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "spawn 済みの状態で再 spawn しても spec dir 数・spec state 数が増えない"
+      - "再 spawn 後、既存 spec ファイルの内容が変化しない"
+
+  AC-PLAN-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "受け入れ基準をインライン保持する roadmap の取込が、違反箇所を示してエラーになる"
+      - "取込失敗後、計画の木に epic/feature が 1 件も永続されない"
+
+  AC-PLAN-007:
+    severity: blocker
+    method: db_state_check
+    expected:
+      - "feature を 1 つ追加した roadmap の再取込後、feature 総数がちょうど 1 増える"
+      - "再取込前に署名済みだった spec state（署名情報）が、再取込後も同一である"
+
+  AC-PLAN-008:
+    severity: major
+    method: unit_test
+    expected:
+      - "署名済み feature について epic→feature→spec→署名 AC の各リンクが解決する"
+      - "spec→feature、feature→epic、epic→roadmap の逆リンクも解決する"
+
+  AC-PLAN-009:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "署名済み spec を持つ feature を roadmap 源から除いて再取込しても、その spec dir と署名が残る"
+      - "当該 feature に『計画から外れた』印が付く（レコードが物理削除されない）"
