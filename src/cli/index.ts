@@ -176,6 +176,7 @@ function cmdSign(pos: string[]): void {
   const existing = store.getSpecState(dir);
   store.upsertSpecState({
     path: dir,
+    featureId: existing?.featureId ?? null, // preserve the planning-tree link across signing (AC-PLAN-008)
     approved,
     signedAt: now,
     createdAt: existing?.createdAt ?? now,

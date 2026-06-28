@@ -92,10 +92,20 @@ export const Issue = z.object({
   title: z.string(),
   area: Area,
   epicId: z.string().nullable().default(null),
+  // Planning-tree links (DOC_TAXONOMY §2本の木): which feature/spec this issue descends from,
+  // so north-star → feature → AC → issue → PR is mechanically traceable.
+  featureId: z.string().nullable().default(null), // FEAT-NNN this issue serves (null for non-spec work)
+  specPath: z.string().nullable().default(null), // signed spec dir this issue decomposes — the coverage-set key
   sprint: z.string().nullable().default(null), // e.g. 2026-W24
   status: IssueStatus.default('planned'),
   assignedAgent: GeneratorAgent.nullable().default(null),
   contract: IssueContract.nullable().default(null), // null until contract-drafted
+  // Nano decomposition (to-detail-design; replaces the old slice .md — DOC_TAXONOMY §NANO).
+  // coversAcIds is the 被覆×排他 unit: every spec AC must be covered by exactly one issue in the set.
+  coversAcIds: z.array(z.string()).default([]), // spec AC-IDs this issue satisfies
+  dependsOnSystem: z.array(z.string()).default([]), // system element ids referenced (DOM/DATA/ARCH/…-<CTX>-NNN) — referenced, never copied
+  dependsOnIssues: z.array(z.string()).default([]), // predecessor issues, forming the spec's issue DAG
+  implementationNotes: z.array(z.string()).default([]), // seam-level HOW hints (optional; internal, not a contract)
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -106,6 +116,7 @@ export const Epic = z.object({
   title: z.string(),
   theme: z.string(),
   status: z.enum(['planned', 'in-progress', 'done']).default('planned'),
+  featureIds: z.array(z.string()).default([]), // ordered features under this epic (bidirectional: Feature.epicId)
   issueIds: z.array(z.string()).default([]),
 });
 export type Epic = z.infer<typeof Epic>;
@@ -116,6 +127,29 @@ export const Roadmap = z.object({
   epicIds: z.array(z.string()).default([]),
 });
 export type Roadmap = z.infer<typeof Roadmap>;
+
+export const FeatureStatus = z.enum(['planned', 'specced', 'signed', 'implemented']);
+export type FeatureStatus = z.infer<typeof FeatureStatus>;
+
+/**
+ * A leaf of the planning tree (DOC_TAXONOMY §2本の木): one signable capability.
+ * roadmap-planner emits only the outcome + order — never acceptance criteria (those are
+ * authored into the signed spec by to-spec). `specPath` is the 交点 where the planning
+ * tree meets the system tree: one Feature becomes exactly one signed spec (AC-PLAN-003/004).
+ * Descoping a feature flips `inPlan`, it never deletes a signed spec (AC-PLAN-009).
+ */
+export const Feature = z.object({
+  id: z.string(), // FEAT-NNN
+  epicId: z.string().nullable().default(null), // parent epic (bidirectional: Epic.featureIds)
+  title: z.string(),
+  outcome: z.string(), // the capability/value ("why now") — no acceptance criteria here
+  specPath: z.string().nullable().default(null), // signed spec dir once spawned (bidirectional: SpecState.featureId)
+  status: FeatureStatus.default('planned'),
+  inPlan: z.boolean().default(true), // false = descoped: a flag, never a deletion (AC-PLAN-009)
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type Feature = z.infer<typeof Feature>;
 
 // --- PR & evaluation -------------------------------------------------------
 
@@ -232,6 +266,7 @@ export type ApprovedSpecRef = z.infer<typeof ApprovedSpecRef>;
  */
 export const SpecState = z.object({
   path: z.string(), // spec dir, e.g. docs/specs/authoring-layer — the identity
+  featureId: z.string().nullable().default(null), // planning-tree feature this spec realizes (bidirectional: Feature.specPath)
   approved: ApprovedSpecRef.nullable().default(null), // null until first signed
   signedAt: z.string().nullable().default(null),
   createdAt: z.string(),
@@ -246,6 +281,7 @@ export const DB = z.object({
   counters: z.record(z.number()).default({}),
   roadmap: Roadmap.nullable().default(null),
   epics: z.array(Epic).default([]),
+  features: z.array(Feature).default([]),
   issues: z.array(Issue).default([]),
   prs: z.array(PR).default([]),
   evalRuns: z.array(EvalRun).default([]),
