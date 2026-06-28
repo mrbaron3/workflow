@@ -1,11 +1,7 @@
 ---
 name: to-system-design
-description:
-   設計層の system 層（ドメインモデル・アーキテクチャ・データモデル）を境界コンテキスト単位で著す・拡張する。
-when_to_use:
-   基本設計・方式設計・アーキテクチャ・ドメインモデル・モジュール境界・seam・
-   DB設計・データモデル・スキーマ設計・正規化・マイグレーションを作るとき。
-   署名済み spec を slice/PR に分解するのは to-detail-design を使う。
+description: 設計層の system 層（ユビキタス言語・ドメインモデル・アーキテクチャ・データモデル）を境界コンテキスト単位で著す・拡張する。
+when_to_use: 基本設計・方式設計・アーキテクチャ・ドメインモデル・ユビキタス言語・モジュール境界・seam・DB設計・データモデル・スキーマ設計・正規化・マイグレーションを作るとき。署名済み spec を Issue/PR に分解するのは to-detail-design を使う。
 argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
 arguments: spec_dir
@@ -13,33 +9,40 @@ arguments: spec_dir
 
 # To system design（日本語訳 — 正本は SKILL.md）
 
-署名済み `spec.md` が触れる境界コンテキストについて、**global・単一正本の system 層**——ドメイン・
+署名済み `spec.md` が触れる境界コンテキストについて、**global・単一正本の system 層**——言語・ドメイン・
 アーキテクチャ・データ——を著す/拡張する。あなたは補助で、構造的不変条件は
 `scripts/check-system-design.ts` が強制する。WHAT の所有者は人間 — `spec.md` / `acceptance.yaml` は
 編集せず、署名もしない。
 
 この層は **spec より粗い**：境界コンテキストは spec をまたいで設計・所有され、毎回引き直さない。
+`_system/<context>/` に置かれ、各ビューは独自の追加専用 ID 空間を持つ（renumber/rewrite しない）。
 関連コンテキスト全体を読み、それに追記する。
 
 ## 2つの観点・1つの順序 — データはドメインに従う
 
-1. **ドメイン** → `domain-map.md`（`DOM-NNN`）＋ `architecture.md`（`ARCH-NNN`）：ユビキタス言語・
-   エンティティ/集約・関係・コンテキスト境界、その上にモジュール境界と seam。
-   ブリーフと実例: [references/domain.md](references/domain.md)。
-2. **データ** → `data-model.md`（`DATA-NNN`）：ドメインのエンティティを**実体化**する論理モデル→スキーマ
-   （新概念は作らない）。ブリーフと実例: [references/data.md](references/data.md)。
+1. **ドメイン** → `ubiquitous-language.md`（`LANG-<CTX>-NNN`）→ `domain-model.md`（`DOM-<CTX>-NNN`）→
+   `architecture.md`（`ARCH-<CTX>-NNN`）：まず語彙、次にその語で書くエンティティ/集約/不変条件、その上に
+   モジュール境界と seam。ブリーフと実例: [references/domain.md](references/domain.md)。
+2. **データ** → `data-model.md`（`DATA-<CTX>-NNN`）：ドメインのエンティティを**実体化**する論理モデル
+   （新概念は作らない）。**DBML ブロックが構造化 SSOT**、Mermaid `erDiagram` はその派生。
+   ブリーフと実例: [references/data.md](references/data.md)。
 
-ドメインを先に行い、データはその境界の上に建てる。spec が実際に触れる観点だけ走らせる——新しい
-ドメイン/データを足さない spec はその段を飛ばす。
+ドメインを先に行い、データはその境界の上に建てる。spec が実際に触れる観点・ビューだけ走らせる——新しい
+言語/ドメイン/データを足さない spec はその段を飛ばす。
+
+> 完全な理想（DOC_TAXONOMY 7 ビュー）には契約（`CONTRACT-<CTX>-NNN`）・横断 NFR・ADR・`context-map.md`
+> 索引もある。これらは本 skill ではまだ first-class でない（ダイアルが要求したら著述する）。本 skill が
+> 持つのは上記 4 ビュー。
 
 ## 共通の規律（両観点）
 
 - **lazy boundary / coherent within** — 触れていないコンテキストは設計しない。最初に触れた時点で集約の
   閉包を概念レベルで設計し、物理は当面の AC が要る分だけ具体化する。
-- **追加のみ** — `DOM/ARCH/DATA-NNN` は一意・安定。変更は「新要素＋マイグレーション」で、renumber・
+- **追加のみ** — ID はコンテキスト内で一意・安定。変更は「新要素＋マイグレーション」で、renumber・
   書き換えしない。
-- **contract altitude** — public な形だけ。内部アルゴリズム/表現は実装者のもの。共有 id は**参照**し
-  内容を複製しない。図表は下流で派生し、ここでは著述しない。
+- **contract altitude** — public な形だけ。内部アルゴリズム/表現は実装者のもの。共有 id
+  （`LANG/DOM/ARCH/DATA-<CTX>-NNN`）は**参照**し内容を複製しない。図表は下流で派生し、ここでは著述しない
+  （データビューの DBML だけが、唯一あなたが著述する構造化ソース）。
 
 ## セルフチェックして停止
 
@@ -55,5 +58,6 @@ npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-system-design.ts <spec-dir>
 
 ---
 
-観点別ブリーフは `references/`、出力テンプレは `assets/`（domain-map / architecture / data-model）。
-整合の不変条件は `scripts/check-system-design.ts`（`src/design/lint.ts` を vendor）が SoT。
+観点別ブリーフは `references/`、出力テンプレは `assets/`（ubiquitous-language / domain-model /
+architecture / data-model）。整合の不変条件は `scripts/check-system-design.ts`
+（`src/design/lint.ts` を vendor）が SoT。

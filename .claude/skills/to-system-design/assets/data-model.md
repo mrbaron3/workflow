@@ -1,21 +1,39 @@
 <!--
-  data-model for one bounded context. Global, single source of truth, additive only.
+  data-model for one bounded context (DOC_TAXONOMY view 4 — データ). Lives at
+  _system/<ctx>/data-model.md. Global within the context, single source of truth, additive only.
   - Fill <…> and delete this comment plus any unused rows.
-  - DATA-NNN ids are unique and stable across the WHOLE system layer — never renumber/reuse.
-  - Data follows the domain: realise domain entities, do not invent new concepts here.
+  - DATA-<CTX>-NNN ids are unique and stable within the context — never renumber/reuse.
+  - STRUCTURED SSOT = the DBML block. The Mermaid erDiagram (and any SQL DDL) are DERIVED from it —
+    author the DBML, regenerate the diagram (DOC_TAXONOMY §データビューの実体化). Don't hand-edit the
+    diagram to diverge from the DBML.
+  - Data follows the domain: realise DOM-<CTX>-NNN entities, do not invent new concepts here.
   - Materialise only the physical columns the current acceptance criteria need (lazy).
-  - This file feeds the (derived) ER diagram; keep the schema lists machine-parseable.
+  - Tag each DATA-<CTX>-NNN element where it lives (a DBML comment/note), so the id is referenceable.
 -->
 
 # Data model — <context> context
 
-## Logical model
+## Logical model (DBML — structured SSOT)
 
-- **DATA-NNN <table / entity>**
-  - owner: <module that owns writes>
-  - columns: `<name>: <type>` (nullable?), ...
-  - keys: pk `<…>`; fk `<…> → <table>`
+```dbml
+// DATA-<CTX>-NNN <table-or-column> — <one-line purpose>; realises DOM-<CTX>-NNN. owner: <module>.
+Table <table> {
+  <id> <type> [pk]
+  <col> <type> [null, note: 'DATA-<CTX>-NNN — <meaning>; null = <first-class meaning>, not a sentinel']
+}
+// Ref: <table>.<fk> > <other>.<id>   // relations are first-class in DBML
+```
+
+## Entity–relationship (Mermaid — DERIVED from the DBML above)
+
+```mermaid
+erDiagram
+  <TABLE> {
+    <type> <col>
+  }
+```
 
 ## Persistence contract & migration
 
-- **DATA-NNN** — migration: <how existing data is handled>; back-compat: <e.g., existing rows read as null>.
+- **DATA-<CTX>-NNN** — migration: <additive strategy, e.g. add nullable column, no backfill>;
+  back-compat: <e.g. existing rows read as null; readers unaware of the column are unaffected>.

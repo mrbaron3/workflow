@@ -6,13 +6,25 @@ owned across specs, so two specs that touch the same concept must not model it t
 
 ## What you write
 
-| File | Element id | Holds |
+| File (under `_system/<ctx>/`) | Element id | Holds |
 | --- | --- | --- |
-| `data-model.md` | `DATA-NNN` | logical model → schema (tables/columns), ownership, keys, migration, persistence contract |
+| `data-model.md` | `DATA-<CTX>-NNN` | logical model (DBML SSOT) → schema, ownership, keys, migration, derived ER diagram |
 
-**Data follows the domain.** Read `domain-map.md` first; your tables/columns realise the domain entities,
-they do not invent new concepts. If you find yourself naming a new concept, that belongs in the **domain
-perspective** ([references/domain.md](domain.md)).
+**Data follows the domain.** Read `domain-model.md` first; your tables/columns realise the domain entities
+(`DOM-<CTX>-NNN`), they do not invent new concepts. If you find yourself naming a new concept, that belongs
+in the **domain perspective** ([references/domain.md](domain.md)).
+
+## Structured SSOT + derived skin (the key discipline)
+
+The **DBML block is the structured SSOT**; the Mermaid `erDiagram` and any SQL DDL are *derived* from it
+(DOC_TAXONOMY §データビューの実体化). Author the DBML, regenerate the diagram — never hand-edit the diagram
+to diverge. DBML carries table/column/type/PK·FK/enum/index and makes relations first-class, is plain text
+that diffs in a PR, and converts to SQL via `@dbml/cli`; Mermaid renders natively in GitHub/VS Code so the
+ER view is a zero-infra always-on projection.
+
+Tag each `DATA-<CTX>-NNN` element where it lives — a DBML comment or column `note:` — so the id stays
+referenceable (`dependsOnSystem` and `check-*` find it by text). Judgement (invariants, the reason for a
+migration) stays prose; the schema and diagram are structured/derived.
 
 ## Lazy boundary / coherent within
 
@@ -25,20 +37,35 @@ perspective** ([references/domain.md](domain.md)).
 
 ## Additive only / migration
 
-- `DATA-NNN` ids are unique and stable. Never renumber or rewrite an existing id's meaning.
+- `DATA-<CTX>-NNN` ids are unique and stable within the context. Never renumber or rewrite an existing
+  id's meaning.
 - A change is a **new** element + a migration, with a back-compat note (e.g., existing rows read as null).
 
 ## Worked example (Todo-due, "scheduling" context, first touch)
 
-```text
-data-model.md + DATA-014  todos.dueDate (nullable, ISO-8601).
-                          owner: todo module. Existing rows read as null (back-compat).
+```dbml
+// DATA-scheduling-014 — todos.dueDate: persisted due-date value; realises DOM-scheduling-001. owner: todo module.
+Table todos {
+  id integer [pk]
+  due_date date [null, note: 'DATA-scheduling-014 — ISO-8601; null = no due date (first-class), never a sentinel']
+}
 ```
 
-Only the one column the AC needs is materialised; the rest of any scheduling schema is deferred (lazy).
+Derived ER view (regenerated from the DBML, not hand-authored):
+
+```mermaid
+erDiagram
+  todos {
+    integer id PK
+    date due_date "nullable; null = no due date"
+  }
+```
+
+Only the one column the AC needs is materialised; overdue stays derived (no column); the rest of any
+scheduling schema is deferred (lazy). Migration is additive — existing rows read as `null`, no backfill.
 
 ## Output / signal
 
-Produce the data-model delta (rich Markdown + structured core) and record `reads` / `extends` (with
-affected AC-IDs) in the spec's `design-delta.md`. `check-system-design` verifies the delta's referenced ids
-are present in the system layer. Signal completion; do not change workflow state or sign.
+Produce the data-model delta (DBML SSOT + derived diagram + migration prose) and record `reads` / `extends`
+(with affected AC-IDs) in the spec's `design-delta.md`. `check-system-design` verifies the delta's
+referenced ids are present in the system layer. Signal completion; do not change workflow state or sign.

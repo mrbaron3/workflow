@@ -1,15 +1,17 @@
 #!/usr/bin/env tsx
 /**
- * Integrity check for a system-design contribution (domain-map + architecture + data-model):
- * a thin wrapper that parses the spec's design-delta.md (reads/extends element ids) and verifies
- * every referenced id is present in the global system layer, delegating to the vendored
- * deterministic tier in ./lib/design-lint.ts. The skill's prose never re-implements the rules.
+ * Integrity check for a system-design contribution (ubiquitous-language + domain-model +
+ * architecture + data-model): a thin wrapper that parses the spec's design-delta.md
+ * (reads/extends element ids) and verifies every referenced id is present in the global system
+ * layer, delegating to the vendored deterministic tier in ./lib/design-lint.ts. The skill's
+ * prose never re-implements the rules.
  *
  * Run from anywhere:
  *   npx tsx <skill>/scripts/check-system-design.ts <spec-dir> [--system <dir>]
  *
- * <spec-dir> holds design-delta.md. The global system layer is found at
- * <spec-dir>/../_system by default (override with --system <dir>).
+ * <spec-dir> holds design-delta.md. The system layer is found at <spec-dir>/../_system by default
+ * (override with --system <dir>); element ids are read recursively from every *.md beneath it,
+ * which is organised per bounded context (_system/<ctx>/*.md).
  * Exit: 0 = passed, 1 = lint failed, 2 = usage / read error.
  */
 
@@ -26,7 +28,8 @@ interface DesignDeltaCore {
   extends?: DeltaRef[];
 }
 
-const SYS_RE = /\b(?:DOM|DATA|ARCH)-\d+\b/g;
+// Context-segmented system element ids: <KIND>-<ctx>-NNN (DOC_TAXONOMY §ID 体系).
+const SYS_RE = /\b(?:LANG|DOM|ARCH|DATA|CONTRACT)-[a-z0-9]+(?:-[a-z0-9]+)*-\d+\b/g;
 const uniq = (xs: string[]): string[] => [...new Set(xs)];
 
 function firstYamlBlock(text: string): string | undefined {
@@ -68,8 +71,10 @@ if (!existsSync(systemDir)) {
   process.exit(2);
 }
 const present: string[] = [];
-for (const f of readdirSync(systemDir).filter((x) => x.endsWith('.md'))) {
-  present.push(...(readFileSync(join(systemDir, f), 'utf8').match(SYS_RE) ?? []));
+// Recurse: the system layer is organised per bounded context (_system/<ctx>/*.md).
+for (const rel of readdirSync(systemDir, { recursive: true }) as string[]) {
+  if (!rel.endsWith('.md')) continue;
+  present.push(...(readFileSync(join(systemDir, rel), 'utf8').match(SYS_RE) ?? []));
 }
 
 const r = checkReferencesPresent(referenced, uniq(present));
