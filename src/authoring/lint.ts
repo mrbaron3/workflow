@@ -150,6 +150,15 @@ export function lintAuthoring(input: AuthoringLintInput): AuthoringLintResult {
   const duplicates = checkNoReuse(input.specAcIds);
   const manual = checkManualAbsence(input.methodsById);
   const errors: string[] = [];
+  // A spec with zero AC-IDs would otherwise pass vacuously: empty coverage trivially
+  // matches, nothing duplicates, nothing is manual. Guard it so the gate (and the
+  // skill's self-check) can never green-light an empty/malformed spec or a doc that
+  // never adopted the AC-<SPEC>-NNN contract format.
+  if (input.specAcIds.length === 0) {
+    errors.push(
+      'spec.md declares no acceptance criteria — author at least one Given/When/Then scenario with a stable AC-ID (an empty spec must not pass the gate)',
+    );
+  }
   if (!coverage.ok) {
     if (coverage.missingInAcceptance.length)
       errors.push(`AC in spec.md but not acceptance.yaml: ${coverage.missingInAcceptance.join(', ')}`);

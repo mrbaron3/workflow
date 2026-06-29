@@ -1,7 +1,7 @@
 ---
 name: to-spec
 description: 機能の受け入れ要件（spec.md / acceptance.yaml）を著すのを助ける。新機能の定義、受け入れ基準の作成・編集、設計・署名前の機能整備のときに使う。
-when_to_use: 「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える / 機能を定義する / 設計・署名の前に詰める」といった依頼のとき。設計層（system 層＝ドメイン/アーキ/データは to-system-design、spec の slice 分解は to-detail-design）には使わない。
+when_to_use: 「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える / 機能を定義する / 設計・署名の前に詰める」といった依頼のとき。設計層（system 層＝ドメイン/アーキ/データは to-system-design、spec の Issue 分解は to-detail-design）には使わない。
 argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
 ---
@@ -18,7 +18,8 @@ the human confirm. Keep `spec.md` human-readable; push grader detail into `accep
 ## 1. Intake — consume the decision, don't re-elicit it
 
 If an upstream decision doc exists (brainstorm result, draft, or notes — ask for the path, or look
-under `docs/draft/_brainstorm/`), read it and treat its decided content as the source. Project it:
+under `draft/_spec/`, whose map is `draft/_spec/README.md` and decisions are in `draft/_spec/decisions/`),
+read it and treat its decided content as the source. Project it:
 
 | Upstream doc element | Maps to in spec |
 | --- | --- |
