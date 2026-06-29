@@ -1,8 +1,9 @@
-# Data model (system layer · bounded-context granularity)
+# Data model (system layer · view 4 of 4)
 
 You model the data of **one bounded context**. This layer is global and single-source-of-truth; you read
 the whole relevant data model and add to it. Cadence is coarser than a spec on purpose — the data model is
-owned across specs, so two specs that touch the same concept must not model it twice.
+owned across specs, so two specs that touch the same concept must not model it twice. You run after the
+domain view (in parallel with architecture).
 
 ## What you write
 
@@ -64,8 +65,16 @@ erDiagram
 Only the one column the AC needs is materialised; overdue stays derived (no column); the rest of any
 scheduling schema is deferred (lazy). Migration is additive — existing rows read as `null`, no backfill.
 
+## Reverse mode (distilling from code)
+
+When the source is existing code, reverse the DBML from the **real** persistence — the live schema,
+migrations, or ORM models — then derive the ER diagram. This is the most faithful view; the database does
+not lie. Tag each element with `file:symbol` evidence; the output is a **draft proposal** for human review,
+not a direct write. See [reverse.md](reverse.md).
+
 ## Output / signal
 
 Produce the data-model delta (DBML SSOT + derived diagram + migration prose) and record `reads` / `extends`
-(with affected AC-IDs) in the spec's `design-delta.md`. `check-system-design` verifies the delta's
-referenced ids are present in the system layer. Signal completion; do not change workflow state or sign.
+(with affected AC-IDs in spec mode) in the run's `design-delta.md`. `check-system-design` verifies the
+delta's referenced ids are present in the system layer. Signal completion; do not change workflow state or
+sign.

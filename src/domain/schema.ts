@@ -52,6 +52,12 @@ export const AgentRole = z.enum([
   'eval-curator',
   'release-manager',
   'harness-analyst',
+  // system-layer view modelers — dispatched per-view by the to-system-design skill.
+  'language-modeler',
+  'domain-modeler',
+  'architecture-modeler',
+  'data-modeler',
+  'context-mapper',
 ]);
 export type AgentRole = z.infer<typeof AgentRole>;
 

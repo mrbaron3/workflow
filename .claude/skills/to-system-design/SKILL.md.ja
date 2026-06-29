@@ -1,63 +1,109 @@
 ---
 name: to-system-design
-description: 設計層の system 層（ユビキタス言語・ドメインモデル・アーキテクチャ・データモデル）を境界コンテキスト単位で著す・拡張する。
-when_to_use: 基本設計・方式設計・アーキテクチャ・ドメインモデル・ユビキタス言語・モジュール境界・seam・DB設計・データモデル・スキーマ設計・正規化・マイグレーションを作るとき。署名済み spec を Issue/PR に分解するのは to-detail-design を使う。
-argument-hint: [spec-dir]
-allowed-tools: Read, Write, Edit, Bash
-arguments: spec_dir
+description: 設計層の system 層（ユビキタス言語・ドメイン・アーキテクチャ・データ）を境界コンテキスト単位で著す・拡張する。spec 差分・トップダウン要求・既存コードからの逆生成のいずれの入力からでも、観点を依存順で設計する（既定はインライン、規模が大きいときだけ観点ごとの専用エージェントに分散）。署名済み spec が無くても使える。
+when_to_use: 基本設計・方式設計・アーキテクチャ・ドメインモデル・ユビキタス言語・モジュール境界・seam・DB設計・データモデル・スキーマ設計・正規化・マイグレーションを作るとき。署名済み spec が無くてもよい（トップダウンの macro 据え／既存実装からの逆生成も本スキルの仕事）。署名済み spec を Issue/PR に分解するのは to-detail-design を使う。
+argument-hint: "[source: <spec-dir> | code <path> | requirement <doc>] [--context <ctx>]"
+allowed-tools: Read, Write, Edit, Bash, Task
+arguments: source
 ---
 
 # To system design（日本語訳 — 正本は SKILL.md）
 
-署名済み `spec.md` が触れる境界コンテキストについて、**global・単一正本の system 層**——言語・ドメイン・
-アーキテクチャ・データ——を著す/拡張する。あなたは補助で、構造的不変条件は
-`scripts/check-system-design.ts` が強制する。WHAT の所有者は人間 — `spec.md` / `acceptance.yaml` は
-編集せず、署名もしない。
+**system 層**——境界コンテキストの4つの macro ビュー：ユビキタス**言語**・**ドメイン**モデル・
+**アーキテクチャ**・**データ**モデル——を *additive な単一正本* として所有する。あなたは調停役で、各観点の
+modeler が著述し、構造的不変条件は `scripts/check-system-design.ts` が強制する。WHAT の所有者は人間で署名も
+人間 — あなたは署名せず、`spec.md` / `acceptance.yaml` も編集しない。
 
-この層は **spec より粗い**：境界コンテキストは spec をまたいで設計・所有され、毎回引き直さない。
-`_system/<context>/` に置かれ、各ビューは独自の追加専用 ID 空間を持つ（renumber/rewrite しない）。
-関連コンテキスト全体を読み、それに追記する。
+system 層は **spec の delta ではなく state**：境界コンテキストは spec をまたいで——そしてコードの生涯を
+通じて——設計・所有され、毎回引き直さない。`_system/<context>/` に置かれ、各ビューは独自の追加専用 ID 空間を
+持つ（`LANG/DOM/ARCH/DATA-<CTX>-NNN`・renumber/rewrite しない）。関連コンテキスト全体を読み、それに追記する。
 
-## 2つの観点・1つの順序 — データはドメインに従う
+## 出力は固定・入力は差し替え可能
 
-1. **ドメイン** → `ubiquitous-language.md`（`LANG-<CTX>-NNN`）→ `domain-model.md`（`DOM-<CTX>-NNN`）→
-   `architecture.md`（`ARCH-<CTX>-NNN`）：まず語彙、次にその語で書くエンティティ/集約/不変条件、その上に
-   モジュール境界と seam。ブリーフと実例: [references/domain.md](references/domain.md)。
-2. **データ** → `data-model.md`（`DATA-<CTX>-NNN`）：ドメインのエンティティを**実体化**する論理モデル
-   （新概念は作らない）。**DBML ブロックが構造化 SSOT**、Mermaid `erDiagram` はその派生。
-   ブリーフと実例: [references/data.md](references/data.md)。
+4ビューの出力契約は不変。変わるのは**知識がどこから来るか**だけ——これが本 skill を `to-spec` に溶接しない
+理由。2つのメカニズムが3つの入口モードを覆う：
 
-ドメインを先に行い、データはその境界の上に建てる。spec が実際に触れる観点・ビューだけ走らせる——新しい
-言語/ドメイン/データを足さない spec はその段を飛ばす。
+| モード | 与えられる入力源 | メカニズム | アンカー |
+| --- | --- | --- | --- |
+| **spec 駆動** | 署名済み `spec.md` ディレクトリ | author / extend | `design-delta.md`（reads/extends ＋ 影響 AC-ID）を spec に対して記録 |
+| **トップダウン** | 要求 / north-star / roadmap（spec はまだ無い） | author / extend | macro を先に据える。delta に AC リンクは無い |
+| **逆生成** | 既存の**コードベース** | コードから蒸留 | **レビュー用ドラフト提案**。`_system/` を直接書かない |
 
-> 完全な理想（DOC_TAXONOMY 7 ビュー）には契約（`CONTRACT-<CTX>-NNN`）・横断 NFR・ADR・`context-map.md`
-> 索引もある。これらは本 skill ではまだ first-class でない（ダイアルが要求したら著述する）。本 skill が
-> 持つのは上記 4 ビュー。
+入力源からモードを判定する。author/extend（spec 駆動＋トップダウン）は `_system/<ctx>/` に additive に
+書き込み、spec が delta をアンカーするか否かだけが違う。逆生成はドラフトを蒸留して staging する——その規律は
+[references/reverse.md](references/reverse.md)。どのコンテキストに属すか／新規か既存か判らないときは、まず
+該当 `_system/<ctx>/` を読む——推測しない。
 
-## 共通の規律（両観点）
+## ビューを依存順で回す——既定はインライン
 
-- **lazy boundary / coherent within** — 触れていないコンテキストは設計しない。最初に触れた時点で集約の
-  閉包を概念レベルで設計し、物理は当面の AC が要る分だけ具体化する。
-- **追加のみ** — ID はコンテキスト内で一意・安定。変更は「新要素＋マイグレーション」で、renumber・
-  書き換えしない。
-- **contract altitude** — public な形だけ。内部アルゴリズム/表現は実装者のもの。共有 id
-  （`LANG/DOM/ARCH/DATA-<CTX>-NNN`）は**参照**し内容を複製しない。図表は下流で派生し、ここでは著述しない
-  （データビューの DBML だけが、唯一あなたが著述する構造化ソース）。
+4ビューは直交した関心だが独立ではない——言語が語を固定し、ドメインがその語でエンティティを定義し、
+アーキとデータがそれぞれドメインを実体化する。次の DAG に沿って、各ビューに到達したらそのブリーフを読み込み
+ながら著述する：
+
+```text
+[逆生成のみ: context-mapper] → language ─► domain ─┬─► architecture
+                                                   └─► data
+```
+
+| ビュー | ブリーフ（skill `references/…`） | 出力テンプレ（`assets/…`） | 分散時のペルソナ（root `agents/…`） |
+| --- | --- | --- | --- |
+| 言語 | `language.md` | `ubiquitous-language.md` | `language-modeler.md` |
+| ドメイン | `domain.md` | `domain-model.md` | `domain-modeler.md` |
+| アーキ | `architecture.md` | `architecture.md` | `architecture-modeler.md` |
+| データ | `data.md` | `data-model.md` | `data-modeler.md` |
+| （逆生成の探索） | `reverse.md` | `assets/proposal/` | `context-mapper.md` |
+
+**既定——自分で、1つのコンテキストで回す。** 各ビューに到達したらブリーフを読み、テンプレに著述し、上流
+ビューの出力を自分のコンテキストに持ち越す。4ビューは相互参照する（ドメインは言語 id を、アーキとデータは
+ドメイン id を引く）ので、1つのコンテキストに保つことがコヒーレンスを守る。**入力源が実際に触れるビューだけ**
+走らせる——新しい言語/ドメイン/データを足さない変更はそのビューを飛ばす。各ビューの delta を run の
+`design-delta.md` に集約する。
+
+**work が1コンテキストに収まらなくなったときだけ、1ビュー＝1サブエージェントに分散する。** 各 modeler には
+ペルソナ＋ブリーフ＋上流ビューの出力（言語→全員／ドメイン→アーキ＆データ）を渡し、著述前に両方を読むよう
+指示する。DAG 順は変わらない。割に合うのは：
+
+- 既存 `_system/<ctx>/` が大きく、4ビュー全部の state を読むと著述を圧迫するとき、または
+- 独立な枝（アーキ ∥ データ）がそれぞれ重く、並列の wall-clock が効くとき、または
+- 逆生成が大きなコードベースを対象とし、探索＋コンテキスト別の蒸留が1ウィンドウに収まらないとき。
+
+その閾値を下回ると分散は損：孤立した modeler は既に手元にある context を読み直し、ビュー横断のコヒーレンスが
+弱まる。分散は規模のための最適化であって——既定はコヒーレンス。
+
+## 共通の規律（全ビュー・全モード）
+
+- **lazy boundary / coherent within** — 触れていないコンテキストは設計しない。最初に触れた時点で集約の閉包を
+  概念レベルで設計し、当面の必要分だけ具体化する。反証テスト：*「これを省いたら、将来の spec が同じ概念を別名で
+  再導入できてしまうか？」* Yes → いま設計する。
+- **追加のみ** — ID はコンテキスト内で一意・安定。変更は「新要素＋マイグレーション」で、renumber・書き換えしない。
+- **参照し複製しない** — 共有 id（`LANG/DOM/ARCH/DATA-<CTX>-NNN`）はビュー間・spec から**参照**し、内容を
+  複製しない（複製は drift する）。図表は下流で派生し、データビューの DBML だけが、あなたが著述する唯一の
+  構造化ソース。
+- **逆生成＝証跡付きドラフト** — コードから蒸留した出力は人間が promote する提案であり、著述済みの真実を黙って
+  上書きしない。提案する各要素に `file:symbol` の証跡を付け、**観測**したことと**推論**したことを分ける。
+
+> 完全な理想（DOC_TAXONOMY 7 ビュー）には契約（`CONTRACT-<CTX>-NNN`）・横断 NFR・ADR・`context-map.md` 索引も
+> ある。これらは本 skill ではまだ first-class でない（ダイアルが要求したら著述する）。本 skill が持つのは上記
+> 4 ビュー（＋逆生成時の `context-map` ノート）。
 
 ## セルフチェックして停止
 
-spec の `design-delta.md` に `reads` / `extends`（影響 AC-ID 付き）を記録し、進行管理役が権威的に
-再実行するのと同じ決定的 lint を、通るまで走らせる（skill 非依存）:
+run の `reads` / `extends`（spec モードでは影響 AC-ID 付き）を `design-delta.md`（テンプレ:
+[assets/design-delta.md](assets/design-delta.md)）に記録し、進行管理役が権威的に再実行するのと同じ決定的
+チェックを、通るまで走らせる（skill 非依存）:
 
 ```bash
-npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-system-design.ts <spec-dir>
+# spec 駆動 / トップダウン — delta は system 層に書き込まれている（--system は最寄りの _system を自動探索）:
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-system-design.ts <run-dir> [--system <ctx-system-dir>]
+# 逆生成 — staging された提案（既存に対し additive・reads が解決・spec リンク不要）:
+npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-system-design.ts <proposal-dir> --proposal --system <ctx-system-dir>
 ```
 
-完成をシグナルする — ワークフロー状態は書かず、署名もしない。境界コンテキスト全体に対する拡張の独立
-レビューが続く。
+完成をシグナルする — ワークフロー状態は書かず、署名もしない。続くのは境界コンテキスト全体に対する拡張の独立
+レビュー（逆生成モードでは、人間が staging 提案をレビューして `_system/` へ promote する）。
 
 ---
 
-観点別ブリーフは `references/`、出力テンプレは `assets/`（ubiquitous-language / domain-model /
-architecture / data-model）。整合の不変条件は `scripts/check-system-design.ts`
+観点別ブリーフは `references/`（language / domain / architecture / data ＋ reverse）、出力テンプレは
+`assets/`、観点別ペルソナは root `agents/`。整合の不変条件は `scripts/check-system-design.ts`
 （`src/design/lint.ts` を vendor）が SoT。

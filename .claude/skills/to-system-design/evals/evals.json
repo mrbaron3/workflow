@@ -1,0 +1,23 @@
+{
+  "skill_name": "to-system-design",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "docs/specs/task-due-date/ に署名済みの spec がある。タスクに有効期限（due date）を足す機能で、acceptance に「期限切れのタスクは overdue として表示される」が入ってる。scheduling コンテキストの system 層に、この機能が要るドメイン（DOM）とデータモデル（DBML）を additive に足したい。",
+      "expected_output": "spec-driven（forward）モードと判定し、scheduling コンテキストの _system に LANG/DOM/DATA を additive 拡張。design-delta.md に reads/extends + 影響 AC-ID を記録。各ビューを依存順で著述（言語→ドメイン→データ）。check-system-design が通る。spec.md/acceptance.yaml は編集せず署名もしない。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "既存の小さな Node アプリ（src/ に Express のルートと Prisma の schema があって、注文と在庫を扱ってる）があるんだけど、設計ドキュメントが一切ない。このコードから system 層の設計（境界コンテキスト・ユビキタス言語・ドメインモデル・データモデル）を起こせない？ 実装を読んでリバースエンジニアリングする感じで。",
+      "expected_output": "reverse モードと判定。まず context 発見（注文/在庫の境界 + 関係）。各要素に file:symbol の証跡を付け、観測と推論を分け、_system を直接書かず proposal バンドル（context-map.md / design-delta.md / 4ビューのドラフト / findings.md）を staging。check-system-design --proposal が通る。人間レビュー前提のドラフトとして提示し署名しない。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "新しく「サブスク課金」のサービスを立ち上げる。まだ spec も実装も無いけど、先にドメインの基礎（ユビキタス言語と集約・不変条件）を据えておきたい。請求サイクル・プラン・支払い失敗のリトライあたりの概念を macro で固めたい。",
+      "expected_output": "top-down モードと判定（spec なし）。billing コンテキストの _system に LANG と DOM を additive に seed。AC リンクの無い design-delta を記録。lazy boundary を守り、当面要る集約閉包だけ概念設計（過剰なスキーマ具体化はしない）。署名しない。",
+      "files": []
+    }
+  ]
+}
