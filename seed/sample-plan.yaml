@@ -1,0 +1,46 @@
+# Sample planning-tree roadmap — drives `agentops plan-roadmap` + `agentops spawn-specs`.
+#
+# This is the v2 roadmap-planner output contract (see agents/roadmap-planner.md):
+# epics group features, every epic and feature states an OUTCOME ("why now"), and
+# NOTHING here carries acceptance criteria or an issue contract — those are authored
+# into each signed spec by to-spec and signed by a human (docs/specs/planning-tree/).
+#
+# Ingesting this builds the planning tree; `spawn-specs` then materializes one
+# authorable spec dir per feature (with no AC yet).
+
+vision: "A fast, local-first task manager people actually trust with their work."
+principles:
+  - "Persistence is non-negotiable: nothing the user creates may silently vanish."
+  - "Every feature ships with an automated check for its core behaviour."
+  - "Improve the harness on the same roadmap as the product."
+
+epics:
+  - id: EPIC-01
+    title: "Core task management"
+    theme: "core"
+    outcome: "Users can capture and manage tasks they trust will persist."
+    features:
+      - id: FEAT-001
+        title: "Task CRUD with reload persistence"
+        outcome: "A created task survives a reload — the foundation of trust."
+      - id: FEAT-002
+        title: "Task filtering and search"
+        outcome: "Users find the task they want quickly in a long list."
+
+  - id: EPIC-02
+    title: "Onboarding"
+    theme: "growth"
+    outcome: "New users reach value on the first screen instead of a void."
+    features:
+      - id: FEAT-003
+        title: "First-run sample data and empty states"
+        outcome: "A new user lands on editable sample tasks, not an empty void."
+
+  - id: EPIC-03
+    title: "Harness & quality"
+    theme: "platform"
+    outcome: "Operators can see and improve the loop on the same roadmap as the product."
+    features:
+      - id: FEAT-004
+        title: "Surface PR scorecards on the dashboard"
+        outcome: "Operators see why a PR failed without digging through files."

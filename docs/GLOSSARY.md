@@ -18,8 +18,11 @@ Roadmap
 | Term | Meaning |
 | --- | --- |
 | **Roadmap** | What to build, in what order, and why. |
+| **計画の木 / Planning tree** | north-star → roadmap → epic → **feature** → spec の intent/delta の木。`planRoadmap` が取込（AC は不可）、`spawnSpecs` が feature を spec に materialize。署名 spec で system の木と交わる（DOC_TAXONOMY §2本の木）。 |
 | **Theme / Initiative** | A large investment area (e.g. "onboarding"). |
-| **Epic** | 下流のロードマップ/進捗グルーピング（issue の束・`Issue.epicId`）。**著述単位ではない**（1 spec ≠ 1 epic）。A big capability decomposed into many issues. |
+| **Epic** | 下流のロードマップ/進捗グルーピング（feature/issue の束・`Epic.featureIds`/`issueIds`）。**著述単位ではない**（1 spec ≠ 1 epic）。A big capability decomposed into many features. |
+| **Feature** | 計画の木の葉＝**1つの署名可能 capability**（`outcome` のみ・AC は持たない）。`specPath` で 1 Feature = 1 spec として system の木と交わる。計画から外すと `inPlan=false`（削除でなく flag）。 |
+| **planRoadmap / spawnSpecs** | 決定論の配線: 取込（epic/feature を計画の木へ永続・AC 混入を拒否）／ materialize（feature ごとに著述 stub spec を生成）。roadmap-planner の**判断**を受ける**機構**。 |
 | **Agile Sprint** | A time-box (e.g. `sprint:2026-W24`) that *contains* issues/epics. Not a feature. |
 | **Issue Contract** | One issue made implementable **and** gradable: goal, story, scope, acceptance criteria, red lines. |
 | **Agent Work Unit / sample** | One independent attempt at an Issue Contract by one agent. |

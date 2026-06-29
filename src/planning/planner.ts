@@ -1,11 +1,13 @@
 /**
- * Roadmap + Issue planning.
+ * LEGACY (pre-M20) seed planning — kept to keep the offline `agentops demo` runnable.
  *
- * In a full deployment the Roadmap Planner and Issue Planner are *agents* that turn
- * a product goal into Epics and validated Issue Contracts (see agents/*.md). For the
- * MVP the planner ingests a human/agent-authored seed file and validates every
- * contract against the schema — which is the point: an Issue Contract is only "ready"
- * when it parses. Invalid contracts fail loudly here instead of confusing a Generator.
+ * This path ingests a one-shot seed file whose epics carry **issues with inline
+ * acceptance criteria** (`seed/sample-roadmap.yaml`). The modern main path is the
+ * planning tree (`planning-tree.ts`): roadmap-planner emits outcomes only, `planRoadmap`
+ * persists the tree, `spawnSpecs` materializes specs, and to-spec authors + a human
+ * signs the AC — acceptance criteria never ride in on the roadmap (see
+ * docs/specs/planning-tree/). Use `planFromSeedLegacy` only for the deterministic demo;
+ * new wiring should go through `planRoadmap` / `spawnSpecs`.
  */
 
 import fs from 'node:fs';
@@ -46,7 +48,7 @@ export function loadSeedFile(file: string): SeedRoadmap {
   return SeedRoadmap.parse(raw);
 }
 
-export function planFromSeed(store: Store, seed: SeedRoadmap): PlanResult {
+export function planFromSeedLegacy(store: Store, seed: SeedRoadmap): PlanResult {
   store.setRoadmap(Roadmap.parse({ vision: seed.vision, principles: seed.principles, epicIds: [] }));
 
   let issues = 0;
@@ -79,3 +81,6 @@ export function planFromSeed(store: Store, seed: SeedRoadmap): PlanResult {
   }
   return { epics: seed.epics.length, issues };
 }
+
+/** @deprecated Back-compat alias for the legacy demo path. Prefer `planRoadmap` (planning-tree.ts). */
+export const planFromSeed = planFromSeedLegacy;
