@@ -3,6 +3,35 @@
 > 別セッションで cold-start するための作業引き継ぎ（**transient**・作業完了後は削除可）。
 > 作成: 2026-06-28
 
+## 更新 (2026-06-30)
+
+**A（スキル修正）と B（planning-tree 実装）は完了。spec→issue の配線も埋まった。残りは C（実データで通す）。**
+
+- 完了済み（コミット済み）: schema デルタ（ee52e34）／ to-detail-design Issue 化〔A.1〕（ea44892）／
+  to-system-design 4ビュー分離〔A.2〕（89e1360・3cca1e9）／ to-spec supersedes・dependsOn〔A.3〕（3cc518f）／
+  planning-tree `planRoadmap`＋`spawnSpecs`〔B〕（eb228f3）。
+- 完了済み（**未コミット**・本セッション）: **`spawnIssues`（issues.yaml → store `ISSUE-NNNN`）＋ CLI `spawn-issues`
+  ＋テスト**。`spawnSpecs` の鏡。`issueSpawnVerdict` ゲート = 未署名 hard error／lint 失敗 hard error／spawn 済み skip。
+  これで §次セッションの未決事項「ブートストラップ順（鶏卵）」は**解消**（to-detail-design の Issue 化が先に実装済み）。
+- **次にやること = item C を実走**（下記 §item C を実走）。コードの欠落ではなく「**署名待ち**」が起点。
+
+### item C を実走（次セッションの主タスク）
+
+planning-tree spec（`docs/specs/planning-tree/`・9 AC・lint pass・**人間の署名待ち**）を、修正後のスキル群で
+end-to-end に初走させる。これが「自律 × 評価 × 改善」の鎖を実データで一本通す最初の機会。
+
+1. **人間が署名**: `agentops sign docs/specs/planning-tree`（spec.md / acceptance.yaml を commit 済みにしてから。
+   署名は HEAD blob を pin する）。
+2. **system 層を実体化**〔A.2 を使う／item C〕: to-system-design で `docs/specs/_system/<ctx>/` に 4ビュー
+   （`ubiquitous-language.md`・`domain-model.md`・`architecture.md`・`data-model.md`＝DBML SSOT）を著述。
+   前方参照 AC-PLAN-008（data-model seed）を解消。
+3. **issue 化**〔A.1 を使う／item C〕: to-detail-design で `docs/specs/planning-tree/issues.yaml` を著述し、
+   `npx tsx <skill>/scripts/check-detail-design.ts docs/specs/planning-tree` で被覆×排他を pass させる。
+4. **取込**: `agentops spawn-issues docs/specs/planning-tree` → store に `ISSUE-NNNN` が落ちる（lint 権威再実行・冪等）。
+5. **run ループ**: `agentops run` で Generate → Evaluate → Repair → Release（既定は mock backend）。
+6. 詰まり所の想定: 署名は git クリーン前提（未コミットだと拒否）／ to-system-design は本 spec で未実行（初回）／
+   `_system` 配置は `<spec-dir>/../_system` 既定（`spawn-issues` の `--system` ではなく `spawnIssues` opts で上書き可）。
+
 ## 目的（なぜ）
 
 理想の文書形（[DOC_TAXONOMY](../_meta/DOC_TAXONOMY.md)）とライフサイクル（[DOC_LIFECYCLE](../_meta/DOC_LIFECYCLE.md)）を
@@ -98,16 +127,18 @@ context-map / contracts 著述 / cross-cutting NFR / ADR ログ / 派生ビュ�
 
 ## 推奨シーケンス
 
-1. **schema デルタ**（Feature / Issue リンク）— 以降を unblock。
-2. **to-detail-design → Issue 化**（＋ check）— planning-tree の臨界経路。
-3. **to-system-design ビュー分離 ＋ data-model DBML** — planning-tree の data-model seed の臨界経路。
-4. **to-spec 仕上げ**（supersedes / dependsOn / ファイル名）。
-5. 純新規スキル・派生ビュー・supersedes 機構 — 後続。
+> 状態は §更新 (2026-06-30) 参照。1〜4 は完了（4 のスキル整合まで）。残りは 5（純新規）と、別軸の **item C 実走**。
+
+1. ✅ **schema デルタ**（Feature / Issue リンク）— 以降を unblock。（ee52e34）
+2. ✅ **to-detail-design → Issue 化**（＋ check ＋ **`spawnIssues` 取込**）— planning-tree の臨界経路。（ea44892 ＋ 本セッション）
+3. ✅ **to-system-design ビュー分離 ＋ data-model DBML**（スキル整合）— 実データへの実体化は item C 手順2。（89e1360・3cca1e9）
+4. ✅ **to-spec 仕上げ**（supersedes / dependsOn / ファイル名）。（3cc518f）
+5. 純新規スキル・派生ビュー・supersedes 機構（`src/` の fold）— 後続（本書 §スキル別 4）。
 
 ## 次セッションの未決事項
 
-- **ブートストラップ順**: planning-tree 配線を先に実装（issue 分解は手動）→ 後で to-detail-design を Issue 化、
-  か、to-detail-design を先に Issue 化 → それで planning-tree を分解するか（鶏卵）。
+- ~~**ブートストラップ順**（鶏卵）~~ — **解消**（2026-06-30）。to-detail-design を先に Issue 化し、`spawnIssues` を実装。
+  これで署名済み planning-tree spec を `spawn-issues` で取込できる（§item C を実走）。
 - NFR / ADR / context-map は to-system-design 所属か別スキルか。
 - vendored lib の同期手順（既存 convention の確認・自動化の要否）。
 - 派生ビュー（feature-catalog / traceability）の生成器の住処。
@@ -122,6 +153,7 @@ context-map / contracts 著述 / cross-cutting NFR / ADR ログ / 派生ビュ�
 - `docs/specs/planning-tree/spec.md` ＋ `acceptance.yaml`：著述済み・lint pass（9 AC）・**人間の署名待ち**。
 - 文書配置: メタ（DOC_TAXONOMY / DOC_LIFECYCLE）は `docs/_meta/` へ隔離済み（疎結合分・完了）。
   `ARCHITECTURE.md` / `GLOSSARY.md` → `_system/` 移設は **未**（to-system-design 整合と同時・上記 §2）。
-- **下流（to-system-design / to-detail-design）はスキル整合まで走らせない**。
+- 下流スキル整合は完了。**下流は実データで未実行**（item C が初走）。
 - 署名後の本来の経路: 署名 → to-system-design で data-model seed（前方参照 AC-PLAN-008 解消）→
-  to-detail-design で Issue 化 → 実装（planRoadmap / spawnSpecs）。
+  to-detail-design で issues.yaml → **`spawn-issues` で取込（`ISSUE-NNNN`）** → `agentops run`。
+  （配線は `planRoadmap` / `spawnSpecs` / **`spawnIssues`** で全段実装済み。残るは実走＝§item C を実走。）

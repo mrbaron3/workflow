@@ -34,6 +34,7 @@ import {
   loadRoadmapFile,
   planRoadmap,
   spawnSpecs,
+  spawnIssues,
   traceFeature,
   PlanIngestError,
 } from '../planning/planning-tree.js';
@@ -294,6 +295,24 @@ function cmdSpawnSpecs(): void {
   log(`\nNext: author each spec with ${c.b('to-spec')}, then ${c.b('agentops sign <spec-dir>')}.`);
 }
 
+function cmdSpawnIssues(pos: string[]): void {
+  const store = requireInit();
+  const dir = pos[0];
+  if (!dir) {
+    log(c.red('usage: agentops spawn-issues <spec-dir>') + c.dim('   (signed dir with spec.md + issues.yaml)'));
+    process.exit(1);
+  }
+  const res = spawnIssues(store, dir);
+  store.save();
+  if (res.spawned === 0) {
+    log(c.dim(`Nothing to spawn — ${dir} is already decomposed into issues.`));
+    return;
+  }
+  log(c.green(`✓ spawned ${res.spawned} issue(s) from ${c.b(dir)}`));
+  for (const id of res.ids) log(`  ${c.dim(id)}`);
+  log(`\nNext: ${c.b('agentops run')} drives each issue: Generate → Evaluate → Repair → Release.`);
+}
+
 function cmdPlanTree(): void {
   const store = requireInit();
   const rm = store.db.roadmap;
@@ -465,6 +484,7 @@ ${c.b('Commands')}
   specs [<spec-dir>]   show signed specs + drift / derived status since signing
   plan-roadmap [--seed F]  ingest a planner roadmap into the planning tree (epics + features)
   spawn-specs          materialize one authorable spec dir per in-plan feature
+  spawn-issues <spec-dir>  ingest a signed spec's issues.yaml into the store (ISSUE-NNNN)
   plan-tree            print the planning tree (roadmap → epic → feature → spec)
   plan [--seed F]      LEGACY: ingest a seed roadmap into epics + Issue Contracts (demo)
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
@@ -496,6 +516,8 @@ async function main(): Promise<void> {
       return cmdPlanRoadmap(flags);
     case 'spawn-specs':
       return cmdSpawnSpecs();
+    case 'spawn-issues':
+      return cmdSpawnIssues(pos);
     case 'plan-tree':
       return cmdPlanTree();
     case 'run':

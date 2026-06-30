@@ -6,6 +6,7 @@ import { Store } from '../src/store/store.js';
 import {
   planRoadmap,
   spawnSpecs,
+  spawnIssues,
   traceFeature,
   PlanIngestError,
 } from '../src/planning/planning-tree.js';
@@ -260,6 +261,124 @@ describe('planRoadmap — re-plan & traceability (PLAN-D)', () => {
     expect(after.specPath).toBe(f.specPath); // spec link preserved
     expect(fs.existsSync(path.join(specDir, 'spec.md'))).toBe(true); // dir survives
     expect(store.getSpecState(f.specPath!)!.approved).not.toBeNull(); // signature survives
+  });
+});
+
+// --- spawn issues: to-detail-design ingest (issues.yaml -> store ISSUE-NNNN) --
+
+/**
+ * Author AC anchors into a feature's spawned spec, optionally seed a _system element,
+ * sign it, and drop an issues.yaml manifest beside it. Returns the spec dir (relative).
+ */
+function authorSignedSpec(
+  store: Store,
+  featureId: string,
+  acIds: string[],
+  manifestYaml: string,
+  opts: { sign?: boolean; systemElementId?: string } = {},
+): string {
+  const f = store.getFeature(featureId)!;
+  const specAbs = path.resolve(store.root, f.specPath!);
+  const acLines = acIds.map((id) => `- **[${id}]** the behavior for ${id}`).join('\n');
+  fs.writeFileSync(path.join(specAbs, 'spec.md'), `# Spec\n\n## 受け入れ基準\n${acLines}\n`, 'utf8');
+  if (opts.sign !== false) fakeSign(store, f.specPath!, acIds);
+  if (opts.systemElementId) {
+    const sysDir = path.resolve(specAbs, '..', '_system', 'todo');
+    fs.mkdirSync(sysDir, { recursive: true });
+    fs.writeFileSync(path.join(sysDir, 'data-model.md'), `# data\n- ${opts.systemElementId}\n`, 'utf8');
+  }
+  fs.writeFileSync(path.join(specAbs, 'issues.yaml'), manifestYaml, 'utf8');
+  return f.specPath!;
+}
+
+describe('spawnIssues — ingest a signed spec into the store', () => {
+  const MANIFEST = `issues:
+  - key: ISSUE-TODO-001
+    title: Persist the todo store
+    area: backend
+    coversAcIds: [AC-TODO-001]
+    dependsOnSystem: [DATA-todo-001]
+  - key: ISSUE-TODO-002
+    title: Build the todo list UI
+    area: frontend
+    coversAcIds: [AC-TODO-002]
+    dependsOnIssues: [ISSUE-TODO-001]
+`;
+
+  function setup(name: string): { store: Store; specPath: string } {
+    const store = tmpStore(name);
+    planRoadmap(store, roadmap());
+    spawnSpecs(store);
+    const specPath = authorSignedSpec(store, 'FEAT-001', ['AC-TODO-001', 'AC-TODO-002'], MANIFEST, {
+      systemElementId: 'DATA-todo-001',
+    });
+    return { store, specPath };
+  }
+
+  it('allocates one ISSUE-NNNN per entry, wired to feature/spec/epic, with keys remapped to ids', () => {
+    const { store, specPath } = setup('spawn-ok');
+    const res = spawnIssues(store, specPath, { now: FIXED });
+
+    expect(res.spawned).toBe(2);
+    expect(res.ids).toEqual(['ISSUE-0001', 'ISSUE-0002']);
+    expect(store.db.issues).toHaveLength(2);
+
+    const a = store.db.issues[0]!;
+    const b = store.db.issues[1]!;
+    // planning-tree links: every issue descends from the signed feature/spec/epic.
+    expect(a.featureId).toBe('FEAT-001');
+    expect(a.specPath).toBe(specPath);
+    expect(a.epicId).toBe('EPIC-01');
+    expect(a.coversAcIds).toEqual(['AC-TODO-001']);
+    expect(a.dependsOnSystem).toEqual(['DATA-todo-001']);
+    // the draft key in dependsOnIssues is remapped to the allocated store id.
+    expect(b.dependsOnIssues).toEqual(['ISSUE-0001']);
+    expect(b.area).toBe('frontend');
+    expect(b.type).toBe('story'); // defaulted
+
+    // the bidirectional Epic.issueIds link is wired by addIssue.
+    expect(store.getEpic('EPIC-01')!.issueIds).toEqual(['ISSUE-0001', 'ISSUE-0002']);
+  });
+
+  it('refuses an unsigned spec and persists nothing (北極星: 承認 is a human judgement point)', () => {
+    const store = tmpStore('spawn-unsigned');
+    planRoadmap(store, roadmap());
+    spawnSpecs(store);
+    const specPath = authorSignedSpec(store, 'FEAT-001', ['AC-TODO-001', 'AC-TODO-002'], MANIFEST, {
+      sign: false,
+      systemElementId: 'DATA-todo-001',
+    });
+
+    expect(() => spawnIssues(store, specPath)).toThrow(/not signed/);
+    expect(store.db.issues).toHaveLength(0);
+  });
+
+  it('refuses an issue set that fails coverage×exclusivity and persists nothing', () => {
+    const store = tmpStore('spawn-coverage');
+    planRoadmap(store, roadmap());
+    spawnSpecs(store);
+    // manifest covers only AC-TODO-001; AC-TODO-002 is left uncovered.
+    const partial = `issues:
+  - key: ISSUE-TODO-001
+    title: Only half the spec
+    area: backend
+    coversAcIds: [AC-TODO-001]
+`;
+    const specPath = authorSignedSpec(store, 'FEAT-001', ['AC-TODO-001', 'AC-TODO-002'], partial);
+
+    expect(() => spawnIssues(store, specPath)).toThrow(/design lint/);
+    expect(() => spawnIssues(store, specPath)).toThrow(/AC-TODO-002/); // names the uncovered AC
+    expect(store.db.issues).toHaveLength(0);
+  });
+
+  it('is idempotent: re-spawning an already-decomposed spec is a no-op', () => {
+    const { store, specPath } = setup('spawn-idempotent');
+    spawnIssues(store, specPath, { now: FIXED });
+    const res2 = spawnIssues(store, specPath, { now: FIXED });
+
+    expect(res2.spawned).toBe(0);
+    expect(res2.ids).toEqual([]);
+    expect(store.db.issues).toHaveLength(2); // no duplicates
   });
 });
 

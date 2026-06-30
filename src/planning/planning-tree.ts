@@ -32,7 +32,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as YAML from 'yaml';
 import { z } from 'zod';
-import { Epic, Feature } from '../domain/schema.js';
+import { Epic, Feature, Issue } from '../domain/schema.js';
+import { lintDesign, type IssueCore } from '../design/lint.js';
 import { Store, nowISO } from '../store/store.js';
 
 // --- the roadmap-planner output contract (v2 — acceptance-criteria-free) -----
@@ -368,6 +369,157 @@ function stubAcceptance(f: Feature): string {
 
 verifications: {}
 `;
+}
+
+// --- spawn issues (to-detail-design ingest: issues.yaml -> store ISSUE-NNNN) -
+
+export interface SpawnIssuesOptions {
+  /** Where the system layer lives (for dependsOnSystem existence). Defaults to <spec-dir>/../_system. */
+  systemDir?: string;
+  now?: () => string;
+}
+
+export interface SpawnIssuesResult {
+  spawned: number;
+  ids: string[]; // allocated store ISSUE-NNNN ids, in manifest order (empty when skipped)
+}
+
+/** One entry of a to-detail-design issues.yaml spawn manifest (validated against Issue at build). */
+interface ManifestIssue {
+  key: string; // draft-local handle; the store ISSUE-NNNN id is allocated here
+  title: string;
+  area: string;
+  type?: string;
+  coversAcIds?: string[];
+  dependsOnIssues?: string[]; // predecessor *keys* in this manifest (remapped to ids on spawn)
+  dependsOnSystem?: string[];
+  implementationNotes?: string[];
+}
+
+const AC_RE = /\bAC-[A-Z0-9]+-\d+\b/g;
+// Context-segmented system element ids: <KIND>-<ctx>-NNN (matches check-detail-design.ts).
+const SYS_RE = /\b(?:LANG|DOM|ARCH|DATA|CONTRACT)-[a-z0-9]+(?:-[a-z0-9]+)*-\d+\b/g;
+const uniqStrs = (xs: string[]): string[] => [...new Set(xs)];
+
+function readManifest(specAbs: string): ManifestIssue[] {
+  const raw = YAML.parse(fs.readFileSync(path.join(specAbs, 'issues.yaml'), 'utf8')) as {
+    issues?: ManifestIssue[];
+  } | null;
+  const issues = raw?.issues;
+  if (!Array.isArray(issues)) throw new Error(`issues.yaml has no \`issues:\` list under ${specAbs}`);
+  issues.forEach((m, i) => {
+    if (!m || typeof m.key !== 'string') throw new Error(`issues[${i}] missing string \`key\``);
+  });
+  return issues;
+}
+
+function readSystemElementIds(systemDir: string): string[] {
+  if (!fs.existsSync(systemDir)) return [];
+  const ids: string[] = [];
+  for (const rel of fs.readdirSync(systemDir, { recursive: true }) as string[]) {
+    if (!rel.endsWith('.md')) continue;
+    ids.push(...(fs.readFileSync(path.join(systemDir, rel), 'utf8').match(SYS_RE) ?? []));
+  }
+  return uniqStrs(ids);
+}
+
+const toIssueCore = (m: ManifestIssue): IssueCore => ({
+  key: m.key,
+  coversAcIds: m.coversAcIds ?? [],
+  dependsOnIssues: m.dependsOnIssues ?? [],
+  dependsOnSystem: m.dependsOnSystem ?? [],
+});
+
+/**
+ * The pre-ingest policy gate — *the decision that shapes this feature*.
+ *
+ * Given the store, the spec's repo-relative path, and the authoritative design-lint
+ * result, decide what spawnIssues does. There are three situations and each is a
+ * genuine product choice, not a mechanical one:
+ *
+ *   1. The spec is NOT signed (no SpecState, or `approved` is null). Issues are a
+ *      decomposition of a *signed* WHAT — spawning from an unsigned/abandoned spec
+ *      breaks the north-star trace (north-star → feature → signed AC → issue). Should
+ *      this be a hard error (loud — a human mis-sequenced the pipeline) or a quiet
+ *      skip (tolerant — a batch run sweeps every spec and ignores the not-yet-ready)?
+ *   2. The design lint FAILED (`!lint.ok`). "整合はコードが強制": the issue set must
+ *      cover the AC set exactly. Almost certainly a hard error — but you decide, and
+ *      decide what the message surfaces (lint.errors).
+ *   3. The spec is ALREADY spawned (some store issue already has this specPath).
+ *      Mirror spawnSpecs's idempotency: this is normal on re-run, so 'skip' (return
+ *      {spawned:0}), never an error.
+ *
+ * Return 'proceed' to ingest, 'skip' to no-op. Throw for the hard-error cases so the
+ * caller persists nothing.
+ *
+ * Policy (recommended default): a signed WHAT is a human judgement point (north-star:
+ * 承認 stays human), so an unsigned/abandoned spec is a hard error — never spawn HOW
+ * from an unconfirmed WHAT. A failed design lint is a hard error (整合はコードが強制),
+ * surfacing the violations. An already-spawned spec is normal on re-run, so skip.
+ */
+function issueSpawnVerdict(
+  store: Store,
+  specPath: string,
+  lint: { ok: boolean; errors: string[] },
+): 'proceed' | 'skip' {
+  if (store.db.issues.some((i) => i.specPath === specPath)) return 'skip'; // idempotent re-run
+  const signed = store.getSpecState(specPath)?.approved != null;
+  if (!signed) throw new Error(`spec is not signed: ${specPath} — issues decompose a signed WHAT (sign it first)`);
+  if (!lint.ok) throw new Error(`issue set fails design lint for ${specPath}:\n  - ${lint.errors.join('\n  - ')}`);
+  return 'proceed';
+}
+
+/**
+ * Ingest a signed spec's to-detail-design output (issues.yaml) into the store: allocate
+ * one ISSUE-NNNN per manifest entry, wire featureId/specPath/epicId from the planning
+ * tree, and translate draft `dependsOnIssues` keys into the allocated ids. The
+ * authoritative design lint runs first (整合はコードが強制); the eligibility policy is
+ * `issueSpawnVerdict`. Idempotent: a spec whose issues already exist is skipped.
+ */
+export function spawnIssues(store: Store, specDir: string, opts: SpawnIssuesOptions = {}): SpawnIssuesResult {
+  const now = opts.now ?? nowISO;
+  const specAbs = path.resolve(store.root, specDir);
+  const specPath = path.relative(store.root, specAbs).split(path.sep).join('/');
+
+  const manifest = readManifest(specAbs);
+  const specAcIds = uniqStrs(fs.readFileSync(path.join(specAbs, 'spec.md'), 'utf8').match(AC_RE) ?? []);
+  const systemDir = opts.systemDir ? path.resolve(opts.systemDir) : path.resolve(specAbs, '..', '_system');
+  const systemElementIds = readSystemElementIds(systemDir);
+
+  const lint = lintDesign({ specAcIds, issues: manifest.map(toIssueCore), systemElementIds });
+
+  if (issueSpawnVerdict(store, specPath, lint) === 'skip') return { spawned: 0, ids: [] };
+
+  // Allocate every id up front so dependsOnIssues (forward-referencing draft keys) can be remapped.
+  const keyToId = new Map<string, string>();
+  for (const m of manifest) keyToId.set(m.key, store.nextId('ISSUE'));
+
+  const featureId = store.getSpecState(specPath)?.featureId ?? null;
+  const epicId = featureId ? (store.getFeature(featureId)?.epicId ?? null) : null;
+
+  const ids: string[] = [];
+  for (const m of manifest) {
+    const id = keyToId.get(m.key)!;
+    // Issue.parse validates area/type against the schema enums — a bad manifest throws here.
+    const issue = Issue.parse({
+      id,
+      type: m.type ?? 'story',
+      title: m.title,
+      area: m.area,
+      epicId,
+      featureId,
+      specPath,
+      coversAcIds: m.coversAcIds ?? [],
+      dependsOnSystem: m.dependsOnSystem ?? [],
+      dependsOnIssues: (m.dependsOnIssues ?? []).map((k) => keyToId.get(k) ?? k),
+      implementationNotes: m.implementationNotes ?? [],
+      createdAt: now(),
+      updatedAt: now(),
+    });
+    store.addIssue(issue); // wires the bidirectional Epic.issueIds link
+    ids.push(id);
+  }
+  return { spawned: ids.length, ids };
 }
 
 // --- traceability (AC-PLAN-008) ----------------------------------------------
