@@ -48,7 +48,7 @@ lockstep** で動かす。スキル文だけ直しても check が旧不変条�
 - [docs/NORTH_STAR.md](../NORTH_STAR.md) — 自律 × 評価 × 改善。状態は監査可能・証拠が蓄積される。
 - [docs/_meta/DOC_TAXONOMY.md](../_meta/DOC_TAXONOMY.md) — 関心 × 高度 × ズーム。7ビュー・ID 体系・2本の木・理想ツリー。
 - [docs/_meta/DOC_LIFECYCLE.md](../_meta/DOC_LIFECYCLE.md) — 時間モード。著述 SSOT は2つ・派生ビュー（案A）・slice→issue。
-- [docs/GLOSSARY.md](../GLOSSARY.md) — 用語（spec ≠ epic、Issue Contract 等）。
+- [docs/context-map.md](../context-map.md) — 境界コンテキスト索引＋ per-context 用語の住処（旧 GLOSSARY は分解・移設済み）。
 - **`Development/workflow/CLAUDE.md` §Agent Skill 著述規約（必守）**: 正本 `SKILL.md` ＋ **必須 `SKILL.md.ja`
   併設・同期**、`description` は日本語、相対パスで skill 外へ登らない、`scripts/` から `scripts/lib/` の
   vendored lib、skill は薄く（rubric を焼かず scripts/ へ委譲）、テンプレは root `templates/` 単一住処
@@ -152,7 +152,9 @@ context-map / contracts 著述 / cross-cutting NFR / ADR ログ / 派生ビュ�
 
 - `docs/specs/planning-tree/spec.md` ＋ `acceptance.yaml`：著述済み・lint pass（9 AC）・**人間の署名待ち**。
 - 文書配置: メタ（DOC_TAXONOMY / DOC_LIFECYCLE）は `docs/_meta/` へ隔離済み（疎結合分・完了）。
-  `ARCHITECTURE.md` / `GLOSSARY.md` → `_system/` 移設は **未**（to-system-design 整合と同時・上記 §2）。
+  `ARCHITECTURE.md` / `GLOSSARY.md` → **分解・移設済み**（2026-06-30）: `context-map.md` 新設＋ per-context
+  `_system/<ctx>/`（language×4・evaluation architecture）＋ `decisions/`（ADR-0001..0004）。両 monolith は
+  リダイレクト stub 化。残: authoring/design の architecture・全コンテキストの domain/data ビューは lazy（spec 設計時に著述）。
 - 下流スキル整合は完了。**下流は実データで未実行**（item C が初走）。
 - 署名後の本来の経路: 署名 → to-system-design で data-model seed（前方参照 AC-PLAN-008 解消）→
   to-detail-design で issues.yaml → **`spawn-issues` で取込（`ISSUE-NNNN`）** → `agentops run`。

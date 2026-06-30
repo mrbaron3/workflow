@@ -117,7 +117,7 @@ src/
   dashboard/       self-contained HTML + terminal status report
   cli/             the agentops command
 test/              vitest: schema, grader, metrics, end-to-end pipeline
-docs/              ARCHITECTURE.md · ROADMAP.md · GLOSSARY.md
+docs/              context-map.md · _system/<ctx>/ · decisions/ (ADR) · ROADMAP.md
 ```
 
 ## Concepts (mapped to the brief)
@@ -134,7 +134,8 @@ docs/              ARCHITECTURE.md · ROADMAP.md · GLOSSARY.md
 | Eval Task Registry | `src/pipeline/curator.ts` | grows regressions from real failures |
 | Harness self-improvement | `src/pipeline/analyst.ts` | files `type:harness` / `type:eval` issues |
 
-See [docs/GLOSSARY.md](docs/GLOSSARY.md) for the full terminology (Roadmap → … → Repair).
+See [docs/context-map.md](docs/context-map.md) for the bounded contexts and where each
+term lives (terminology is per-context under `docs/specs/_system/<ctx>/ubiquitous-language.md`).
 
 ## Wiring real agents
 
