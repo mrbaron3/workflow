@@ -1,0 +1,53 @@
+# contract ドラフトの橋 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+# 消費する署名証拠（ApprovedSpecRef）= 計画の木 system 層の data/domain 要素。
+dependsOn:
+  - DOM-planning-005
+  - DATA-planning-008
+
+verifications:
+  AC-CONTRACT-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "署名 spec から spawn された planned issue 群をドラフトすると、各 issue に非 null の Issue Contract が付く"
+      - "ドラフト後、対象 issue の status が contract-drafted（実行対象）へ前進する"
+
+  AC-CONTRACT-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "各 issue の契約が負う受け入れ基準の AC-ID 集合が、その issue の coversAcIds と完全一致する（落とさず・足さず）"
+      - "契約の受け入れ基準は署名 spec 由来であり、本機能が新規著述した AC が混入しない"
+
+  AC-CONTRACT-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "未署名 spec（署名記録が無い／approved が空）を対象にドラフトを試みるとエラーになる"
+      - "拒否後、当該 spec のどの issue も status・契約が変化しない"
+
+  AC-CONTRACT-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "ある issue の coversAcIds が現在の署名 AC 集合（approvedAcIds）に無い AC-ID を含むとき、違反箇所を示してエラーになる"
+      - "拒否後、当該 spec の issue 群の status・契約は一切変化しない"
+
+  AC-CONTRACT-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "一部 issue が既に contract-drafted（以降の status を含む）の状態で再ドラフトしても、それらの契約・status は不変"
+      - "再ドラフトで未ドラフト issue だけが前進し、契約の重複生成・status の後退が起きない"
+
+  AC-CONTRACT-006:
+    severity: major
+    method: db_state_check
+    expected:
+      - "複数 spec の issue が混在する store で 1 spec を指定してドラフトすると、specPath 一致の planned issue だけが変化する"
+      - "他 spec の issue の status・契約は変化しない"

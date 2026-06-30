@@ -1,0 +1,40 @@
+# Issue spawn マニフェスト — 署名済み planning-tree spec に対する to-detail-design の出力。
+# 3 つの PR サイズ Issue。各 AC-PLAN-00N はちょうど 1 つにカバーされる（被覆×排他）。
+#   - key は draft ローカル; spawn-issues が store の ISSUE-NNNN id を採番する。
+#   - dependsOnSystem は docs/specs/_system/planning/ の実在 id を参照する（複製しない）。
+issues:
+  - key: ISSUE-PLAN-001
+    title: planner roadmap を計画の木へ取り込む（ゲート付き）
+    area: harness
+    type: story
+    coversAcIds: [AC-PLAN-001, AC-PLAN-002, AC-PLAN-006]
+    dependsOnIssues: []
+    dependsOnSystem: [ARCH-planning-001, ARCH-planning-002, DATA-planning-003, DOM-planning-006, DOM-planning-008]
+    implementationNotes:
+      - "public seam: planRoadmap(store, rawRoadmap) -> PlanResult（ARCH-planning-002）。"
+      - "受け入れ基準を持たない roadmap（ARCH-planning-001）を parse し、epic ＋ feature を双方向リンク付きで store seam 経由で永続する。"
+      - "fail-closed・all-or-nothing なゲート: AC 入り入力（AC-PLAN-006）と outcome 不在の feature/epic（AC-PLAN-002）は、違反箇所を示す PlanIngestError を投げて拒否し、失敗時は何も永続しない。"
+
+  - key: ISSUE-PLAN-002
+    title: in-plan な feature ごとに署名可能な spec を冪等に spawn する
+    area: harness
+    type: story
+    coversAcIds: [AC-PLAN-003, AC-PLAN-004, AC-PLAN-005]
+    dependsOnIssues: [ISSUE-PLAN-001]
+    dependsOnSystem: [ARCH-planning-003, DOM-planning-007, DATA-planning-005, DATA-planning-007]
+    implementationNotes:
+      - "public seam: spawnSpecs(store, opts?) -> { spawned, dirs }（ARCH-planning-003）。"
+      - "1 Feature = ちょうど 1 spec dir・排他（DOM-planning-007）: slug を導出し、同題目の feature は別 dir へ曖昧性解消する（AC-PLAN-004）。"
+      - "冪等＋非破壊（AC-PLAN-005）: 既に specPath を持つ feature は skip; ファイルは不在のときだけ書く; 未署名 SpecState（DATA-planning-007）を登録し featureId <-> specPath を配線する。"
+
+  - key: ISSUE-PLAN-003
+    title: 冪等な再取込（descope フラグ）と双方向トレース
+    area: harness
+    type: story
+    coversAcIds: [AC-PLAN-007, AC-PLAN-008, AC-PLAN-009]
+    dependsOnIssues: [ISSUE-PLAN-001, ISSUE-PLAN-002]
+    dependsOnSystem: [ARCH-planning-006, DOM-planning-009, DOM-planning-010, DOM-planning-012, DATA-planning-008, DATA-planning-011]
+    implementationNotes:
+      - "additive な再取込（AC-PLAN-007, DOM-planning-009）: id で差分を取り、新規 feature だけ追加; 署名済み SpecState（DATA-planning-011）は決して変更・上書きしない。"
+      - "descope は削除でなくフラグ（AC-PLAN-009, DOM-planning-010）: roadmap 源から外れた feature は inPlan=false へ反転; その署名済み spec dir ＋署名は残る。"
+      - "public seam: traceFeature(store, featureId) -> FeatureTrace（ARCH-planning-006）; `linked` は north-star -> epic -> feature -> spec -> 承認 AC の双方向到達可能性判定（AC-PLAN-008）。"
