@@ -23,7 +23,7 @@ durable store you can resume, analyse and improve from.
 リリース→評価ハーネス改善まで回す **ローカルファーストな開発運用ハーネス**」の MVP です。
 設計ドキュメントの section 18 が言う「まず通すべき 1 本」
 
-```
+```text
 Issue Contract → Generator PR → Evaluator Scorecard → Repair → PASS → Eval Result DB
 ```
 
@@ -55,7 +55,10 @@ Or drive it step by step (`agentops` == `npm run harness --`):
 
 ```bash
 npm run harness -- init
-npm run harness -- plan                 # ingest seed/sample-roadmap.yaml
+npm run harness -- plan-roadmap          # ingest seed/sample-plan.yaml into the planning tree
+npm run harness -- spawn-specs           # materialize one authorable spec stub per feature
+npm run harness -- plan-tree             # print roadmap → epic → feature → spec
+npm run harness -- plan                  # LEGACY: ingest seed/sample-roadmap.yaml (drives the demo)
 npm run harness -- run                   # Generate → Evaluate → Repair → Release
 npm run harness -- status                # pass@k / pass^k / cost
 npm run harness -- curate                # promote blocker criteria into the eval registry
@@ -65,7 +68,7 @@ npm run harness -- dashboard --open
 
 ## The loop
 
-```
+```text
  Roadmap ─▶ Epic ─▶ Issue Contract ─▶ Coordinator
                                           │
                           ┌───────────────┴───────────────┐
@@ -99,7 +102,7 @@ both measurable for the same issue.
 
 ## Repository layout
 
-```
+```text
 agents/            role prompts (the real prompts you'd feed an agent)
 templates/         issue-contract.md, scorecard.yaml, labels.yaml, epic.md, roadmap.yaml
 seed/              sample-roadmap.yaml — drives the demo
@@ -110,7 +113,7 @@ src/
   graders/         hard gates + composite score (index.ts)
   pipeline/        evaluate · repair · coordinator · curator · analyst
   metrics/         pass@1 / pass@k / pass^k / heatmap / cost (metrics.ts)
-  planning/        roadmap+issue planning from a seed (planner.ts)
+  planning/        planning tree: roadmap→epic→feature→spec (planning-tree.ts) + legacy seed (planner.ts)
   dashboard/       self-contained HTML + terminal status report
   cli/             the agentops command
 test/              vitest: schema, grader, metrics, end-to-end pipeline
@@ -121,6 +124,7 @@ docs/              ARCHITECTURE.md · ROADMAP.md · GLOSSARY.md
 
 | Concept | Where | Notes |
 | --- | --- | --- |
+| Planning tree | `src/planning/planning-tree.ts`, `Feature` schema | roadmap→epic→feature→spec; planner emits outcomes, AC are never inlined (`docs/specs/planning-tree/`) |
 | Issue Contract | `templates/issue-contract.md`, `IssueContract` schema | a contract is "ready" only when it parses |
 | State machine | `src/domain/states.ts`, `templates/labels.yaml` | `status:*` labels = the lifecycle |
 | Generator / Evaluator / Repair | `agents/*.md`, `src/pipeline/*` | Evaluator is independent; verdict from evidence |

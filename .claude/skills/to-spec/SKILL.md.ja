@@ -6,7 +6,7 @@ description:
 when_to_use:
    「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える /
    機能を定義する / 設計・署名の前に詰める」といった依頼のとき。
-   設計層（system 層＝ドメイン/アーキ/データは to-system-design、spec の slice 分解は to-detail-design）には使わない。
+   設計層（system 層＝ドメイン/アーキ/データは to-system-design、spec の Issue 分解は to-detail-design）には使わない。
 argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
 ---
@@ -22,7 +22,8 @@ allowed-tools: Read, Write, Edit, Bash
 
 ## 1. Intake — 決定を再ヒアリングせず取り込む
 
-上流に決定 doc（ブレスト結果・draft・メモ等）があれば、パスを尋ねるか `docs/draft/_brainstorm/` を探して読み、
+上流に決定 doc（ブレスト結果・draft・メモ等）があれば、パスを尋ねるか `draft/_spec/`（地図は
+`draft/_spec/README.md`、決定は `draft/_spec/decisions/`）を探して読み、
 決定済み内容を SoT として扱う。spec へは次のように写像する。
 
 | 上流 doc の要素 | spec の写像先 |

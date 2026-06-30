@@ -16,6 +16,7 @@ import type {
   Epic,
   EvalRun,
   EvalTask,
+  Feature,
   Issue,
   PR,
   Roadmap,
@@ -82,6 +83,22 @@ export class Store {
 
   getEpic(id: string): Epic | undefined {
     return this.db.epics.find((e) => e.id === id);
+  }
+
+  // --- features (planning tree) --------------------------------------------
+
+  /** Add a planning-tree feature and wire the bidirectional Epic.featureIds link. */
+  addFeature(f: Feature): Feature {
+    this.db.features.push(f);
+    if (f.epicId) {
+      const epic = this.getEpic(f.epicId);
+      if (epic && !epic.featureIds.includes(f.id)) epic.featureIds.push(f.id);
+    }
+    return f;
+  }
+
+  getFeature(id: string): Feature | undefined {
+    return this.db.features.find((f) => f.id === id);
   }
 
   // --- issues --------------------------------------------------------------

@@ -29,7 +29,14 @@ import {
   type HarnessConfig,
 } from '../config.js';
 import { pkgPath } from '../agents/prompts.js';
-import { loadSeedFile, planFromSeed } from '../planning/planner.js';
+import { loadSeedFile, planFromSeedLegacy } from '../planning/planner.js';
+import {
+  loadRoadmapFile,
+  planRoadmap,
+  spawnSpecs,
+  traceFeature,
+  PlanIngestError,
+} from '../planning/planning-tree.js';
 import { runAll, runIssue } from '../pipeline/coordinator.js';
 import { makeRunner } from '../agents/runner.js';
 import { curateEvalTasks } from '../pipeline/curator.js';
@@ -241,11 +248,71 @@ function cmdPlan(flags: Args['flags']): void {
     process.exit(1);
   }
   const seed = loadSeedFile(seedFile);
-  const res = planFromSeed(store, seed);
+  const res = planFromSeedLegacy(store, seed);
   store.save();
   log(c.green('✓ planned') + ` from ${c.dim(path.relative(ROOT, seedFile))}`);
   log(`  ${res.epics} epics, ${res.issues} issues drafted into Issue Contracts.`);
   log(`\nNext: ${c.b('agentops run')}.`);
+}
+
+function cmdPlanRoadmap(flags: Args['flags']): void {
+  const store = requireInit();
+  const seedFile =
+    typeof flags.seed === 'string' ? path.resolve(ROOT, flags.seed) : pkgPath('seed', 'sample-plan.yaml');
+  if (!fs.existsSync(seedFile)) {
+    log(c.red(`Roadmap not found: ${seedFile}`));
+    process.exit(1);
+  }
+  let res;
+  try {
+    res = planRoadmap(store, loadRoadmapFile(seedFile));
+  } catch (err) {
+    if (err instanceof PlanIngestError) {
+      log(c.red('✗ roadmap rejected — nothing persisted:'));
+      log(`  ${err.message}`);
+      process.exit(1);
+    }
+    throw err;
+  }
+  store.save();
+  log(c.green('✓ planned roadmap') + ` from ${c.dim(path.relative(ROOT, seedFile))}`);
+  log(`  ${res.epics} epics, ${res.features} features in the planning tree ${c.dim(`(+${res.added.epics} epics, +${res.added.features} features)`)}`);
+  if (res.descoped.length) log(`  ${c.yellow('descoped')} ${res.descoped.join(', ')} ${c.dim('(flagged, not deleted)')}`);
+  log(`\nNext: ${c.b('agentops spawn-specs')} then author each spec with to-spec.`);
+}
+
+function cmdSpawnSpecs(): void {
+  const store = requireInit();
+  const res = spawnSpecs(store);
+  store.save();
+  if (res.spawned === 0) {
+    log(c.dim('Nothing to spawn — every in-plan feature already has a spec. Run `agentops plan-roadmap` first.'));
+    return;
+  }
+  log(c.green(`✓ spawned ${res.spawned} spec stub(s)`));
+  for (const d of res.dirs) log(`  ${c.dim(d)}`);
+  log(`\nNext: author each spec with ${c.b('to-spec')}, then ${c.b('agentops sign <spec-dir>')}.`);
+}
+
+function cmdPlanTree(): void {
+  const store = requireInit();
+  const rm = store.db.roadmap;
+  if (!rm) return void log(c.dim('No roadmap yet — run `agentops plan-roadmap`.'));
+  log(c.b('Planning tree') + ` ${c.dim(rm.vision)}`);
+  for (const epicId of rm.epicIds) {
+    const epic = store.getEpic(epicId);
+    if (!epic) continue;
+    log(`${c.blue('▸')} ${c.b(epic.id)} ${epic.title} ${c.dim(`[${epic.theme}]`)}`);
+    for (const fid of epic.featureIds) {
+      const t = traceFeature(store, fid);
+      const f = store.getFeature(fid);
+      if (!f || !t) continue;
+      const state = !f.inPlan ? c.yellow('descoped') : t.signed ? c.green('signed') : f.specPath ? c.blue('specced') : c.dim('planned');
+      const spec = f.specPath ? c.dim(` → ${f.specPath}`) : '';
+      const acs = t.approvedAcIds.length ? c.dim(` · ${t.approvedAcIds.length} AC`) : '';
+      log(`   • ${f.id} ${f.title}  ${state}${spec}${acs}`);
+    }
+  }
 }
 
 async function cmdRun(flags: Args['flags']): Promise<void> {
@@ -354,7 +421,7 @@ async function cmdDemo(flags: Args['flags']): Promise<void> {
 
   // 2. plan
   const seed = loadSeedFile(pkgPath('seed', 'sample-roadmap.yaml'));
-  const plan = planFromSeed(store, seed);
+  const plan = planFromSeedLegacy(store, seed);
   store.save();
   log(c.green('② plan') + ` ${plan.epics} epics, ${plan.issues} issue contracts`);
 
@@ -396,7 +463,10 @@ ${c.b('Commands')}
   init                 scaffold .harness/ (db + config)
   sign <spec-dir>      sign a spec's contract: pin ApprovedSpecRef (AUTH-B gate first)
   specs [<spec-dir>]   show signed specs + drift / derived status since signing
-  plan [--seed F]      ingest a seed roadmap into epics + Issue Contracts
+  plan-roadmap [--seed F]  ingest a planner roadmap into the planning tree (epics + features)
+  spawn-specs          materialize one authorable spec dir per in-plan feature
+  plan-tree            print the planning tree (roadmap → epic → feature → spec)
+  plan [--seed F]      LEGACY: ingest a seed roadmap into epics + Issue Contracts (demo)
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
        [--agent A] [--samples N] [--max-repairs N]
   status               pass@k / pass^k / cost summary
@@ -422,6 +492,12 @@ async function main(): Promise<void> {
       return cmdSpecs(pos);
     case 'plan':
       return cmdPlan(flags);
+    case 'plan-roadmap':
+      return cmdPlanRoadmap(flags);
+    case 'spawn-specs':
+      return cmdSpawnSpecs();
+    case 'plan-tree':
+      return cmdPlanTree();
     case 'run':
       return cmdRun(flags);
     case 'status':

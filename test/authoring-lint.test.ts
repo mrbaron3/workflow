@@ -37,6 +37,11 @@ describe('lintAuthoring wires dependsOn / supersedes', () => {
   it('passes when the optional fields are omitted (back-compat)', () => {
     expect(lintAuthoring(base).ok).toBe(true);
   });
+  it('fails a spec with zero acceptance criteria (no vacuous pass)', () => {
+    const r = lintAuthoring({ specAcIds: [], acceptanceAcIds: [], methodsById: {} });
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e) => e.includes('no acceptance criteria'))).toBe(true);
+  });
   it('passes a clean dependsOn + supersedes', () => {
     const r = lintAuthoring({ ...base, dependsOn: ['DATA-scheduling-014'], supersedes: ['AC-OLD-002'] });
     expect(r.ok).toBe(true);
