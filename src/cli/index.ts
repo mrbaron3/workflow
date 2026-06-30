@@ -38,6 +38,7 @@ import {
   traceFeature,
   PlanIngestError,
 } from '../planning/planning-tree.js';
+import { draftContracts } from '../pipeline/contract-draft.js';
 import { runAll, runIssue } from '../pipeline/coordinator.js';
 import { makeRunner } from '../agents/runner.js';
 import { curateEvalTasks } from '../pipeline/curator.js';
@@ -313,6 +314,24 @@ function cmdSpawnIssues(pos: string[]): void {
   log(`\nNext: ${c.b('agentops run')} drives each issue: Generate → Evaluate → Repair → Release.`);
 }
 
+function cmdContractDraft(pos: string[]): void {
+  const store = requireInit();
+  const dir = pos[0];
+  if (!dir) {
+    log(c.red('usage: agentops contract-draft <spec-dir>') + c.dim('   (signed spec whose issues are spawned)'));
+    process.exit(1);
+  }
+  const res = draftContracts(store, dir);
+  store.save();
+  if (res.drafted === 0) {
+    log(c.dim(`Nothing to draft — no planned issues for ${dir} (already contract-drafted, or none spawned).`));
+    return;
+  }
+  log(c.green(`✓ drafted ${res.drafted} contract(s) from ${c.b(dir)}`));
+  for (const id of res.ids) log(`  ${c.dim(id)} → contract-drafted`);
+  log(`\nNext: ${c.b('agentops run')} drives each issue: Generate → Evaluate → Repair → Release.`);
+}
+
 function cmdPlanTree(): void {
   const store = requireInit();
   const rm = store.db.roadmap;
@@ -485,6 +504,7 @@ ${c.b('Commands')}
   plan-roadmap [--seed F]  ingest a planner roadmap into the planning tree (epics + features)
   spawn-specs          materialize one authorable spec dir per in-plan feature
   spawn-issues <spec-dir>  ingest a signed spec's issues.yaml into the store (ISSUE-NNNN)
+  contract-draft <spec-dir>  draft Issue Contracts from a signed spec → contract-drafted
   plan-tree            print the planning tree (roadmap → epic → feature → spec)
   plan [--seed F]      LEGACY: ingest a seed roadmap into epics + Issue Contracts (demo)
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
@@ -518,6 +538,8 @@ async function main(): Promise<void> {
       return cmdSpawnSpecs();
     case 'spawn-issues':
       return cmdSpawnIssues(pos);
+    case 'contract-draft':
+      return cmdContractDraft(pos);
     case 'plan-tree':
       return cmdPlanTree();
     case 'run':
