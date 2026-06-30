@@ -80,7 +80,9 @@ coherence weakens. Fan-out is an optimization for scale — coherence is the def
   never a renumber or rewrite.
 - **Reference, never copy** — reference shared ids (`LANG/DOM/ARCH/DATA-<CTX>-NNN`) across views and from
   specs; never duplicate their content (duplication drifts). Diagrams are derived downstream; the data
-  view's DBML is the one structured source you author.
+  view has **one structured source that fits the actual persistence** — DBML for a relational DB, the
+  code schema (e.g. the project's Zod/TS types) for a JSON/document store — never a second model that
+  duplicates the live one. Skip the data view entirely when the change persists no new state.
 - **Reverse = draft, with evidence** — distilled-from-code output is a proposal a human promotes, never a
   silent overwrite of authored truth. Tag every proposed element with its `file:symbol` evidence and
   separate what you observed from what you inferred.

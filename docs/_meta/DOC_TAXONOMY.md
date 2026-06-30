@@ -169,14 +169,23 @@ micro の AC が macro の ID を `dependsOn` で指すことで、「この機�
 
 ## データビューの実体化：構造化スキーマ → ER 図（構造原則1 の適用）
 
-> 構造原則1「構造化ソース＋派生スキン」を **データ（`DATA-<CTX>-NNN`）** に落とした harness 既定。
-> SSOT は **スキーマ DSL**、ER 図はその派生。要件「**無料・プロジェクト数無制限**」がツールを縛る。
+> 構造原則1「構造化ソース＋派生スキン」を **データ（`DATA-<CTX>-NNN`）** に落としたもの。
+> SSOT は **実際の永続実体に合わせた構造化ソース**、図はその派生。**単一ソース**が不可侵原則——
+> すでにコードスキーマで検証している系を別表現で二重化しない（二重化は drift＝本ビューが防ぐもの）。
 
-| 層 | 採用 | 理由 |
+| 永続実体 | 構造化 SSOT（著述） | 理由 |
 |---|---|---|
-| **構造化 SSOT（著述）** | **DBML**（schema DSL） | table/column/型/PK・FK/enum/index を表現し関係を1級で持つ。`@dbml/cli` で SQL DDL と相互変換。言語自体は MIT・無料 |
-| **派生・既定ビュー** | **Mermaid `erDiagram`** | GitHub/GitLab/VS Code/Obsidian が**ネイティブ描画**＝インフラ・アカウント・上限ゼロ。PR 差分で図が見える常設ビュー |
-| **派生・リッチ確認（必要時）** | **DrawDB**（ブラウザ完結）／**自己ホスト Azimutt**（大規模・関係追跡） | DBML/SQL を import しドラッグ操作・探索。共に無料・無制限（OSS） |
+| リレーショナル DB | **DBML**（schema DSL） | table/column/型/PK・FK/enum/index を1級で持ち `@dbml/cli` で SQL DDL と相互変換。DB が正本のときに使う |
+| **JSON/ドキュメントストア、またはコード型（Zod/TS・pydantic・JSON Schema）で検証する系** | **そのコードスキーマを参照**（例: `src/domain/schema.ts`） | ライブな正本が既にコードにある。DBML へ書き写すと二重 SSOT になり drift する。data-model.md は `DATA-…` id・所有・不変条件・migration だけ足す |
+| イベントログ/メッセージバス | **イベント/メッセージスキーマ**（Avro・Protobuf・JSON Schema） | 流れの正本。シーケンス/フロー図を派生 |
+
+> **新規の永続状態を足さない変更（ステータス遷移・フラグだけ）はデータビューを省略**する。スロット埋めの
+> ためにデータモデルを捏造しない（「触れたビューだけ走らせる」）。
+
+| 派生スキン | 採用 | 理由 |
+|---|---|---|
+| **既定ビュー** | **Mermaid `erDiagram`** | GitHub/GitLab/VS Code/Obsidian が**ネイティブ描画**＝インフラ・アカウント・上限ゼロ。PR 差分で図が見える常設ビュー |
+| **リッチ確認（必要時）** | **DrawDB**（ブラウザ完結）／**自己ホスト Azimutt** | DBML/SQL を import しドラッグ操作・探索。共に無料・無制限（OSS） |
 
 **なぜ SaaS でなく上記か**：無料×無制限という要件がホスト型を落とす（dbdiagram.io＝無料10図 / ChartDB
 cloud＝DB1・テーブル10 / Azimutt cloud＝1プロジェクト）。残るのは「リポジトリ内描画の text 図」と「OSS
@@ -185,9 +194,12 @@ hosted viewer だけが有料）。判断（不変条件・migration の根拠�
 （[DOC_LIFECYCLE](DOC_LIFECYCLE.md)「Diagrams are derived downstream」）。
 
 ```text
+# リレーショナル DB のとき（SSOT＝DBML）:
 data-model.md の DBML  ──┬─► Mermaid erDiagram（data-model.md 内 / _derived/diagrams/）
 （構造化 SSOT・著述）     ├─► SQL DDL（@dbml/cli）
                           └─► import → DrawDB / Azimutt（リッチ探索）
+# JSON/ドキュメントストアのとき（SSOT＝コードスキーマ）:
+コードスキーマ（例 Zod）   ──► Mermaid erDiagram/型グラフ（data-model.md は id・所有・不変条件・migration だけ著述）
 ```
 
 ## ダイアル（規模に応じた右サイズ化）
