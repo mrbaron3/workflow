@@ -223,6 +223,9 @@ export const EvalRun = z.object({
   featureArea: z.string().default('unknown'),
   // Optional human label, used to compute false-pass / false-fail when present.
   humanVerdict: Verdict.nullable().default(null),
+  // DATA-execution-001: which review perspective (lens) produced this run when graded by
+  // the evaluator panel; null = legacy single composite grade. Additive/optional.
+  perspective: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type EvalRun = z.infer<typeof EvalRun>;

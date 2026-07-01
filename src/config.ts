@@ -18,6 +18,19 @@ export interface AgentCliConfig {
   args: string[];
 }
 
+/**
+ * A real target repository the execution layer edits in isolated git worktrees
+ * (ADR-0005 / _system/execution). Present only for grounded real-agent runs; absent for
+ * the mock backend. `graders` are real commands run against the checkout (evidence, not
+ * self-report); `protectedPaths` are harness-owned files the agent must not edit.
+ */
+export interface TargetRepoConfig {
+  repo: string;
+  baseRef?: string;
+  graders?: { typecheck?: string; unit_tests?: string };
+  protectedPaths?: string[];
+}
+
 export interface HarnessConfig {
   /** Active generator backend. "mock" runs fully offline; others shell out. */
   generator: GeneratorAgent;
@@ -38,6 +51,8 @@ export interface HarnessConfig {
   };
   /** CLI templates for real agent backends (used when generator != "mock"). */
   cli: Record<'claude' | 'codex' | 'gemini', AgentCliConfig>;
+  /** Target repo for grounded runs (execution layer edits worktrees of it). */
+  target?: TargetRepoConfig;
 }
 
 export const DEFAULT_CONFIG: HarnessConfig = {
