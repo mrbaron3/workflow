@@ -11,3 +11,4 @@
 | [ADR-0002](ADR-0002-zod-contracts-published-language.md) | cross-agent 成果物は zod 契約で検証する（Published Language） | 採択 |
 | [ADR-0003](ADR-0003-hard-gates-before-score.md) | hard gate を score より先に評価する | 採択 |
 | [ADR-0004](ADR-0004-determinism-and-pluggable-backend.md) | 決定論を構成で保証し、agent backend を差し替え可能にする | 採択 |
+| [ADR-0005](ADR-0005-execution-layer-tmux-orchestration.md) | 実装層は issue queue を入力とする独立層とし、tmux で role-scoped セッションをオーケストレーションする | 採択 |

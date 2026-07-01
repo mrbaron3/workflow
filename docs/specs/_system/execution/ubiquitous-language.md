@@ -1,0 +1,23 @@
+# ユビキタス言語 — execution コンテキスト
+
+> execution コンテキストは、**issue queue を唯一の入力**として消費し、issue ごとに実装を役割セッションの
+> オーケストレーションで自律に進める**独立層**を所有する（[ADR-0005](../../../decisions/ADR-0005-execution-layer-tmux-orchestration.md)）。
+> Generator/Evaluator/Scorecard/Verdict といった「何を採点するか」の語は evaluation コンテキスト
+> （`LANG-evaluation-NNN`）を**参照**し再定義しない——本コンテキストは「どう起動し・どう束ねるか」を足す。
+> [context-map.md](../../context-map.md) の境界に従う。追加のみ（`LANG-execution-NNN` は安定）。
+
+| ID | 用語 | 意味（execution コンテキスト内で一貫） |
+| --- | --- | --- |
+| LANG-execution-001 | 実装層 / Execution Layer | issue queue を唯一の入力として消費し、issue ごとに実装を自律で進める独立層。上流（planning/authoring/design）と queue で分離される（ACL）。上流の生成過程に依存しない。 |
+| LANG-execution-002 | Issue Queue | store の `contract-drafted` **かつ** AI 指定（`LANG-execution-012`）された issue の集合。実装層の入力境界。 |
+| LANG-execution-003 | Orchestrator | queue を poll し役割セッションを spawn・fan-in する**決定論コード**（LLM ではない）。evaluation の coordinator（`ARCH-evaluation-001`）を tmux 起動へ拡張したもの。 |
+| LANG-execution-004 | Watch（常駐 poll） | orchestrator を poll ループで常駐させる運用。一発 `run`（queue を drain して exit）を包む。 |
+| LANG-execution-005 | Session（役割セッション） | 1 ロールが 1 つの tmux **対話**セッションで、最小コンテキストだけを受けて処理を進める単位。揮発（真実は store）。`claude -p` headless ではなく attach 可。 |
+| LANG-execution-006 | Scoped Context（最小コンテキスト） | セッションに渡す role 最適な最小情報。計画の木の `dependsOnSystem`（id 参照・never copied）から解決して組む。セッション間のコンテキスト汚染を防ぐ。 |
+| LANG-execution-007 | Worktree（隔離チェックアウト） | sample ごとの git worktree。セッションが実ファイルを編集する隔離空間。sentinel と grade はここに対して行う。 |
+| LANG-execution-008 | Sentinel（完了印） | セッション完了時に worktree へ書かれる印（`.agentops/done.json`）。orchestrator が polling で検知して grade へハンドオフする。tmux の生存は状態ではない。 |
+| LANG-execution-009 | Evaluator Panel（観点パネル） | 単一 Evaluator（`LANG-evaluation-005`）でなく、**観点ごとに独立した Evaluator セッション群**。各自 Verdict（`LANG-evaluation-007`）を出し、集約する。 |
+| LANG-execution-010 | Perspective（観点） | レビューの独立した lens。**7観点**＝functionality / codeQuality / testQuality / ux / accessibility（grader 5次元）＋ security ＋ type-design。 |
+| LANG-execution-011 | Human Review Gate（人間審査ゲート） | パネル approve 後・`released` 前の人間判断点。`needs-human-review` で停止し、人間承認で `released` へ（`LANG-evaluation-010`/`016` の延長）。 |
+| LANG-execution-012 | Scoping Guard / ai-managed | 実装層が触ってよい issue の **opt-in 指定**。`assignedAgent` が担当 AI に設定された issue のみ。未指定／他人が作った issue は決して触らない（デフォルト非処理）。 |
+| LANG-execution-013 | Execution Backend | セッションを実行する基盤の pluggable な差し替え（自前 tmux／将来 Hermes）。evaluation の AgentRunner seam（`ARCH-evaluation-002`）の裏に位置する。 |

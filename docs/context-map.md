@@ -6,19 +6,22 @@
 > （per-context の `ubiquitous-language.md` ＋ ここでの翻訳点）。
 
 - 種別: system（macro 索引）
-- 状態: ドラフト（planning のみ system 層実体化済み・他は移行待ち）
+- 状態: ドラフト（planning・execution は4ビュー実体化済み・他は移行待ち）
 
 ## 境界コンテキスト一覧
 
-ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると4つ。技術レイヤー（Product/Execution/…）ではなく
-**言語の境界**で分ける。
+ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると5つ。技術レイヤー（Product/…）ではなく
+**言語の境界**で分ける。**execution は旧 ARCHITECTURE の技術層「Execution」ではない**——orchestration /
+session / panel / sentinel という固有のユビキタス言語を持つ境界として立てる（[ADR-0005](decisions/ADR-0005-execution-layer-tmux-orchestration.md)）。
+evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
 
 | コンテキスト | 責務（一文） | 主なコード | system 層 | 代表用語 |
 | --- | --- | --- | --- | --- |
 | **planning** | 製品ゴールを roadmap→epic→feature に分解し永続、各 feature を spec へ materialize | `src/planning/` | `_system/planning/` ✅ | Roadmap・Epic・Feature・Outcome・取込・spawn |
 | **authoring** | 人間が spec の WHAT（AC）を著述し**署名**、署名後のドリフトを検知 | `src/authoring/` | `_system/authoring/`（未） | Spec・acceptance.yaml・ApprovedSpecRef・署名・fingerprint・ドリフト |
 | **design** | 署名 spec から system 層（4ビュー）を設計し、PR サイズの Issue 集合へ分解 | `src/design/`・`planning-tree.ts:spawnIssues` | `_system/design/`（未） | 境界コンテキスト・ドメインモデル・seam・被覆×排他・dependsOnSystem |
-| **evaluation** | Issue Contract を生成→評価→修正→リリースし、証拠から指標・回帰・改善を育てる | `src/pipeline/`・`graders/`・`metrics/`・`agents/`・`resolve/` | `_system/evaluation/`（未） | Issue Contract・Generator・PR・Scorecard・EvalRun・pass@k・Repair・Curator・Analyst |
+| **evaluation** | Issue Contract を生成→評価→修正→リリースし、証拠から指標・回帰・改善を育てる | `src/pipeline/`・`graders/`・`metrics/`・`agents/`・`resolve/` | `_system/evaluation/`（言語・アーキのみ） | Issue Contract・Generator・PR・Scorecard・EvalRun・pass@k・Repair・Curator・Analyst |
+| **execution** | issue queue を入力に、issue ごとの実装を role-scoped tmux セッションのオーケストレーションで自律に進める独立層 | `src/pipeline/coordinator.ts`・`src/agents/`（tmux runner は実装予定） | `_system/execution/` ✅ | 実装層・Issue Queue・Orchestrator・Watch・Session・Sentinel・Evaluator Panel・観点・審査ゲート・Scoping Guard |
 
 **共有カーネル（Shared Kernel）**: `src/domain/`（`schema.ts` の zod 契約 ＋ `states.ts` の状態機械）と
 `src/store/`（Eval Result DB）は4コンテキストすべてが共有する。これがコンテキスト間の **Published Language**
@@ -28,18 +31,22 @@
 ## 関係（DDD 関係パターン）
 
 ```text
-            ┌─────────────────────── 改善フィードバック（評価→計画）────────────────────────┐
-            ▼                                                                              │
-   ┌────────────┐  spec stub   ┌────────────┐  署名 spec   ┌──────────┐  issues+契約  ┌────────────┐
-   │  planning  │ ───────────▶ │ authoring  │ ───────────▶ │  design  │ ───────────▶ │ evaluation │
-   └────────────┘  C/S         └────────────┘  C/S・順応    └──────────┘  C/S          └────────────┘
-            │                          │                        │                          │
-            └──────────────────────────┴── Shared Kernel: domain（zod 契約・状態機械）＋ store ──┴───────┘
+       ┌──────────────────── 改善フィードバック（評価→計画）──────────────────────────────┐
+       ▼                                                                                 │
+ ┌──────────┐ spec stub ┌──────────┐ 署名spec ┌────────┐ issues  ┌───────────┐  駆動  ┌────────────┐
+ │ planning │ ────────▶ │authoring │ ───────▶ │ design │ ═══════▶│ execution │ ─────▶ │ evaluation │
+ └──────────┘   C/S     └──────────┘ C/S順応  └────────┘ queue   └───────────┘  SK    └────────────┘
+       │                     │                   │       =ACL         │                     │
+       └─────────────────────┴──── Shared Kernel: domain（zod 契約・状態機械）＋ store ───────┴─────────┘
 ```
+
+> `design ═▶ execution` の二重線は**層境界（ACL）**＝issue queue。execution は queue を poll して消費し、
+> evaluation の役割（Generator/Evaluator）を tmux セッションとして**駆動**する（Shared Kernel）。
 
 - **planning → authoring**（Customer-Supplier）: planning が feature ごとに**著述 stub spec** を供給し、authoring が AC を著述・署名する。
 - **authoring → design**（Customer-Supplier・Conformist）: design は**署名された AC 集合に順応**する——issue の被覆は署名 AC とちょうど一致せねばならない（勝手に AC を足さない）。
-- **design → evaluation**（Customer-Supplier）: design が Issue（被覆・seam 参照）を供給、evaluation が契約ドラフト→生成→評価→リリースで消費する。橋は `contract-draft`（署名 spec の AC を契約へ・新規著述しない）。
+- **design → execution**（Customer-Supplier・issue queue が ACL）: design が署名 spec を Issue（被覆・seam 参照）へ分解し供給、execution が **contract-drafted かつ ai-managed** な issue を queue から poll して消費する。橋は `contract-draft`（署名 spec の AC を契約へ・新規著述しない）。実装層は「issue がどう作られたか」に依存しない（`_system/execution/`・ADR-0005）。
+- **execution ↔ evaluation**（Shared Kernel・execution が駆動）: execution は evaluation の Generator/Evaluator/grader を **role-scoped tmux セッション**として起動・fan-in し、観点パネルで採点を束ねる。採点の意味論（hard-gate→score・Scorecard・Verdict）は evaluation が所有し、execution は再定義せず参照する。
 - **evaluation → planning**（改善フィードバック・Customer-Supplier）: Harness Analyst が `type:harness`/`type:eval` の改善 issue を計画の木へ戻し、Curator が失敗を回帰として育てる。北極星の「改善」軸の閉路。
 - **Shared Kernel**: 4コンテキストは `domain`（契約・状態機械）と `store`（Eval DB）を共有する。契約が Published Language として境界を跨ぐ唯一の語彙。
 
