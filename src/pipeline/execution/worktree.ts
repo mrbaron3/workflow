@@ -33,14 +33,18 @@ export function worktreeExists(worktreePath: string): boolean {
   return fs.existsSync(worktreePath);
 }
 
-/** Files changed in the worktree (tracked + untracked), for filesChanged / scope checks. */
+/** Files changed in the worktree (tracked + untracked), for filesChanged / scope checks.
+ *  Excludes `.agentops/` — the harness's own prompt/sentinel scaffolding, which is
+ *  infrastructure the harness writes into every worktree, never the agent's edits.
+ *  (First real run caught this: without the exclusion, .agentops/ read as scope creep.) */
 export function changedFiles(worktreePath: string): string[] {
   const { out } = git(worktreePath, ['status', '--porcelain'], true);
   return out
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
-    .map((l) => l.replace(/^\S+\s+/, '').replace(/^.*->\s*/, '')); // strip status code / rename arrow
+    .map((l) => l.replace(/^\S+\s+/, '').replace(/^.*->\s*/, '')) // strip status code / rename arrow
+    .filter((f) => f !== '.agentops' && !f.startsWith('.agentops/'));
 }
 
 export function removeWorktree(repo: string, worktreePath: string): void {
