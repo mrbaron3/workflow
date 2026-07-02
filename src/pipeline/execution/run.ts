@@ -8,18 +8,21 @@
  * review gate are the next slices; the orchestration seam and evidence trail are already here.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { PR, type Issue } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
 import { evaluate } from '../evaluate.js';
 import { pollable } from './guard.js';
-import { runGeneratorSession } from './session.js';
+import { runGeneratorSession, type SessionResult } from './session.js';
 import { groundArtifact } from './grade.js';
+import type { LivenessOutcome } from './tmux.js';
 
 export interface ExecOnceResult {
   issueId: string;
   verdict: string;
-  sentinelSeen: boolean;
+  outcome: LivenessOutcome;
   overall: number;
   evalId: string;
 }
@@ -72,6 +75,20 @@ async function runOne(
 
   const sess = await runGeneratorSession(config, { issue, contract, sampleIndex: 0, attempt: 1 }, harnessRoot, log);
 
+  // Liveness surfacing (ARCH-execution-014/015): a stuck/timed-out session is promoted to
+  // needs-human-review with pane evidence and kept alive — never silently graded or dropped.
+  if (sess.outcome !== 'completed') {
+    const evPath = writeStuckEvidence(harnessRoot, issue.id, sess);
+    pr.status = 'changes-requested';
+    pr.updatedAt = nowISO();
+    store.setStatus(issue.id, 'needs-human-review');
+    log(
+      `  ⚠ ${issue.id}: ${sess.outcome.toUpperCase()} → needs-human-review. ` +
+        `Take over: tmux attach -t ${sess.session}  ·  pane evidence: ${evPath}`,
+    );
+    return { issueId: issue.id, verdict: 'needs_human', outcome: sess.outcome, overall: 0, evalId: '' };
+  }
+
   store.setStatus(issue.id, 'ready-for-evaluation');
   store.setStatus(issue.id, 'evaluation-in-progress');
 
@@ -98,8 +115,21 @@ async function runOne(
   pr.updatedAt = nowISO();
 
   log(
-    `  = ${issue.id}: ${run.verdict} (overall ${run.overall.toFixed(2)}, ` +
-      `${sess.sentinelSeen ? 'sentinel ✓' : 'no sentinel'}, ${sess.changed.length} files changed)`,
+    `  = ${issue.id}: ${run.verdict} (overall ${run.overall.toFixed(2)}, sentinel ✓, ` +
+      `${sess.changed.length} files changed)`,
   );
-  return { issueId: issue.id, verdict: run.verdict, sentinelSeen: sess.sentinelSeen, overall: run.overall, evalId: run.id };
+  return { issueId: issue.id, verdict: run.verdict, outcome: 'completed', overall: run.overall, evalId: run.id };
+}
+
+/** Persist the stuck session's pane so a human can see WHY it stopped (evidence, auditable). */
+function writeStuckEvidence(harnessRoot: string, issueId: string, sess: SessionResult): string {
+  const dir = path.join(harnessRoot, '.harness', 'evidence');
+  fs.mkdirSync(dir, { recursive: true });
+  const rel = path.join('.harness', 'evidence', `stuck-${issueId.toLowerCase()}-${sess.session}.txt`);
+  const body =
+    `STUCK session ${sess.session} (${sess.outcome})\n` +
+    `worktree: ${sess.worktree}\nbranch: ${sess.branch}\n` +
+    `take over: tmux attach -t ${sess.session}\n\n--- pane tail ---\n${sess.paneTail}\n`;
+  fs.writeFileSync(path.join(harnessRoot, rel), body, 'utf8');
+  return rel;
 }

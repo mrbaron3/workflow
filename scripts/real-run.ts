@@ -21,5 +21,6 @@ const results = await runExecutionOnce(store, config, ROOT, (m) => console.log(m
 
 console.log('\n=== results ===');
 for (const r of results) {
-  console.log(`${r.issueId}: ${r.verdict} (overall ${r.overall.toFixed(2)}, ${r.sentinelSeen ? 'sentinel ✓' : 'no sentinel'}, ${r.evalId})`);
+  const detail = r.outcome === 'completed' ? `overall ${r.overall.toFixed(2)}, ${r.evalId}` : `${r.outcome} — see needs-human-review`;
+  console.log(`${r.issueId}: ${r.verdict} (${detail})`);
 }

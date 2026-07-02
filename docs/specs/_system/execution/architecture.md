@@ -15,6 +15,7 @@
 - **ARCH-execution-006 evaluator panel（fan-out / aggregate）** — 責務: Perspective ごとに Evaluator セッションを起こし、その Verdict を集約する（`DOM-execution-003`/`004`）。public な形: `runPanel(pr, perspectives): AggregateVerdict`。evaluation の evaluate/grader（`ARCH-evaluation-003`）を観点数だけ起動し、blocker 観点優先で束ねる。
 - **ARCH-execution-007 scoped-context assembler** — 責務: role に最小コンテキストを組む（`LANG-execution-006`）。public な形: `contextFor(role, issue, store): ScopedContext` ＝ 計画の木の `dependsOnSystem`（id 参照）から解決。汚染防止（`DOM-execution-001`）。
 - **ARCH-execution-008 human review gate** — 責務: パネル approve 後・`released` 前に `needs-human-review` で停止し、人間承認で `released` へ進める（`DOM-execution-007`）。evaluation の release/escalate（`ARCH-evaluation-005`）に人間判断点を挿す。
+- **ARCH-execution-014 liveness モニタ / surfacing** — 責務: Sentinel 待ちと並行に pane を監視し、stuck（`LANG-execution-014`）を検知して顕在化する（`DOM-execution-009`）。public な形: `monitorLiveness(session, sentinelPath, { idleMs, hardCapMs, pollMs }): 'completed' | 'stuck' | 'timeout'`。判定: pane が `idleMs` 不変 ∧ 作業指標なし ∧ sentinel 無し → stuck；経過 > `hardCapMs` → timeout。stuck/timeout 時: store を `needs-human-review` にし pane スナップショットを evidence 保存、セッションは kill せず `tmux attach` を提示。**自動続行はしない。**
 
 ## 共有基盤（Shared Kernel への依存）
 
@@ -32,3 +33,4 @@
 - **ARCH-execution-011** — Orchestrator は決定論コードであり、制御フロー（poll/dispatch/grade/store）を LLM 判断へ委ねない（`DOM-execution-008`）。
 - **ARCH-execution-012** — セッションは queue の opt-in 指定（ai-managed）issue のみに生成される（scoping guard・`DOM-execution-006`）。
 - **ARCH-execution-013** — sample は Sentinel の出現でのみ grade へ進む（`DOM-execution-005`）。tmux プロセス生存は grade 契機にしない。
+- **ARCH-execution-015** — セッションは静かに終了しない: 正常完了は Sentinel、異常停止は liveness surfacing のいずれかで**必ず store に昇格**する（`DOM-execution-009`）。無言 timeout・無言 kill を禁ずる。

@@ -25,3 +25,4 @@
 - **DOM-execution-006 スコープガードの不変条件** — Orchestrator は `status==contract-drafted` **かつ** `assignedAgent==担当 AI`（`LANG-execution-012`）の issue のみを dispatch する。未指定／他人所有の issue は不変（触らない）。デフォルト非処理（opt-in）。
 - **DOM-execution-007 審査ゲートの状態遷移** — パネル集約が approve でも自動 `released` にしない: `build-approved`（`LANG-evaluation-016`）→ `needs-human-review` → 人間承認 → `released`。自律は build-approved まで、release は人間の判断点（`LANG-execution-011`・北極星 §判断点）。
 - **DOM-execution-008 決定論境界の不変条件** — poll / dispatch / grade / store 更新（seam の外側）は決定論コードが行い、非決定な実エージェントはセッション内（HOW の遂行）に閉じる。制御フローを LLM 判断へ委ねない（`ARCH-evaluation-010` の拡張）。
+- **DOM-execution-009 liveness 昇格の不変条件** — セッションは**静かに終わらない**。正常完了は Sentinel（`DOM-execution-005`）で昇格し、stuck（`LANG-execution-014`）は store 状態（`needs-human-review`）＋ pane 証拠へ昇格する。stuck なセッションは静かに kill/timeout せず**生かしたまま**人間が引き継げる（`tmux attach`）。自動での続行注入はしない（人間の判断点へ渡す）。sentinel が正常完了の昇格なら、これは**異常停止の昇格**——揮発する tmux 状態を監査可能な store 状態へ上げる（`ARCH-evaluation-008`）。

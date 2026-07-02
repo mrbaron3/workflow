@@ -79,19 +79,36 @@ export function killSession(session: string): void {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+export type LivenessOutcome = 'completed' | 'stuck' | 'timeout';
+
 /**
- * Poll for the sentinel file (ARCH-execution-005). Completion is confirmed ONLY by the
- * sentinel — a live tmux process is not a "done" signal (DOM-execution-005). Returns true
- * if the sentinel appeared before the timeout.
+ * Watch a session until it completes or stops making progress (ARCH-execution-014/015).
+ * Completion is confirmed ONLY by the sentinel (DOM-execution-005). In parallel we watch the
+ * pane: while the agent works, the TUI keeps changing (spinner/token ticks), so a pane that
+ * is unchanged for `idleMs` with no sentinel means the session is waiting for input or hung
+ * — a stuck session, which must be surfaced, not silently timed out (DOM-execution-009).
+ *
+ *   - 'completed' : sentinel appeared
+ *   - 'stuck'     : pane idle for idleMs, no sentinel (input-waiting / hung)
+ *   - 'timeout'   : exceeded hardCapMs regardless of pane activity
  */
-export async function waitForSentinel(
+export async function monitorLiveness(
+  session: string,
   sentinelPath: string,
-  opts: { timeoutMs: number; pollMs: number },
-): Promise<boolean> {
-  const deadline = Date.now() + opts.timeoutMs;
-  while (Date.now() < deadline) {
-    if (fs.existsSync(sentinelPath)) return true;
+  opts: { idleMs: number; hardCapMs: number; pollMs: number },
+): Promise<LivenessOutcome> {
+  const start = Date.now();
+  let lastPane = capturePane(session);
+  let lastChange = Date.now();
+  for (;;) {
+    if (fs.existsSync(sentinelPath)) return 'completed';
+    if (Date.now() - start > opts.hardCapMs) return 'timeout';
+    const pane = capturePane(session);
+    if (pane !== lastPane) {
+      lastPane = pane;
+      lastChange = Date.now();
+    }
+    if (Date.now() - lastChange > opts.idleMs) return 'stuck';
     await sleep(opts.pollMs);
   }
-  return false;
 }

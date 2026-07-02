@@ -21,3 +21,4 @@
 | LANG-execution-011 | Human Review Gate（人間審査ゲート） | パネル approve 後・`released` 前の人間判断点。`needs-human-review` で停止し、人間承認で `released` へ（`LANG-evaluation-010`/`016` の延長）。 |
 | LANG-execution-012 | Scoping Guard / ai-managed | 実装層が触ってよい issue の **opt-in 指定**。`assignedAgent` が担当 AI に設定された issue のみ。未指定／他人が作った issue は決して触らない（デフォルト非処理）。 |
 | LANG-execution-013 | Execution Backend | セッションを実行する基盤の pluggable な差し替え（自前 tmux／将来 Hermes）。evaluation の AgentRunner seam（`ARCH-evaluation-002`）の裏に位置する。 |
+| LANG-execution-014 | Liveness / stuck | sentinel を出さないままセッションが進捗を止めた状態（入力待ち・質問・ハング）。正常完了（sentinel）に対する**異常停止**。auto-mode 起動でも起こり得るため、検知して顕在化する対象。 |

@@ -15,7 +15,7 @@ import type { Issue, IssueContract } from '../../domain/schema.js';
 import type { HarnessConfig, TargetRepoConfig } from '../../config.js';
 import { loadRolePrompt } from '../../agents/prompts.js';
 import { createWorktree, worktreeExists, changedFiles } from './worktree.js';
-import { launchSession, sendPrompt, capturePane, killSession, waitForSentinel } from './tmux.js';
+import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
 
 export interface GeneratorSessionInput {
   issue: Issue;
@@ -28,7 +28,7 @@ export interface SessionResult {
   worktree: string;
   branch: string;
   session: string;
-  sentinelSeen: boolean;
+  outcome: LivenessOutcome;
   changed: string[];
   paneTail: string;
 }
@@ -80,12 +80,23 @@ export async function runGeneratorSession(
       'When finished, create .agentops/done.json containing {"done": true}.',
   );
 
-  const sentinelSeen = await waitForSentinel(sentinelPath, { timeoutMs: 1000 * 60 * 15, pollMs: 2000 });
-  const paneTail = capturePane(session).split('\n').filter(Boolean).slice(-20).join('\n');
-  killSession(session);
-  log(`  ▸ ${session}: ${sentinelSeen ? 'sentinel seen' : 'TIMED OUT (no sentinel)'}`);
+  const outcome = await monitorLiveness(session, sentinelPath, {
+    idleMs: 90_000, // pane unchanged this long with no sentinel = stuck
+    hardCapMs: 1000 * 60 * 20,
+    pollMs: 3000,
+  });
+  const paneTail = capturePane(session).split('\n').filter(Boolean).slice(-25).join('\n');
 
-  return { worktree: wt, branch, session, sentinelSeen, changed: changedFiles(wt), paneTail };
+  // Only a clean completion tears the session down; a stuck/timed-out session is kept ALIVE
+  // so a human can attach and take over (ARCH-execution-014). Never a silent kill.
+  if (outcome === 'completed') {
+    killSession(session);
+    log(`  ▸ ${session}: completed (sentinel)`);
+  } else {
+    log(`  ⚠ ${session}: ${outcome.toUpperCase()} — session kept alive; inspect: tmux attach -t ${session}`);
+  }
+
+  return { worktree: wt, branch, session, outcome, changed: changedFiles(wt), paneTail };
 }
 
 function buildPrompt(input: GeneratorSessionInput, target: TargetRepoConfig): string {
