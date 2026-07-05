@@ -94,7 +94,12 @@ npx tsx scripts/real-run.ts           # queue を poll → 実セッション �
    これで**決定論ループが `drive → panel → repair×N → gate` で端まで閉じた**。残りは実 backend の配線のみ:
    - **承認入力元の GitHub backend**（G1-G2 の HOW）: approve → push ＋ `gh pr create`、人間 merge の poll 検知を
      `recordHumanDecision` 呼び出しへ変換する seam（今はテスト/CLI から直接呼ぶ）。remote・`gh` 認証前提。`PR.externalRef`（additive）で対応付け。
-   - **実 LLM backend**: 6 観点を tmux セッションに（`PerspectiveGrader` の裏）＋ generator を実セッションに（`runGeneratorSession` 既存）。
+   - **実 LLM backend（seam 実装済み・ライブ配線が残り）**: `src/pipeline/execution/perspective-session.ts` —
+     findings.json 契約＋`parsePerspectiveFindings`＋`fileBackedGrader`/`sessionBackedGrader`（runPanel に無改造で刺さる）
+     ＋観点別プロンプト（`PERSPECTIVE_LENS`）＋`runPerspectiveSessions`（read-only tmux セッション・read-only 違反は
+     changedFiles で検知し discard）。決定論の seam は `test/perspective-session.test.ts`（8）green。**残り**: `driveIssueOnce` の
+     ライブ版（generator を `runGeneratorSession`＋パネルを `runPerspectiveSessions`→`runPanel(sessionBackedGrader)`）と、
+     使い捨て sandbox での grounded 走行（cost・`claude` 認証が要る非決定パート）。generator セッションは既存（`runGeneratorSession`）。
    - 実 backend 既定 samples=1・first-approve-stop（E5。best-of-N は計測 opt-in）。
    - scoped-context 組立（`ARCH-execution-007`・P5）: 今は generator.md＋contract 全体。木の `dependsOnSystem` から最小化。
 3. **残る横断**: `config.cli` の `claude -p` 既定を除去（ADR-0005 Q2 残債）。ISSUE-0002（systemRefs 未固定）修正。
