@@ -1,0 +1,30 @@
+# Issue spawn マニフェスト — 署名済み execution-loop spec に対する to-detail-design の出力。
+# 2 つの PR サイズ Issue。各 AC-LOOP-00N はちょうど 1 つにカバーされる（被覆×排他）。
+#   - key は draft ローカル; spawn-issues が store の ISSUE-NNNN id を採番する。
+#   - dependsOnSystem は docs/specs/_system/{execution,evaluation}/ の実在 id を参照する（複製しない）。
+issues:
+  - key: ISSUE-LOOP-GATE
+    title: 審査ゲート — build-approved で人間承認を待ち、承認/差戻しを humanVerdict に証拠として記録
+    area: harness
+    type: harness
+    coversAcIds: [AC-LOOP-005, AC-LOOP-006, AC-LOOP-007, AC-LOOP-008]
+    dependsOnIssues: []
+    dependsOnSystem: [LANG-execution-011, ARCH-execution-008, DOM-execution-007, LANG-evaluation-016, ARCH-evaluation-005]
+    implementationNotes:
+      - "状態機械（src/domain/states.ts）に build-approved を additive に追加。遷移: evaluation-in-progress → build-approved → needs-human-review（ゲート停止）; needs-human-review → released（人間承認）。既存遷移は壊さない。"
+      - "public seam: applyPanelVerdict(store, issueId, verdict)（DOM-execution-007）。approve→build-approved→needs-human-review（自動 released しない・AC-LOOP-005）。request_changes→changes-requested。needs_human→needs-human-review。"
+      - "public seam: recordHumanDecision(store, issueId, decision)（ARCH-execution-008・ラベル収穫 G3）。approve→released＋勝者 sample の観点 EvalRun の humanVerdict='approve'（AC-LOOP-006）。reject→非 released＋humanVerdict='request_changes'（AC-LOOP-007・false-pass 較正）。"
+      - "冪等（AC-LOOP-008）: 既に released なら早期 return。humanVerdict はスカラ場ゆえ再適用で重複しない。"
+
+  - key: ISSUE-LOOP-WATCH
+    title: 自律ドライブ — ai-managed queue を poll し implement→panel→ゲートまで進める（scoping・resume・再入冪等）
+    area: harness
+    type: harness
+    coversAcIds: [AC-LOOP-001, AC-LOOP-002, AC-LOOP-003, AC-LOOP-004]
+    dependsOnIssues: [ISSUE-LOOP-GATE]
+    dependsOnSystem: [LANG-execution-001, LANG-execution-002, LANG-execution-004, LANG-execution-012, ARCH-execution-001, ARCH-execution-002, ARCH-execution-009, DOM-execution-006, DOM-execution-008]
+    implementationNotes:
+      - "public seam: driveOnce(store, config, generate) -> results（ARCH-execution-001 の決定論版）。queue=pollable(store,config)（既存 guard・ARCH-execution-002）を drain。generate は seam（mock backend=makeRunner／実 backend=tmux session）。"
+      - "driveIssueOnce: status を contract-drafted→…→evaluation-in-progress へ walk し、generate→runPanel（evaluator-panel）→applyPanelVerdict（GATE issue）。単一 sample・単一 attempt（repair ループは別スコープ）。"
+      - "scoping（AC-LOOP-002・DOM-execution-006）: pollable は status==contract-drafted かつ ai-managed のみ。未指定/他人所有は不変。"
+      - "resume・再入冪等（AC-LOOP-003/004・ARCH-execution-009）: driveIssueOnce 後 issue は contract-drafted を離れる→次 poll で拾わない。落ちても contract-drafted のままの issue だけ次巡が継続。決定論制御（DOM-execution-008）。"
