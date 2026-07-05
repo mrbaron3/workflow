@@ -159,6 +159,18 @@ export type Feature = z.infer<typeof Feature>;
 
 // --- PR & evaluation -------------------------------------------------------
 
+/**
+ * The human review gate's external projection, when it has one (ADR-0006 G1). The store is
+ * SoT (ADR-0001 / ARCH-execution-009); a GitHub PR is only the UI of the human decision point,
+ * so this is a back-reference used to poll that PR's state — never a second source of truth.
+ */
+export const PrExternalRef = z.object({
+  provider: z.literal('github'),
+  number: z.number().int().positive(), // the PR number in the target repo
+  url: z.string(),
+});
+export type PrExternalRef = z.infer<typeof PrExternalRef>;
+
 export const PR = z.object({
   id: z.string(), // PR-0001
   issueId: z.string(),
@@ -167,6 +179,9 @@ export const PR = z.object({
   generator: GeneratorAgent,
   attempts: z.number().int().nonnegative().default(0), // generation attempts incl. repairs
   status: z.enum(['open', 'changes-requested', 'approved', 'merged']).default('open'),
+  // ADR-0006 G1: set when an approved build is projected to a GitHub PR gate. null = no
+  // projection (store-direct gate / local sandbox). Additive — absent on older records.
+  externalRef: PrExternalRef.nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

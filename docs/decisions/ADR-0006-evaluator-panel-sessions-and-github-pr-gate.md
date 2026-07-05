@@ -1,6 +1,6 @@
 # ADR-0006: evaluator パネルは観点ごとの独立 tmux セッションで fan-out し決定論コードが集約する。審査ゲートの UI は GitHub PR とする
 
-- 状態: 採択（パネル部 E1-E7・ゲート部 G1-G3 とも `_system/execution` へ吸収済み＋決定論コア実装済み。残: 承認入力元の GitHub backend seam の裏）
+- 状態: 採択（パネル部 E1-E7・ゲート部 G1-G3 とも `_system/execution` へ吸収済み＋決定論コア実装済み。**GitHub backend seam も実装済み**＝`src/pipeline/execution/gate.ts`：`openGate`（push＋`gh pr create`）／`pollGate`（merge/close→`recordHumanDecision`）・`PR.externalRef`／`config.gate`。既定は `store` 直ゲートで github は opt-in。残: 使い捨て remote での grounded 実走）
 - コンテキスト: execution（evaluation の採点語＝Scorecard/Verdict/grader を参照。再定義しない）
 - 関連: [ADR-0005](ADR-0005-execution-layer-tmux-orchestration.md)（P4 観点パネル・Q3 審査ゲートの premise を実装可能な粒度へ具体化する）、
   [ADR-0003](ADR-0003-hard-gates-before-score.md)（hard-gate-before-score をパネル招集条件へ拡張）、
@@ -106,7 +106,7 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
 | E3 不正出力の昇格 | `ARCH-execution-015` | `panel.ts` `runPanel`（gradeWithRetry→needs-human-review） |
 | E7 観点横断 repair | `ARCH-execution-006`（注記） | `src/pipeline/repair.ts` `buildPanelRepairBrief` |
 | reader 非二重計上 | `DATA-execution-001` | `src/metrics/metrics.ts` `perSample`（attempt 集約） |
-| G1-G3 審査ゲート（build-approved→承認→released・humanVerdict 収穫） | `ARCH-execution-008` / `DOM-execution-007` | `src/pipeline/execution/loop.ts` `applyPanelVerdict`／`recordHumanDecision`＋`states.ts` `build-approved`（承認入力元の GitHub backend は未実装・seam の裏） |
+| G1-G3 審査ゲート（build-approved→承認→released・humanVerdict 収穫） | `ARCH-execution-008` / `DOM-execution-007` / `DATA-execution-005` | `src/pipeline/execution/loop.ts` `applyPanelVerdict`／`recordHumanDecision`＋`states.ts` `build-approved`＋**`gate.ts` `openGate`／`pollGate`／`prStateToDecision`（GitHub backend seam・`PR.externalRef`／`config.gate`。既定 store 直・github opt-in） |
 | L1 watch 常駐（poll→drive→gate） | `ARCH-execution-001` / `ARCH-execution-002` | `src/pipeline/execution/loop.ts` `driveOnce`／`watch` |
 
 spec: `docs/specs/evaluator-panel/`（署名済み・9 AC）＋`docs/specs/execution-loop/`（署名済み・8 AC）。

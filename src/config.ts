@@ -31,6 +31,19 @@ export interface TargetRepoConfig {
   protectedPaths?: string[];
 }
 
+/**
+ * The human review gate's backend (ADR-0006 G1-G2). `store` (default) keeps the gate
+ * direct — an approved build stops at needs-human-review and a human calls recordHumanDecision
+ * (CLI / dashboard); nothing leaves the machine. `github` projects the approved build to a real
+ * PR (push + `gh pr create`) and polls that PR's merge/close as the human decision. The store
+ * stays SoT either way; github is opt-in and requires a pushable remote + `gh` auth.
+ */
+export interface GateConfig {
+  backend: 'store' | 'github';
+  /** github only: base branch for the PR (defaults to config.baseBranch). */
+  baseBranch?: string;
+}
+
 export interface HarnessConfig {
   /** Active generator backend. "mock" runs fully offline; others shell out. */
   generator: GeneratorAgent;
@@ -53,6 +66,8 @@ export interface HarnessConfig {
   cli: Record<'claude' | 'codex' | 'gemini', AgentCliConfig>;
   /** Target repo for grounded runs (execution layer edits worktrees of it). */
   target?: TargetRepoConfig;
+  /** Human review gate backend (ADR-0006 G1). Absent = store-direct gate (current behavior). */
+  gate?: GateConfig;
 }
 
 export const DEFAULT_CONFIG: HarnessConfig = {

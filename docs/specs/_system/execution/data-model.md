@@ -16,6 +16,9 @@
 - **DATA-execution-001 `EvalRun.perspective`** — パネルの各観点採点がどの lens かを識別するタグ; 実体化 DOM-execution-003/004。
   source: `src/domain/schema.ts` → `EvalRun`（Zod・additive に `perspective?` を追加）。owner: execution の panel が書き、evaluation の grader が各観点を採点。
   形: `perspective: string | null`（`LANG-execution-010` の7観点のいずれか。`null` = 旧来の単一 composite 採点＝一級の意味、sentinel でない）。同一 PR に観点数だけの EvalRun がぶら下がり、sample の最終 Verdict はそれらの集約（`DOM-execution-004`）として**派生**する（集約値は保存しない）。
+- **DATA-execution-005 `PR.externalRef`** — 審査ゲートの GitHub PR 投影への逆参照（[ADR-0006](../../../decisions/ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) G1・`ARCH-execution-008`）。
+  source: `src/domain/schema.ts` → `PR`（Zod・additive に `externalRef?` を追加。実体は `PrExternalRef = { provider: 'github', number, url }`）。owner: `openGate` が投影時に書き、`pollGate` が PR 状態のポーリング先として読む（`src/pipeline/execution/gate.ts`）。
+  形: `externalRef: PrExternalRef | null`（`null` = 未投影＝store 直ゲート／ローカル sandbox）。**store が SoT**（`ARCH-execution-009`・ADR-0001）——これは真実でなく投影への back-ref。PR の merged/closed は人間判定の入力元にすぎず、確定は `recordHumanDecision`（`released`／repair）＋`EvalRun.humanVerdict`（G3 較正）に写る。
 
 ## エンティティ関係（Mermaid — 上記スキーマから派生）
 

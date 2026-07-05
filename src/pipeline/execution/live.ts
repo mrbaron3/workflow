@@ -23,10 +23,13 @@ import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader } from './perspective-session.js';
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
 import { runBoundedRepairLoop, type DriveResult } from './loop.js';
+import { openGate, realGhGateRunner, type GhGateRunner } from './gate.js';
 
 export interface LiveOptions {
   /** Which lenses to convene (default: all 7). Reduce it for a cheap smoke. */
   perspectives?: PerspectiveSpec[];
+  /** Gate backend runner (github only). Injectable for tests; defaults to the real `gh` runner. */
+  gateRunner?: GhGateRunner;
 }
 
 /**
@@ -64,6 +67,8 @@ export async function driveIssueLive(
     }),
   );
 
+  let approvedWorktree: string | null = null; // the checkout at the gate, for the github projection
+
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
     log(`▶ ${issue.id}: generator session (attempt ${attempt}/${maxAttempts})`);
@@ -72,6 +77,7 @@ export async function driveIssueLive(
       log(`  ⚠ ${issue.id}: generator ${sess.outcome} — escalating, session kept alive`);
       return { stuck: true };
     }
+    approvedWorktree = sess.worktree; // the reused worktree; the last completed attempt is the build at the gate
 
     store.setStatus(issue.id, 'ready-for-evaluation');
     store.setStatus(issue.id, 'evaluation-in-progress');
@@ -91,6 +97,12 @@ export async function driveIssueLive(
     );
     return { panel };
   }, log);
+
+  // Project an approved build to the gate UI (ADR-0006 G1). No-op for the store backend; for github
+  // it pushes the branch + opens the PR the human merges to release. Poll it later with pollGate.
+  if (loop.verdict === 'approve' && (config.gate?.backend ?? 'store') === 'github' && approvedWorktree) {
+    openGate(store, config, { pr, worktree: approvedWorktree, title: `${issue.id}: ${issue.title}` }, opts.gateRunner ?? realGhGateRunner(), log);
+  }
 
   log(`  = ${issue.id}: ${loop.verdict}${loop.gateFailed ? ' (gate failed — no lenses convened)' : ''} → ${loop.status} [${loop.attempts} attempt(s)]`);
   return { issueId: issue.id, prId: pr.id, ...loop };
