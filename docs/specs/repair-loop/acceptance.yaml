@@ -1,0 +1,45 @@
+# 修復ループ 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - LANG-evaluation-009
+  - ARCH-evaluation-002
+  - ARCH-evaluation-004
+  - ARCH-evaluation-005
+  - ARCH-execution-001
+  - ARCH-execution-006
+  - ARCH-execution-009
+  - ARCH-execution-015
+  - DOM-execution-004
+
+verifications:
+  AC-REPAIR-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "初回試行が request_changes のとき、次試行の生成に前試行のパネル指摘由来の修復ブリーフ（発生源観点付き）が渡る"
+      - "次試行が改めてパネルで評価され、修復ブリーフの指摘は本機能が捏造したものでなくパネル findings 由来である"
+
+  AC-REPAIR-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "上限以内の試行でパネルが approve に収束すると、それ以上の試行が発生しない"
+      - "収束時 issue は needs-human-review（審査ゲート）に到達し、released には自動遷移しない"
+
+  AC-REPAIR-003:
+    severity: major
+    method: unit_test
+    expected:
+      - "N 試行を回すと、attempt が異なる独立した EvalRun 群が試行数ぶん残る（初回と修復後を区別できる）"
+      - "pass@1（初回）と eventual（最終）を別々に算出できる記録になっている"
+
+  AC-REPAIR-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "上限回数まで繰り返しても未収束のとき、試行回数が上限で頭打ちになり無限ループしない"
+      - "未収束の結末は needs-human-review へ昇格し、approve や放棄へ静かに倒れない"
