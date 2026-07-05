@@ -1,0 +1,80 @@
+# 自律実行ループ 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+#
+# 採点の高度: AC は観測可能な効果（status 遷移・証拠＝humanVerdict の記録・不変性）を採点する。承認の入力元の
+# 機構（GitHub PR の merge 検知など）は HOW でありこの層では採点しない——それは設計層の backend で、別途検証する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - LANG-execution-001
+  - LANG-execution-002
+  - LANG-execution-004
+  - LANG-execution-011
+  - LANG-execution-012
+  - ARCH-execution-001
+  - ARCH-execution-002
+  - ARCH-execution-008
+  - ARCH-execution-009
+  - DOM-execution-006
+  - DOM-execution-007
+  - DOM-execution-008
+  - LANG-evaluation-016
+  - ARCH-evaluation-005
+
+verifications:
+  AC-LOOP-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "実装対象指定された実行可能 issue を一巡させると、人間介入なしで status が build-approved か changes-requested に到達する"
+      - "到達 status が store に永続し、再読込で同じ現在地が得られる"
+
+  AC-LOOP-002:
+    severity: blocker
+    method: db_state_check
+    expected:
+      - "明示指定（ai-managed）でない／他人所有の issue は queue に含まれず、一巡後も status・contract・成果物が不変"
+
+  AC-LOOP-003:
+    severity: major
+    method: unit_test
+    expected:
+      - "処理途中の中断後に再度一巡すると、store 状態から在庫を再構成して継続する"
+      - "既に build-approved / released に達した issue を再生成・再評価しない（完了段をやり直さない）"
+
+  AC-LOOP-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "一巡は処理対象を drain して終了する"
+      - "続けてもう一度一巡しても、同じ issue の同じ段に対する新たな生成・評価が発生しない（再入冪等）"
+
+  AC-LOOP-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "パネルが approve にした sample を処理すると、issue は released でなく needs-human-review（人間承認待ち）で停止する"
+      - "自動 released への遷移が起きない"
+
+  AC-LOOP-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "承認待ちの issue に人間の承認を適用すると status が released になる"
+      - "承認した EvalRun（勝者 sample の観点 run）の humanVerdict が approve として記録される"
+
+  AC-LOOP-007:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "承認待ちの issue に人間の差戻しを適用すると status は released にならない（needs-human-review のまま／changes-requested へ）"
+      - "当該 EvalRun の humanVerdict が request_changes として記録される（false-pass 較正データ）"
+
+  AC-LOOP-008:
+    severity: major
+    method: unit_test
+    expected:
+      - "同じ承認判断を二度適用しても released は一度だけ・humanVerdict の記録が重複しない"
+      - "冪等: 二度目の適用は状態・証拠を変えない"
