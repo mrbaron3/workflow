@@ -164,8 +164,10 @@ export async function runPerspectiveSessions(
     const before = new Set(changedFiles(input.worktree));
     const session = `ao-eval-${input.issueKey}-${p.key}`;
     log(`  ▸ ${session}: read-only review`);
-    // Read to inspect the tree; Write to produce findings.json only (enforced by the post-check).
-    launchSession({ session, cwd: input.worktree, allowedTools: ['Read', 'Write'], permissionMode: 'default' });
+    // acceptEdits + Bash so the review can inspect the tree and write findings.json WITHOUT hanging
+    // on an approval prompt in this detached session. "Read-only" is enforced structurally, not by
+    // permission: the post-session changedFiles guard below discards any review that edited the tree.
+    launchSession({ session, cwd: input.worktree, allowedTools: ['Read', 'Write', 'Bash'], permissionMode: 'acceptEdits' });
     await waitForReady(session);
     sendPrompt(session, `Read .agentops/eval/${p.key}/PROMPT.md and do exactly what it says.`);
     const outcome = await monitorLiveness(session, sentinel, { idleMs: 90_000, hardCapMs: 1000 * 60 * 10, pollMs: 3000 });

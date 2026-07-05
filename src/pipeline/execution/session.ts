@@ -72,7 +72,10 @@ export async function runGeneratorSession(
   fs.rmSync(sentinelPath, { force: true }); // clear any stale sentinel from a prior attempt
 
   log(`  ▸ ${session}: launch in ${path.relative(harnessRoot, wt)}`);
-  launchSession({ session, cwd: wt, allowedTools: ['Read', 'Edit', 'Write'], permissionMode: 'acceptEdits' });
+  // Bash is allowed so the agent can run tests/typecheck to check its own work WITHOUT hanging on
+  // an approval prompt in this detached session (a grounded run showed it stalls otherwise). The
+  // harness is still the authoritative grader — self-checks don't count as evidence.
+  launchSession({ session, cwd: wt, allowedTools: ['Read', 'Edit', 'Write', 'Bash'], permissionMode: 'acceptEdits' });
   await waitForReady(session, 20_000);
   sendPrompt(
     session,
