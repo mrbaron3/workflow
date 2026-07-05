@@ -175,20 +175,31 @@ describe('AC-LOOP-008: applying a human decision is idempotent', () => {
   });
 });
 
-describe('gate routing (applyPanelVerdict) — request_changes lane', () => {
-  it('a rejecting panel routes the issue to changes-requested, not the gate', async () => {
+describe('gate routing (applyPanelVerdict)', () => {
+  it('request_changes routes to changes-requested (not the gate)', () => {
     const store = tmpStore('loop-rc');
     addIssue(store, 'ISSUE-1');
-    await driveOnce(store, CONFIG, { runner: cleanRunner(), panel: { grader: oneRejects } });
+    for (const s of ['ready-for-generation', 'generation-in-progress', 'ready-for-evaluation', 'evaluation-in-progress'] as const) store.setStatus('ISSUE-1', s);
+    applyPanelVerdict(store, 'ISSUE-1', 'request_changes');
     expect(store.getIssue('ISSUE-1')!.status).toBe('changes-requested');
   });
 
-  it('applyPanelVerdict is a pure status router from evaluation-in-progress', () => {
+  it('approve routes through build-approved to the human gate', () => {
     const store = tmpStore('loop-router');
     addIssue(store, 'ISSUE-1');
     for (const s of ['ready-for-generation', 'generation-in-progress', 'ready-for-evaluation', 'evaluation-in-progress'] as const) store.setStatus('ISSUE-1', s);
     applyPanelVerdict(store, 'ISSUE-1', 'approve');
     expect(store.getIssue('ISSUE-1')!.status).toBe('needs-human-review');
+  });
+
+  it('a persistently-rejecting panel exhausts the repair loop and escalates (not the gate)', async () => {
+    const store = tmpStore('loop-persist-reject');
+    addIssue(store, 'ISSUE-1');
+    const res = await driveOnce(store, CONFIG, { runner: cleanRunner(), panel: { grader: oneRejects } });
+    // never reached build-approved via approval; ended at human review after the bound
+    expect(store.getIssue('ISSUE-1')!.status).toBe('needs-human-review');
+    expect(res[0]!.exhausted).toBe(true);
+    expect(res[0]!.attempts).toBe(CONFIG.maxRepairs + 1);
   });
 });
 

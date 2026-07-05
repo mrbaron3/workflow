@@ -87,10 +87,14 @@ npx tsx scripts/real-run.ts           # queue を poll → 実セッション �
    - 招集は hard gates 通過後のみ・全観点並行・`panel.maxConcurrent`（E4）。
    - 集約は決定論（E6・`DOM-execution-004`）。各観点 EvalRun に `EvalRun.perspective`（schema に既存）。
    - RepairBrief をパネル横断版に置換（E7）: blocker-first・criterionId 重複統合・発生源観点タグ・修復帰属の記録。
-2. ~~**審査ゲート＋watch（task 12）**~~ ＝上記「済み」（決定論コア）。残りは以下:
+2. ~~**審査ゲート＋watch（task 12）**~~ ＝上記「済み」（決定論コア）。
+2b. **repair ループ＝実装済み**（repair-loop spec・署名済み 4 AC）: `driveIssueOnce` を多 attempt 化
+   （`config.maxRepairs+1` まで: request_changes→`buildPanelRepairBrief`→次 attempt に repair brief→再 panel、
+   approve で break・ゲートへ／上限で `needs-human-review` 昇格）。`test/repair-loop.test.ts`（4）green。ISSUE-0008。
+   これで**決定論ループが `drive → panel → repair×N → gate` で端まで閉じた**。残りは実 backend の配線のみ:
    - **承認入力元の GitHub backend**（G1-G2 の HOW）: approve → push ＋ `gh pr create`、人間 merge の poll 検知を
      `recordHumanDecision` 呼び出しへ変換する seam（今はテスト/CLI から直接呼ぶ）。remote・`gh` 認証前提。`PR.externalRef`（additive）で対応付け。
-   - **repair ループ**: `driveIssueOnce` は単一 attempt。changes-requested を repair brief 付きで再 drive する多 attempt 化（`buildPanelRepairBrief` は実装済み）。
+   - **実 LLM backend**: 6 観点を tmux セッションに（`PerspectiveGrader` の裏）＋ generator を実セッションに（`runGeneratorSession` 既存）。
    - 実 backend 既定 samples=1・first-approve-stop（E5。best-of-N は計測 opt-in）。
    - scoped-context 組立（`ARCH-execution-007`・P5）: 今は generator.md＋contract 全体。木の `dependsOnSystem` から最小化。
 3. **残る横断**: `config.cli` の `claude -p` 既定を除去（ADR-0005 Q2 残債）。ISSUE-0002（systemRefs 未固定）修正。

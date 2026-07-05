@@ -11,11 +11,12 @@
 
 import { PR, type Issue, type Verdict, type EvalRun } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
-import type { BuildArtifact } from '../../domain/artifact.js';
+import type { BuildArtifact, RepairBrief, PanelRepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
 import { makeRunner, type AgentRunner } from '../../agents/runner.js';
 import { pollable } from './guard.js';
 import { runPanel, aggregatePanelVerdict, type RunPanelOptions } from '../panel.js';
+import { buildPanelRepairBrief } from '../repair.js';
 
 /**
  * Route a panel verdict into the state machine (DOM-execution-007). The one rule that
@@ -99,6 +100,10 @@ export interface DriveResult {
   status: string;
   gateFailed: boolean;
   escalated: boolean;
+  /** How many generate→panel attempts ran (1 = converged/failed first try). */
+  attempts: number;
+  /** True when the loop exhausted its bound without converging (escalated to human review). */
+  exhausted: boolean;
 }
 
 export interface DriveOptions {
@@ -106,12 +111,23 @@ export interface DriveOptions {
   panel?: RunPanelOptions;
 }
 
+/** Adapt a cross-perspective panel brief to the RepairBrief the generator seam consumes. */
+function toGenerateBrief(panel: PanelRepairBrief): RepairBrief {
+  return {
+    fromEvalRunId: panel.fromEvalRunIds[0] ?? '',
+    findings: panel.findings,
+    instructions: panel.instructions.map((i) => i.instruction),
+  };
+}
+
 /**
- * Drive ONE contract-drafted, ai-managed issue: walk it to evaluation, generate a build,
- * convene the panel, and route the verdict through the gate. Single sample / single attempt
- * (the repair loop is a separate slice). After this the issue has left `contract-drafted`,
- * so a re-poll never picks it up again — that is what makes the drive re-entrant and
- * resumable from store state alone (AC-LOOP-003/004).
+ * Drive ONE contract-drafted, ai-managed issue through the bounded repair loop: generate →
+ * panel → (repair → generate → panel)* until it converges or the bound is spent (repair-loop
+ * spec). On approve it advances to the review gate (AC-REPAIR-002); on request_changes it feeds
+ * the cross-perspective findings back into the next attempt (AC-REPAIR-001); each attempt keeps
+ * its own EvalRuns (AC-REPAIR-003). Exhausting config.maxRepairs+1 attempts without converging
+ * escalates to needs-human-review — never an infinite loop, never a silent pass (AC-REPAIR-004).
+ * After this the issue has left `contract-drafted`, so a re-poll never re-drives it (AC-LOOP-003/004).
  */
 export async function driveIssueOnce(store: Store, config: HarnessConfig, runner: AgentRunner, issue: Issue, opts: DriveOptions = {}): Promise<DriveResult> {
   const contract = issue.contract;
@@ -126,31 +142,69 @@ export async function driveIssueOnce(store: Store, config: HarnessConfig, runner
       branch: `agent/${issue.id.toLowerCase()}-s0`,
       baseBranch: config.baseBranch,
       generator: runner.agent,
-      attempts: 1,
+      attempts: 0,
       status: 'open',
       createdAt: nowISO(),
       updatedAt: nowISO(),
     }),
   );
 
-  const artifact: BuildArtifact = await runner.generate({ issue, contract, sampleIndex: 0, attempt: 1, repairBrief: null });
+  const maxAttempts = config.maxRepairs + 1; // 1 initial + maxRepairs repairs — the "repeat N" bound
+  let repairBrief: RepairBrief | null = null;
+  let lastVerdict: Verdict = 'request_changes';
+  let gateFailed = false;
+  let panelEscalated = false;
 
-  store.setStatus(issue.id, 'ready-for-evaluation');
-  store.setStatus(issue.id, 'evaluation-in-progress');
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) store.setStatus(issue.id, 'generation-in-progress'); // changes-requested -> generation (repair)
+    pr.attempts = attempt;
 
-  const panel = runPanel(
-    store,
-    config,
-    { issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex: 0, attempt: 1, agent: runner.agent, featureArea: issue.area },
-    opts.panel,
-  );
+    const artifact: BuildArtifact = await runner.generate({ issue, contract, sampleIndex: 0, attempt, repairBrief });
+    store.setStatus(issue.id, 'ready-for-evaluation');
+    store.setStatus(issue.id, 'evaluation-in-progress');
 
-  // The panel already sent the issue to needs-human-review if it escalated; otherwise route here.
-  if (!panel.escalated) applyPanelVerdict(store, issue.id, panel.verdict);
-  pr.status = panel.verdict === 'approve' ? 'approved' : 'changes-requested';
+    const panel = runPanel(
+      store,
+      config,
+      { issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex: 0, attempt, agent: runner.agent, featureArea: issue.area },
+      opts.panel,
+    );
+    lastVerdict = panel.verdict;
+    gateFailed = panel.gateFailed;
+
+    if (panel.escalated) {
+      panelEscalated = true; // panel already sent the issue to needs-human-review
+      break;
+    }
+    if (panel.verdict === 'approve') {
+      applyPanelVerdict(store, issue.id, 'approve'); // build-approved -> needs-human-review (gate)
+      pr.status = 'approved';
+      break;
+    }
+    // request_changes: route back and carry this attempt's findings into the next generate.
+    applyPanelVerdict(store, issue.id, 'request_changes');
+    pr.status = 'changes-requested';
+    repairBrief = toGenerateBrief(buildPanelRepairBrief(panel.runs));
+  }
+
+  // Bounded escalation (AC-REPAIR-004): exhausted the loop without converging -> human review.
+  const converged = lastVerdict === 'approve';
+  const exhausted = !converged && !panelEscalated;
+  if (exhausted && store.getIssue(issue.id)!.status !== 'needs-human-review') {
+    store.setStatus(issue.id, 'needs-human-review');
+  }
+
   pr.updatedAt = nowISO();
-
-  return { issueId: issue.id, prId: pr.id, verdict: panel.verdict, status: store.getIssue(issue.id)!.status, gateFailed: panel.gateFailed, escalated: panel.escalated };
+  return {
+    issueId: issue.id,
+    prId: pr.id,
+    verdict: lastVerdict,
+    status: store.getIssue(issue.id)!.status,
+    gateFailed,
+    escalated: panelEscalated,
+    attempts: pr.attempts,
+    exhausted,
+  };
 }
 
 /**
