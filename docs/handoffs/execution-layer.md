@@ -71,6 +71,11 @@ npx tsx scripts/real-run.ts           # queue を poll → 実セッション �
   attempt 集約・`graders` `hasBlockingGateFailure`。`test/panel.test.ts`（12・9 AC を grounding）green。
   署名 spec `docs/specs/evaluator-panel/`＋ISSUE-0003/0004/0005（contract-drafted）＋ADR-0006 吸収済み。
   **残り**: 実 tmux backend で 6 観点 LLM セッションを `PerspectiveGrader` の裏に差す（今は決定論 grader のみ）。
+- **審査ゲート＋watch（task 12）＝実装済み**。`src/pipeline/execution/loop.ts`（`applyPanelVerdict`＝approve→
+  `build-approved`→`needs-human-review`・自動 released しない／`recordHumanDecision`＝承認→`released`＋humanVerdict
+  収穫・冪等／`driveOnce`・`driveIssueOnce`・`watch`）＋`states.ts` `build-approved` 遷移。`test/execution-loop.test.ts`
+  （10・8 AC を grounding）green。署名 spec `docs/specs/execution-loop/`＋ISSUE-0006/0007（contract-drafted）＋ADR-0006 吸収済み。
+  **残り**: 承認入力元（GitHub PR merge 検知）を backend seam の裏に実装（今は `recordHumanDecision` の直接呼び）／repair ループ。
 
 ## 残りスライス（next）— premises は ADR-0006
 
@@ -82,17 +87,14 @@ npx tsx scripts/real-run.ts           # queue を poll → 実セッション �
    - 招集は hard gates 通過後のみ・全観点並行・`panel.maxConcurrent`（E4）。
    - 集約は決定論（E6・`DOM-execution-004`）。各観点 EvalRun に `EvalRun.perspective`（schema に既存）。
    - RepairBrief をパネル横断版に置換（E7）: blocker-first・criterionId 重複統合・発生源観点タグ・修復帰属の記録。
-2. **審査ゲート＋repair＋watch（task 12）**:
-   - Q3 人間審査ゲート＝**GitHub PR が UI**（G1-G2）: approve → push ＋ `gh pr create` → `needs-human-review` で停止
-     → 人間 merge の poll 検知で `released`（今は approve で自動 released。`build-approved` 含む状態機械の遷移追加が要る）。`ARCH-execution-008`。
-   - **ゲート判定を `EvalRun.humanVerdict` へ自動記録**（G3・ラベル収穫）: merge＝true-pass／差戻し＝false-pass。
-     falsePassRate の較正セットが運用から育つ（改善ループの起点）。
-   - repair ループ: `runGeneratorSession` は attempt>1 で worktree 再利用済み。パネル横断 repair brief を prompt に載せ再 drive。
-   - watch デーモン: `runExecutionOnce` を poll ループで包む常駐（`ARCH-execution-001`・L1）。実 backend 既定は
-     samples=1・first-approve-stop（E5。best-of-N は計測 opt-in）。
+2. ~~**審査ゲート＋watch（task 12）**~~ ＝上記「済み」（決定論コア）。残りは以下:
+   - **承認入力元の GitHub backend**（G1-G2 の HOW）: approve → push ＋ `gh pr create`、人間 merge の poll 検知を
+     `recordHumanDecision` 呼び出しへ変換する seam（今はテスト/CLI から直接呼ぶ）。remote・`gh` 認証前提。`PR.externalRef`（additive）で対応付け。
+   - **repair ループ**: `driveIssueOnce` は単一 attempt。changes-requested を repair brief 付きで再 drive する多 attempt 化（`buildPanelRepairBrief` は実装済み）。
+   - 実 backend 既定 samples=1・first-approve-stop（E5。best-of-N は計測 opt-in）。
    - scoped-context 組立（`ARCH-execution-007`・P5）: 今は generator.md＋contract 全体。木の `dependsOnSystem` から最小化。
-3. **system 層への反映（task 11/12 と同時）**: `_system/execution` 4 ビューへ ADR-0006 の premises を追記
-   （to-system-design。パネル実行単位・ゲート UI・ラベル収穫の ARCH/DATA id）。`config.cli` の `claude -p` 既定を除去（Q2 残債）。
+3. **残る横断**: `config.cli` の `claude -p` 既定を除去（ADR-0005 Q2 残債）。ISSUE-0002（systemRefs 未固定）修正。
+   evaluator 観点セッションの実 tmux backend（`agents/evaluator-<観点>.md` 6 本の著述＋`.agentops/eval/<perspective>/`）。
 
 ## 実装で詰まりそうなところ（先に知っておく穴）
 

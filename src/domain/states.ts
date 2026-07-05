@@ -18,6 +18,10 @@ export const ISSUE_STATUSES = [
   'generation-in-progress',
   'ready-for-evaluation',
   'evaluation-in-progress',
+  // The evaluator panel approved the build (LANG-evaluation-016). Distinct from `approved`
+  // (the legacy single-grader path): a panel-approved build stops at the human review gate
+  // (DOM-execution-007) rather than auto-releasing.
+  'build-approved',
   'changes-requested',
   'approved',
   'ready-to-merge',
@@ -41,19 +45,24 @@ export const TRANSITIONS: Record<IssueStatus, IssueStatus[]> = {
   'ready-for-generation': ['generation-in-progress'],
   'generation-in-progress': ['ready-for-evaluation'],
   'ready-for-evaluation': ['evaluation-in-progress'],
-  'evaluation-in-progress': ['changes-requested', 'approved'],
+  // Panel path adds build-approved; the legacy `approved` path is kept intact.
+  'evaluation-in-progress': ['changes-requested', 'approved', 'build-approved'],
+  // Panel approval never auto-releases (ADR-0006 G1): it stops at the human review gate.
+  'build-approved': ['needs-human-review'],
   // Repair loop: a changes-requested issue goes back to generation.
   'changes-requested': ['generation-in-progress'],
   approved: ['ready-to-merge'],
   'ready-to-merge': ['released'],
   released: [],
-  // Human override can re-inject work at most sensible points.
+  // Human override can re-inject work at most sensible points. `released` is reachable here
+  // because the review gate releases a build-approved issue on human approval (DOM-execution-007).
   'needs-human-review': [
     'ready-for-contract',
     'ready-for-generation',
     'ready-for-evaluation',
     'changes-requested',
     'approved',
+    'released',
   ],
 };
 

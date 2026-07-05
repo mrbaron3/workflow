@@ -1,6 +1,6 @@
 # ADR-0006: evaluator パネルは観点ごとの独立 tmux セッションで fan-out し決定論コードが集約する。審査ゲートの UI は GitHub PR とする
 
-- 状態: 採択（パネル部 E1-E7 は `_system/execution` へ吸収済み＋実装済み・ゲート部 G1-G3 は gate spec で吸収予定）
+- 状態: 採択（パネル部 E1-E7・ゲート部 G1-G3 とも `_system/execution` へ吸収済み＋決定論コア実装済み。残: 承認入力元の GitHub backend seam の裏）
 - コンテキスト: execution（evaluation の採点語＝Scorecard/Verdict/grader を参照。再定義しない）
 - 関連: [ADR-0005](ADR-0005-execution-layer-tmux-orchestration.md)（P4 観点パネル・Q3 審査ゲートの premise を実装可能な粒度へ具体化する）、
   [ADR-0003](ADR-0003-hard-gates-before-score.md)（hard-gate-before-score をパネル招集条件へ拡張）、
@@ -106,6 +106,9 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
 | E3 不正出力の昇格 | `ARCH-execution-015` | `panel.ts` `runPanel`（gradeWithRetry→needs-human-review） |
 | E7 観点横断 repair | `ARCH-execution-006`（注記） | `src/pipeline/repair.ts` `buildPanelRepairBrief` |
 | reader 非二重計上 | `DATA-execution-001` | `src/metrics/metrics.ts` `perSample`（attempt 集約） |
-| G1-G3 GitHub PR ゲート | `ARCH-execution-008`（forward-ref・gate spec で吸収予定） | 未実装（gate spec） |
+| G1-G3 審査ゲート（build-approved→承認→released・humanVerdict 収穫） | `ARCH-execution-008` / `DOM-execution-007` | `src/pipeline/execution/loop.ts` `applyPanelVerdict`／`recordHumanDecision`＋`states.ts` `build-approved`（承認入力元の GitHub backend は未実装・seam の裏） |
+| L1 watch 常駐（poll→drive→gate） | `ARCH-execution-001` / `ARCH-execution-002` | `src/pipeline/execution/loop.ts` `driveOnce`／`watch` |
 
-spec: `docs/specs/evaluator-panel/`（署名済み・9 AC）。issues: ISSUE-0003/0004/0005（contract-drafted）。テスト: `test/panel.test.ts`（12・9 AC を grounding）。
+spec: `docs/specs/evaluator-panel/`（署名済み・9 AC）＋`docs/specs/execution-loop/`（署名済み・8 AC）。
+issues: ISSUE-0003/0004/0005（パネル）・ISSUE-0006/0007（ゲート・watch）＝すべて contract-drafted。
+テスト: `test/panel.test.ts`（12）＋`test/execution-loop.test.ts`（10）＝9＋8 AC を grounding。
