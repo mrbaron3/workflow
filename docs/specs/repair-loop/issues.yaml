@@ -1,0 +1,16 @@
+# Issue spawn マニフェスト — 署名済み repair-loop spec に対する to-detail-design の出力。
+# 1 つの PR サイズ Issue（driveIssueOnce の多 attempt 化＝一つの凝集した変更）。全 4 AC を被覆。
+issues:
+  - key: ISSUE-REPAIR-001
+    title: 修復ループ — driveIssueOnce を多 attempt 化し、収束でゲート・上限で人間審査へ昇格
+    area: harness
+    type: harness
+    coversAcIds: [AC-REPAIR-001, AC-REPAIR-002, AC-REPAIR-003, AC-REPAIR-004]
+    dependsOnIssues: []
+    dependsOnSystem: [LANG-evaluation-009, ARCH-evaluation-002, ARCH-evaluation-004, ARCH-evaluation-005, ARCH-execution-001, ARCH-execution-006, ARCH-execution-009, ARCH-execution-015, DOM-execution-004]
+    implementationNotes:
+      - "driveIssueOnce を attempt 1..config.maxRepairs+1 のループへ。PR は issue に 1 本、attempt を増やす。各 attempt: (再)生成→ready-for-evaluation→evaluation-in-progress→runPanel(attempt)。"
+      - "収束（AC-REPAIR-002）: panel approve で applyPanelVerdict→build-approved→needs-human-review して break。escalated でも break。"
+      - "修復（AC-REPAIR-001）: request_changes なら applyPanelVerdict→changes-requested、buildPanelRepairBrief(panel.runs) を RepairBrief 形へ適合して次 attempt の generate に渡す（発生源観点は PanelInstruction に保持）。status は changes-requested→generation-in-progress で戻す。"
+      - "有界と昇格（AC-REPAIR-004・ARCH-execution-015）: ループを抜けても未収束なら setStatus(needs-human-review)。無限ループ禁止・静かな approve/放棄禁止。"
+      - "証拠（AC-REPAIR-003）: attempt ごとに runPanel が別 attempt の EvalRun 群を残す（resume 冪等は (prId,attempt,perspective)）。既存 metrics の pass@1/eventual がそのまま効く。"
