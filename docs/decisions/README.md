@@ -4,6 +4,12 @@
 > 帰結を残す。決定は削除せず、覆すときは新 ADR で **supersede** する。system 層（`_system/<ctx>/`）が「何で
 > あるか」を、ここが「なぜそう決めたか」を持つ。旧 `docs/ARCHITECTURE.md` の "Key design choices" / "Why JSON"
 > はここへ移設。
+>
+> **吸収の強制（2026-07-05 決定）**: ADR は **delta（決定という事件）**、system ビューは **state（現在の真実）**。
+> 採択した ADR の premises は必ず `_system/<ctx>/` ビューへ **additive に吸収**し、ADR 末尾に **実装先 id**
+> （`ARCH/DOM/DATA/LANG-<CTX>-NNN`）を列挙する。ビュー側の各 id は根拠として ADR を逆参照する。
+> 吸収されるまで ADR は「採択（未吸収）」であり、実装の契約は常にビューの id（ADR を直接実装しない）。
+> この規約の機械検証（採択 ADR ⇔ 実装先 id 実在）は将来 `scripts/check-*` へ落とす（決定論はコードへ）。
 
 | ADR | 決定 | 状態 |
 | --- | --- | --- |
@@ -12,3 +18,4 @@
 | [ADR-0003](ADR-0003-hard-gates-before-score.md) | hard gate を score より先に評価する | 採択 |
 | [ADR-0004](ADR-0004-determinism-and-pluggable-backend.md) | 決定論を構成で保証し、agent backend を差し替え可能にする | 採択 |
 | [ADR-0005](ADR-0005-execution-layer-tmux-orchestration.md) | 実装層は issue queue を入力とする独立層とし、tmux で role-scoped セッションをオーケストレーションする | 採択 |
+| [ADR-0006](ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) | evaluator パネルは観点ごとの独立セッションで fan-out し決定論コードが集約する。審査ゲート UI は GitHub PR | 採択 |

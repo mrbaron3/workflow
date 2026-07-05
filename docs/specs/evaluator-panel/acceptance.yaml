@@ -1,0 +1,80 @@
+# 多観点パネル採点 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - LANG-execution-009
+  - LANG-execution-010
+  - DOM-execution-003
+  - DOM-execution-004
+  - DATA-execution-001
+  - ARCH-execution-006
+  - ARCH-execution-010
+  - ARCH-execution-015
+  - ARCH-evaluation-011
+
+verifications:
+  AC-PANEL-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "hard gate 通過済みの完了 sample をパネルが採点すると、定義された全観点それぞれに perspective タグ付きの EvalRun が 1 件ずつ残る"
+      - "各観点 EvalRun は verdict と、expected / observed / 再現手順・evidence 参照を備えた findings を持つ"
+
+  AC-PANEL-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "hard gate が fail する試行では、その試行に perspective タグ付き EvalRun が増えない"
+      - "gate の failing findings から修復指示（RepairBrief）が組まれる"
+
+  AC-PANEL-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "1 観点でも blocker findings により request_changes のとき、sample の最終判定の導出結果は request_changes になる"
+      - "他観点のスコア・verdict がすべて良好でも導出結果は変わらない（スコア平均で相殺されない）"
+
+  AC-PANEL-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "全観点の verdict が approve のとき、sample の最終判定の導出結果は approve になる"
+      - "最終判定は保存値でなく観点別 EvalRun 集合から導出され、同一集合からの再導出は同一結果を返す（集約値の永続レコードを持たない）"
+
+  AC-PANEL-005:
+    severity: major
+    method: unit_test
+    expected:
+      - "複数観点の findings から組んだ修復指示で、blocker 由来の指示が非 blocker より先に並ぶ"
+      - "同一 criterionId への複数観点の指摘が 1 指示に束ねられ、各指示に発生源観点（perspective）が付く"
+
+  AC-PANEL-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "ある観点の採点出力が schema 検証に失敗し、定められた再試行後も失敗するとき、当該 issue の status が needs-human-review へ遷移する"
+      - "検証失敗した観点が approve として集約に算入されたり、観点欠落のまま最終判定が approve になったりしない"
+
+  AC-PANEL-007:
+    severity: major
+    method: unit_test
+    expected:
+      - "一部観点のみ EvalRun が残る中断状態から再開すると、未完の観点だけが採点される"
+      - "再開後も同一（PR・attempt・perspective）の EvalRun は 1 件のままで重複しない"
+
+  AC-PANEL-008:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "パネル採点の前後で sample の changedFiles 集合とファイル内容が一致する"
+      - "採点の実行によって scope 判定（scope_check の結果）が変化しない"
+
+  AC-PANEL-009:
+    severity: major
+    method: unit_test
+    expected:
+      - "観点数ぶんの EvalRun が存在しても、pass@k / pass^k の分母（sample / attempt 数）が観点数に影響されない"
+      - "Curator の回帰昇格が同一（issue・基準）に対して観点数ぶん重複して作られない"
