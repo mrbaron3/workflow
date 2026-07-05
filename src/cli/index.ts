@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Verdict, emptyDB } from '../domain/schema.js';
 import { Store, nowISO } from '../store/store.js';
-import { parseSpecScenarios, parseAcceptance } from '../authoring/source.js';
+import { parseSpecScenarios, parseAcceptance, parseDependsOn } from '../authoring/source.js';
 import { buildApprovedSpecRef } from '../authoring/sign.js';
 import { lintAuthoring } from '../authoring/lint.js';
 import { deriveStatus } from '../authoring/drift.js';
@@ -151,8 +151,10 @@ function cmdSign(pos: string[]): void {
     log(c.red(`✗ ${dir} must contain both spec.md and acceptance.yaml`));
     process.exit(1);
   }
+  const accText = fs.readFileSync(accAbs, 'utf8');
   const scenarios = parseSpecScenarios(fs.readFileSync(specAbs, 'utf8'));
-  const verifications = parseAcceptance(fs.readFileSync(accAbs, 'utf8'));
+  const verifications = parseAcceptance(accText);
+  const systemRefs = parseDependsOn(accText); // pin dependsOn into ApprovedSpecRef.systemRefs
 
   // 1. AUTH-B gate must pass before a signature can be taken (AUTH-C precondition).
   const lint = lintAuthoring({
@@ -180,7 +182,7 @@ function cmdSign(pos: string[]): void {
   };
 
   // 3. Build + persist the ApprovedSpecRef. status derives, it is never written.
-  const approved = buildApprovedSpecRef({ scenarios, verifications, git: facts });
+  const approved = buildApprovedSpecRef({ scenarios, verifications, git: facts, systemRefs });
   const now = nowISO();
   const existing = store.getSpecState(dir);
   store.upsertSpecState({
@@ -194,8 +196,9 @@ function cmdSign(pos: string[]): void {
   store.save();
 
   const status = deriveStatus(approved.approvedAcIds, scenarios.map((s) => s.id));
+  const refs = approved.systemRefs.length;
   log(c.green('✓ signed') + ` ${c.b(dir)} @ ${c.dim(facts.signedCommitSha.slice(0, 8))}`);
-  log(`  ${approved.approvedAcIds.length} AC approved · status=${c.b(status)}`);
+  log(`  ${approved.approvedAcIds.length} AC approved · ${refs} systemRef${refs === 1 ? '' : 's'} pinned · status=${c.b(status)}`);
 }
 
 function cmdSpecs(pos: string[]): void {

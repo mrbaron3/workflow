@@ -59,6 +59,18 @@ export interface SpecVerification {
   expected: string[];
 }
 
+/**
+ * Parse acceptance.yaml's top-level `dependsOn:` list — the system-layer element ids
+ * (LANG/DOM/ARCH/DATA/CONTRACT-<ctx>-NNN, NFR-NNN) this spec references. The signing gate
+ * pins these into ApprovedSpecRef.systemRefs so the north-star trace (feature → system
+ * element) is versioned with the signature. Absent/greenfield => empty.
+ */
+export function parseDependsOn(acceptanceText: string): string[] {
+  const doc = (parseYaml(acceptanceText) ?? {}) as { dependsOn?: unknown };
+  if (!Array.isArray(doc.dependsOn)) return [];
+  return doc.dependsOn.filter((x): x is string => typeof x === 'string');
+}
+
 /** Parse acceptance.yaml's `verifications:` map into AC-ID -> verification. */
 export function parseAcceptance(acceptanceText: string): Record<string, SpecVerification> {
   const doc = (parseYaml(acceptanceText) ?? {}) as {

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { parseSpecScenarios, parseAcceptance } from '../src/authoring/source.js';
+import { parseSpecScenarios, parseAcceptance, parseDependsOn } from '../src/authoring/source.js';
 import { buildApprovedSpecRef, computeAcFingerprints } from '../src/authoring/sign.js';
 import { fingerprintAc } from '../src/authoring/fingerprint.js';
 import { evaluateDrift } from '../src/authoring/drift.js';
@@ -85,6 +85,26 @@ describe('parseAcceptance', () => {
     expect(Object.keys(v)).toEqual(['AC-DEMO-001', 'AC-DEMO-002']);
     expect(v['AC-DEMO-001']).toEqual({ severity: 'blocker', method: 'unit_test', expected: ['保存後に GET で取得できる'] });
     expect(v['AC-DEMO-002']!.method).toBe('api_test');
+  });
+});
+
+// --- dependsOn -> systemRefs (regression: ISSUE-0002, the sign gap dogfooding found) --------
+
+describe('parseDependsOn + systemRefs pinning', () => {
+  const ACC_WITH_DEPS = `dependsOn:\n  - DOM-planning-005\n  - DATA-planning-008\n${ACC}`;
+
+  it('parses the top-level dependsOn list', () => {
+    expect(parseDependsOn(ACC_WITH_DEPS)).toEqual(['DOM-planning-005', 'DATA-planning-008']);
+    expect(parseDependsOn(ACC)).toEqual([]); // absent => greenfield
+  });
+
+  it('buildApprovedSpecRef pins the parsed dependsOn as systemRefs (not always [])', () => {
+    const scenarios = parseSpecScenarios(SPEC);
+    const verifications = parseAcceptance(ACC_WITH_DEPS);
+    const systemRefs = parseDependsOn(ACC_WITH_DEPS);
+    const git = { signedCommitSha: 'c0ffee', specBlobGitSha: 'aaaa', acceptanceBlobGitSha: 'bbbb' };
+    const ref = buildApprovedSpecRef({ scenarios, verifications, git, systemRefs });
+    expect(ref.systemRefs).toEqual(['DOM-planning-005', 'DATA-planning-008']);
   });
 });
 
