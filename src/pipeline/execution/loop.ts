@@ -11,12 +11,12 @@
 
 import { PR, type Issue, type Verdict, type EvalRun } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
-import type { BuildArtifact, RepairBrief, PanelRepairBrief } from '../../domain/artifact.js';
+import type { RepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
 import { makeRunner, type AgentRunner } from '../../agents/runner.js';
 import { pollable } from './guard.js';
-import { runPanel, aggregatePanelVerdict, type RunPanelOptions } from '../panel.js';
-import { buildPanelRepairBrief } from '../repair.js';
+import { runPanel, aggregatePanelVerdict, type RunPanelOptions, type PanelResult } from '../panel.js';
+import { buildPanelRepairBrief, toGenerateBrief } from '../repair.js';
 
 /**
  * Route a panel verdict into the state machine (DOM-execution-007). The one rule that
@@ -111,23 +111,108 @@ export interface DriveOptions {
   panel?: RunPanelOptions;
 }
 
-/** Adapt a cross-perspective panel brief to the RepairBrief the generator seam consumes. */
-function toGenerateBrief(panel: PanelRepairBrief): RepairBrief {
+/** What producing one attempt yields: a graded panel, or a stuck generator (live-only). */
+export interface AttemptOutcome {
+  /** The generator could not finish this attempt (live: a stuck/timed-out session). */
+  stuck?: boolean;
+  /** The graded evaluator panel for this attempt (absent iff `stuck`). */
+  panel?: PanelResult;
+}
+
+/** Produce one attempt's build+grade. `brief` is null on attempt 1, a repair brief thereafter. */
+export type ProduceAttempt = (attempt: number, brief: RepairBrief | null) => Promise<AttemptOutcome>;
+
+/** The loop-derived fields of a DriveResult (everything but the issue/PR identity). */
+export type LoopOutcome = Omit<DriveResult, 'issueId' | 'prId'>;
+
+/**
+ * The bounded repair loop, shared by the mock (`driveIssueOnce`) and live (`driveIssueLive`)
+ * drives: generate → panel → (repair → generate → panel)* until it converges or the bound is
+ * spent (repair-loop spec). It is pure orchestration (DOM-execution-008) — it never builds or
+ * grades anything itself; `produce` supplies each attempt's artifact+panel, so the mock and the
+ * real-session backend run the identical control flow.
+ *
+ * On approve it advances to the review gate (AC-REPAIR-002); on request_changes it feeds the
+ * cross-perspective findings into the next attempt as a repair brief (AC-REPAIR-001), each attempt
+ * keeping its own EvalRuns (AC-REPAIR-003). Exhausting config.maxRepairs+1 attempts without
+ * converging escalates to needs-human-review — never an infinite loop, never a silent pass
+ * (AC-REPAIR-004). A `stuck` attempt (live liveness surfacing) escalates immediately and keeps the
+ * session alive for a human (ARCH-execution-014) — also never a silent grade.
+ */
+export async function runBoundedRepairLoop(
+  store: Store,
+  config: HarnessConfig,
+  issueId: string,
+  pr: PR,
+  produce: ProduceAttempt,
+  log: (m: string) => void = () => {},
+): Promise<LoopOutcome> {
+  const maxAttempts = config.maxRepairs + 1; // 1 initial + maxRepairs repairs — the "repeat N" bound
+  let repairBrief: RepairBrief | null = null;
+  let lastVerdict: Verdict = 'request_changes';
+  let gateFailed = false;
+  let panelEscalated = false;
+  let stuck = false;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (attempt > 1) store.setStatus(issueId, 'generation-in-progress'); // changes-requested -> generation (repair)
+    pr.attempts = attempt;
+
+    const outcome = await produce(attempt, repairBrief);
+
+    if (outcome.stuck || !outcome.panel) {
+      // Liveness surfacing (ARCH-execution-014): keep the session alive, escalate, stop the loop.
+      // No panel ran, so the aggregate outcome is "needs a human", not a changes-requested verdict.
+      stuck = true;
+      lastVerdict = 'needs_human';
+      pr.status = 'changes-requested';
+      if (store.getIssue(issueId)!.status !== 'needs-human-review') store.setStatus(issueId, 'needs-human-review');
+      break;
+    }
+
+    const panel = outcome.panel;
+    lastVerdict = panel.verdict;
+    gateFailed = panel.gateFailed;
+
+    if (panel.escalated) {
+      panelEscalated = true; // panel already sent the issue to needs-human-review
+      break;
+    }
+    if (panel.verdict === 'approve') {
+      applyPanelVerdict(store, issueId, 'approve'); // build-approved -> needs-human-review (gate)
+      pr.status = 'approved';
+      break;
+    }
+    // request_changes: route back and carry this attempt's findings into the next generate.
+    applyPanelVerdict(store, issueId, 'request_changes');
+    pr.status = 'changes-requested';
+    repairBrief = toGenerateBrief(buildPanelRepairBrief(panel.runs));
+    if (attempt < maxAttempts) log(`  ↻ ${issueId}: request_changes → repair (${repairBrief.instructions.length} fix(es))`);
+  }
+
+  // Bounded escalation (AC-REPAIR-004): exhausted the loop without converging -> human review.
+  const converged = lastVerdict === 'approve';
+  const exhausted = !converged && !panelEscalated && !stuck;
+  if (exhausted && store.getIssue(issueId)!.status !== 'needs-human-review') {
+    store.setStatus(issueId, 'needs-human-review');
+  }
+
+  pr.updatedAt = nowISO();
   return {
-    fromEvalRunId: panel.fromEvalRunIds[0] ?? '',
-    findings: panel.findings,
-    instructions: panel.instructions.map((i) => i.instruction),
+    verdict: lastVerdict,
+    status: store.getIssue(issueId)!.status,
+    gateFailed,
+    escalated: panelEscalated || stuck,
+    attempts: pr.attempts,
+    exhausted,
   };
 }
 
 /**
- * Drive ONE contract-drafted, ai-managed issue through the bounded repair loop: generate →
- * panel → (repair → generate → panel)* until it converges or the bound is spent (repair-loop
- * spec). On approve it advances to the review gate (AC-REPAIR-002); on request_changes it feeds
- * the cross-perspective findings back into the next attempt (AC-REPAIR-001); each attempt keeps
- * its own EvalRuns (AC-REPAIR-003). Exhausting config.maxRepairs+1 attempts without converging
- * escalates to needs-human-review — never an infinite loop, never a silent pass (AC-REPAIR-004).
- * After this the issue has left `contract-drafted`, so a re-poll never re-drives it (AC-LOOP-003/004).
+ * Drive ONE contract-drafted, ai-managed issue through the bounded repair loop with the MOCK
+ * backend (deterministic runner + deterministic graders). Thin wrapper over runBoundedRepairLoop:
+ * it only supplies the per-attempt production (runner.generate → runPanel). After this the issue
+ * has left `contract-drafted`, so a re-poll never re-drives it (AC-LOOP-003/004).
  */
 export async function driveIssueOnce(store: Store, config: HarnessConfig, runner: AgentRunner, issue: Issue, opts: DriveOptions = {}): Promise<DriveResult> {
   const contract = issue.contract;
@@ -149,62 +234,20 @@ export async function driveIssueOnce(store: Store, config: HarnessConfig, runner
     }),
   );
 
-  const maxAttempts = config.maxRepairs + 1; // 1 initial + maxRepairs repairs — the "repeat N" bound
-  let repairBrief: RepairBrief | null = null;
-  let lastVerdict: Verdict = 'request_changes';
-  let gateFailed = false;
-  let panelEscalated = false;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (attempt > 1) store.setStatus(issue.id, 'generation-in-progress'); // changes-requested -> generation (repair)
-    pr.attempts = attempt;
-
-    const artifact: BuildArtifact = await runner.generate({ issue, contract, sampleIndex: 0, attempt, repairBrief });
+  const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
+    const artifact = await runner.generate({ issue, contract, sampleIndex: 0, attempt, repairBrief });
     store.setStatus(issue.id, 'ready-for-evaluation');
     store.setStatus(issue.id, 'evaluation-in-progress');
-
     const panel = runPanel(
       store,
       config,
       { issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex: 0, attempt, agent: runner.agent, featureArea: issue.area },
       opts.panel,
     );
-    lastVerdict = panel.verdict;
-    gateFailed = panel.gateFailed;
+    return { panel };
+  });
 
-    if (panel.escalated) {
-      panelEscalated = true; // panel already sent the issue to needs-human-review
-      break;
-    }
-    if (panel.verdict === 'approve') {
-      applyPanelVerdict(store, issue.id, 'approve'); // build-approved -> needs-human-review (gate)
-      pr.status = 'approved';
-      break;
-    }
-    // request_changes: route back and carry this attempt's findings into the next generate.
-    applyPanelVerdict(store, issue.id, 'request_changes');
-    pr.status = 'changes-requested';
-    repairBrief = toGenerateBrief(buildPanelRepairBrief(panel.runs));
-  }
-
-  // Bounded escalation (AC-REPAIR-004): exhausted the loop without converging -> human review.
-  const converged = lastVerdict === 'approve';
-  const exhausted = !converged && !panelEscalated;
-  if (exhausted && store.getIssue(issue.id)!.status !== 'needs-human-review') {
-    store.setStatus(issue.id, 'needs-human-review');
-  }
-
-  pr.updatedAt = nowISO();
-  return {
-    issueId: issue.id,
-    prId: pr.id,
-    verdict: lastVerdict,
-    status: store.getIssue(issue.id)!.status,
-    gateFailed,
-    escalated: panelEscalated,
-    attempts: pr.attempts,
-    exhausted,
-  };
+  return { issueId: issue.id, prId: pr.id, ...loop };
 }
 
 /**

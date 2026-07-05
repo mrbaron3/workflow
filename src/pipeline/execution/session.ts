@@ -13,6 +13,7 @@ import path from 'node:path';
 import * as YAML from 'yaml';
 import type { Issue, IssueContract } from '../../domain/schema.js';
 import type { HarnessConfig, TargetRepoConfig } from '../../config.js';
+import type { RepairBrief } from '../../domain/artifact.js';
 import { loadRolePrompt } from '../../agents/prompts.js';
 import { createWorktree, worktreeExists, changedFiles } from './worktree.js';
 import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
@@ -22,6 +23,8 @@ export interface GeneratorSessionInput {
   contract: IssueContract;
   sampleIndex: number;
   attempt: number;
+  /** Present on repair attempts (attempt > 1): the reviewers' required fixes to apply on top. */
+  repairBrief?: RepairBrief | null;
 }
 
 export interface SessionResult {
@@ -67,7 +70,7 @@ export async function runGeneratorSession(
   // submitting early — and the agent reads it (Read is in allowedTools)
   const agentDir = path.join(wt, '.agentops');
   fs.mkdirSync(agentDir, { recursive: true });
-  fs.writeFileSync(path.join(agentDir, 'PROMPT.md'), buildPrompt(input, target), 'utf8');
+  fs.writeFileSync(path.join(agentDir, 'PROMPT.md'), buildGeneratorPrompt(input, target), 'utf8');
   const sentinelPath = path.join(agentDir, 'done.json');
   fs.rmSync(sentinelPath, { force: true }); // clear any stale sentinel from a prior attempt
 
@@ -102,11 +105,18 @@ export async function runGeneratorSession(
   return { worktree: wt, branch, session, outcome, changed: changedFiles(wt), paneTail };
 }
 
-function buildPrompt(input: GeneratorSessionInput, target: TargetRepoConfig): string {
+/**
+ * Build the file the generator session reads (.agentops/PROMPT.md). Exported so the deterministic
+ * seam — that a repair attempt's required fixes land in the prompt — is unit-testable without a
+ * live session. On attempt 1 (no brief) it is the plain implement-the-contract briefing; on a
+ * repair attempt it appends the reviewers' required fixes so the session amends the reused
+ * worktree instead of starting over (live repair, ADR-0006 E7 / AC-REPAIR-001).
+ */
+export function buildGeneratorPrompt(input: GeneratorSessionInput, target: TargetRepoConfig): string {
   const role = loadRolePrompt('generator');
   const contractYaml = YAML.stringify(input.contract);
   const protectedList = (target.protectedPaths ?? []).map((p) => `- ${p}`).join('\n') || '(none)';
-  return [
+  const sections = [
     role,
     `\n## You are in a real git checkout`,
     `Implement the Issue Contract below by EDITING FILES directly in this working directory.`,
@@ -114,9 +124,30 @@ function buildPrompt(input: GeneratorSessionInput, target: TargetRepoConfig): st
     protectedList,
     `\n## Issue\n${input.issue.id} — ${input.issue.title} (area: ${input.issue.area})`,
     `\n## Issue Contract\n\`\`\`yaml\n${contractYaml}\`\`\``,
+  ];
+
+  const brief = input.repairBrief;
+  if (brief && brief.instructions.length > 0) {
+    sections.push(
+      `\n## Repair — reviewers requested changes to your previous attempt`,
+      `Your earlier edits are already in this working tree. Do NOT start over: apply these required`,
+      `fixes on top of them, and do not regress acceptance criteria that already pass.`,
+      `\n### Required fixes`,
+      ...brief.instructions.map((i) => `- ${i}`),
+    );
+    if (brief.findings.length > 0) {
+      sections.push(
+        `\n### Findings (for context)`,
+        ...brief.findings.map((f) => `- [${f.criterionId}] (${f.severity}) expected: ${f.expected || '—'}; observed: ${f.observed || '—'}`),
+      );
+    }
+  }
+
+  sections.push(
     `\n## Done`,
     `When the implementation is complete and you believe the tests will pass, create`,
     `.agentops/done.json containing {"done": true}. The harness grades your checkout by`,
     `running the real test suite — do not self-report pass/fail.`,
-  ].join('\n');
+  );
+  return sections.join('\n');
 }

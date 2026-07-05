@@ -2,10 +2,11 @@
 
 > 別セッションで cold-start するための作業引き継ぎ（**transient**・作業完了後は削除可）。
 > 作成: 2026-07-02 ／ 全面更新: 2026-07-05（決定論ループ完成・実 evaluator backend・無人 grounded 走行の実証を反映）
+> 追記: 2026-07-05（**ライブ repair 完成** — 実 backend でも多 attempt repair ループが回る。決定論ループを mock/live 共有に抽出）
 
 ## 一言で
 
-**ハーネスが ai-managed issue を無人で「実装→実 tsc/vitest 採点→実レビュー→審査ゲート」まで自律駆動することを、実 Claude セッションで実証済み。** 決定論ループ（drive → 7観点 panel → repair×N → gate → human release）は全て実装・テスト green。実 backend（generator＋perspective セッション）も grounded 走行で無人完走を確認。残るのは実 backend の**幅と深さ**（フル6観点・ライブ repair・GitHub gate）と横断掃除。
+**ハーネスが ai-managed issue を無人で「実装→実 tsc/vitest 採点→実レビュー→審査ゲート」まで自律駆動することを、実 Claude セッションで実証済み。** 決定論ループ（drive → 7観点 panel → repair×N → gate → human release）は全て実装・テスト green。実 backend（generator＋perspective セッション）も grounded 走行で無人完走を確認。**ライブ repair も実装済み**（generator セッションが repair brief を受け取り、worktree を再利用して多 attempt を回す・mock と同じ `runBoundedRepairLoop` を共有）。残るのは実 backend の**幅**（フル6観点・GitHub gate）と横断掃除。
 
 **設計の一本の線**（不変）: seam の外側（poll/dispatch/grade/gate/store）は決定論コード、内側（HOW 遂行）だけが非決定な実セッション。headless 非目標・人間の判断点（署名＝WHAT／ゲート＝release）・状態は store、を守る。
 
@@ -19,7 +20,7 @@
 
 ## 現状 done（このセッション・全て committed & pushed / origin `3e26ac4`）
 
-決定論はすべて `npm test`（**138 green**）＋`npm run typecheck` で担保。各 spec は署名→to-detail-design→spawn→contract-draft→実装の自己ドッグフード。
+決定論はすべて `npm test`（**143 green**）＋`npm run typecheck` で担保。各 spec は署名→to-detail-design→spawn→contract-draft→実装の自己ドッグフード。
 
 | 層 | 実装 | テスト | 署名 spec / issue |
 |---|---|---|---|
@@ -31,6 +32,7 @@
 | **systemRefs 修正**（sign が dependsOn を固定・ISSUE-0002 解消） | `src/authoring/source.ts` `parseDependsOn`＋`cli/index.ts` | `test/authoring-sign.test.ts` 回帰 | — |
 | **実 evaluator backend（seam）** | `src/pipeline/execution/perspective-session.ts` | `test/perspective-session.test.ts`(8) | — |
 | **ライブ配線** | `src/pipeline/execution/live.ts`＋`scripts/real-panel-run.ts` | grounded 走行 | — |
+| **ライブ repair**（generator が brief を受領・worktree 再利用・多 attempt。ループは mock/live 共有に抽出） | `loop.ts` `runBoundedRepairLoop`＋`session.ts` `buildGeneratorPrompt`＋`repair.ts` `toGenerateBrief` | `test/live-repair.test.ts`(5) | — |
 
 **実 backend の設計要点**: セッションが `.agentops/eval/<perspective>/findings.json` を産む（async・非決定）→ `sessionBackedGrader` がそれを読む（sync・決定論）→ `runPanel` 無改造。functionality は決定論 grader（E2）、6観点だけ LLM セッション。read-only は権限でなく**構造**で保証（走行後 `changedFiles` ガードがコード編集レビューを discard）。
 
@@ -51,6 +53,7 @@ npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/
 npx tsx scripts/real-run-sandbox.ts                 # 使い捨て sandbox（roman）＋ ai-managed ISSUE-0001 ＋ config
 LENSES=codeQuality npx tsx scripts/real-panel-run.ts # 安く1観点だけ（generator＋1レビュー）
 npx tsx scripts/real-panel-run.ts                    # フル6観点
+MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts    # ライブ repair を観測（request_changes→再 generate）。既定 0＝単発
 # 走行中: tmux attach -t ao-issue-0001-s0（generator） / ao-eval-issue-0001-s0-<観点>（レビュー）
 # ゲート承認: recordHumanDecision(store, issueId, 'approve'|'reject')（今は直接呼び／CLI 未整備）
 ```
@@ -63,16 +66,19 @@ npx tsx scripts/real-panel-run.ts                    # フル6観点
 - `worktree.ts` — worktree。`.agentops/` は changedFiles 除外。
 - `grade.ts` — 実 tsc/vitest → grounded BuildArtifact（AC は test 名の id 一致で満たす）。
 - `perspective-session.ts` — findings 契約・parse・grader・prompt・`runPerspectiveSessions`（read-only 逐次・acceptEdits+Bash）。
-- `loop.ts` — `driveIssueOnce`（多 attempt repair）・`applyPanelVerdict`・`recordHumanDecision`・`driveOnce`・`watch`。
-- `live.ts` — 実 backend 版 `driveIssueLive`/`runLoopLive`（generator セッション＋grounded＋perspective セッション＋panel＋gate）。
+- `loop.ts` — **`runBoundedRepairLoop`（mock/live 共有の決定論ループ・`produce` seam で各 attempt を差し込む）**・`driveIssueOnce`（mock backend の薄い wrapper）・`applyPanelVerdict`・`recordHumanDecision`・`driveOnce`・`watch`。
+- `live.ts` — 実 backend 版 `driveIssueLive`/`runLoopLive`（`runBoundedRepairLoop` に real-session `produce` を渡す：generator セッション＋grounded＋perspective セッション＋panel＋gate。多 attempt repair・worktree 再利用・stuck→needs-human-review 昇格）。
 - `run.ts` — 旧・薄い単一観点 run（`runExecutionOnce`）。live.ts に置換されつつある（後述）。
 
 ## 残り（next・優先順）
 
 1. **フル6観点の grounded 走行**（幅）: 今 grounded 検証は codeQuality 1観点のみ。`LENSES` 無指定で6観点を回し、
    security/type-design 等が実コードでどう割れるか観測。`PERSPECTIVE_LENS` に6観点分の焦点は既にある（`agents/evaluator-<観点>.md` の別ファイルは不要）。
-2. **ライブ repair**（深さ）: `runGeneratorSession` は repair brief を受け取らない → `driveIssueLive` は単一 attempt。
-   generator プロンプトに repair brief を載せ、`driveIssueOnce` と同じ多 attempt を live でも回す。`buildPanelRepairBrief` は実装済み。
+2. ~~**ライブ repair**（深さ）~~ **✅ 完了**（このセッション）: `runGeneratorSession` が repair brief を受領し（`buildGeneratorPrompt` が
+   プロンプトに載せる）、`runBoundedRepairLoop` を mock/live 共有に抽出したので `driveIssueLive` も `driveIssueOnce` と同じ多 attempt を回す。
+   worktree 再利用で edits 累積・stuck generator は needs-human-review へ昇格（沈黙採点しない）。決定論テスト 5 本（`test/live-repair.test.ts`）。
+   **未検証**: 実 Claude での repair 周回（`MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts` で観測できるが、roman は attempt 1 で収束しがち
+   → lens が実際に request_changes を出す issue でないと repair 経路は踏まれない）。フル6観点の grounded 走行（項1）と併せて観測すると良い。
 3. **GitHub gate backend**（G1-G2 の HOW）: 今 `recordHumanDecision` は直接呼び。`gh pr create`＋人間 merge の poll 検知を
    `recordHumanDecision` へ変換する seam。remote・`gh` 認証前提／`PR.externalRef`（additive）で対応付け。sandbox はローカルのみ →
    (a) `gh repo create` で使い捨て remote、(b) remote 無しは store 直ゲート（現状）に fallback、を選ぶ。

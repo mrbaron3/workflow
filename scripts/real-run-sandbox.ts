@@ -131,11 +131,14 @@ store.addIssue(
 store.save();
 
 // --- config: real backend + real graders -----------------------------------
+// maxRepairs bounds the live repair loop (attempts = maxRepairs + 1). Default 0 = one attempt
+// (cheapest grounded run). Raise it to watch live repair: on a lens's request_changes the harness
+// feeds the findings back into the next generator session. e.g.  MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts
 const config: HarnessConfig = {
   ...DEFAULT_CONFIG,
   generator: 'claude',
   samples: 1,
-  maxRepairs: 0,
+  maxRepairs: process.env.MAX_REPAIRS ? Number(process.env.MAX_REPAIRS) : 0,
   target: {
     repo: '.harness/sandbox',
     baseRef: 'HEAD',

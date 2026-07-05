@@ -62,3 +62,16 @@ export function buildPanelRepairBrief(runs: EvalRun[]): PanelRepairBrief {
     findings: forwarded.map((m) => m.finding),
   };
 }
+
+/**
+ * Adapt a cross-perspective panel brief to the single RepairBrief the Generator seam consumes.
+ * The perspective tags are dropped here (the generator acts on the instructions, not on who
+ * raised them); the attribution is preserved on the PanelRepairBrief for the improvement loop.
+ */
+export function toGenerateBrief(panel: PanelRepairBrief): RepairBrief {
+  return {
+    fromEvalRunId: panel.fromEvalRunIds[0] ?? '',
+    findings: panel.findings,
+    instructions: panel.instructions.map((i) => i.instruction),
+  };
+}

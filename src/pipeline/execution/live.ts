@@ -13,7 +13,6 @@
  * it drives live tmux + Claude; the seams it composes are each tested on their own.
  */
 
-import path from 'node:path';
 import type { Issue } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
@@ -23,7 +22,7 @@ import { runGeneratorSession } from './session.js';
 import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader } from './perspective-session.js';
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
-import { applyPanelVerdict, type DriveResult } from './loop.js';
+import { runBoundedRepairLoop, type DriveResult } from './loop.js';
 
 export interface LiveOptions {
   /** Which lenses to convene (default: all 7). Reduce it for a cheap smoke. */
@@ -31,10 +30,13 @@ export interface LiveOptions {
 }
 
 /**
- * Drive ONE ai-managed issue through one live attempt: generate → ground → panel → gate.
- * Single attempt for now — live repair needs runGeneratorSession to accept a brief (follow-up);
- * the sandbox runs with maxRepairs=0. A stuck/timed-out generator escalates to needs-human-review
- * with the session kept alive (ARCH-execution-014/015), never a silent grade.
+ * Drive ONE ai-managed issue through the live bounded repair loop: (generate → ground → panel)*
+ * → gate. Each attempt is a real generator session grounded in real tsc/vitest and reviewed by
+ * real read-only perspective sessions; on request_changes the cross-perspective findings ride
+ * into the next attempt as a repair brief and the worktree is reused so edits accumulate
+ * (AC-REPAIR-001). The bound is config.maxRepairs+1; exhaustion or a stuck/timed-out generator
+ * escalates to needs-human-review with the session kept alive (ARCH-execution-014/015) — never a
+ * silent grade. Only the sessions are non-deterministic; the loop is shared with the mock drive.
  */
 export async function driveIssueLive(
   store: Store,
@@ -47,51 +49,51 @@ export async function driveIssueLive(
   const contract = issue.contract;
   if (!contract) throw new Error(`${issue.id} has no contract`);
   if (!config.target) throw new Error('driveIssueLive requires config.target (a real repo)');
+  const target = config.target;
   const perspectives = opts.perspectives ?? PERSPECTIVES;
+  const issueKey = `${issue.id.toLowerCase()}-s0`;
+  const maxAttempts = config.maxRepairs + 1;
 
   store.setStatus(issue.id, 'ready-for-generation');
   store.setStatus(issue.id, 'generation-in-progress');
   const pr = store.addPR(
     PR.parse({
-      id: store.nextId('PR'), issueId: issue.id, branch: `agent/${issue.id.toLowerCase()}-s0`,
-      baseBranch: config.baseBranch, generator: config.generator, attempts: 1, status: 'open',
+      id: store.nextId('PR'), issueId: issue.id, branch: `agent/${issueKey}`,
+      baseBranch: config.baseBranch, generator: config.generator, attempts: 0, status: 'open',
       createdAt: nowISO(), updatedAt: nowISO(),
     }),
   );
 
-  // 1. real generator session -> worktree with real edits
-  log(`▶ ${issue.id}: generator session`);
-  const sess = await runGeneratorSession(config, { issue, contract, sampleIndex: 0, attempt: 1 }, harnessRoot, log);
-  if (sess.outcome !== 'completed') {
-    pr.status = 'changes-requested';
-    store.setStatus(issue.id, 'needs-human-review'); // liveness surfacing — kept alive
-    return { issueId: issue.id, prId: pr.id, verdict: 'needs_human', status: store.getIssue(issue.id)!.status, gateFailed: false, escalated: true, attempts: 1, exhausted: false };
-  }
+  const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
+    // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
+    log(`▶ ${issue.id}: generator session (attempt ${attempt}/${maxAttempts})`);
+    const sess = await runGeneratorSession(config, { issue, contract, sampleIndex: 0, attempt, repairBrief }, harnessRoot, log);
+    if (sess.outcome !== 'completed') {
+      log(`  ⚠ ${issue.id}: generator ${sess.outcome} — escalating, session kept alive`);
+      return { stuck: true };
+    }
 
-  store.setStatus(issue.id, 'ready-for-evaluation');
-  store.setStatus(issue.id, 'evaluation-in-progress');
+    store.setStatus(issue.id, 'ready-for-evaluation');
+    store.setStatus(issue.id, 'evaluation-in-progress');
 
-  // 2. ground the checkout with real graders
-  const artifact = groundArtifact({ contract, target: config.target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed });
+    // 2. ground the checkout with real graders (real tsc/vitest)
+    const artifact = groundArtifact({ contract, target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed });
 
-  // 3. real read-only perspective sessions -> findings.json under the worktree
-  log(`  ${issue.id}: evaluator panel (${perspectives.filter((p) => !p.deterministic).length} live lenses)`);
-  const panelSessions = await runPerspectiveSessions(config, { worktree: sess.worktree, contract, perspectives, issueKey: `${issue.id.toLowerCase()}-s0` }, log);
+    // 3. real read-only perspective sessions -> findings.json under the worktree
+    log(`  ${issue.id}: evaluator panel (${perspectives.filter((p) => !p.deterministic).length} live lenses)`);
+    const panelSessions = await runPerspectiveSessions(config, { worktree: sess.worktree, contract, perspectives, issueKey }, log);
 
-  // 4. panel grades from the findings.json files (missing/broken -> escalate); functionality is deterministic
-  const panel = runPanel(
-    store, config,
-    { issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex: 0, attempt: 1, agent: config.generator, featureArea: issue.area },
-    { perspectives, grader: sessionBackedGrader(panelSessions.evalRoot) },
-  );
+    // 4. panel grades from the findings.json files (missing/broken -> escalate); functionality is deterministic
+    const panel = runPanel(
+      store, config,
+      { issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex: 0, attempt, agent: config.generator, featureArea: issue.area },
+      { perspectives, grader: sessionBackedGrader(panelSessions.evalRoot) },
+    );
+    return { panel };
+  }, log);
 
-  // 5. route through the gate (approve -> build-approved -> needs-human-review; never auto-release)
-  if (!panel.escalated) applyPanelVerdict(store, issue.id, panel.verdict);
-  pr.status = panel.verdict === 'approve' ? 'approved' : 'changes-requested';
-  pr.updatedAt = nowISO();
-
-  log(`  = ${issue.id}: panel ${panel.verdict}${panel.gateFailed ? ' (gate failed — no lenses convened)' : ''} → ${store.getIssue(issue.id)!.status}`);
-  return { issueId: issue.id, prId: pr.id, verdict: panel.verdict, status: store.getIssue(issue.id)!.status, gateFailed: panel.gateFailed, escalated: panel.escalated, attempts: 1, exhausted: false };
+  log(`  = ${issue.id}: ${loop.verdict}${loop.gateFailed ? ' (gate failed — no lenses convened)' : ''} → ${loop.status} [${loop.attempts} attempt(s)]`);
+  return { issueId: issue.id, prId: pr.id, ...loop };
 }
 
 /** One live turn over the ai-managed queue (the watch daemon's live run-once). */
