@@ -1,159 +1,100 @@
-# ハンドオフ：execution 層（tmux オーケストレーション）を完成させる
+# ハンドオフ：execution 層 — 決定論ループ完成＋実 backend が無人 grounded 走行まで到達
 
 > 別セッションで cold-start するための作業引き継ぎ（**transient**・作業完了後は削除可）。
-> 作成: 2026-07-02 ／ 更新: 2026-07-05（ADR-0006 の premises と「詰まり所」を反映）
+> 作成: 2026-07-02 ／ 全面更新: 2026-07-05（決定論ループ完成・実 evaluator backend・無人 grounded 走行の実証を反映）
 
-## 目的（なぜ）
+## 一言で
 
-「実 CLI backend を差し込んで実開発で回す」を、北極星に沿って実現する。設計対話で premises を固め
-（[ADR-0005](../decisions/ADR-0005-execution-layer-tmux-orchestration.md)）、**実装層を独立コンテキスト**として
-system 層に据え、**generator セッション1本＋実 grade** までを実データで通した（verdict approve）。
-残りは evaluator パネル・審査ゲート・repair・watch デーモンを積むこと。
+**ハーネスが ai-managed issue を無人で「実装→実 tsc/vitest 採点→実レビュー→審査ゲート」まで自律駆動することを、実 Claude セッションで実証済み。** 決定論ループ（drive → 7観点 panel → repair×N → gate → human release）は全て実装・テスト green。実 backend（generator＋perspective セッション）も grounded 走行で無人完走を確認。残るのは実 backend の**幅と深さ**（フル6観点・ライブ repair・GitHub gate）と横断掃除。
 
-**設計の一本の線**: seam の外側（poll/dispatch/grade/store）は決定論コード、内側（HOW 遂行）だけが非決定な
-実エージェント。headless 非目標・人間の判断点・状態は store という北極星の非交渉領域を、この境界で守る。
+**設計の一本の線**（不変）: seam の外側（poll/dispatch/grade/gate/store）は決定論コード、内側（HOW 遂行）だけが非決定な実セッション。headless 非目標・人間の判断点（署名＝WHAT／ゲート＝release）・状態は store、を守る。
 
 ## 最初に読むもの（canonical）
 
-- [docs/decisions/ADR-0005-...md](../decisions/ADR-0005-execution-layer-tmux-orchestration.md) — 確定した premises（P0-P5・L0-L2・Q1-Q3）。
-- [docs/decisions/ADR-0006-...md](../decisions/ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) — パネル実行モデル（E1-E7）と GitHub PR ゲート（G1-G3）。task 11/12 はこの premises の実装。
-- [docs/specs/_system/execution/](../specs/_system/execution/) — 4ビュー（language/domain/architecture/data）。`ARCH-execution-NNN` が実装の契約。
-- [docs/context-map.md](../context-map.md) — execution は5番目のコンテキスト（言語境界・evaluation の採点語は参照）。
-- [docs/NORTH_STAR.md](../NORTH_STAR.md) — headless 非目標・判断点・「状態は tmux でなく store」。
+- [ADR-0005](../decisions/ADR-0005-execution-layer-tmux-orchestration.md) — 実装層 premises（P0-P5・L0-L2・Q1-Q3）。
+- [ADR-0006](../decisions/ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) — パネル実行モデル（E1-E7）＋GitHub PR ゲート（G1-G3）。末尾に**実装先 id 表**（吸収済み／未の別）。
+- [docs/specs/_system/execution/](../specs/_system/execution/) — 4ビュー。`ARCH-execution-NNN` が実装契約。ADR-0006 premises 吸収済み。
+- [NORTH_STAR.md](../NORTH_STAR.md) — 自律×評価×改善／判断点／状態は store。
+- 決定記録の吸収規約: [decisions/README.md](../decisions/README.md) §吸収の強制（採択 ADR は system view へ additive 吸収・逆参照）。
 
-## 現状（done・committed）— origin より4コミット（このセッション分）
+## 現状 done（このセッション・全て committed & pushed / origin `3e26ac4`）
 
-| commit | 内容 |
-|---|---|
-| `7f2b778` | 設計: ADR-0005 ＋ `_system/execution/` 4ビュー |
-| `8528120` | runner: scoping guard・tmux セッション・worktree・実 grader |
-| `18ccf02` | 初の実走行: 実 Claude が `roman.ts` 実装 → 実 tsc/vitest → approve。harness バグ2件を修正＋回帰テスト化 |
-| `2f7b02f` | liveness: stuck セッションを needs-human-review へ昇格（無言終了しない） |
+決定論はすべて `npm test`（**138 green**）＋`npm run typecheck` で担保。各 spec は署名→to-detail-design→spawn→contract-draft→実装の自己ドッグフード。
 
-**検証済みの機構レシピ**（有人スモークで確認）:
+| 層 | 実装 | テスト | 署名 spec / issue |
+|---|---|---|---|
+| **評価パネル**（7観点 fan-out・gate-before-panel・resume・集約・昇格） | `src/pipeline/panel.ts` | `test/panel.test.ts`(12) | evaluator-panel(9AC) / ISSUE-0003/4/5 |
+| 観点横断 repair 指示 | `src/pipeline/repair.ts` `buildPanelRepairBrief` | 同上 | 同上 |
+| reader 整合（metrics/curator が観点 run を二重計上しない） | `src/metrics/metrics.ts` `perSample` | 同上 | 同上 |
+| **自律ドライブ＋審査ゲート**（humanVerdict 収穫・冪等） | `src/pipeline/execution/loop.ts`＋`states.ts` `build-approved` | `test/execution-loop.test.ts`(11) | execution-loop(8AC) / ISSUE-0006/7 |
+| **修復ループ**（収束 or 上限昇格＝「3回」要求） | `loop.ts` `driveIssueOnce` 多 attempt | `test/repair-loop.test.ts`(4) | repair-loop(4AC) / ISSUE-0008 |
+| **systemRefs 修正**（sign が dependsOn を固定・ISSUE-0002 解消） | `src/authoring/source.ts` `parseDependsOn`＋`cli/index.ts` | `test/authoring-sign.test.ts` 回帰 | — |
+| **実 evaluator backend（seam）** | `src/pipeline/execution/perspective-session.ts` | `test/perspective-session.test.ts`(8) | — |
+| **ライブ配線** | `src/pipeline/execution/live.ts`＋`scripts/real-panel-run.ts` | grounded 走行 | — |
 
-```text
-launch  tmux new-session -d -s <sess> -c <worktree> \
-          "claude -n <sess> --permission-mode acceptEdits --allowedTools 'Read Edit Write'"
-drive   tmux send-keys -t <sess> -l "<one-liner: PROMPT.md を読んで実装・完了で sentinel>" ; send-keys Enter
-        （複数行プロンプトは送れない → 全文は worktree の .agentops/PROMPT.md に置き、agent に読ませる）
-wait    monitorLiveness: sentinel(.agentops/done.json) を polling ＋ pane を並行監視
-        pane が 90s 不変 ∧ sentinel 無し → stuck ／ 20m 超 → timeout ／ sentinel → completed
-grade   completed のみ: 実 tsc/vitest を worktree に → grounded BuildArtifact → evaluate()
-```
+**実 backend の設計要点**: セッションが `.agentops/eval/<perspective>/findings.json` を産む（async・非決定）→ `sessionBackedGrader` がそれを読む（sync・決定論）→ `runPanel` 無改造。functionality は決定論 grader（E2）、6観点だけ LLM セッション。read-only は権限でなく**構造**で保証（走行後 `changedFiles` ガードがコード編集レビューを discard）。
 
-## 動かし方（reproduce・mock でなく実 Claude）
+**grounded 走行の実証**（2回）:
+
+1. 有人: 実 generator→roman.ts（実 vitest 4/4 pass）→ codeQuality レビュー approve → panel approve → gate → 人間承認 → released ＋ humanVerdict 記録。この走行が自律ギャップ2件を露呈。
+2. **無人**: 同じスモークを承認プロンプト介入なしで完走（`genPrompt=0`/`evalPrompt=0`）。修正（generator に Bash・perspective に acceptEdits+Bash・`3e26ac4`）が無人自律を成立させた。
+
+## 動かし方
 
 ```bash
-npx tsx scripts/real-run-sandbox.ts   # 使い捨て sandbox（roman）＋ ai-managed issue ＋ config を生成
-npx tsx scripts/real-run.ts           # queue を poll → 実セッション → 実 grade → verdict
-# 走行中: tmux attach -t ao-issue-0001-s0  でライブ観戦/介入（审查点）
+# 決定論の確認
+npm test           # 138
+npm run typecheck
+npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
+
+# 実 Claude での grounded 走行（cost・claude 認証が要る）
+npx tsx scripts/real-run-sandbox.ts                 # 使い捨て sandbox（roman）＋ ai-managed ISSUE-0001 ＋ config
+LENSES=codeQuality npx tsx scripts/real-panel-run.ts # 安く1観点だけ（generator＋1レビュー）
+npx tsx scripts/real-panel-run.ts                    # フル6観点
+# 走行中: tmux attach -t ao-issue-0001-s0（generator） / ao-eval-issue-0001-s0-<観点>（レビュー）
+# ゲート承認: recordHumanDecision(store, issueId, 'approve'|'reject')（今は直接呼び／CLI 未整備）
 ```
 
-- 決定論の確認: `npm test`（101）・`npm run typecheck`。
-- system 層の整合: `npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system`
+## 主要ファイル（execution）
 
-## 主要ファイル
+- `guard.ts` — `pollable()` スコープガード（status==contract-drafted && assignedAgent==config.generator）。
+- `tmux.ts` — セッション substrate ＋ `monitorLiveness`（sentinel＋pane 監視・stuck/timeout 昇格）。
+- `session.ts` — generator セッション（Read/Edit/Write/**Bash**・acceptEdits）。
+- `worktree.ts` — worktree。`.agentops/` は changedFiles 除外。
+- `grade.ts` — 実 tsc/vitest → grounded BuildArtifact（AC は test 名の id 一致で満たす）。
+- `perspective-session.ts` — findings 契約・parse・grader・prompt・`runPerspectiveSessions`（read-only 逐次・acceptEdits+Bash）。
+- `loop.ts` — `driveIssueOnce`（多 attempt repair）・`applyPanelVerdict`・`recordHumanDecision`・`driveOnce`・`watch`。
+- `live.ts` — 実 backend 版 `driveIssueLive`/`runLoopLive`（generator セッション＋grounded＋perspective セッション＋panel＋gate）。
+- `run.ts` — 旧・薄い単一観点 run（`runExecutionOnce`）。live.ts に置換されつつある（後述）。
 
-- `src/pipeline/execution/guard.ts` — `pollable()` スコープガード（ARCH-execution-002）
-- `src/pipeline/execution/tmux.ts` — セッション substrate ＋ `monitorLiveness`（003/014）
-- `src/pipeline/execution/worktree.ts` — worktree（004）。`.agentops/` は changedFiles から除外
-- `src/pipeline/execution/session.ts` — generator セッション1本（003/005）
-- `src/pipeline/execution/grade.ts` — 実 grader → grounded BuildArtifact
-- `src/pipeline/execution/run.ts` — 最小 run entry（001 の薄い版）＋ liveness 顕在化
-- `scripts/real-run-sandbox.ts` / `scripts/real-run.ts` — scaffold ＋ driver
-- `agents/generator.md` — 実装エージェントの人格（`loadRolePrompt` が読む）。`AgentRole` enum が名簿
+## 残り（next・優先順）
 
-## 済み（2026-07-05・deterministic core）
+1. **フル6観点の grounded 走行**（幅）: 今 grounded 検証は codeQuality 1観点のみ。`LENSES` 無指定で6観点を回し、
+   security/type-design 等が実コードでどう割れるか観測。`PERSPECTIVE_LENS` に6観点分の焦点は既にある（`agents/evaluator-<観点>.md` の別ファイルは不要）。
+2. **ライブ repair**（深さ）: `runGeneratorSession` は repair brief を受け取らない → `driveIssueLive` は単一 attempt。
+   generator プロンプトに repair brief を載せ、`driveIssueOnce` と同じ多 attempt を live でも回す。`buildPanelRepairBrief` は実装済み。
+3. **GitHub gate backend**（G1-G2 の HOW）: 今 `recordHumanDecision` は直接呼び。`gh pr create`＋人間 merge の poll 検知を
+   `recordHumanDecision` へ変換する seam。remote・`gh` 認証前提／`PR.externalRef`（additive）で対応付け。sandbox はローカルのみ →
+   (a) `gh repo create` で使い捨て remote、(b) remote 無しは store 直ゲート（現状）に fallback、を選ぶ。
+4. **並行パネル**: `runPerspectiveSessions` は逐次（read-only 違反の帰属のため）。`panel.maxConcurrent` で並行化（E4）。
+   `monitorLiveness` は単一セッション監視なので複数同時監視ループが要る。
+5. **best-of-N / samples>1**: 今 live は単一 sample（pass^k 定義できず）。計測走行を issue 単位 opt-in で（E5・first-approve-stop 既定）。
+6. **横断掃除**: `config.cli` の `claude -p` 既定を除去（ADR-0005 Q2 残債・DEFAULT_CONFIG）。`run.ts` の薄い単一観点 run を live.ts に統合。
+   scoped-context 組立（`ARCH-execution-007`・P5）: 今は generator.md＋contract 全体、木の `dependsOnSystem` から最小化。
 
-- **evaluator パネル（task 11）＝実装済み**。`src/pipeline/panel.ts`（`runPanel`/`aggregatePanelVerdict`/
-  `deterministicPerspectiveGrade`/`PERSPECTIVES`）・`repair.ts` `buildPanelRepairBrief`・`metrics.ts` の
-  attempt 集約・`graders` `hasBlockingGateFailure`。`test/panel.test.ts`（12・9 AC を grounding）green。
-  署名 spec `docs/specs/evaluator-panel/`＋ISSUE-0003/0004/0005（contract-drafted）＋ADR-0006 吸収済み。
-  **残り**: 実 tmux backend で 6 観点 LLM セッションを `PerspectiveGrader` の裏に差す（今は決定論 grader のみ）。
-- **審査ゲート＋watch（task 12）＝実装済み**。`src/pipeline/execution/loop.ts`（`applyPanelVerdict`＝approve→
-  `build-approved`→`needs-human-review`・自動 released しない／`recordHumanDecision`＝承認→`released`＋humanVerdict
-  収穫・冪等／`driveOnce`・`driveIssueOnce`・`watch`）＋`states.ts` `build-approved` 遷移。`test/execution-loop.test.ts`
-  （10・8 AC を grounding）green。署名 spec `docs/specs/execution-loop/`＋ISSUE-0006/0007（contract-drafted）＋ADR-0006 吸収済み。
-  **残り**: 承認入力元（GitHub PR merge 検知）を backend seam の裏に実装（今は `recordHumanDecision` の直接呼び）／repair ループ。
+## 落とし穴・不変条件
 
-## 残りスライス（next）— premises は ADR-0006
-
-1. ~~**evaluator パネル（task 11）**~~ ＝上記「済み」（決定論コア）。実セッション backend 差し込みが残り。realises `ARCH-execution-006`。
-   - 実行単位＝**観点ごとの独立 tmux セッション**（E1。サブエージェント方式は決定論境界・liveness と衝突するため不採用）。
-   - **functionality は決定論 grader backend のまま**（E2）。LLM セッションは 6 観点（codeQuality / testQuality /
-     ux / accessibility / security / type-design）のみ。**`agents/evaluator-<観点>.md` 6 本を著述**。
-   - evaluator は read-only reviewer（E3）: 出力は `.agentops/eval/<perspective>/findings.json`（zod 検証）＋ sentinel。
-   - 招集は hard gates 通過後のみ・全観点並行・`panel.maxConcurrent`（E4）。
-   - 集約は決定論（E6・`DOM-execution-004`）。各観点 EvalRun に `EvalRun.perspective`（schema に既存）。
-   - RepairBrief をパネル横断版に置換（E7）: blocker-first・criterionId 重複統合・発生源観点タグ・修復帰属の記録。
-2. ~~**審査ゲート＋watch（task 12）**~~ ＝上記「済み」（決定論コア）。
-2b. **repair ループ＝実装済み**（repair-loop spec・署名済み 4 AC）: `driveIssueOnce` を多 attempt 化
-   （`config.maxRepairs+1` まで: request_changes→`buildPanelRepairBrief`→次 attempt に repair brief→再 panel、
-   approve で break・ゲートへ／上限で `needs-human-review` 昇格）。`test/repair-loop.test.ts`（4）green。ISSUE-0008。
-   これで**決定論ループが `drive → panel → repair×N → gate` で端まで閉じた**。残りは実 backend の配線のみ:
-   - **承認入力元の GitHub backend**（G1-G2 の HOW）: approve → push ＋ `gh pr create`、人間 merge の poll 検知を
-     `recordHumanDecision` 呼び出しへ変換する seam（今はテスト/CLI から直接呼ぶ）。remote・`gh` 認証前提。`PR.externalRef`（additive）で対応付け。
-   - **実 LLM backend（seam 実装済み・ライブ配線が残り）**: `src/pipeline/execution/perspective-session.ts` —
-     findings.json 契約＋`parsePerspectiveFindings`＋`fileBackedGrader`/`sessionBackedGrader`（runPanel に無改造で刺さる）
-     ＋観点別プロンプト（`PERSPECTIVE_LENS`）＋`runPerspectiveSessions`（read-only tmux セッション・read-only 違反は
-     changedFiles で検知し discard）。決定論の seam は `test/perspective-session.test.ts`（8）green。**残り**: `driveIssueOnce` の
-     ライブ版（generator を `runGeneratorSession`＋パネルを `runPerspectiveSessions`→`runPanel(sessionBackedGrader)`）と、
-     使い捨て sandbox での grounded 走行（cost・`claude` 認証が要る非決定パート）。generator セッションは既存（`runGeneratorSession`）。
-   - 実 backend 既定 samples=1・first-approve-stop（E5。best-of-N は計測 opt-in）。
-   - scoped-context 組立（`ARCH-execution-007`・P5）: 今は generator.md＋contract 全体。木の `dependsOnSystem` から最小化。
-3. **残る横断**: `config.cli` の `claude -p` 既定を除去（ADR-0005 Q2 残債）。ISSUE-0002（systemRefs 未固定）修正。
-   evaluator 観点セッションの実 tmux backend（`agents/evaluator-<観点>.md` 6 本の著述＋`.agentops/eval/<perspective>/`）。
-
-## 実装で詰まりそうなところ（先に知っておく穴）
-
-1. **「1 attempt＝1 EvalRun」前提の reader たち** — パネル後は 1 attempt に観点数の EvalRun がぶら下がる
-   （`DATA-execution-001`・集約値は保存せず派生）。`src/metrics/metrics.ts`（pass@k/pass^k の分母）・
-   `src/pipeline/curator.ts`（findings 走査 → 観点数だけ重複昇格する）・`src/dashboard/dashboard.ts` が
-   `perspective ≠ null` を区別しないと数が壊れる。改修は「sample の verdict は集約関数から引く」の一点に寄せる。
-2. **`buildRepairBrief` が単一 EvalRun 前提**（`src/pipeline/repair.ts`）— パネル横断版に置換（E7）。観点間で
-   矛盾する指摘の優先順位は blocker-first ＋ 発生源観点タグで機械的に扱う（LLM に裁定させない）。
-3. **sentinel / worktree の衝突** — generator の sentinel は `.agentops/done.json`。evaluator 6 セッションが同じ
-   worktree を読むため、出力は観点別パス `.agentops/eval/<perspective>/` に分離（E3）。evaluator に Edit/Write を
-   許すと worktree 汚染・scope_check 誤検知の事故になる（read-only tool 制限が本質）。`.agentops/` の changedFiles
-   除外は既存（回帰テスト `test/execution-worktree.test.ts`）。
-4. **LLM が書く findings.json の検証失敗パス** — zod parse 失敗は「1 回 re-drive → だめなら needs-human-review」
-   （E3）。**静かに skip して approve 側へ倒すのが最悪**（false-pass 製造機になる）。`ARCH-execution-015` の精神で必ず昇格。
-5. **GitHub PR ゲートは remote 前提** — 今の sandbox（`scripts/real-run-sandbox.ts`）はローカルのみ。
-   (a) `gh repo create` で使い捨て remote を作る scaffold 拡張、(b) remote が無い target は store 直のゲート
-   （`needs-human-review` 停止・CLI 承認）に fallback、のどちらかを先に決める。`gh` 認証が前提。store との対応は
-   `PR.externalRef`（additive）。merge 検知は poll（webhook 無し・L1 と同型）。
-6. **`build-approved` が状態機械に無い** — `DOM-execution-007` が参照するが `src/domain/states.ts` に未定義。
-   遷移: `evaluation-in-progress → build-approved → needs-human-review →（人間承認）released`。今の coordinator は
-   approve で自動 released（`src/pipeline/coordinator.ts:113-115`）— **ここを断つのが Q3 の本体**。
-7. **samples=1 での計測の縮退** — first-approve-stop（E5）では pass^k が定義できない。metrics の headlineK は
-   「実測に存在する k」から引く。best-of-N 計測走行は issue 単位の opt-in フラグで区別する。
-8. **並行 6 セッションの資源制約** — `monitorLiveness`（`src/pipeline/execution/tmux.ts`）は単一セッション監視の形。
-   パネルには複数セッション同時監視のループが要る。tmux セッション数・rate limit の飽和は `panel.maxConcurrent`（E4）で抑える。
-9. **`config.cli` に `claude -p` 既定が残存**（`src/config.ts` の DEFAULT_CONFIG）— ADR-0005 Q2 で deprecate 済みの
-   headless 経路。パネル配線と同時に消さないと「二つの真実」になる。
-
-## 落とし穴
-
-- `.harness/` は **gitignore・ローカル揮発**（store・sandbox・worktrees・evidence）。消えても scaffold で再生成（決定論）。
-- **`.agentops/` は harness 自身の足場**（PROMPT.md・sentinel）。`changedFiles` は除外する（初回走行で scope 誤検知したバグ・回帰テスト `test/execution-worktree.test.ts` で固定）。
-- `vitest.config.ts` が **`.harness/**` を除外**（sandbox/worktree のテストを harness 自身の suite が拾わないため）。
-- **headless（`claude -p`）は使わない**（北極星非目標）。対話セッション＋acceptEdits＋tool 制限が「auto 起動」。
-- **オーケストレータは決定論コード**（LLM でない）。poll/dispatch/grade/store を LLM に委ねない。
-- **Hermes backend は forward-ref**（AgentRunner seam の裏の将来 backend・orchestrator には据えない）。採用時は curl でなく mise http backend でマニフェスト化。
-- ローカル store の ISSUE-0001 は今 `needs-human-review`（バグ入り EVAL-00001 の名残）。クリーンな approve は再走行で再生成（再 grade では approve 確認済み）。
-- **tmux 3.7 導入済み**（brew・`~/.Brewfile` に宣言済み）。
-
-## 完了の定義（残りスライス）
-
-- 7観点パネル（LLM 6 観点＋functionality 決定論）が 1 sample を採点し、集約 verdict が `DOM-execution-004` で
-  派生する（`EvalRun.perspective` が観点数ぶん付く。metrics/curator が観点 run を二重計上しない）。
-- approve で GitHub PR が立ち `needs-human-review` で止まる。人間 merge の検知で `released`、差戻しで
-  `EvalRun.humanVerdict` に false-pass が記録される（Q3・G1/G3）。
-- watch が ai-managed queue を連続処理する（実 backend 既定 samples=1・first-approve-stop）。
-- すべて `npm test` green・system 層 check OK を保つ。
+- `.harness/` は **gitignore・ローカル揮発**（store・sandbox・worktrees・evidence）。消えても scaffold で決定論再生成。
+  → **store の issue/eval は共有されない**（ISSUE-0003..0008 はローカルのみ・code は commit 済み）。ハーネス自身の backlog を durable にするかは未決の設計論点。
+- **`.agentops/` は harness の足場**（PROMPT.md・sentinel・eval/<観点>/findings.json）。changedFiles 除外済み（回帰 `test/execution-worktree.test.ts`）。
+- **findings.json 検証失敗は昇格**（`ARCH-execution-015`）: parse 失敗→1回 re-drive→なお不可なら needs-human-review。**静かに approve へ倒さない**（false-pass 製造機になる）。`runPanel` の `gradeWithRetry` が実装。
+- **detached セッションは承認で無言停止する**（grounded 走行の教訓）: 必要 tool は先付け（generator=Bash 追加、perspective=acceptEdits+Bash）。無人自律の要。この種のバグは**決定論テストでは出ない**（mock はプロンプトを出さない）——grounded 走行だけが暴く。
+- **headless（`claude -p`）不使用**（北極星非目標）。対話セッション＋acceptEdits＋tool 制限が「auto 起動」。
+- **オーケストレータは決定論**。poll/dispatch/grade/gate/store を LLM に委ねない。
+- **`agentops run`（coordinator.ts）は別経路**: mock demo 用で approve→自動 released。execution 層の `driveOnce`/`driveIssueLive` はゲートで止める。混同しない。
+- tmux 3.7 導入済み（brew・`~/.Brewfile`）。claude 2.1.x。
 
 ## push 状況
 
-- **未 push**: `main` は origin/main より **12 コミット先行**（このセッション4本＋以前8本）。
-- remote: `git@github.com:mrbaron3/workflow.git`。引き継ぎには push が必要（`.harness` はローカルなので code のみ共有）。
+- origin/main = `3e26ac4`、**未 push 0**（このセッション分は全て push 済み）。
+- remote: `git@github.com:mrbaron3/workflow.git`。`.harness` はローカルなので code のみ共有。
