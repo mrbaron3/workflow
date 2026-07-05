@@ -1,0 +1,42 @@
+# Issue spawn マニフェスト — 署名済み evaluator-panel spec に対する to-detail-design の出力。
+# 3 つの PR サイズ Issue。各 AC-PANEL-00N はちょうど 1 つにカバーされる（被覆×排他）。
+#   - key は draft ローカル; spawn-issues が store の ISSUE-NNNN id を採番する。
+#   - dependsOnSystem は docs/specs/_system/{execution,evaluation}/ の実在 id を参照する（複製しない）。
+#   - seam/contract 高度のみ。内部アルゴリズムは implementationNotes（非ゲート）。
+issues:
+  - key: ISSUE-PANEL-001
+    title: パネル fan-out — 完了 sample を観点別に採点し perspective タグ付き EvalRun を残す（gate 後・read-only・resume 冪等）
+    area: harness
+    type: harness
+    coversAcIds: [AC-PANEL-001, AC-PANEL-002, AC-PANEL-007, AC-PANEL-008]
+    dependsOnIssues: []
+    dependsOnSystem: [LANG-execution-009, LANG-execution-010, DATA-execution-001, ARCH-execution-006, ARCH-execution-009, ARCH-execution-010, ARCH-evaluation-011]
+    implementationNotes:
+      - "public seam: runPanel(store, config, sample, perspectives) -> EvalRun[]（ARCH-execution-006 の決定論バックエンド実装。観点数ぶんの EvalRun を返す）。"
+      - "gate-before-panel（AC-PANEL-002・ARCH-evaluation-011 の観点版）: hard gates が fail する試行では観点採点に進まず、gate findings のみを返す。functionality 観点は決定論 grader（LLM セッション 0 本・ADR-0006 E2）。"
+      - "各 EvalRun に perspective タグ（DATA-execution-001）。resume 冪等（AC-PANEL-007）: 同一（prId, attempt, perspective）の EvalRun は 1 件のみ——既存があれば再採点しない（store が在庫）。"
+      - "read-only（AC-PANEL-008・ADR-0006 E3）: パネルは sample の changedFiles とその内容・scope 判定を変更しない。決定論経路は artifact を読むだけ。"
+
+  - key: ISSUE-PANEL-002
+    title: 集約と昇格 — 観点別 EvalRun から sample 最終 verdict を blocker 優先で派生し、不正出力は needs-human-review へ昇格
+    area: harness
+    type: harness
+    coversAcIds: [AC-PANEL-003, AC-PANEL-004, AC-PANEL-006]
+    dependsOnIssues: [ISSUE-PANEL-001]
+    dependsOnSystem: [DOM-execution-003, DOM-execution-004, ARCH-execution-006, ARCH-execution-015]
+    implementationNotes:
+      - "public seam: aggregatePanelVerdict(runs) -> Verdict（DOM-execution-004）。1 観点でも request_changes なら request_changes; 全 approve でのみ approve。スコア平均で blocker を相殺しない。"
+      - "派生であり保存しない（AC-PANEL-004・DATA-execution-001）: 集約値の永続レコードを持たず、常に観点別 EvalRun 集合から再計算する（同入力→同出力）。"
+      - "昇格（AC-PANEL-006・ARCH-execution-015）: 観点出力の schema 検証が再試行後も失敗したら issue を needs-human-review へ。検証失敗観点を approve 算入・観点欠落のまま approve にしない（静かに合格へ倒さない）。"
+
+  - key: ISSUE-PANEL-003
+    title: 観点横断 repair と reader 整合 — 修復指示に発生源観点、既存 metrics/Curator を観点別 run で二重計上させない
+    area: harness
+    type: harness
+    coversAcIds: [AC-PANEL-005, AC-PANEL-009]
+    dependsOnIssues: [ISSUE-PANEL-001, ISSUE-PANEL-002]
+    dependsOnSystem: [DATA-execution-001, DOM-execution-004, ARCH-evaluation-003]
+    implementationNotes:
+      - "repair 横断化（AC-PANEL-005・ADR-0006 E7）: buildRepairBrief を観点別 EvalRun 群を受ける版へ。blocker 由来を先頭、同一 criterionId を 1 指示へ束ね、各指示に発生源 perspective を付す。"
+      - "reader 整合（AC-PANEL-009）: metrics（pass@k/pass^k の分母＝sample/attempt 数）と Curator（回帰昇格）が perspective≠null の EvalRun を二重計上しない。1 attempt は 1 と数え、集約は aggregatePanelVerdict 経由に寄せる。"
+      - "後方互換（DATA-execution-001）: perspective=null（旧来の単一 composite EvalRun）は従来どおり数える——additive、既存テストを壊さない。"
