@@ -42,6 +42,26 @@ export interface RepairBrief {
   instructions: string[];
 }
 
+/**
+ * One repair instruction that carries which review perspective(s) raised it — so the
+ * Generator knows whose objection it is answering, and the improvement loop can later
+ * attribute a fix to the perspective that demanded it (ADR-0006 E7 / AC-PANEL-005).
+ */
+export interface PanelInstruction {
+  criterionId: string;
+  severity: Finding['severity'];
+  instruction: string;
+  /** Perspectives that flagged this criterion (a criterion flagged by several is merged once). */
+  perspectives: string[];
+}
+
+/** Cross-perspective repair brief: findings from every perspective run, blocker-first, deduped. */
+export interface PanelRepairBrief {
+  fromEvalRunIds: string[];
+  instructions: PanelInstruction[];
+  findings: Finding[];
+}
+
 export interface GenerateInput {
   issue: Issue;
   contract: IssueContract;

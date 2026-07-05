@@ -1,6 +1,6 @@
 # ADR-0006: evaluator パネルは観点ごとの独立 tmux セッションで fan-out し決定論コードが集約する。審査ゲートの UI は GitHub PR とする
 
-- 状態: 採択（premises 確定・実装は後続スライス task 11/12）
+- 状態: 採択（パネル部 E1-E7 は `_system/execution` へ吸収済み＋実装済み・ゲート部 G1-G3 は gate spec で吸収予定）
 - コンテキスト: execution（evaluation の採点語＝Scorecard/Verdict/grader を参照。再定義しない）
 - 関連: [ADR-0005](ADR-0005-execution-layer-tmux-orchestration.md)（P4 観点パネル・Q3 審査ゲートの premise を実装可能な粒度へ具体化する）、
   [ADR-0003](ADR-0003-hard-gates-before-score.md)（hard-gate-before-score をパネル招集条件へ拡張）、
@@ -92,5 +92,20 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
   run を数え方から分離する改修が要る（詳細は handoff の詰まり所）。
 - − GitHub PR ゲートは remote と `gh` 認証が前提 → ローカル使い捨て sandbox では fallback が要る。
 - − `agents/evaluator-<perspective>.md` 6 本の著述が要る。
-- 後続: `_system/execution` 4 ビューへの反映（to-system-design。パネル実行単位・ゲート UI・ラベル収穫の
-  ARCH/DATA id 追加）、`config.cli` の `claude -p` 既定の除去（ADR-0005 Q2 の残債）。
+- 後続: `config.cli` の `claude -p` 既定の除去（ADR-0005 Q2 の残債）、ゲート部（G1-G3）の gate spec 化＋吸収。
+
+## 実装先（吸収先 id・吸収規約 = decisions/README §吸収の強制）
+
+パネル部（E1-E7）の premises が着地した system-layer / コードの id。views の各 id は本 ADR を逆参照する。
+
+| premise | 吸収先（system view id） | 実装 |
+| --- | --- | --- |
+| E1 観点＝独立セッション／E2 functionality 決定論・6 観点 LLM／E3 read-only | `ARCH-execution-006`（注記追加） | `src/pipeline/panel.ts` `runPanel` / `PERSPECTIVES` |
+| E4 gate-before-panel | `ARCH-execution-016`（新規不変条件） | `panel.ts` `runPanel` ＋ `graders` `hasBlockingGateFailure` |
+| 集約（blocker 優先・派生・保存しない） | `DOM-execution-004` / `DATA-execution-001` | `panel.ts` `aggregatePanelVerdict` |
+| E3 不正出力の昇格 | `ARCH-execution-015` | `panel.ts` `runPanel`（gradeWithRetry→needs-human-review） |
+| E7 観点横断 repair | `ARCH-execution-006`（注記） | `src/pipeline/repair.ts` `buildPanelRepairBrief` |
+| reader 非二重計上 | `DATA-execution-001` | `src/metrics/metrics.ts` `perSample`（attempt 集約） |
+| G1-G3 GitHub PR ゲート | `ARCH-execution-008`（forward-ref・gate spec で吸収予定） | 未実装（gate spec） |
+
+spec: `docs/specs/evaluator-panel/`（署名済み・9 AC）。issues: ISSUE-0003/0004/0005（contract-drafted）。テスト: `test/panel.test.ts`（12・9 AC を grounding）。

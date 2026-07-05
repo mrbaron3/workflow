@@ -160,6 +160,16 @@ export function gradeBuild(
   return { hardGates, findings, scores, overall, verdict, blockerCount };
 }
 
+/**
+ * Does any *blocking* hard gate fail? The evaluator panel is only convened once the
+ * hard gates pass (ADR-0006 E4 / AC-PANEL-002 — the perspective version of
+ * hard-gate-before-score). Playwright is excluded here: it is handled per-criterion,
+ * not as a pre-panel gate. Reuses the single BLOCKING_GATES list — no duplication.
+ */
+export function hasBlockingGateFailure(hardGates: Record<string, GateResult>): boolean {
+  return BLOCKING_GATES.some((g) => hardGates[g] === 'fail');
+}
+
 function fixForGate(gate: string, artifact: BuildArtifact): string {
   switch (gate) {
     case 'scope_check':

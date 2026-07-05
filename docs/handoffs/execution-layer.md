@@ -64,9 +64,17 @@ npx tsx scripts/real-run.ts           # queue を poll → 実セッション �
 - `scripts/real-run-sandbox.ts` / `scripts/real-run.ts` — scaffold ＋ driver
 - `agents/generator.md` — 実装エージェントの人格（`loadRolePrompt` が読む）。`AgentRole` enum が名簿
 
+## 済み（2026-07-05・deterministic core）
+
+- **evaluator パネル（task 11）＝実装済み**。`src/pipeline/panel.ts`（`runPanel`/`aggregatePanelVerdict`/
+  `deterministicPerspectiveGrade`/`PERSPECTIVES`）・`repair.ts` `buildPanelRepairBrief`・`metrics.ts` の
+  attempt 集約・`graders` `hasBlockingGateFailure`。`test/panel.test.ts`（12・9 AC を grounding）green。
+  署名 spec `docs/specs/evaluator-panel/`＋ISSUE-0003/0004/0005（contract-drafted）＋ADR-0006 吸収済み。
+  **残り**: 実 tmux backend で 6 観点 LLM セッションを `PerspectiveGrader` の裏に差す（今は決定論 grader のみ）。
+
 ## 残りスライス（next）— premises は ADR-0006
 
-1. **evaluator パネル（task 11）**: realises `ARCH-execution-006`。
+1. ~~**evaluator パネル（task 11）**~~ ＝上記「済み」（決定論コア）。実セッション backend 差し込みが残り。realises `ARCH-execution-006`。
    - 実行単位＝**観点ごとの独立 tmux セッション**（E1。サブエージェント方式は決定論境界・liveness と衝突するため不採用）。
    - **functionality は決定論 grader backend のまま**（E2）。LLM セッションは 6 観点（codeQuality / testQuality /
      ux / accessibility / security / type-design）のみ。**`agents/evaluator-<観点>.md` 6 本を著述**。

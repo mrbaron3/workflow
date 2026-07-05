@@ -14,6 +14,7 @@
 
 import type { EvalRun, Issue } from '../domain/schema.js';
 import type { Store } from '../store/store.js';
+import { aggregatePanelVerdict } from '../pipeline/panel.js';
 
 export interface IssueStats {
   issueId: string;
@@ -110,11 +111,21 @@ function perSample(runs: EvalRun[]): PerSample[] {
   }
   const out: PerSample[] = [];
   for (const [sampleIndex, sruns] of bySample) {
-    const first = sruns.find((r) => r.attempt === 1);
+    // AC-PANEL-009: a panel produces one EvalRun PER PERSPECTIVE for each attempt. Collapse
+    // them into one aggregate verdict per attempt (DOM-execution-004) before counting, so the
+    // sample/attempt denominators never scale with the perspective count. Legacy single
+    // (perspective=null) runs aggregate to their own verdict — identical to the old behaviour.
+    const byAttempt = new Map<number, EvalRun[]>();
+    for (const r of sruns) {
+      const arr = byAttempt.get(r.attempt) ?? [];
+      arr.push(r);
+      byAttempt.set(r.attempt, arr);
+    }
+    const attemptVerdict = (n: number): string => aggregatePanelVerdict(byAttempt.get(n) ?? []);
     out.push({
       sampleIndex,
-      eventuallyPassed: sruns.some((r) => r.verdict === 'approve'),
-      firstApproved: first?.verdict === 'approve',
+      eventuallyPassed: [...byAttempt.keys()].some((n) => attemptVerdict(n) === 'approve'),
+      firstApproved: byAttempt.has(1) && attemptVerdict(1) === 'approve',
       attempts: sruns.reduce((m, r) => Math.max(m, r.attempt), 0),
       agent: sruns[0]?.agent ?? 'mock',
     });
