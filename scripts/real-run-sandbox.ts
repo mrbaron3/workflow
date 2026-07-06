@@ -183,11 +183,19 @@ store.save();
 // maxRepairs bounds the live repair loop (attempts = maxRepairs + 1). Default 0 = one attempt
 // (cheapest grounded run). Raise it to watch live repair: on a lens's request_changes the harness
 // feeds the findings back into the next generator session. e.g.  MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts
+// Model overrides (config.models). GEN_MODEL weakens the coder so a first attempt is likelier to
+// fall short and trip the repair loop — the reliable lever HARD alone lacks against a strong
+// generator (see the handoff: Opus 4.8 passed attempt 1 even with the bait). REVIEW_MODEL cheapens
+// the panel. Both absent = inherit the user's default model.  e.g.  GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1 …
+const genModel = process.env.GEN_MODEL;
+const reviewModel = process.env.REVIEW_MODEL;
+const models = genModel || reviewModel ? { generator: genModel, reviewer: reviewModel } : undefined;
 const config: HarnessConfig = {
   ...DEFAULT_CONFIG,
   generator: 'claude',
   samples: 1,
   maxRepairs: process.env.MAX_REPAIRS ? Number(process.env.MAX_REPAIRS) : 0,
+  ...(models ? { models } : {}),
   target: {
     repo: '.harness/sandbox',
     baseRef: 'HEAD',
@@ -202,7 +210,9 @@ const config: HarnessConfig = {
 };
 saveConfig(ROOT, config);
 
-console.log(`✓ scaffolded sandbox at ${path.relative(ROOT, SANDBOX)}${HARD ? ' [HARD: repair-bait acceptance test]' : ''}`);
+const modelNote = models ? ` [models: generator=${genModel ?? 'default'}, reviewer=${reviewModel ?? 'default'}]` : '';
+console.log(`✓ scaffolded sandbox at ${path.relative(ROOT, SANDBOX)}${HARD ? ' [HARD: repair-bait acceptance test]' : ''}${modelNote}`);
 console.log(`✓ seeded ${issueId} (contract-drafted, assignedAgent=claude) + config (grounded target, maxRepairs=${config.maxRepairs})`);
 console.log(`\nNext:  LENSES=codeQuality npx tsx scripts/real-panel-run.ts   (cheap: generator + 1 review)`);
 if (HARD) console.log(`       (HARD run: attempt 1 may fail AC-3 → watch the repair loop drive attempt 2)`);
+if (!genModel) console.log(`       To reliably trip the repair loop, weaken the coder:  GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts`);

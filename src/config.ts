@@ -40,6 +40,20 @@ export interface GateConfig {
   baseBranch?: string;
 }
 
+/**
+ * Claude model per interactive session role (ADR-0005 / _system/execution, realising the tmux
+ * substrate). Each field is a `--model` alias/id ('haiku', 'opus', or a full model name); absent
+ * = inherit the user's default model (current behaviour). Set `generator` to a weaker model to
+ * exercise the live repair loop — a weaker coder is likelier to need a second attempt, which the
+ * strong-generator × easy-task case never triggers (see the execution-layer handoff). Set
+ * `reviewer` to a cheaper model to trim the six-lens panel's cost. The two are independent so a
+ * weak coder can be judged by strong reviewers.
+ */
+export interface ModelConfig {
+  generator?: string;
+  reviewer?: string;
+}
+
 export interface HarnessConfig {
   /** Active generator backend. "mock" runs fully offline; others shell out. */
   generator: GeneratorAgent;
@@ -62,6 +76,8 @@ export interface HarnessConfig {
   target?: TargetRepoConfig;
   /** Human review gate backend (ADR-0006 G1). Absent = store-direct gate (current behavior). */
   gate?: GateConfig;
+  /** Per-role session model overrides. Absent = every role inherits the user's default model. */
+  models?: ModelConfig;
   /** Evaluator panel tuning (ADR-0006 E4). */
   panel?: {
     /** Max review sessions to fan out concurrently (saturation guard: machine / rate limits). */

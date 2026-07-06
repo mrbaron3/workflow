@@ -11,8 +11,10 @@ ai-managed issue を無人で「実装（実セッション）→ 実 tsc/vitest
 ＋system-design check で担保。すべて origin/main に push 済み（`git log --oneline` 参照）。
 
 **残タスクは実質1つ**: 「live repair loop の**発火**を grounded で観測する」。機構は決定論テスト済みだが、実走行で
-発火させるには attempt 1 が落ちる必要があり、強い generator（Opus 4.8）× 簡単な課題（roman）では稀。→ `HARD` mode
-（repair-bait）を仕込み中（下記）。
+発火させるには attempt 1 が落ちる必要があり、強い generator（Opus 4.8）× 簡単な課題（roman）では稀。`HARD` mode
+（repair-bait）だけでは Opus 4.8 に効かなかった（4/4 approve・下記実験結果）。→ **option (a) を実装済み**:
+`config.models.generator` で generator セッションだけ弱いモデル（例 haiku）に落とせる（`--model` 配線）。
+`GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1` が発火を狙う本命の組み合わせ（下記）。
 
 ## 最初に読むもの（canonical）
 
@@ -31,6 +33,7 @@ ai-managed issue を無人で「実装（実セッション）→ 実 tsc/vitest
 - **横断掃除**: headless `claude -p` seam 撤去（`cli.ts`/`config.cli` 削除・`makeRunner` は mock 以外 throw）・旧 `run.ts`/`real-run.ts` 削除・**scoped-context assembler**（`scoped-context.ts`・`ARCH-execution-007`・`config.target.systemDir` opt-in・sandbox に roman 設計層を種として仕込み済み）。
 - **best-of-N**（`loop.ts` `runBestOfN`・既定 samples:1＋first-approve-stop・`MEASURE=1` で pass@k/pass^k）。
 - **grounded 実走で発見した2バグを修正**: (1) `sendPrompt` の submit race（Enter 取りこぼし→typed-but-unsent→stuck）を submit-and-verify retry で解消（`tmux.ts`・`PaneDriver` seam）。(2) worktree 作成が stale dir に非冪等（`worktree.ts` `clearWorktree` で解消）。両方 決定論テスト付き。
+- **per-role モデル選択**（option (a) 実装）: `config.models.{generator,reviewer}` → 各セッションの `claude --model`。純関数 `buildLaunchCommand`（`tmux.ts`）に切り出して決定論テスト（`test/launch-command.test.ts`）。既定 undefined＝ユーザ既定モデル継承（＝従来挙動）。無効モデルは pre-validate せず claude に投げて `monitorLiveness` が stuck として surface（never-silent 方針）。sandbox は `GEN_MODEL`/`REVIEW_MODEL` env で opt-in。`config.models` 素通し（`loadConfig`）を `test/config.test.ts` で固定。
 
 ## grounded 実走の知見
 
@@ -59,16 +62,20 @@ repair は attempt 1 が `request_changes` のときだけ発火する。強い 
 attempt 2 が締め直す——という賭け（**確定ではない**: strict parsing を最初から選ぶ generator は attempt 1 で通る）。
 
 ```bash
-HARD=1 MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts        # repair-bait を仕込む（attempts=2）
+# 本命（option a）: 弱い generator × repair-bait。弱いコーダは attempt 1 で締め切れず repair を踏みやすい。
+GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts   # generator だけ haiku・reviewer は既定(強)
 LENSES=testQuality npx tsx scripts/real-panel-run.ts           # 安く回す（functionality が gate。testQuality は1観点）
+# 参考（bait のみ・Opus 4.8 では不発だった）: HARD=1 MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts
 # attempt 1 が request_changes なら: ログに "↻ request_changes → repair"、EvalRun に attempt=1,2 の両方、
 #   attempt 2 の generator が brief 付きで worktree 再利用して修正 → approve or 上限で escalate。
-# 落ちなければ（attempt 1 で approve）: 運任せなので数回引く or full panel（LENSES 無指定）で発火率↑。
+# 落ちなければ（attempt 1 で approve）: さらに弱いモデル or full panel（LENSES 無指定）で発火率↑。
 ```
 
 **別解**: full panel（6観点）＋`MAX_REPAIRS=1` は「どれか1観点が dissent」で発火するので単観点より当たりやすい（が ~7-14 セッションと高コスト）。あるいは決定論テスト（`test/repair-loop.test.ts`・`test/live-repair.test.ts`）で機構は既に green＝「発火の実走観測」は nice-to-have。
 
 **実験結果（2026-07-06・4走行）**: attempt 1 は**4/4 で approve**。`HARD` bait すら不発 — generator（Opus 4.8）は terse な「reject malformed input」だけから**最初から canonical-form 正規表現で strict 実装**し（scoped-context の `DOM-roman-002` を根拠にコメントで小文字/空白/非正準を列挙）、bait が前提にした「寛容な正規化」を選ばなかった。**結論: この generator × この課題クラスでは repair の grounded 発火を安定に誘発できない**（機構は決定論テストで実証済み）。grounded で見たいなら (a) より弱い generator（例 haiku）に落とす、(b) 本当に難しい/曖昧な課題を種にする、(c) 決定論の実証で十分とする、のいずれか。皮肉だが「scoped-context が効いて generator が堅牢になった」ことが bait を難しくした側面もある。
+
+**追記（option a を実装済み・未実走）**: `config.models.generator`（＋sandbox の `GEN_MODEL` env）を追加し、generator セッションだけ弱いモデルに落とせるようにした。`GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1` で「弱いコーダ × 締め切りにくい bait × strong reviewer」を作れる＝発火の本命。**まだ grounded では回していない**（cost・要 claude 認証）ので、実走観測は次セッションの残タスク。配線自体は決定論テスト（`launch-command`・`config`）で green。回して発火したら EvalRun に attempt=1,2 が載り、falsePassRate/graderAgreement 較正データが増える。
 
 ## 落とし穴・不変条件
 
@@ -78,4 +85,4 @@ LENSES=testQuality npx tsx scripts/real-panel-run.ts           # 安く回す（
 - **liveness surfacing**（`ARCH-execution-014`）: stuck セッションは kill/timeout せず生かす（`tmux attach` で人間が引き継ぐ）。
 - **headless 非目標**: 実 agent は対話 tmux セッション（`claude -n`）。`claude -p` は使わない・`makeRunner` は mock 以外 throw。
 - **オーケストレータは決定論**: poll/dispatch/grade/gate/store を LLM に委ねない。`agentops run`（coordinator）は mock demo 用の別経路（approve→自動 released）で execution 層の live 経路と混同しない。
-- 環境: tmux 3.7・claude 2.1.x（Opus 4.8）。generator worktree=`ao-issue-*-s*`、review=`ao-eval-issue-*-s*-<観点>`。
+- 環境: tmux 3.7・claude 2.1.x（既定モデル＝Opus 4.8。`config.models.{generator,reviewer}` で role 別に上書き可・未指定は既定継承）。generator worktree=`ao-issue-*-s*`、review=`ao-eval-issue-*-s*-<観点>`。

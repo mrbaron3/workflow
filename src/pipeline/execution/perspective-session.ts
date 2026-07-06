@@ -186,7 +186,8 @@ export async function runPerspectiveSessions(
   });
 
   // phase 2 (concurrent): the read-only review sessions — the only slow, non-deterministic part
-  const statuses = await mapPool(jobs, maxConcurrent, (job) => runReviewSession(input.issueKey, job, log));
+  const reviewerModel = config.models?.reviewer; // undefined = inherit the user's default model
+  const statuses = await mapPool(jobs, maxConcurrent, (job) => runReviewSession(input.issueKey, job, log, reviewerModel));
 
   // phase 3 (sequential): collect findings from clean reviews, tear down finished worktrees
   const completed: string[] = [];
@@ -207,13 +208,13 @@ export async function runPerspectiveSessions(
 }
 
 /** Run one read-only review session in its prepared worktree; returns its status (no git bookkeeping). */
-async function runReviewSession(issueKey: string, job: ReviewJob, log: (m: string) => void): Promise<ReviewStatus> {
+async function runReviewSession(issueKey: string, job: ReviewJob, log: (m: string) => void, model?: string): Promise<ReviewStatus> {
   const session = `ao-eval-${issueKey}-${job.key}`;
   log(`  ▸ ${session}: read-only review`);
   // acceptEdits + Bash so the review can inspect the tree and write findings.json WITHOUT hanging
   // on an approval prompt. Read-only is enforced by ISOLATION (own worktree) + the changedFiles
   // guard below; a review that edits its checkout is discarded and never touches the build.
-  launchSession({ session, cwd: job.reviewWt, allowedTools: ['Read', 'Write', 'Bash'], permissionMode: 'acceptEdits' });
+  launchSession({ session, cwd: job.reviewWt, allowedTools: ['Read', 'Write', 'Bash'], permissionMode: 'acceptEdits', model });
   await waitForReady(session);
   const submitted = await sendPrompt(session, `Read .agentops/eval/${job.key}/PROMPT.md and do exactly what it says.`);
   if (!submitted) log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);

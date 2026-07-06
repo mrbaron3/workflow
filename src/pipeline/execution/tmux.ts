@@ -22,6 +22,9 @@ export interface LaunchOpts {
   allowedTools?: string[];
   /** Permission mode; `acceptEdits` = semi-autonomous HOW (P1), no per-edit approval. */
   permissionMode?: 'acceptEdits' | 'default' | 'plan';
+  /** Claude model alias/id for THIS session (`--model`). Absent = inherit the user's default
+   *  model. Set it per role to weaken the generator (bait the repair loop) or cheapen reviews. */
+  model?: string;
   cols?: number;
   rows?: number;
 }
@@ -31,13 +34,25 @@ function tmux(args: string[]): { ok: boolean; stdout: string; stderr: string } {
   return { ok: res.status === 0, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
 }
 
-/** Launch an interactive Claude Code session, detached, in its own tmux window. */
-export function launchSession(opts: LaunchOpts): void {
+/**
+ * Build the `claude` command line the tmux window runs. Pure + exported so the flag wiring
+ * (allowedTools, permission mode, optional `--model`) is unit-testable without spawning tmux —
+ * the same seam discipline as buildGeneratorPrompt and the PaneDriver. An invalid model string is
+ * NOT pre-validated here: claude surfaces it and monitorLiveness flags the session as stuck (the
+ * codebase's never-silent stance), rather than a duplicated allow-list drifting from the CLI.
+ */
+export function buildLaunchCommand(opts: LaunchOpts): string {
   const allowed = (opts.allowedTools ?? ['Read', 'Edit', 'Write']).join(' ');
-  const claude =
+  const model = opts.model ? ` --model ${opts.model}` : ''; // absent = inherit the user's default model
+  return (
     `claude -n ${opts.session} ` +
     `--permission-mode ${opts.permissionMode ?? 'acceptEdits'} ` +
-    `--allowedTools '${allowed}'`;
+    `--allowedTools '${allowed}'${model}`
+  );
+}
+
+/** Launch an interactive Claude Code session, detached, in its own tmux window. */
+export function launchSession(opts: LaunchOpts): void {
   killSession(opts.session); // idempotent: clear any stale window of the same name
   const res = tmux([
     'new-session',
@@ -50,7 +65,7 @@ export function launchSession(opts: LaunchOpts): void {
     String(opts.rows ?? 50),
     '-c',
     opts.cwd,
-    claude,
+    buildLaunchCommand(opts),
   ]);
   if (!res.ok) throw new Error(`tmux new-session failed: ${res.stderr || res.stdout}`);
 }

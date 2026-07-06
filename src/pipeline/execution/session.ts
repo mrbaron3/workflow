@@ -84,7 +84,9 @@ export async function runGeneratorSession(
   // Bash is allowed so the agent can run tests/typecheck to check its own work WITHOUT hanging on
   // an approval prompt in this detached session (a grounded run showed it stalls otherwise). The
   // harness is still the authoritative grader — self-checks don't count as evidence.
-  launchSession({ session, cwd: wt, allowedTools: ['Read', 'Edit', 'Write', 'Bash'], permissionMode: 'acceptEdits' });
+  // model override (config.models.generator): weaken the coder to exercise the repair loop, or
+  // leave undefined to inherit the user's default model.
+  launchSession({ session, cwd: wt, allowedTools: ['Read', 'Edit', 'Write', 'Bash'], permissionMode: 'acceptEdits', model: config.models?.generator });
   await waitForReady(session, 20_000);
   const submitted = await sendPrompt(
     session,
