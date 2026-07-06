@@ -1,7 +1,8 @@
-# ハンドオフ：execution 層 — 全機能実装済み＋grounded 実証済み。残るは「repair の実走観測」のみ
+# ハンドオフ：execution 層 — 全機能実装済み＋grounded 実証済み（repair の実走発火も観測済み）
 
 > 別セッションで cold-start するための引き継ぎ（**transient**・完了後は削除可）。作成: 2026-07-06。
 > 前回このファイルは「完了」で一度削除したが、repair loop の grounded 観測の実験が継続中のため再作成。
+> **2026-07-06 追記: repair loop の grounded 発火を観測（`GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1` の 1 走行目）。長らくの残タスクは解消。以降は真の transient。**
 
 ## 一言で
 
@@ -10,11 +11,13 @@ ai-managed issue を無人で「実装（実セッション）→ 実 tsc/vitest
 人間 release → humanVerdict 較正」まで自律駆動する。決定論は `npm test`（**180+ green**）＋`npm run typecheck`
 ＋system-design check で担保。すべて origin/main に push 済み（`git log --oneline` 参照）。
 
-**残タスクは実質1つ**: 「live repair loop の**発火**を grounded で観測する」。機構は決定論テスト済みだが、実走行で
-発火させるには attempt 1 が落ちる必要があり、強い generator（Opus 4.8）× 簡単な課題（roman）では稀。`HARD` mode
-（repair-bait）だけでは Opus 4.8 に効かなかった（4/4 approve・下記実験結果）。→ **option (a) を実装済み**:
-`config.models.generator` で generator セッションだけ弱いモデル（例 haiku）に落とせる（`--model` 配線）。
-`GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1` が発火を狙う本命の組み合わせ（下記）。
+**この残タスクは解消済み**: 「live repair loop の**発火**を grounded で観測する」を達成。経緯: 機構は決定論テスト済み
+だが実走発火には attempt 1 の request_changes が要る。`HARD` bait だけでは Opus 4.8 も Haiku も**厳格実装**を選んで
+不発（下記実験結果）。**option (a)**（`config.models.generator` で generator だけ弱いモデルに落とす `--model` 配線）を
+実装し、`GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1` を回したところ**1 走行目で発火**した（下記「発火観測」）。
+発火の実体は functionality の hard-fail ではなく **testQuality（Opus）の request_changes**——弱い haiku が
+canonical round-trip check を欠いた実装を書き、strong reviewer が**コードを実行して**非正準受理バグ（`fromRoman('IIX')=10` 等）を
+突いた。**弱いコーダ × 強い敵対的レビュアの dissent** が発火条件。機構・`config.models`・prompt 監査（下記）は全て稼働。
 
 ## 最初に読むもの（canonical）
 
@@ -34,6 +37,7 @@ ai-managed issue を無人で「実装（実セッション）→ 実 tsc/vitest
 - **best-of-N**（`loop.ts` `runBestOfN`・既定 samples:1＋first-approve-stop・`MEASURE=1` で pass@k/pass^k）。
 - **grounded 実走で発見した2バグを修正**: (1) `sendPrompt` の submit race（Enter 取りこぼし→typed-but-unsent→stuck）を submit-and-verify retry で解消（`tmux.ts`・`PaneDriver` seam）。(2) worktree 作成が stale dir に非冪等（`worktree.ts` `clearWorktree` で解消）。両方 決定論テスト付き。
 - **per-role モデル選択**（option (a) 実装）: `config.models.{generator,reviewer}` → 各セッションの `claude --model`。純関数 `buildLaunchCommand`（`tmux.ts`）に切り出して決定論テスト（`test/launch-command.test.ts`）。既定 undefined＝ユーザ既定モデル継承（＝従来挙動）。無効モデルは pre-validate せず claude に投げて `monitorLiveness` が stuck として surface（never-silent 方針）。sandbox は `GEN_MODEL`/`REVIEW_MODEL` env で opt-in。`config.models` 素通し（`loadConfig`）を `test/config.test.ts` で固定。
+- **発行プロンプトの監査保全**（`PromptRecord`・`DATA-execution-006`）: Session は揮発（`DOM-execution-002`）で `.agentops/PROMPT.md` は repair ごとに上書き＋wipe されるので、attempt 1 の本文と repair brief が失われていた。それを store（`DB.promptRecords`・additive `default([])`）へ**監査射影**として写す（実行時揮発性は不変）。1 行＝`(issue, sample, attempt, role)`＋`model`/`outcome`/本文インライン。seam の上（`live.ts` の `runLiveSample`）で書き、session 層は本文を返すだけ（`SessionResult.prompt`）。stuck attempt は EvalRun を生まないので `outcome` 付きの唯一の足跡。決定論テスト `test/prompt-record.test.ts`。上記「発火観測」で実走実証。
 
 ## grounded 実走の知見
 
@@ -76,6 +80,23 @@ LENSES=testQuality npx tsx scripts/real-panel-run.ts           # 安く回す（
 **実験結果（2026-07-06・4走行）**: attempt 1 は**4/4 で approve**。`HARD` bait すら不発 — generator（Opus 4.8）は terse な「reject malformed input」だけから**最初から canonical-form 正規表現で strict 実装**し（scoped-context の `DOM-roman-002` を根拠にコメントで小文字/空白/非正準を列挙）、bait が前提にした「寛容な正規化」を選ばなかった。**結論: この generator × この課題クラスでは repair の grounded 発火を安定に誘発できない**（機構は決定論テストで実証済み）。grounded で見たいなら (a) より弱い generator（例 haiku）に落とす、(b) 本当に難しい/曖昧な課題を種にする、(c) 決定論の実証で十分とする、のいずれか。皮肉だが「scoped-context が効いて generator が堅牢になった」ことが bait を難しくした側面もある。
 
 **追記（option a を実装＋grounded 実走・2026-07-06）**: `config.models.generator`（＋sandbox の `GEN_MODEL` env）で generator セッションだけ弱いモデルに落とせるようにし、`GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1 → LENSES=testQuality` を実走した。**モデル上書きは grounded で機能**（generator pane に `Haiku 4.5`・review pane に `Opus 4.8` を確認＝role 別 `--model` 配線が実セッションを駆動）。**だが repair はまた不発**: Haiku の attempt 1 も**厳格実装**（`fromRoman` が `/^[IVXLCDM]+$/` で小文字/空白を弾き、`toRoman(result) !== s` の canonical round-trip check で `IIII`/`IXIX` 等を弾く）で HARD 受け入れテストを全通過 → functionality=approve(1.0)、testQuality も approve(0.9・minor 1件のみ：`fromRoman` の out-of-range guard `roman.ts:74-76` を直接突く受け入れケースが無い、という鋭い指摘) → EvalRun は attempt=1 のみ・needs-human-review。**弱いモデルでも発火しなかった**のは、scoped-context が round-trip（`LANG-roman-001`）と canonical form（`DOM-roman-002`）を prompt に注入する＝**モデルを弱めても設計シグナルは弱まらない**ため（Opus で見た皮肉が Haiku でも再現）。全セッション clean teardown（submit-race・worktree 冪等の修正が保持・stuck 無し）。**結論の更新: この課題クラスでは generator を haiku に落としても repair の grounded 発火は誘発できない**。発火を実走で見たいなら残る手は (b) 本当に曖昧/難しい課題を種にする（例: 仕様が terse で「寛容 vs 厳格」がコイントス・かつ scoped-context に厳格判断の根拠を置かない）か、あるいは testQuality の ~1/3 dissent を引くまで full panel を複数回引く。**機構自体は決定論テストで実証済み**（`repair-loop`・`live-repair`）なので grounded 発火は依然 nice-to-have。
+
+**発火観測（2026-07-06・landmark）**: 上の「複数回引く」を実行——`GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1 → LENSES=testQuality`
+を最大8回ループ（各回 sandbox を wipe して独立・attempt=2 の generator PromptRecord が出たら break）したところ**1 走行目で発火**。
+連鎖: attempt 1 は functionality=approve(1.0) だが、この回の Haiku は前回と違い **canonical round-trip check を欠いた実装**を書いた
+（generator 非決定性）→ testQuality（Opus）が**コードを実行して**非正準受理バグ（`fromRoman('IIX')=10`・`'IXX'=19`・`'MCMM'=2900`）を
+発見し **request_changes(0.6)**（2 findings）→ 機構が 2-fix の repair brief を生成（ログ `↻ request_changes → repair (2 fix(es))`）→
+**attempt 2 の generator が brief 付きで発火**（PromptRecord attempt=2・`model='haiku'`・本文 6286 字＝attempt 1 の 4018 字＋`## Repair` 節）。
+attempt 2 は **scope_check（blocker）で gate-fail → needs-human-review**（converge せず）。
+
+- **教訓**: 発火条件は「functionality の hard-fail」ではなく **弱いコーダ × 強い敵対的レビュアの dissent**。前段の不発は Haiku が
+  たまたま strict 実装を選んだから。generator 非決定性ゆえ**単観点でも数回引けば ~1/3 で dissent → 発火**する（今回は 1 回で当たった）。
+- **prompt 監査（`PromptRecord`）がこの実験の計測器になった**: attempt=2 の存在＝発火の判定に使い、repair brief 本文もそのまま保全。
+  上書き・wipe される PROMPT.md では消えていた brief が store に残る＝機能の価値が実走で実証。
+- **⚠ 派生 finding（要検討・未修正）**: attempt 2 の gate-fail は **testQuality の repair brief が「テストを追加せよ」と要求するのに、contract の
+  `scope.include` が `src/**` のみ（`test/**` は scope 外）**という矛盾から来た可能性が高い。brief に従うと scope 違反で `scope_check` が落ちる。
+  = レビュアが要求するカバレッジを generator が scope 内で満たせない構造的テンション。generator の scope に test dir を足すか、
+  testQuality の要求を in-scope に限定するか、いずれ判断が要る（この課題クラス固有か、契約設計の一般問題かは要調査）。
 
 ## 落とし穴・不変条件
 
