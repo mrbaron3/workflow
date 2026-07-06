@@ -259,6 +259,33 @@ export const EvalTask = z.object({
 });
 export type EvalTask = z.infer<typeof EvalTask>;
 
+/**
+ * The exact prompt text issued to a role session, preserved for audit (DATA-execution-006).
+ * A Session is volatile by design (DOM-execution-002): its `.agentops/PROMPT.md` is OVERWRITTEN in
+ * place on each repair attempt and lives only under the gitignored, wiped `.harness/` worktree — so
+ * without this the text of attempt 1 (and how the repair brief reshaped attempt 2) is lost. This is
+ * an additive AUDIT projection: it does not change the Session's runtime volatility, it copies the
+ * issued prompt into the store (the single inspectable SoT). One row per (issue, sample, attempt,
+ * role). `perspective` names the lens for a reviewer prompt (null for the generator); `model` is the
+ * resolved `--model` for that session (null = the user's default model); `outcome` is the session's
+ * liveness result so a stuck attempt — which produces no EvalRun — still leaves a durable trace.
+ */
+export const PromptRecord = z.object({
+  id: z.string(), // PROMPT-0001
+  issueId: z.string(),
+  prId: z.string(),
+  sampleIndex: z.number().int().nonnegative(),
+  attempt: z.number().int().positive(), // 1-based; > 1 carries the repair brief
+  role: z.enum(['generator', 'reviewer']).default('generator'),
+  perspective: z.string().nullable().default(null), // reviewer lens; null for the generator
+  agent: GeneratorAgent,
+  model: z.string().nullable().default(null), // resolved --model; null = user default
+  outcome: z.string().nullable().default(null), // completed | stuck | timeout; null = not captured
+  prompt: z.string(),
+  createdAt: z.string(),
+});
+export type PromptRecord = z.infer<typeof PromptRecord>;
+
 // --- spec authoring (M20 signing) ------------------------------------------
 
 /**
@@ -310,6 +337,7 @@ export const DB = z.object({
   prs: z.array(PR).default([]),
   evalRuns: z.array(EvalRun).default([]),
   evalTasks: z.array(EvalTask).default([]),
+  promptRecords: z.array(PromptRecord).default([]), // audit trail of issued prompts (additive)
   specStates: z.array(SpecState).default([]),
 });
 export type DB = z.infer<typeof DB>;

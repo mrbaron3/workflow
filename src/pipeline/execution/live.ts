@@ -17,7 +17,7 @@ import path from 'node:path';
 import type { Issue } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
-import { PR } from '../../domain/schema.js';
+import { PR, PromptRecord } from '../../domain/schema.js';
 import { pollable } from './guard.js';
 import { runGeneratorSession } from './session.js';
 import { groundArtifact } from './grade.js';
@@ -66,6 +66,15 @@ async function runLiveSample(
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
     log(`▶ ${issue.id} s${sampleIndex}: generator session (attempt ${attempt}/${maxAttempts})`);
     const sess = await runGeneratorSession(config, { issue, contract, sampleIndex, attempt, repairBrief }, harnessRoot, log);
+    // Persist the exact prompt for audit (DATA-execution-006) BEFORE the stuck check, so a stuck
+    // attempt — which produces no EvalRun — still leaves the issued text (incl. repair brief) durable.
+    store.addPromptRecord(
+      PromptRecord.parse({
+        id: store.nextId('PROMPT'), issueId: issue.id, prId: pr.id, sampleIndex, attempt,
+        role: 'generator', agent: config.generator, model: config.models?.generator ?? null,
+        outcome: sess.outcome, prompt: sess.prompt, createdAt: nowISO(),
+      }),
+    );
     if (sess.outcome !== 'completed') {
       log(`  ⚠ ${issue.id} s${sampleIndex}: generator ${sess.outcome} — escalating, session kept alive`);
       return { stuck: true };

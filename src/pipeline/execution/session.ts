@@ -35,6 +35,9 @@ export interface SessionResult {
   outcome: LivenessOutcome;
   changed: string[];
   paneTail: string;
+  /** The exact prompt written to PROMPT.md this attempt — returned so the orchestrator can persist
+   *  it for audit (the file itself is overwritten next attempt and wiped with .harness/). */
+  prompt: string;
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -76,7 +79,8 @@ export async function runGeneratorSession(
   const scoped = target.systemDir
     ? renderScopedContext(contextFor(input.issue, path.resolve(harnessRoot, target.systemDir)))
     : '';
-  fs.writeFileSync(path.join(agentDir, 'PROMPT.md'), buildGeneratorPrompt(input, target, scoped), 'utf8');
+  const prompt = buildGeneratorPrompt(input, target, scoped);
+  fs.writeFileSync(path.join(agentDir, 'PROMPT.md'), prompt, 'utf8');
   const sentinelPath = path.join(agentDir, 'done.json');
   fs.rmSync(sentinelPath, { force: true }); // clear any stale sentinel from a prior attempt
 
@@ -118,7 +122,7 @@ export async function runGeneratorSession(
   // The build's cumulative change set comes from the commit once there is one; fall back to the
   // working tree for a stuck/empty session (nothing committed).
   const changed = committed ? buildChangedFiles(wt) : changedFiles(wt);
-  return { worktree: wt, branch, session, outcome, changed, paneTail };
+  return { worktree: wt, branch, session, outcome, changed, paneTail, prompt };
 }
 
 /**

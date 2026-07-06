@@ -7,7 +7,9 @@
 >
 > **execution はほぼ永続実体を持たない**——Session/Worktree/Sentinel は揮発（`DOM-execution-002`）で、真実は
 > 既存の Issue/PR/EvalRun に写る。Scoping Guard は既存 `Issue.assignedAgent` を*再利用*するだけで新フィールドを
-> 足さない（下記 §契約）。新規の永続状態は、パネル（`DOM-execution-003`）が生む**観点タグ**の1点のみ。
+> 足さない（下記 §契約）。新規の永続実体は2点のみ: パネル（`DOM-execution-003`）が生む**観点タグ**（`DATA-execution-001`）と、
+> 揮発する発行プロンプトの**監査射影**（`DATA-execution-006`）。後者は Session の実行時揮発性を変えない——PROMPT.md は
+> 従来どおり上書き・wipe され、store には監査用のコピーだけが durable に写る。
 
 ## 論理モデル（構造化 SSOT＝コードスキーマ参照）
 
@@ -19,6 +21,9 @@
 - **DATA-execution-005 `PR.externalRef`** — 審査ゲートの GitHub PR 投影への逆参照（[ADR-0006](../../../decisions/ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) G1・`ARCH-execution-008`）。
   source: `src/domain/schema.ts` → `PR`（Zod・additive に `externalRef?` を追加。実体は `PrExternalRef = { provider: 'github', number, url }`）。owner: `openGate` が投影時に書き、`pollGate` が PR 状態のポーリング先として読む（`src/pipeline/execution/gate.ts`）。
   形: `externalRef: PrExternalRef | null`（`null` = 未投影＝store 直ゲート／ローカル sandbox）。**store が SoT**（`ARCH-execution-009`・ADR-0001）——これは真実でなく投影への back-ref。PR の merged/closed は人間判定の入力元にすぎず、確定は `recordHumanDecision`（`released`／repair）＋`EvalRun.humanVerdict`（G3 較正）に写る。
+- **DATA-execution-006 `PromptRecord`** — 役割セッションに発行した**プロンプト本文の監査射影**; 実体化 `DOM-execution-002`（Session が所有する scoped-context/プロンプト・`LANG-execution-007`）。Session の PROMPT.md は repair attempt ごとに**同一パスへ上書き**され `.harness/` ごと wipe される揮発物なので、attempt 1 の本文と「repair brief が attempt 2 をどう変えたか」が失われる。それを store（唯一の inspectable SoT）へ durable にコピーする。
+  source: `src/domain/schema.ts` → `PromptRecord`（Zod・新規 collection `DB.promptRecords`）。owner: オーケストレータ（`src/pipeline/execution/live.ts` の `runLiveSample`）が generator セッション完了直後に1件追記。**seam の上で書く**（`DOM-execution-008`）——セッション層は store を触らず、発行本文を返すだけ。
+  形: 1 行 = `(issueId, prId, sampleIndex, attempt, role)`。`role: 'generator' | 'reviewer'`（現状 generator のみ発行・reviewer は将来の additive 拡張）、`perspective: string | null`（reviewer の lens・generator は `null`）、`model: string | null`（解決済み `--model`・`null`=ユーザ既定＝`config.models` の射影）、`outcome: string | null`（`completed`/`stuck`/`timeout`——**stuck attempt は EvalRun を生まない**ので、この record が唯一の durable な足跡になる・`DOM-execution-009` の監査版）、`prompt: string`（本文をインラインで保持——`.harness/db.json` は gitignore・ローカル揮発なので肥大は git を汚さない）。
 
 ## エンティティ関係（Mermaid — 上記スキーマから派生）
 
@@ -26,9 +31,17 @@
 erDiagram
   Issue ||--o{ PR : "best-of-N sample"
   PR ||--o{ EvalRun : "観点ごと（perspective 別）"
+  PR ||--o{ PromptRecord : "attempt ごと（発行プロンプト監査）"
   EvalRun {
     string perspective "nullable; null=旧来の単一composite・7観点のいずれか"
     string verdict "approve|request_changes|needs_human（evaluation 所有）"
+  }
+  PromptRecord {
+    int attempt "1-based; >1 は repair brief を含む"
+    string role "generator|reviewer"
+    string model "nullable; 解決済み --model（null=既定）"
+    string outcome "completed|stuck|timeout; stuck は唯一の足跡"
+    string prompt "発行本文（インライン）"
   }
   Issue {
     string assignedAgent "scoping guard: AI 指定＝ai-managed / null=他人所有・非処理"
@@ -40,3 +53,4 @@ erDiagram
 - **DATA-execution-002** — `EvalRun.perspective` は **additive な optional フィールド**: 既存の EvalRun は不在（`null`）として読まれ、旧来の単一 composite 採点として扱う。backfill 無し。この1点を知らない reader は影響を受けない。
 - **DATA-execution-003 スコープガードは新規状態を持たない** — opt-in 指定（`LANG-execution-012`・`DOM-execution-006`）は既存 `Issue.assignedAgent`（`schema.ts`）を*再利用*する: 担当 AI が入っていれば ai-managed、`null` なら他人所有・非処理。新フィールドは足さない。`ai-managed` ラベルは `assignedAgent` の人間可視な射影であって別実体ではない。所有者（「私」vs「他人」）の厳密な区別が要る段階で `owner`/`createdBy` を additive に足す（現状は単一 store のため forward-ref）。
 - **DATA-execution-004 Session/Worktree/Sentinel は非永続** — 揮発（`DOM-execution-002`・`ARCH-execution-009`）。resume は store（PR/Issue status）から在庫を再構成する。worktree パス・branch は既存 `PR.branch` に写り、新しい永続実体を作らない。
+- **DATA-execution-007 `PromptRecord` は additive な監査射影** — 新規 collection `DB.promptRecords` は `default([])`: 既存 DB は空で読まれ、この collection を知らない reader は無影響。backfill 無し。**揮発性の例外ではない**——Session は依然として非永続（`DATA-execution-004`）で、これは実行時状態でなく発行本文の監査コピー。プロンプトはインライン保持だが `.harness/` は gitignore・ローカル揮発なので共有・git を汚さない。将来 reviewer プロンプトや evidence-file 参照へ移す場合も `role`/`perspective`/インライン `prompt` は additive に据え置ける。

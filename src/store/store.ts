@@ -19,6 +19,7 @@ import type {
   Feature,
   Issue,
   PR,
+  PromptRecord,
   Roadmap,
   SpecState,
 } from '../domain/schema.js';
@@ -180,6 +181,19 @@ export class Store {
   addEvalTask(t: EvalTask): EvalTask {
     this.db.evalTasks.push(t);
     return t;
+  }
+
+  // --- prompt records (audit trail of issued prompts) ----------------------
+
+  /** Persist the exact prompt issued to a role session (DATA-execution-006). */
+  addPromptRecord(r: PromptRecord): PromptRecord {
+    this.db.promptRecords.push(r);
+    return r;
+  }
+
+  /** All prompts issued for an issue, in insertion order (sample → attempt → role). */
+  promptsForIssue(issueId: string): PromptRecord[] {
+    return this.db.promptRecords.filter((r) => r.issueId === issueId);
   }
 
   /** Create (and return) the evidence directory for an eval run. */
