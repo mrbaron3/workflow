@@ -215,7 +215,8 @@ async function runReviewSession(issueKey: string, job: ReviewJob, log: (m: strin
   // guard below; a review that edits its checkout is discarded and never touches the build.
   launchSession({ session, cwd: job.reviewWt, allowedTools: ['Read', 'Write', 'Bash'], permissionMode: 'acceptEdits' });
   await waitForReady(session);
-  sendPrompt(session, `Read .agentops/eval/${job.key}/PROMPT.md and do exactly what it says.`);
+  const submitted = await sendPrompt(session, `Read .agentops/eval/${job.key}/PROMPT.md and do exactly what it says.`);
+  if (!submitted) log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
   const outcome = await monitorLiveness(session, job.sentinel, { idleMs: 90_000, hardCapMs: 1000 * 60 * 10, pollMs: 3000 });
 
   if (outcome !== 'completed') {

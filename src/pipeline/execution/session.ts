@@ -86,11 +86,12 @@ export async function runGeneratorSession(
   // harness is still the authoritative grader — self-checks don't count as evidence.
   launchSession({ session, cwd: wt, allowedTools: ['Read', 'Edit', 'Write', 'Bash'], permissionMode: 'acceptEdits' });
   await waitForReady(session, 20_000);
-  sendPrompt(
+  const submitted = await sendPrompt(
     session,
     'Read .agentops/PROMPT.md and do exactly what it says, editing files directly. ' +
       'When finished, create .agentops/done.json containing {"done": true}.',
   );
+  if (!submitted) log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
 
   const outcome = await monitorLiveness(session, sentinelPath, {
     idleMs: 90_000, // pane unchanged this long with no sentinel = stuck

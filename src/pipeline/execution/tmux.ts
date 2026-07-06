@@ -55,13 +55,63 @@ export function launchSession(opts: LaunchOpts): void {
   if (!res.ok) throw new Error(`tmux new-session failed: ${res.stderr || res.stdout}`);
 }
 
-/** Type a prompt into the session's input and submit it (literal keys, then Enter). */
-export function sendPrompt(session: string, prompt: string): void {
+/** The three pane operations sendPrompt needs, behind a seam so its retry logic is unit-testable. */
+export interface PaneDriver {
+  type(session: string, text: string): void; // send-keys -l (literal)
+  enter(session: string): void; // send-keys Enter (submit)
+  capture(session: string): string; // capture-pane -p
+}
+
+const tmuxPaneDriver: PaneDriver = {
   // `-l` sends the string literally so tokens like `{`/`Enter` aren't interpreted as keys.
-  const typed = tmux(['send-keys', '-t', session, '-l', prompt]);
-  if (!typed.ok) throw new Error(`tmux send-keys (text) failed: ${typed.stderr}`);
-  const enter = tmux(['send-keys', '-t', session, 'Enter']);
-  if (!enter.ok) throw new Error(`tmux send-keys (Enter) failed: ${enter.stderr}`);
+  type(session, text) {
+    const r = tmux(['send-keys', '-t', session, '-l', text]);
+    if (!r.ok) throw new Error(`tmux send-keys (text) failed: ${r.stderr}`);
+  },
+  enter(session) {
+    const r = tmux(['send-keys', '-t', session, 'Enter']);
+    if (!r.ok) throw new Error(`tmux send-keys (Enter) failed: ${r.stderr}`);
+  },
+  capture(session) {
+    return tmux(['capture-pane', '-t', session, '-p']).stdout;
+  },
+};
+
+export interface SendPromptOpts {
+  /** How many Enter attempts before giving up (default 4). */
+  attempts?: number;
+  /** How long to wait for the TUI to react to an Enter before judging it dropped (default 1500ms). */
+  settleMs?: number;
+  driver?: PaneDriver; // injectable for tests
+  sleep?: (ms: number) => Promise<void>; // injectable for tests
+}
+
+/**
+ * Type a prompt into the session and submit it, VERIFYING the submission took (returns whether it
+ * did). A single `send-keys Enter` can be dropped before the TUI has committed the typed input —
+ * under concurrency this stranded a review with its prompt typed-but-unsent, idling until the
+ * liveness monitor flagged it stuck (observed in a grounded 6-lens run; the mock never sends a
+ * prompt, so no unit test could have caught it). So we type once, then Enter-and-check in a bounded
+ * loop: a submitted prompt makes the pane start changing (spinner/tokens), a dropped Enter leaves it
+ * static → retry. If every attempt fails we return false and the caller's monitorLiveness still
+ * surfaces the stuck session — never a silent hang.
+ */
+export async function sendPrompt(session: string, prompt: string, opts: SendPromptOpts = {}): Promise<boolean> {
+  const driver = opts.driver ?? tmuxPaneDriver;
+  const wait = opts.sleep ?? sleep;
+  const attempts = opts.attempts ?? 4;
+  const settleMs = opts.settleMs ?? 1500;
+
+  driver.type(session, prompt);
+  await wait(400); // let the typed text render before we compare panes
+
+  for (let i = 0; i < attempts; i++) {
+    const before = driver.capture(session);
+    driver.enter(session);
+    await wait(settleMs);
+    if (driver.capture(session) !== before) return true; // Enter took → the session started working
+  }
+  return false;
 }
 
 /** The visible pane text — used for evidence/debugging, never as a grading signal. */
