@@ -25,6 +25,13 @@ function tmpSystemDir(name: string): string {
     '# Domain',
     '- **DOM-demo-001 Execution Layer** — the layer boundary.',
   ].join('\n'));
+  // LANG elements are defined as TABLE ROWS in the real views, not bullets — the resolver must match both.
+  fs.writeFileSync(path.join(dir, 'ubiquitous-language.md'), [
+    '# Language',
+    '| id | term | meaning |',
+    '|---|---|---|',
+    '| LANG-demo-001 | round-trip | the two functions are exact inverses. |',
+  ].join('\n'));
   return dir;
 }
 
@@ -58,6 +65,13 @@ describe('resolveSystemContext: ids -> defining lines', () => {
     const ctx = resolveSystemContext(['ARCH-demo-001', 'ARCH-demo-999'], dir);
     expect(ctx.missing).toEqual(['ARCH-demo-999']);
     expect(ctx.resolved.find((e) => e.id === 'ARCH-demo-999')!.text).toBeNull();
+  });
+
+  it('resolves an id defined as a table row (LANG convention), not only bullets', () => {
+    const dir = tmpSystemDir('sc-table');
+    const ctx = resolveSystemContext(['LANG-demo-001'], dir);
+    expect(ctx.missing).toEqual([]);
+    expect(ctx.resolved[0]!.text).toContain('round-trip');
   });
 
   it('ignores non-id strings (not counted as missing)', () => {

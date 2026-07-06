@@ -92,6 +92,35 @@ describe('roman numerals', () => {
 `,
 );
 
+// --- system design views (exercise the scoped-context assembler, ARCH-execution-007) ------
+// A small `_system` layer the issue references via dependsOnSystem. config.target.systemDir points
+// here, so the generator prompt gets these design elements resolved (id refs, never copied). Two
+// conventions on purpose: DOM/ARCH as bullets, LANG as a table row (mirrors the harness's own views).
+write(
+  'docs/specs/_system/roman/domain-model.md',
+  `# Roman numerals — domain
+
+- **DOM-roman-001 Value range** — a roman numeral represents an integer in the closed range 1..3999; there is no zero and nothing outside this range is representable. Out-of-range input is rejected.
+- **DOM-roman-002 Canonical subtractive form** — the canonical encoding uses the six subtractive pairs (IV=4, IX=9, XL=40, XC=90, CD=400, CM=900). A run of four equal symbols (IIII, XXXX) is NOT canonical: \`toRoman\` must never emit one and \`fromRoman\` must reject one.
+`,
+);
+write(
+  'docs/specs/_system/roman/ubiquitous-language.md',
+  `# Roman numerals — ubiquitous language
+
+| id | term | meaning |
+|---|---|---|
+| LANG-roman-001 | round-trip | \`fromRoman(toRoman(n)) === n\` for every n in range; the two functions are exact inverses on canonical forms. |
+`,
+);
+write(
+  'docs/specs/_system/roman/architecture.md',
+  `# Roman numerals — architecture
+
+- **ARCH-roman-001 Pure total functions** — \`toRoman\`/\`fromRoman\` are pure (no I/O, no globals) and total over their domain: valid input returns a value, invalid input throws — never returns null/NaN/empty or silently coerces.
+`,
+);
+
 // --- git baseline ----------------------------------------------------------
 git(['init', '-q', '-b', 'main']);
 git(['config', 'user.email', 'sandbox@agentops.local']);
@@ -110,6 +139,8 @@ store.addIssue(
     area: 'backend',
     status: 'contract-drafted',
     assignedAgent: 'claude', // ai-managed → scoping guard picks it up
+    // Referenced design (ARCH-execution-007): the generator prompt resolves these from systemDir.
+    dependsOnSystem: ['DOM-roman-001', 'DOM-roman-002', 'LANG-roman-001', 'ARCH-roman-001'],
     createdAt: nowISO(),
     updatedAt: nowISO(),
     contract: {
@@ -147,6 +178,8 @@ const config: HarnessConfig = {
       unit_tests: `${path.join(BIN, 'vitest')} run`,
     },
     protectedPaths: ['test/acceptance/'],
+    // scoped-context source (ARCH-execution-007): the issue's dependsOnSystem resolve from here.
+    systemDir: '.harness/sandbox/docs/specs/_system',
   },
 };
 saveConfig(ROOT, config);

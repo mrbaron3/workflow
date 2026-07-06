@@ -35,8 +35,11 @@ function indexSystemElements(systemDir: string): Map<string, string> {
   for (const rel of files) {
     const lines = fs.readFileSync(path.join(systemDir, rel), 'utf8').split('\n');
     for (const line of lines) {
-      // an element is defined on a bullet whose text starts with its id (e.g. "- **ARCH-execution-006 …**")
-      const m = line.match(/^\s*[-*]\s+\*{0,2}((?:LANG|DOM|ARCH|DATA)-[a-z]+-\d{3})\b/);
+      // an element is DEFINED either on a bullet ("- **ARCH-x-001 …**") or as a table row
+      // ("| LANG-x-001 | term | … |") — the two conventions the system views use (LANG in a table).
+      const bullet = line.match(/^\s*[-*]\s+\*{0,2}((?:LANG|DOM|ARCH|DATA)-[a-z]+-\d{3})\b/);
+      const row = line.match(/^\s*\|\s*\*{0,2}((?:LANG|DOM|ARCH|DATA)-[a-z]+-\d{3})\b/);
+      const m = bullet ?? row;
       if (m && !index.has(m[1]!)) index.set(m[1]!, line.trim().replace(/^[-*]\s+/, ''));
     }
   }
