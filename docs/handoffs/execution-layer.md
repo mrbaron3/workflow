@@ -4,10 +4,11 @@
 > 作成: 2026-07-02 ／ 全面更新: 2026-07-05（決定論ループ完成・実 evaluator backend・無人 grounded 走行の実証を反映）
 > 追記: 2026-07-05（**ライブ repair 完成** — 実 backend でも多 attempt repair ループが回る。決定論ループを mock/live 共有に抽出）
 > 追記: 2026-07-05（**GitHub gate backend 完成** — `openGate`/`pollGate`・`PR.externalRef`・`config.gate`。既定 store 直・github opt-in。決定論テスト green。残: 使い捨て remote での grounded 実走）
+> 追記: 2026-07-06（**並行パネル完成** — build を単一 commit に確定（`commitBuild`・amend）し、各 read-only レビューを build の分離 detached worktree で並行招集（`config.panel.maxConcurrent`）。AC-PANEL-008 が構造で成立。**副作用でゲートの実 push 空問題も解消**＝build が commit されるようになった）
 
 ## 一言で
 
-**ハーネスが ai-managed issue を無人で「実装→実 tsc/vitest 採点→実レビュー→審査ゲート」まで自律駆動することを、実 Claude セッションで実証済み。** 決定論ループ（drive → 7観点 panel → repair×N → gate → human release）は全て実装・テスト green。実 backend（generator＋perspective セッション）も grounded 走行で無人完走を確認。**ライブ repair も実装済み**（generator セッションが repair brief を受け取り、worktree を再利用して多 attempt を回す・mock と同じ `runBoundedRepairLoop` を共有）。**GitHub gate backend も実装済み**（approve→PR 投影→merge/close をポーリングして `recordHumanDecision` へ・`gh` は seam の裏で決定論テスト済み）。残るのは実 backend の**幅**（フル6観点の grounded 走行・GitHub gate の使い捨て remote 実走）と横断掃除。
+**ハーネスが ai-managed issue を無人で「実装→実 tsc/vitest 採点→実レビュー→審査ゲート」まで自律駆動することを、実 Claude セッションで実証済み。** 決定論ループ（drive → 7観点 panel → repair×N → gate → human release）は全て実装・テスト green。実 backend（generator＋perspective セッション）も grounded 走行で無人完走を確認。**ライブ repair も実装済み**（generator セッションが repair brief を受け取り、worktree を再利用して多 attempt を回す・mock と同じ `runBoundedRepairLoop` を共有）。**GitHub gate backend も実装済み**（approve→PR 投影→merge/close をポーリングして `recordHumanDecision` へ・`gh` は seam の裏で決定論テスト済み）。**並行パネルも実装済み**（build を単一 commit に確定し、各レビューを分離 detached worktree で並行招集。AC-PANEL-008 は分離で構造的に成立。これで ゲートの実 push も非空に）。残るのは実 backend の**幅の grounded 実走**（フル6観点・GitHub gate の使い捨て remote）と横断掃除（best-of-N・`claude -p` 除去・run.ts 統合）。
 
 **設計の一本の線**（不変）: seam の外側（poll/dispatch/grade/gate/store）は決定論コード、内側（HOW 遂行）だけが非決定な実セッション。headless 非目標・人間の判断点（署名＝WHAT／ゲート＝release）・状態は store、を守る。
 
@@ -21,7 +22,7 @@
 
 ## 現状 done（このセッション・全て committed & pushed / origin `3e26ac4`）
 
-決定論はすべて `npm test`（**154 green**）＋`npm run typecheck` で担保。各 spec は署名→to-detail-design→spawn→contract-draft→実装の自己ドッグフード。
+決定論はすべて `npm test`（**161 green**）＋`npm run typecheck` で担保。各 spec は署名→to-detail-design→spawn→contract-draft→実装の自己ドッグフード。
 
 | 層 | 実装 | テスト | 署名 spec / issue |
 |---|---|---|---|
@@ -36,7 +37,7 @@
 | **ライブ repair**（generator が brief を受領・worktree 再利用・多 attempt。ループは mock/live 共有に抽出） | `loop.ts` `runBoundedRepairLoop`＋`session.ts` `buildGeneratorPrompt`＋`repair.ts` `toGenerateBrief` | `test/live-repair.test.ts`(5) | — |
 | **GitHub gate backend**（approve→PR 投影→merge/close ポーリング→`recordHumanDecision`。git/`gh` は seam の裏・既定 store 直・github opt-in） | `src/pipeline/execution/gate.ts`（`openGate`/`pollGate`/`prStateToDecision`）＋`PR.externalRef`／`config.gate`＋`scripts/gate-poll.ts` | `test/github-gate.test.ts`(11) | — |
 
-**実 backend の設計要点**: セッションが `.agentops/eval/<perspective>/findings.json` を産む（async・非決定）→ `sessionBackedGrader` がそれを読む（sync・決定論）→ `runPanel` 無改造。functionality は決定論 grader（E2）、6観点だけ LLM セッション。read-only は権限でなく**構造**で保証（走行後 `changedFiles` ガードがコード編集レビューを discard）。
+**実 backend の設計要点**: セッションが `.agentops/eval/<perspective>/findings.json` を産む（async・非決定）→ `sessionBackedGrader` がそれを読む（sync・決定論）→ `runPanel` 無改造。functionality は決定論 grader（E2）、6観点だけ LLM セッション。**各レビューは build commit の分離 detached worktree で並行招集**（`config.panel.maxConcurrent`）——findings は中央 evalRoot へ集約。read-only は**分離で構造保証**（レビューは build の worktree に触れられない＝AC-PANEL-008 成立）＋自分の checkout を編集したレビューは `changedFiles` で帰属 discard。
 
 **grounded 走行の実証**（2回）:
 
@@ -47,7 +48,7 @@
 
 ```bash
 # 決定論の確認
-npm test           # 154
+npm test           # 161
 npm run typecheck
 npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
 
@@ -66,10 +67,11 @@ MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts    # ライブ repair を観�
 
 - `guard.ts` — `pollable()` スコープガード（status==contract-drafted && assignedAgent==config.generator）。
 - `tmux.ts` — セッション substrate ＋ `monitorLiveness`（sentinel＋pane 監視・stuck/timeout 昇格）。
-- `session.ts` — generator セッション（Read/Edit/Write/**Bash**・acceptEdits）。
-- `worktree.ts` — worktree。`.agentops/` は changedFiles 除外。
+- `session.ts` — generator セッション（Read/Edit/Write/**Bash**・acceptEdits）。完了時に build を単一 commit へ確定（`commitBuild`）し `buildChangedFiles` を返す。
+- `worktree.ts` — worktree。`.agentops/` は git exclude。`commitBuild`（生成物を単一 build commit に・修正は `--amend`）／`buildChangedFiles`（`git diff HEAD^..HEAD`＝累積変更）／`createDetachedWorktree`（レビュー用の分離 checkout）。
+- `pool.ts` — `mapPool(items, limit, fn)`：入力順保持の上限付き並行 map（`panel.maxConcurrent`）。
 - `grade.ts` — 実 tsc/vitest → grounded BuildArtifact（AC は test 名の id 一致で満たす）。
-- `perspective-session.ts` — findings 契約・parse・grader・prompt・`runPerspectiveSessions`（read-only 逐次・acceptEdits+Bash）。
+- `perspective-session.ts` — findings 契約・parse・grader・prompt・`runPerspectiveSessions`（**並行**：各レビューを build の分離 detached worktree で走らせ・findings を中央 evalRoot へ集約・git worktree 操作は逐次でセッションのみ並行の3相・acceptEdits+Bash）。
 - `loop.ts` — **`runBoundedRepairLoop`（mock/live 共有の決定論ループ・`produce` seam で各 attempt を差し込む）**・`driveIssueOnce`（mock backend の薄い wrapper）・`applyPanelVerdict`・`recordHumanDecision`・`driveOnce`・`watch`。
 - `live.ts` — 実 backend 版 `driveIssueLive`/`runLoopLive`（`runBoundedRepairLoop` に real-session `produce` を渡す：generator セッション＋grounded＋perspective セッション＋panel＋gate。多 attempt repair・worktree 再利用・stuck→needs-human-review 昇格）。
 - `run.ts` — 旧・薄い単一観点 run（`runExecutionOnce`）。live.ts に置換されつつある（後述）。
@@ -92,8 +94,11 @@ MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts    # ライブ repair を観�
    **注意**: これは outward（実 GitHub リポジトリ/PR を作る）ので人間の明示 go が要る。既定 store のままなら一切外に出ない。
    なお reject の routing は `recordHumanDecision`（→changes-requested＝repair 車線）に従う。ADR G1 の「closed→needs-human-review」表現とは
    実装が決定論コア（既存）に合わせてある（closed=repair 差戻し・humanVerdict=request_changes 収穫）。ここを変えたいなら `recordHumanDecision` 側の論点。
-4. **並行パネル**: `runPerspectiveSessions` は逐次（read-only 違反の帰属のため）。`panel.maxConcurrent` で並行化（E4）。
-   `monitorLiveness` は単一セッション監視なので複数同時監視ループが要る。
+4. ~~**並行パネル**~~ **✅ 完了**（このセッション）: build を単一 commit に確定（`commitBuild`・修正は `--amend`）し、各 read-only レビューを
+   その build の**分離 detached worktree**で `mapPool`（`config.panel.maxConcurrent`）並行招集。AC-PANEL-008（採点は成果物を変えない）は分離で
+   **構造的に**成立（レビューは build の worktree に触れられない）。git worktree の作成/破棄は逐次・セッションのみ並行の3相でレースを避ける。
+   決定論テスト: `test/build-commit.test.ts`(4)＋`test/pool.test.ts`(3)。**副作用**: 生成物が commit されるので **項3 のゲート実 push 空問題が解消**。
+   **未検証**: 実 Claude での並行招集（複数 tmux セッション同時）と worktree 増の負荷。フル6観点 grounded（項1）で観測。
 5. **best-of-N / samples>1**: 今 live は単一 sample（pass^k 定義できず）。計測走行を issue 単位 opt-in で（E5・first-approve-stop 既定）。
 6. **横断掃除**: `config.cli` の `claude -p` 既定を除去（ADR-0005 Q2 残債・DEFAULT_CONFIG）。`run.ts` の薄い単一観点 run を live.ts に統合。
    scoped-context 組立（`ARCH-execution-007`・P5）: 今は generator.md＋contract 全体、木の `dependsOnSystem` から最小化。

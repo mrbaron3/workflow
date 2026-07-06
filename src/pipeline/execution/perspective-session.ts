@@ -18,8 +18,9 @@ import { z } from 'zod';
 import { Severity, Verdict, type IssueContract } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { PerspectiveResult, deterministicPerspectiveGrade, type PerspectiveGrader, type PerspectiveSpec } from '../panel.js';
-import { changedFiles } from './worktree.js';
+import { changedFiles, createDetachedWorktree, removeWorktree } from './worktree.js';
 import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness } from './tmux.js';
+import { mapPool } from './pool.js';
 
 /** The review focus each perspective session is briefed on (single source; no per-file personas). */
 export const PERSPECTIVE_LENS: Record<string, string> = {
@@ -125,10 +126,15 @@ export function perspectivePrompt(perspective: string, contract: IssueContract, 
 }
 
 export interface PerspectiveSessionsInput {
+  /** The generator's worktree — the collection point for findings (central evalRoot). */
   worktree: string;
   contract: IssueContract;
   perspectives: PerspectiveSpec[];
   issueKey: string;
+  /** The target repo (owns the build branch) — where each review's detached worktree is added. */
+  repo: string;
+  /** The committed build to review — the generator's branch (or its commit SHA). */
+  buildRef: string;
 }
 
 export interface PerspectiveSessionsResult {
@@ -138,56 +144,92 @@ export interface PerspectiveSessionsResult {
   touchedCode: string[]; // perspectives that illegally edited the tree (read-only violation)
 }
 
+interface ReviewJob {
+  key: string;
+  reviewWt: string;
+  sentinel: string; // where this review writes findings.json (in its own worktree)
+}
+type ReviewStatus = 'completed' | 'touched' | 'stuck';
+
 /**
- * Spawn one read-only Claude session per (LLM) perspective, sequentially so a read-only
- * violation is attributable, and wait for each to write findings.json. Deterministic
- * perspectives (functionality, ADR-0006 E2) are skipped — they are graded by code, not a
- * session. NOT unit-tested (drives live tmux + Claude); the parse/grade seam it feeds is.
+ * Convene the LLM perspectives as read-only Claude sessions (ADR-0006 E1/E3) and collect each
+ * findings.json into the central evalRoot (the generator worktree) for runPanel. Each review runs
+ * in its OWN detached worktree of the committed build, so AC-PANEL-008 (the build is unchanged by
+ * scoring) holds by construction — a review physically cannot touch the build under evaluation.
+ *
+ * Three phases so git worktree bookkeeping never races the fan-out: (1) create every review's
+ * worktree + prompt sequentially — fast; (2) run the sessions CONCURRENTLY up to
+ * config.panel.maxConcurrent (E4) — the slow part; (3) collect/teardown sequentially. A review that
+ * edited its checkout is attributable and discarded; a stuck review keeps its session + worktree
+ * alive (ARCH-execution-014). functionality is skipped (graded by code, E2). NOT unit-tested
+ * (drives live tmux + Claude); the parse/grade + isolation seams are.
  */
 export async function runPerspectiveSessions(
   config: HarnessConfig,
   input: PerspectiveSessionsInput,
   log: (m: string) => void = () => {},
 ): Promise<PerspectiveSessionsResult> {
-  const evalRoot = path.join(input.worktree, '.agentops', 'eval');
-  const completed: string[] = [];
-  const touchedCode: string[] = [];
+  const evalRoot = path.join(input.worktree, '.agentops', 'eval'); // central collection point
+  const reviewRoot = path.resolve(input.worktree, '..', '..', 'review-worktrees');
+  const lenses = input.perspectives.filter((p) => !p.deterministic); // functionality is graded by code
+  const maxConcurrent = config.panel?.maxConcurrent ?? 4;
+  log(`  panel: ${lenses.length} live lenses, maxConcurrent=${maxConcurrent}`);
 
-  for (const p of input.perspectives) {
-    if (p.deterministic) continue; // functionality is graded by code
-    const dir = path.join(evalRoot, p.key);
+  // phase 1 (sequential): one isolated detached checkout of the build per review + its prompt
+  const jobs: ReviewJob[] = lenses.map((p) => {
+    const reviewWt = path.join(reviewRoot, `${input.issueKey}-${p.key}`);
+    createDetachedWorktree(input.repo, input.buildRef, reviewWt);
+    const dir = path.join(reviewWt, '.agentops', 'eval', p.key);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, 'PROMPT.md'), perspectivePrompt(p.key, input.contract, `.agentops/eval/${p.key}`), 'utf8');
-    const sentinel = findingsPath(evalRoot, p.key);
-    fs.rmSync(sentinel, { force: true });
+    return { key: p.key, reviewWt, sentinel: path.join(dir, 'findings.json') };
+  });
 
-    const before = new Set(changedFiles(input.worktree));
-    const session = `ao-eval-${input.issueKey}-${p.key}`;
-    log(`  ▸ ${session}: read-only review`);
-    // acceptEdits + Bash so the review can inspect the tree and write findings.json WITHOUT hanging
-    // on an approval prompt in this detached session. "Read-only" is enforced structurally, not by
-    // permission: the post-session changedFiles guard below discards any review that edited the tree.
-    launchSession({ session, cwd: input.worktree, allowedTools: ['Read', 'Write', 'Bash'], permissionMode: 'acceptEdits' });
-    await waitForReady(session);
-    sendPrompt(session, `Read .agentops/eval/${p.key}/PROMPT.md and do exactly what it says.`);
-    const outcome = await monitorLiveness(session, sentinel, { idleMs: 90_000, hardCapMs: 1000 * 60 * 10, pollMs: 3000 });
+  // phase 2 (concurrent): the read-only review sessions — the only slow, non-deterministic part
+  const statuses = await mapPool(jobs, maxConcurrent, (job) => runReviewSession(input.issueKey, job, log));
 
-    if (outcome === 'completed') {
-      killSession(session);
-      // read-only guard (AC-PANEL-008): the review must not have edited the tree
-      const added = changedFiles(input.worktree).filter((f) => !before.has(f));
-      if (added.length > 0) {
-        touchedCode.push(p.key);
-        log(`  ⚠ ${session}: edited the tree (${added.join(', ')}) — review discarded`);
-        fs.rmSync(sentinel, { force: true }); // discard: runPanel will escalate this perspective
-      } else {
-        completed.push(p.key);
-      }
-    } else {
-      log(`  ⚠ ${session}: ${outcome} — kept alive; inspect: tmux attach -t ${session}`);
+  // phase 3 (sequential): collect findings from clean reviews, tear down finished worktrees
+  const completed: string[] = [];
+  const touchedCode: string[] = [];
+  jobs.forEach((job, i) => {
+    const status = statuses[i]!;
+    if (status === 'completed') {
+      const dest = findingsPath(evalRoot, job.key);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(job.sentinel, dest); // into the central evalRoot the panel grades from
+      completed.push(job.key);
     }
-  }
+    if (status === 'touched') touchedCode.push(job.key);
+    if (status !== 'stuck') removeWorktree(input.repo, job.reviewWt); // stuck → left alive for a human
+  });
+
   return { evalRoot, completed, touchedCode };
+}
+
+/** Run one read-only review session in its prepared worktree; returns its status (no git bookkeeping). */
+async function runReviewSession(issueKey: string, job: ReviewJob, log: (m: string) => void): Promise<ReviewStatus> {
+  const session = `ao-eval-${issueKey}-${job.key}`;
+  log(`  ▸ ${session}: read-only review`);
+  // acceptEdits + Bash so the review can inspect the tree and write findings.json WITHOUT hanging
+  // on an approval prompt. Read-only is enforced by ISOLATION (own worktree) + the changedFiles
+  // guard below; a review that edits its checkout is discarded and never touches the build.
+  launchSession({ session, cwd: job.reviewWt, allowedTools: ['Read', 'Write', 'Bash'], permissionMode: 'acceptEdits' });
+  await waitForReady(session);
+  sendPrompt(session, `Read .agentops/eval/${job.key}/PROMPT.md and do exactly what it says.`);
+  const outcome = await monitorLiveness(session, job.sentinel, { idleMs: 90_000, hardCapMs: 1000 * 60 * 10, pollMs: 3000 });
+
+  if (outcome !== 'completed') {
+    log(`  ⚠ ${session}: ${outcome} — session + worktree kept alive; inspect: tmux attach -t ${session}`);
+    return 'stuck';
+  }
+  killSession(session);
+  // read-only guard (AC-PANEL-008): a clean detached checkout is dirty only if the review edited it
+  const edited = changedFiles(job.reviewWt);
+  if (edited.length > 0) {
+    log(`  ⚠ ${session}: edited its checkout (${edited.join(', ')}) — review discarded`);
+    return 'touched'; // no findings collected → runPanel escalates this perspective
+  }
+  return 'completed';
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

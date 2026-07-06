@@ -50,7 +50,7 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
   gate 落ちの attempt は gate findings から直接 RepairBrief を作り、LLM トークンを一切使わない）。招集後は
   **6 観点を全て並行に fan-out** し、観点先行の short-circuit はしない: attempts（≤ 3）は トークンより希少で、
   同一 attempt で全観点の指摘を出し切る方が修正往復が少なく済む。並行は wall-time 約 1 セッション分。
-  並行上限は config `panel.maxConcurrent`（マシン・rate limit 都合の飽和防止）。
+  並行上限は config `panel.maxConcurrent`（マシン・rate limit 都合の飽和防止）。**実装済み**（`runPerspectiveSessions`・`mapPool`）: 各レビューは build commit の分離 detached worktree で並行に走り、AC-PANEL-008 は分離により構造で成立。build は単一 commit へ確定（`commitBuild`・`--amend`）＝ゲートの実 push も同時に成立。
 
 ### コスト既定（実 backend）
 
@@ -100,7 +100,7 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
 
 | premise | 吸収先（system view id） | 実装 |
 | --- | --- | --- |
-| E1 観点＝独立セッション／E2 functionality 決定論・6 観点 LLM／E3 read-only | `ARCH-execution-006`（注記追加） | `src/pipeline/panel.ts` `runPanel` / `PERSPECTIVES` |
+| E1 観点＝独立セッション／E2 functionality 決定論・6 観点 LLM／E3 read-only／**E4 並行招集** | `ARCH-execution-004`／`ARCH-execution-006`（注記追加） | `src/pipeline/panel.ts` `runPanel` / `PERSPECTIVES`＋実 backend `src/pipeline/execution/perspective-session.ts` `runPerspectiveSessions`（分離 detached worktree で並行・`mapPool`・`config.panel.maxConcurrent`）＋`worktree.ts` `commitBuild`/`buildChangedFiles`/`createDetachedWorktree` |
 | E4 gate-before-panel | `ARCH-execution-016`（新規不変条件） | `panel.ts` `runPanel` ＋ `graders` `hasBlockingGateFailure` |
 | 集約（blocker 優先・派生・保存しない） | `DOM-execution-004` / `DATA-execution-001` | `panel.ts` `aggregatePanelVerdict` |
 | E3 不正出力の昇格 | `ARCH-execution-015` | `panel.ts` `runPanel`（gradeWithRetry→needs-human-review） |

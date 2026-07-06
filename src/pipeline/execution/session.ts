@@ -15,7 +15,7 @@ import type { Issue, IssueContract } from '../../domain/schema.js';
 import type { HarnessConfig, TargetRepoConfig } from '../../config.js';
 import type { RepairBrief } from '../../domain/artifact.js';
 import { loadRolePrompt } from '../../agents/prompts.js';
-import { createWorktree, worktreeExists, changedFiles } from './worktree.js';
+import { createWorktree, worktreeExists, changedFiles, commitBuild, buildChangedFiles } from './worktree.js';
 import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
 
 export interface GeneratorSessionInput {
@@ -95,14 +95,21 @@ export async function runGeneratorSession(
 
   // Only a clean completion tears the session down; a stuck/timed-out session is kept ALIVE
   // so a human can attach and take over (ARCH-execution-014). Never a silent kill.
+  let committed = false;
   if (outcome === 'completed') {
+    // Commit the edits into a single build commit (amended across repair attempts) so the branch
+    // is pushable (the gate) and each read-only review can check out the exact build in isolation.
+    committed = commitBuild(wt, `${input.issue.id} s${input.sampleIndex} attempt ${input.attempt}`);
     killSession(session);
-    log(`  ▸ ${session}: completed (sentinel)`);
+    log(`  ▸ ${session}: completed (sentinel)${committed ? ', build committed' : ', no changes to commit'}`);
   } else {
     log(`  ⚠ ${session}: ${outcome.toUpperCase()} — session kept alive; inspect: tmux attach -t ${session}`);
   }
 
-  return { worktree: wt, branch, session, outcome, changed: changedFiles(wt), paneTail };
+  // The build's cumulative change set comes from the commit once there is one; fall back to the
+  // working tree for a stuck/empty session (nothing committed).
+  const changed = committed ? buildChangedFiles(wt) : changedFiles(wt);
+  return { worktree: wt, branch, session, outcome, changed, paneTail };
 }
 
 /**

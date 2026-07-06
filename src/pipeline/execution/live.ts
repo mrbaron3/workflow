@@ -13,6 +13,7 @@
  * it drives live tmux + Claude; the seams it composes are each tested on their own.
  */
 
+import path from 'node:path';
 import type { Issue } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
@@ -85,9 +86,13 @@ export async function driveIssueLive(
     // 2. ground the checkout with real graders (real tsc/vitest)
     const artifact = groundArtifact({ contract, target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed });
 
-    // 3. real read-only perspective sessions -> findings.json under the worktree
-    log(`  ${issue.id}: evaluator panel (${perspectives.filter((p) => !p.deterministic).length} live lenses)`);
-    const panelSessions = await runPerspectiveSessions(config, { worktree: sess.worktree, contract, perspectives, issueKey }, log);
+    // 3. real read-only perspective sessions — each in its own detached worktree of the committed
+    //    build (isolated + concurrent), collecting findings.json into the generator worktree's evalRoot
+    const panelSessions = await runPerspectiveSessions(
+      config,
+      { worktree: sess.worktree, contract, perspectives, issueKey, repo: path.resolve(harnessRoot, target.repo), buildRef: sess.branch },
+      log,
+    );
 
     // 4. panel grades from the findings.json files (missing/broken -> escalate); functionality is deterministic
     const panel = runPanel(

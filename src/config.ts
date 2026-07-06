@@ -68,6 +68,11 @@ export interface HarnessConfig {
   target?: TargetRepoConfig;
   /** Human review gate backend (ADR-0006 G1). Absent = store-direct gate (current behavior). */
   gate?: GateConfig;
+  /** Evaluator panel tuning (ADR-0006 E4). */
+  panel?: {
+    /** Max review sessions to fan out concurrently (saturation guard: machine / rate limits). */
+    maxConcurrent?: number;
+  };
 }
 
 export const DEFAULT_CONFIG: HarnessConfig = {
@@ -91,6 +96,7 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     // Gemini CLI.
     gemini: { command: 'gemini', args: ['-p', '{prompt}'] },
   },
+  panel: { maxConcurrent: 4 },
 };
 
 export function configPath(root: string): string {
@@ -107,6 +113,7 @@ export function loadConfig(root: string): HarnessConfig {
     ...raw,
     scoreWeights: { ...DEFAULT_CONFIG.scoreWeights, ...(raw.scoreWeights ?? {}) },
     cli: { ...DEFAULT_CONFIG.cli, ...(raw.cli ?? {}) },
+    panel: { ...DEFAULT_CONFIG.panel, ...(raw.panel ?? {}) },
   };
 }
 
