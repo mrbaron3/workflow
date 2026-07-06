@@ -68,6 +68,8 @@ LENSES=testQuality npx tsx scripts/real-panel-run.ts           # 安く回す（
 
 **別解**: full panel（6観点）＋`MAX_REPAIRS=1` は「どれか1観点が dissent」で発火するので単観点より当たりやすい（が ~7-14 セッションと高コスト）。あるいは決定論テスト（`test/repair-loop.test.ts`・`test/live-repair.test.ts`）で機構は既に green＝「発火の実走観測」は nice-to-have。
 
+**実験結果（2026-07-06・4走行）**: attempt 1 は**4/4 で approve**。`HARD` bait すら不発 — generator（Opus 4.8）は terse な「reject malformed input」だけから**最初から canonical-form 正規表現で strict 実装**し（scoped-context の `DOM-roman-002` を根拠にコメントで小文字/空白/非正準を列挙）、bait が前提にした「寛容な正規化」を選ばなかった。**結論: この generator × この課題クラスでは repair の grounded 発火を安定に誘発できない**（機構は決定論テストで実証済み）。grounded で見たいなら (a) より弱い generator（例 haiku）に落とす、(b) 本当に難しい/曖昧な課題を種にする、(c) 決定論の実証で十分とする、のいずれか。皮肉だが「scoped-context が効いて generator が堅牢になった」ことが bait を難しくした側面もある。
+
 ## 落とし穴・不変条件
 
 - `.harness/` は **gitignore・ローカル揮発**（store・sandbox・worktrees・review-worktrees・evidence）。scaffolder で決定論再生成。store の issue/eval はローカルのみ（共有されない）。
