@@ -62,6 +62,7 @@ role 単位の tmux 対話セッションを fan-out / fan-in するオーケス
   検知→grade。tmux 終了検知より頑健で resume と相性が良い。
 - **Q2 headless seam を deprecate**。現 `cli.ts` の `claude -p` パスと README/`agents/*` の「headless print mode」記述は、
   本 ADR の tmux orchestration に置換（北極星の非目標との矛盾を解消）。`AgentRunner` seam 自体（ADR-0004）は存置。
+  **実装済み**（`ARCH-execution-003` へ吸収済みの不変条件「`claude -p` を使わない」）: `src/agents/cli.ts`（`CliAgentRunner`）と `config.cli`／`AgentCliConfig` を削除、`makeRunner` は mock 以外で live tmux 経路（`runLoopLive`）へ誘導する throw に。`agents/generator.md`・README の JSON-block/headless 記述も実 tmux 実態（実テストで採点・sentinel で完了）に修正。
 - **Q3 審査ゲート**。Evaluator パネルが approve した後、`released` の前に**人間審査ゲート**を挿す
   （`needs-human-review` → 人間承認で `released`）。`needs_human` verdict／`needs-human-review` status は schema に既存。
 

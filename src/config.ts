@@ -8,16 +8,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { GeneratorAgent } from './domain/schema.js';
 
-export interface AgentCliConfig {
-  /** Executable to run, e.g. "claude". */
-  command: string;
-  /**
-   * Argument template. The token "{promptFile}" is replaced with a path to a temp
-   * file containing the rendered prompt; "{prompt}" with the prompt text inline.
-   */
-  args: string[];
-}
-
 /**
  * A real target repository the execution layer edits in isolated git worktrees
  * (ADR-0005 / _system/execution). Present only for grounded real-agent runs; absent for
@@ -29,6 +19,12 @@ export interface TargetRepoConfig {
   baseRef?: string;
   graders?: { typecheck?: string; unit_tests?: string };
   protectedPaths?: string[];
+  /**
+   * Where the target's `_system` design views live (for scoped-context resolution of an issue's
+   * dependsOnSystem, ARCH-execution-007). Relative to harnessRoot or absolute. Absent = scoped
+   * design context disabled (the generator gets the contract only).
+   */
+  systemDir?: string;
 }
 
 /**
@@ -62,8 +58,6 @@ export interface HarnessConfig {
     ux: number;
     accessibility: number;
   };
-  /** CLI templates for real agent backends (used when generator != "mock"). */
-  cli: Record<'claude' | 'codex' | 'gemini', AgentCliConfig>;
   /** Target repo for grounded runs (execution layer edits worktrees of it). */
   target?: TargetRepoConfig;
   /** Human review gate backend (ADR-0006 G1). Absent = store-direct gate (current behavior). */
@@ -88,14 +82,6 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     ux: 0.15,
     accessibility: 0.1,
   },
-  cli: {
-    // Claude Code, headless print mode.
-    claude: { command: 'claude', args: ['-p', '{prompt}'] },
-    // OpenAI Codex CLI, non-interactive exec.
-    codex: { command: 'codex', args: ['exec', '{prompt}'] },
-    // Gemini CLI.
-    gemini: { command: 'gemini', args: ['-p', '{prompt}'] },
-  },
   panel: { maxConcurrent: 4 },
 };
 
@@ -112,7 +98,6 @@ export function loadConfig(root: string): HarnessConfig {
     ...DEFAULT_CONFIG,
     ...raw,
     scoreWeights: { ...DEFAULT_CONFIG.scoreWeights, ...(raw.scoreWeights ?? {}) },
-    cli: { ...DEFAULT_CONFIG.cli, ...(raw.cli ?? {}) },
     panel: { ...DEFAULT_CONFIG.panel, ...(raw.panel ?? {}) },
   };
 }

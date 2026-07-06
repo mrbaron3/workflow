@@ -12,7 +12,7 @@ durable store you can resume, analyse and improve from.
 
 > This is an **MVP**: the entire pipeline runs end-to-end **today, offline**, on a
 > deterministic **mock** agent backend. Swapping in a real agent CLI or a GitHub
-> backend are isolated, documented seams (see [Wiring real agents](#wiring-real-agents)
+> backend are isolated, documented seams (see [Two backends](#two-backends-mock-deterministic-and-real-live-tmux)
 > and [docs/ROADMAP.md](docs/ROADMAP.md)).
 
 ---
@@ -39,7 +39,7 @@ npm run dashboard   # .harness/dashboard.html をブラウザで開く
 ```
 
 実エージェント(Claude Code / Codex / Gemini)や GitHub 連携への差し替えは
-[Wiring real agents](#wiring-real-agents) と [docs/ROADMAP.md](docs/ROADMAP.md) を参照。
+[Two backends](#two-backends-mock-deterministic-and-real-live-tmux) と [docs/ROADMAP.md](docs/ROADMAP.md) を参照。
 
 ---
 
@@ -137,33 +137,26 @@ docs/              context-map.md · _system/<ctx>/ · decisions/ (ADR) · ROADM
 See [docs/context-map.md](docs/context-map.md) for the bounded contexts and where each
 term lives (terminology is per-context under `docs/specs/_system/<ctx>/ubiquitous-language.md`).
 
-## Wiring real agents
+## Two backends: mock (deterministic) and real (live tmux)
 
-Set the backend in `.harness/config.json`:
+The **mock** backend runs the whole loop offline and deterministically — it is what the test
+suite and `agentops run` demo use (`"generator": "mock"`). It is the reproducible substrate:
+drive → panel → repair → gate all run without a real agent.
 
-```jsonc
-{
-  "generator": "claude",         // "mock" | "claude" | "codex" | "gemini"
-  "samples": 3,
-  "maxRepairs": 2,
-  "passThreshold": 0.7,
-  "cli": {
-    "claude": { "command": "claude", "args": ["-p", "{prompt}"] },
-    "codex":  { "command": "codex",  "args": ["exec", "{prompt}"] },
-    "gemini": { "command": "gemini", "args": ["-p", "{prompt}"] }
-  }
-}
+**Real agents run as interactive tmux sessions on an actual git worktree**, grounded by real
+`tsc` / `vitest` against that checkout — not a headless `claude -p` shell-out (the old
+`CliAgentRunner` was deprecated with the tmux orchestration; headless is a North-Star non-goal,
+ADR-0005 Q2). A generator session edits files, the harness commits the build and grades it, then
+read-only perspective sessions review it, and an approved build stops at the human review gate.
+
+```bash
+npx tsx scripts/real-run-sandbox.ts                  # scaffold a throwaway sandbox + ai-managed issue + config
+LENSES=codeQuality npx tsx scripts/real-panel-run.ts # cheap: generator + one review lens
+npx tsx scripts/real-panel-run.ts                    # full 6-perspective panel
 ```
 
-…or override per run: `npm run harness -- run --agent claude --samples 5`.
-
-The CLI runner renders `agents/generator.md` + the Issue Contract, invokes the tool,
-and parses a `BuildArtifact` JSON block from its output (the output contract is
-documented in `agents/generator.md`). **Honest MVP boundary:** full-fidelity real-agent
-runs need the agent to operate on an actual target repo and the graders to run real
-commands (`npm test`, Playwright, …) against that checkout — that target-repo wiring is
-the v2 step in [docs/ROADMAP.md](docs/ROADMAP.md). Until then the deterministic mock is
-what makes the loop testable and reproducible.
+`config.gate.backend` (`store` | `github`) chooses the review gate; `config.panel.maxConcurrent`
+bounds the review fan-out. See [docs/handoffs/execution-layer.md](docs/handoffs/execution-layer.md).
 
 ## What is real vs mocked (so there are no surprises)
 

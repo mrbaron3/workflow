@@ -17,6 +17,7 @@ import type { RepairBrief } from '../../domain/artifact.js';
 import { loadRolePrompt } from '../../agents/prompts.js';
 import { createWorktree, worktreeExists, changedFiles, commitBuild, buildChangedFiles } from './worktree.js';
 import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
+import { contextFor, renderScopedContext } from './scoped-context.js';
 
 export interface GeneratorSessionInput {
   issue: Issue;
@@ -70,7 +71,12 @@ export async function runGeneratorSession(
   // submitting early — and the agent reads it (Read is in allowedTools)
   const agentDir = path.join(wt, '.agentops');
   fs.mkdirSync(agentDir, { recursive: true });
-  fs.writeFileSync(path.join(agentDir, 'PROMPT.md'), buildGeneratorPrompt(input, target), 'utf8');
+  // scoped context (ARCH-execution-007): resolve the issue's dependsOnSystem from the target's
+  // system views when configured — id references resolved fresh, never a dumped design (P5).
+  const scoped = target.systemDir
+    ? renderScopedContext(contextFor(input.issue, path.resolve(harnessRoot, target.systemDir)))
+    : '';
+  fs.writeFileSync(path.join(agentDir, 'PROMPT.md'), buildGeneratorPrompt(input, target, scoped), 'utf8');
   const sentinelPath = path.join(agentDir, 'done.json');
   fs.rmSync(sentinelPath, { force: true }); // clear any stale sentinel from a prior attempt
 
@@ -119,7 +125,7 @@ export async function runGeneratorSession(
  * repair attempt it appends the reviewers' required fixes so the session amends the reused
  * worktree instead of starting over (live repair, ADR-0006 E7 / AC-REPAIR-001).
  */
-export function buildGeneratorPrompt(input: GeneratorSessionInput, target: TargetRepoConfig): string {
+export function buildGeneratorPrompt(input: GeneratorSessionInput, target: TargetRepoConfig, scopedContext = ''): string {
   const role = loadRolePrompt('generator');
   const contractYaml = YAML.stringify(input.contract);
   const protectedList = (target.protectedPaths ?? []).map((p) => `- ${p}`).join('\n') || '(none)';
@@ -132,6 +138,9 @@ export function buildGeneratorPrompt(input: GeneratorSessionInput, target: Targe
     `\n## Issue\n${input.issue.id} — ${input.issue.title} (area: ${input.issue.area})`,
     `\n## Issue Contract\n\`\`\`yaml\n${contractYaml}\`\`\``,
   ];
+
+  // scoped design context (ARCH-execution-007): the system elements this issue depends on, when resolved
+  if (scopedContext) sections.push(`\n${scopedContext}`);
 
   const brief = input.repairBrief;
   if (brief && brief.instructions.length > 0) {

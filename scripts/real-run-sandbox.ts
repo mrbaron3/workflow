@@ -11,7 +11,7 @@
  *   - config                 generator: claude + target (real tsc/vitest graders).
  *
  * The graders are the harness's OWN tsc/vitest binaries run against the sandbox checkout,
- * so the sandbox needs no npm install. After scaffolding:  npx tsx scripts/real-run.ts
+ * so the sandbox needs no npm install. After scaffolding:  npx tsx scripts/real-panel-run.ts
  */
 
 import { execFileSync } from 'node:child_process';
@@ -153,4 +153,4 @@ saveConfig(ROOT, config);
 
 console.log(`✓ scaffolded sandbox at ${path.relative(ROOT, SANDBOX)}`);
 console.log(`✓ seeded ${issueId} (contract-drafted, assignedAgent=claude) + config (grounded target)`);
-console.log(`\nNext:  npx tsx scripts/real-run.ts`);
+console.log(`\nNext:  LENSES=codeQuality npx tsx scripts/real-panel-run.ts   (cheap: generator + 1 review)`);
