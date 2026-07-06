@@ -156,7 +156,10 @@ npx tsx scripts/real-panel-run.ts                    # full 6-perspective panel
 ```
 
 `config.gate.backend` (`store` | `github`) chooses the review gate; `config.panel.maxConcurrent`
-bounds the review fan-out. See [docs/handoffs/execution-layer.md](docs/handoffs/execution-layer.md).
+bounds the review fan-out. The execution layer's design lives in
+[ADR-0005](docs/decisions/ADR-0005-execution-layer-tmux-orchestration.md) /
+[ADR-0006](docs/decisions/ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) and the
+[`_system/execution`](docs/specs/_system/execution/) views.
 
 ## What is real vs mocked (so there are no surprises)
 
