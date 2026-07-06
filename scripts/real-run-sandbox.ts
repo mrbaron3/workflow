@@ -36,6 +36,7 @@ const git = (args: string[]): void => void execFileSync('git', args, { cwd: SAND
 // --- clean slate -----------------------------------------------------------
 fs.rmSync(SANDBOX, { recursive: true, force: true });
 fs.rmSync(path.join(HARNESS, 'worktrees'), { recursive: true, force: true });
+fs.rmSync(path.join(HARNESS, 'review-worktrees'), { recursive: true, force: true }); // kept-alive stuck reviews
 fs.rmSync(path.join(HARNESS, 'db.json'), { force: true });
 fs.rmSync(path.join(HARNESS, 'evidence'), { recursive: true, force: true });
 fs.mkdirSync(SANDBOX, { recursive: true });

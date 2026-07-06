@@ -95,4 +95,24 @@ describe('createDetachedWorktree: each review checks out the committed build in 
     expect(changedFiles(review)).toContain('src/roman.ts');
     expect(fs.readFileSync(path.join(wt, 'src', 'roman.ts'), 'utf8')).toContain('export const x = 1');
   });
+
+  it('is idempotent against a STALE leftover directory git no longer tracks (kept-alive stuck review)', () => {
+    const repo = tmpRepo('dw-stale');
+    const wt = path.join(repo, '.wt');
+    createWorktree(repo, 'agent/x', 'HEAD', wt);
+    write(wt, 'src/roman.ts', 'export const x = 1;');
+    commitBuild(wt, 'attempt 1');
+
+    const review = path.join(repo, '.review');
+    createDetachedWorktree(repo, 'agent/x', review);
+    // simulate a re-scaffold: a leftover dir with content that git no longer knows about
+    execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', review]);
+    fs.mkdirSync(review, { recursive: true });
+    fs.writeFileSync(path.join(review, 'stale.txt'), 'leftover from a prior stuck review');
+
+    // must not throw "already exists" — clears the stale dir first
+    expect(() => createDetachedWorktree(repo, 'agent/x', review)).not.toThrow();
+    expect(fs.existsSync(path.join(review, 'stale.txt'))).toBe(false); // stale content gone
+    expect(fs.readFileSync(path.join(review, 'src', 'roman.ts'), 'utf8')).toContain('export const x = 1');
+  });
 });

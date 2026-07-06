@@ -19,12 +19,24 @@ function git(cwd: string, args: string[], allowFail = false): { ok: boolean; out
 }
 
 /**
+ * Clear any prior worktree at `worktreePath` so `worktree add` can't collide. Robust to a stale
+ * dir that git doesn't know about — a review kept alive after a stuck session (ARCH-execution-014),
+ * then a re-scaffold into a NEW repo where `worktree remove` no longer recognises the path. So:
+ * try the clean git removal, force-delete any leftover directory, then prune the admin entry.
+ */
+function clearWorktree(repo: string, worktreePath: string): void {
+  git(repo, ['worktree', 'remove', '--force', worktreePath], true); // if this repo still tracks it
+  fs.rmSync(worktreePath, { recursive: true, force: true }); // leftover dir (foreign / untracked)
+  git(repo, ['worktree', 'prune'], true); // drop the now-dangling admin entry
+}
+
+/**
  * Create a fresh worktree at `worktreePath` on branch `branch`, forked from `baseRef`.
  * Idempotent: tears down any stale worktree/branch of the same name first.
  */
 export function createWorktree(repo: string, branch: string, baseRef: string, worktreePath: string): void {
   fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
-  git(repo, ['worktree', 'remove', '--force', worktreePath], true);
+  clearWorktree(repo, worktreePath);
   git(repo, ['branch', '-D', branch], true);
   git(repo, ['worktree', 'add', '-B', branch, worktreePath, baseRef]);
   excludeAgentops(worktreePath);
@@ -37,7 +49,7 @@ export function createWorktree(repo: string, branch: string, baseRef: string, wo
  */
 export function createDetachedWorktree(repo: string, commitish: string, worktreePath: string): void {
   fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
-  git(repo, ['worktree', 'remove', '--force', worktreePath], true);
+  clearWorktree(repo, worktreePath);
   git(repo, ['worktree', 'add', '--detach', worktreePath, commitish]);
   excludeAgentops(worktreePath);
 }
