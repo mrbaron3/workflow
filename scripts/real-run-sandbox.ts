@@ -64,6 +64,29 @@ describe('greet (baseline)', () => {
 );
 // Target feature ABSENT: src/roman.ts. The harness-owned acceptance test below fails at
 // baseline; the agent's job is to make it pass. Titles carry the AC id for per-AC grounding.
+//
+// HARD=1 turns this into a repair-BAIT run (to observe the live repair loop): AC-3's strict cases
+// — lowercase, whitespace-padded, and internal-space input must be REJECTED — live only in this
+// acceptance test, NOT in the contract's AC-3 (which just says "reject malformed input"). A
+// first-pass generator that normalises input (trim/toUpperCase, a common "be lenient" choice) will
+// wrongly ACCEPT them and fail AC-3 → request_changes → a repair brief → attempt 2, which (now
+// failing) tends to read the grader and tighten to strict rejection. Probabilistic, not guaranteed:
+// a generator that chooses strict parsing from the start passes on attempt 1 (see the handoff).
+const HARD = !!process.env.HARD;
+const ac3Strict = HARD
+  ? `  it('AC-3 rejects out-of-range, non-integer, and every malformed/non-strict roman string', () => {
+    for (const bad of [0, -1, 4000, 3.5, NaN, Infinity]) expect(() => toRoman(bad as number)).toThrow();
+    // STRICT: no normalisation — case, surrounding/internal whitespace, and non-canonical forms all throw
+    for (const bad of ['', 'iv', 'McMxciv', ' IV', 'IV ', 'I V', 'IIII', 'VV', 'IL', 'IC', 'XM', 'IXIX'])
+      expect(() => fromRoman(bad)).toThrow();
+  });`
+  : `  it('AC-3 rejects out-of-range and malformed input', () => {
+    expect(() => toRoman(0)).toThrow();
+    expect(() => toRoman(4000)).toThrow();
+    expect(() => toRoman(3.5)).toThrow();
+    expect(() => fromRoman('IIII')).toThrow();
+    expect(() => fromRoman('ABC')).toThrow();
+  });`;
 write(
   'test/acceptance/roman.acceptance.test.ts',
   `import { describe, it, expect } from 'vitest';
@@ -82,13 +105,7 @@ describe('roman numerals', () => {
     expect(fromRoman('MCMXCIV')).toBe(1994);
     for (const n of [1, 4, 9, 40, 90, 400, 900, 2024, 3888]) expect(fromRoman(toRoman(n))).toBe(n);
   });
-  it('AC-3 rejects out-of-range and malformed input', () => {
-    expect(() => toRoman(0)).toThrow();
-    expect(() => toRoman(4000)).toThrow();
-    expect(() => toRoman(3.5)).toThrow();
-    expect(() => fromRoman('IIII')).toThrow();
-    expect(() => fromRoman('ABC')).toThrow();
-  });
+${ac3Strict}
 });
 `,
 );
@@ -185,6 +202,7 @@ const config: HarnessConfig = {
 };
 saveConfig(ROOT, config);
 
-console.log(`✓ scaffolded sandbox at ${path.relative(ROOT, SANDBOX)}`);
-console.log(`✓ seeded ${issueId} (contract-drafted, assignedAgent=claude) + config (grounded target)`);
+console.log(`✓ scaffolded sandbox at ${path.relative(ROOT, SANDBOX)}${HARD ? ' [HARD: repair-bait acceptance test]' : ''}`);
+console.log(`✓ seeded ${issueId} (contract-drafted, assignedAgent=claude) + config (grounded target, maxRepairs=${config.maxRepairs})`);
 console.log(`\nNext:  LENSES=codeQuality npx tsx scripts/real-panel-run.ts   (cheap: generator + 1 review)`);
+if (HARD) console.log(`       (HARD run: attempt 1 may fail AC-3 → watch the repair loop drive attempt 2)`);
