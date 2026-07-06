@@ -58,6 +58,10 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
   pass@k / pass^k の計測走行）は**計測したい issue にだけ opt-in**。mock backend は従来通り samples=3 全完走
   （無料・決定論・Eval DB の基質）。coordinator の「approve 後も全 sample 完走」は計測モードの挙動であって
   実 backend の既定にしない。
+  **実装済み**（`runBestOfN`＝`src/pipeline/execution/loop.ts`・`driveIssueLive`）: 既定 first-approve-stop（最初の approve で停止）、
+  `opts.measure` で全 sample 完走。勝者（最初の approver）を gate へ投影。sample ごとの loop は `manageIssueStatus:false` で回し、
+  issue の terminal status は勝者基準で1回だけ適用（last sample でなく winner を映す）。metrics は sampleIndex 別 EvalRun から pass@k/pass^k を既に算出（`perSample`）。
+  操作: `SAMPLES=k MEASURE=1 npx tsx scripts/real-panel-run.ts`。
 
 ### 集約と修復
 

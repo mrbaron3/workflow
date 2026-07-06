@@ -6,10 +6,11 @@
 > 追記: 2026-07-05（**GitHub gate backend 完成** — `openGate`/`pollGate`・`PR.externalRef`・`config.gate`。既定 store 直・github opt-in。決定論テスト green。残: 使い捨て remote での grounded 実走）
 > 追記: 2026-07-06（**並行パネル完成** — build を単一 commit に確定（`commitBuild`・amend）し、各 read-only レビューを build の分離 detached worktree で並行招集（`config.panel.maxConcurrent`）。AC-PANEL-008 が構造で成立。**副作用でゲートの実 push 空問題も解消**＝build が commit されるようになった）
 > 追記: 2026-07-06（**横断掃除完成** — headless `claude -p` seam 撤去（`cli.ts`/`config.cli` 削除・`makeRunner` は mock 以外 throw・ADR-0005 Q2）＋旧 `run.ts`/`real-run.ts` 削除（live.ts が代替）＋scoped-context assembler 実装（`ARCH-execution-007`・`config.target.systemDir` opt-in））
+> 追記: 2026-07-06（**best-of-N 完成** — `runBestOfN`・`driveIssueLive` が N sample を回す＝既定 samples:1＋first-approve-stop、`MEASURE=1` で全 sample 完走（pass@k/pass^k）。勝者を gate 投影・terminal status は勝者基準で1回。ADR-0006 E5）
 
 ## 一言で
 
-**ハーネスが ai-managed issue を無人で「実装→実 tsc/vitest 採点→実レビュー→審査ゲート」まで自律駆動することを、実 Claude セッションで実証済み。** 決定論ループ（drive → 7観点 panel → repair×N → gate → human release）は全て実装・テスト green。実 backend（generator＋perspective セッション）も grounded 走行で無人完走を確認。**ライブ repair も実装済み**（generator セッションが repair brief を受け取り、worktree を再利用して多 attempt を回す・mock と同じ `runBoundedRepairLoop` を共有）。**GitHub gate backend も実装済み**（approve→PR 投影→merge/close をポーリングして `recordHumanDecision` へ・`gh` は seam の裏で決定論テスト済み）。**並行パネルも実装済み**（build を単一 commit に確定し、各レビューを分離 detached worktree で並行招集。AC-PANEL-008 は分離で構造的に成立。これで ゲートの実 push も非空に）。**横断掃除も一段落**（headless `claude -p` seam 撤去・旧 run.ts 削除・scoped-context assembler 実装）。残るのは実 backend の**幅の grounded 実走**（フル6観点・GitHub gate の使い捨て remote）と best-of-N（項5）。
+**ハーネスが ai-managed issue を無人で「実装→実 tsc/vitest 採点→実レビュー→審査ゲート」まで自律駆動することを、実 Claude セッションで実証済み。** 決定論ループ（drive → 7観点 panel → repair×N → gate → human release）は全て実装・テスト green。実 backend（generator＋perspective セッション）も grounded 走行で無人完走を確認。**ライブ repair も実装済み**（generator セッションが repair brief を受け取り、worktree を再利用して多 attempt を回す・mock と同じ `runBoundedRepairLoop` を共有）。**GitHub gate backend も実装済み**（approve→PR 投影→merge/close をポーリングして `recordHumanDecision` へ・`gh` は seam の裏で決定論テスト済み）。**並行パネルも実装済み**（build を単一 commit に確定し、各レビューを分離 detached worktree で並行招集。AC-PANEL-008 は分離で構造的に成立。これで ゲートの実 push も非空に）。**横断掃除も一段落**（headless `claude -p` seam 撤去・旧 run.ts 削除・scoped-context assembler 実装）。**best-of-N も実装済み**（`runBestOfN`・既定 first-approve-stop・`MEASURE=1` で pass@k/pass^k 計測）。残るのは実 backend の**幅の grounded 実走のみ**（フル6観点・並行招集・best-of-N・GitHub gate の使い捨て remote — いずれも決定論部は済で、実 Claude 走行による観測が未）。
 
 **設計の一本の線**（不変）: seam の外側（poll/dispatch/grade/gate/store）は決定論コード、内側（HOW 遂行）だけが非決定な実セッション。headless 非目標・人間の判断点（署名＝WHAT／ゲート＝release）・状態は store、を守る。
 
@@ -23,7 +24,7 @@
 
 ## 現状 done（このセッション・全て committed & pushed / origin `3e26ac4`）
 
-決定論はすべて `npm test`（**168 green**）＋`npm run typecheck` で担保。各 spec は署名→to-detail-design→spawn→contract-draft→実装の自己ドッグフード。
+決定論はすべて `npm test`（**175 green**）＋`npm run typecheck` で担保。各 spec は署名→to-detail-design→spawn→contract-draft→実装の自己ドッグフード。
 
 | 層 | 実装 | テスト | 署名 spec / issue |
 |---|---|---|---|
@@ -39,6 +40,7 @@
 | **GitHub gate backend**（approve→PR 投影→merge/close ポーリング→`recordHumanDecision`。git/`gh` は seam の裏・既定 store 直・github opt-in） | `src/pipeline/execution/gate.ts`（`openGate`/`pollGate`/`prStateToDecision`）＋`PR.externalRef`／`config.gate`＋`scripts/gate-poll.ts` | `test/github-gate.test.ts`(11) | — |
 | **並行パネル**（build 単一 commit 確定＋分離 detached worktree で並行招集・AC-PANEL-008 構造成立・ゲート実 push 空も解消） | `worktree.ts`（`commitBuild`/`buildChangedFiles`/`createDetachedWorktree`）＋`perspective-session.ts`＋`pool.ts`＋`config.panel.maxConcurrent` | `test/build-commit.test.ts`(4)＋`test/pool.test.ts`(3) | — |
 | **横断掃除**（headless `claude -p` seam 撤去・旧 run.ts 削除・scoped-context assembler） | `runner.ts`（`makeRunner` throw）＋`cli.ts`/`config.cli`/`run.ts`/`real-run.ts` 削除＋`scoped-context.ts`（`ARCH-execution-007`・`config.target.systemDir`）＋`session.ts` 配線 | `test/scoped-context.test.ts`(7) | — |
+| **best-of-N**（既定 samples:1＋first-approve-stop・`MEASURE` で全 sample 完走＝pass@k/pass^k・勝者を gate 投影・E5） | `loop.ts` `runBestOfN`＋`live.ts` `runLiveSample`/`driveIssueLive`＋`LiveOptions.samples/measure`＋`runBoundedRepairLoop` の `manageIssueStatus` | `test/best-of-n.test.ts`(6)＋`test/live-repair.test.ts`(+1) | — |
 
 **実 backend の設計要点**: セッションが `.agentops/eval/<perspective>/findings.json` を産む（async・非決定）→ `sessionBackedGrader` がそれを読む（sync・決定論）→ `runPanel` 無改造。functionality は決定論 grader（E2）、6観点だけ LLM セッション。**各レビューは build commit の分離 detached worktree で並行招集**（`config.panel.maxConcurrent`）——findings は中央 evalRoot へ集約。read-only は**分離で構造保証**（レビューは build の worktree に触れられない＝AC-PANEL-008 成立）＋自分の checkout を編集したレビューは `changedFiles` で帰属 discard。
 
@@ -51,7 +53,7 @@
 
 ```bash
 # 決定論の確認
-npm test           # 168
+npm test           # 175
 npm run typecheck
 npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
 
@@ -60,6 +62,7 @@ npx tsx scripts/real-run-sandbox.ts                 # 使い捨て sandbox（rom
 LENSES=codeQuality npx tsx scripts/real-panel-run.ts # 安く1観点だけ（generator＋1レビュー）
 npx tsx scripts/real-panel-run.ts                    # フル6観点
 MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts    # ライブ repair を観測（request_changes→再 generate）。既定 0＝単発
+SAMPLES=3 MEASURE=1 npx tsx scripts/real-panel-run.ts # best-of-N 計測走行（全 sample 完走→pass@k/pass^k）。無指定＝1 sample・first-approve-stop
 # 走行中: tmux attach -t ao-issue-0001-s0（generator） / ao-eval-issue-0001-s0-<観点>（レビュー）
 # ゲート承認（store 直・既定）: recordHumanDecision(store, issueId, 'approve'|'reject')（直接呼び／CLI 未整備）
 # ゲート承認（github・opt-in）: config.gate.backend='github' で driveIssueLive が approve 時に PR 投影 → 人間が merge/close →
@@ -76,8 +79,8 @@ MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts    # ライブ repair を観�
 - `pool.ts` — `mapPool(items, limit, fn)`：入力順保持の上限付き並行 map（`panel.maxConcurrent`）。
 - `grade.ts` — 実 tsc/vitest → grounded BuildArtifact（AC は test 名の id 一致で満たす）。
 - `perspective-session.ts` — findings 契約・parse・grader・prompt・`runPerspectiveSessions`（**並行**：各レビューを build の分離 detached worktree で走らせ・findings を中央 evalRoot へ集約・git worktree 操作は逐次でセッションのみ並行の3相・acceptEdits+Bash）。
-- `loop.ts` — **`runBoundedRepairLoop`（mock/live 共有の決定論ループ・`produce` seam で各 attempt を差し込む）**・`driveIssueOnce`（mock backend の薄い wrapper）・`applyPanelVerdict`・`recordHumanDecision`・`driveOnce`・`watch`。
-- `live.ts` — 実 backend 版 `driveIssueLive`/`runLoopLive`（`runBoundedRepairLoop` に real-session `produce` を渡す：generator セッション＋grounded＋perspective セッション＋panel＋gate。多 attempt repair・worktree 再利用・stuck→needs-human-review 昇格）。
+- `loop.ts` — **`runBoundedRepairLoop`（mock/live 共有の決定論ループ・`produce` seam・`manageIssueStatus` で issue status 管理を切替）**・**`runBestOfN`（best-of-N orchestration・`runSample` seam・first-approve-stop/measure・勝者選定）**・`driveIssueOnce`（mock backend の薄い wrapper）・`applyPanelVerdict`・`recordHumanDecision`・`driveOnce`・`watch`。
+- `live.ts` — 実 backend 版。`runLiveSample`（1 sample の repair loop）を `runBestOfN` で N 回し（`driveIssueLive`）：generator セッション＋grounded＋分離並行 perspective セッション＋panel。既定 samples:1＋first-approve-stop、`measure` で全 sample 完走。勝者（最初の approver）を gate 投影し issue terminal status を勝者基準で1回適用。`runLoopLive` が queue を drain。
 - `gate.ts` — GitHub PR ゲート backend。`prStateToDecision`（純粋: merged→approve/closed→reject/open→pending）・`openGate`（approve→push＋`gh pr create`・`PR.externalRef` 記録・冪等）・`pollGate`（`needs-human-review`×github PR をポーリング→`recordHumanDecision`）・`GhGateRunner` seam（git/`gh` は裏・テストは fake）・`realGhGateRunner`。既定 `config.gate.backend=store`（no-op）・github は opt-in。ポーリングは `scripts/gate-poll.ts`。
 
 ## 残り（next・優先順）
@@ -102,7 +105,11 @@ MAX_REPAIRS=1 npx tsx scripts/real-run-sandbox.ts    # ライブ repair を観�
    **構造的に**成立（レビューは build の worktree に触れられない）。git worktree の作成/破棄は逐次・セッションのみ並行の3相でレースを避ける。
    決定論テスト: `test/build-commit.test.ts`(4)＋`test/pool.test.ts`(3)。**副作用**: 生成物が commit されるので **項3 のゲート実 push 空問題が解消**。
    **未検証**: 実 Claude での並行招集（複数 tmux セッション同時）と worktree 増の負荷。フル6観点 grounded（項1）で観測。
-5. **best-of-N / samples>1**: 今 live は単一 sample（pass^k 定義できず）。計測走行を issue 単位 opt-in で（E5・first-approve-stop 既定）。
+5. ~~**best-of-N / samples>1**~~ **✅ 完了**（このセッション）: `runBestOfN`（pure orchestration・`runSample` seam）を `driveIssueLive` に配線。
+   既定 `samples:1`＋first-approve-stop（最初の approve で停止）、`opts.measure`（`MEASURE=1`）で全 sample 完走＝pass@k/pass^k。勝者（最初の approver）を
+   gate 投影。sample ごとの loop は `manageIssueStatus:false` で回し、issue の terminal status は勝者基準で1回だけ適用（last sample でなく winner）。
+   metrics（`perSample`）は sampleIndex 別 EvalRun から既に pass@k/pass^k を算出＝計測側は無改造。決定論テスト `test/best-of-n.test.ts`(6)＋`live-repair`(+1)。
+   **未検証**: 実 Claude での複数 sample 走行（コスト大）。`SAMPLES=3 MEASURE=1 npx tsx scripts/real-panel-run.ts` で観測（フル6観点×3 sample は高コスト）。
 6. ~~**横断掃除**~~ **✅ 完了**（このセッション）: (a) headless `claude -p` seam を撤去＝`cli.ts`（`CliAgentRunner`）と `config.cli`／`AgentCliConfig` 削除・
    `makeRunner` は mock 以外 throw（実 agent は live tmux 経路へ誘導・ADR-0005 Q2）・`agents/generator.md`／README の JSON-block/headless 記述も実態へ修正。
    (b) 旧 `run.ts`（`runExecutionOnce`）＋`real-run.ts` 削除（`live.ts`/`real-panel-run.ts` が代替）。(c) scoped-context assembler 実装

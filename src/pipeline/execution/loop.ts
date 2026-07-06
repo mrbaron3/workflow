@@ -104,6 +104,8 @@ export interface DriveResult {
   attempts: number;
   /** True when the loop exhausted its bound without converging (escalated to human review). */
   exhausted: boolean;
+  /** best-of-N: how many independent samples were driven (absent/1 for the single-sample default). */
+  sampleCount?: number;
 }
 
 export interface DriveOptions {
@@ -138,6 +140,11 @@ export type LoopOutcome = Omit<DriveResult, 'issueId' | 'prId'>;
  * converging escalates to needs-human-review — never an infinite loop, never a silent pass
  * (AC-REPAIR-004). A `stuck` attempt (live liveness surfacing) escalates immediately and keeps the
  * session alive for a human (ARCH-execution-014) — also never a silent grade.
+ *
+ * `manageIssueStatus` (default true) owns the issue's status transitions. Best-of-N drives several
+ * samples through this loop for one issue and must apply the ISSUE's terminal status once, at the
+ * winner level — so it sets `false` and the loop touches only PR status + verdict, leaving the
+ * issue status for the caller (the resting state must reflect the winner, not the last sample).
  */
 export async function runBoundedRepairLoop(
   store: Store,
@@ -145,8 +152,10 @@ export async function runBoundedRepairLoop(
   issueId: string,
   pr: PR,
   produce: ProduceAttempt,
-  log: (m: string) => void = () => {},
+  opts: { log?: (m: string) => void; manageIssueStatus?: boolean } = {},
 ): Promise<LoopOutcome> {
+  const log = opts.log ?? (() => {});
+  const manage = opts.manageIssueStatus ?? true;
   const maxAttempts = config.maxRepairs + 1; // 1 initial + maxRepairs repairs — the "repeat N" bound
   let repairBrief: RepairBrief | null = null;
   let lastVerdict: Verdict = 'request_changes';
@@ -155,7 +164,7 @@ export async function runBoundedRepairLoop(
   let stuck = false;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (attempt > 1) store.setStatus(issueId, 'generation-in-progress'); // changes-requested -> generation (repair)
+    if (manage && attempt > 1) store.setStatus(issueId, 'generation-in-progress'); // changes-requested -> generation (repair)
     pr.attempts = attempt;
 
     const outcome = await produce(attempt, repairBrief);
@@ -166,7 +175,7 @@ export async function runBoundedRepairLoop(
       stuck = true;
       lastVerdict = 'needs_human';
       pr.status = 'changes-requested';
-      if (store.getIssue(issueId)!.status !== 'needs-human-review') store.setStatus(issueId, 'needs-human-review');
+      if (manage && store.getIssue(issueId)!.status !== 'needs-human-review') store.setStatus(issueId, 'needs-human-review');
       break;
     }
 
@@ -179,12 +188,12 @@ export async function runBoundedRepairLoop(
       break;
     }
     if (panel.verdict === 'approve') {
-      applyPanelVerdict(store, issueId, 'approve'); // build-approved -> needs-human-review (gate)
+      if (manage) applyPanelVerdict(store, issueId, 'approve'); // build-approved -> needs-human-review (gate)
       pr.status = 'approved';
       break;
     }
     // request_changes: route back and carry this attempt's findings into the next generate.
-    applyPanelVerdict(store, issueId, 'request_changes');
+    if (manage) applyPanelVerdict(store, issueId, 'request_changes');
     pr.status = 'changes-requested';
     repairBrief = toGenerateBrief(buildPanelRepairBrief(panel.runs));
     if (attempt < maxAttempts) log(`  ↻ ${issueId}: request_changes → repair (${repairBrief.instructions.length} fix(es))`);
@@ -193,7 +202,7 @@ export async function runBoundedRepairLoop(
   // Bounded escalation (AC-REPAIR-004): exhausted the loop without converging -> human review.
   const converged = lastVerdict === 'approve';
   const exhausted = !converged && !panelEscalated && !stuck;
-  if (exhausted && store.getIssue(issueId)!.status !== 'needs-human-review') {
+  if (manage && exhausted && store.getIssue(issueId)!.status !== 'needs-human-review') {
     store.setStatus(issueId, 'needs-human-review');
   }
 
@@ -206,6 +215,38 @@ export async function runBoundedRepairLoop(
     attempts: pr.attempts,
     exhausted,
   };
+}
+
+/** One best-of-N sample's outcome — the loop result plus which sample it was and its build checkout. */
+export interface SampleOutcome extends LoopOutcome {
+  sampleIndex: number;
+  prId: string;
+  approved: boolean;
+  /** The build checkout to project at the gate if this sample wins (live backend; null when none). */
+  worktree: string | null;
+}
+
+/**
+ * Best-of-N orchestration (ADR-0006 E5): drive up to `n` independent samples of one issue and pick
+ * the winner (the first to reach an approve verdict). Pure control flow over a `runSample` seam —
+ * the mock and live backends plug their per-sample driver in, exactly like `produce` for the repair
+ * loop. `measure` is the ship-vs-measure switch: default (false) is FIRST-APPROVE-STOP — stop as
+ * soon as a sample approves (cheapest reliable build). `measure: true` runs ALL n samples to
+ * completion regardless, so the Eval DB has the full sample set pass@k / pass^k are computed from
+ * (a truncated set makes pass^k meaningless). The winner is still the first approver.
+ */
+export async function runBestOfN(
+  n: number,
+  measure: boolean,
+  runSample: (sampleIndex: number) => Promise<SampleOutcome>,
+): Promise<{ samples: SampleOutcome[]; winner: SampleOutcome | null }> {
+  const samples: SampleOutcome[] = [];
+  for (let s = 0; s < Math.max(1, n); s++) {
+    const outcome = await runSample(s);
+    samples.push(outcome);
+    if (outcome.approved && !measure) break; // first-approve-stop (default): don't pay for more
+  }
+  return { samples, winner: samples.find((o) => o.approved) ?? null };
 }
 
 /**

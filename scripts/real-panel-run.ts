@@ -7,6 +7,10 @@
  * Cost control: set LENSES to a comma-separated subset to convene fewer live review sessions,
  * e.g.  LENSES=codeQuality,security npx tsx scripts/real-panel-run.ts
  * Default convenes all six review lenses (+ deterministic functionality).
+ *
+ * Best-of-N (ADR-0006 E5): SAMPLES=k drives k independent samples per issue; default is
+ * first-approve-stop. Add MEASURE=1 to run ALL k to completion for pass@k / pass^k, e.g.
+ *   SAMPLES=3 MEASURE=1 npx tsx scripts/real-panel-run.ts   (then: npx tsx scripts/report.ts or computeMetrics)
  */
 
 import { Store } from '../src/store/store.js';
@@ -28,12 +32,16 @@ const perspectives = only.length
 
 const store = new Store(ROOT);
 const config = loadConfig(ROOT);
-console.log(`lenses: ${perspectives.map((p) => p.key + (p.deterministic ? '(det)' : '')).join(', ')}\n`);
+const samples = process.env.SAMPLES ? Math.max(1, Number(process.env.SAMPLES)) : undefined;
+const measure = process.env.MEASURE === '1';
+console.log(`lenses: ${perspectives.map((p) => p.key + (p.deterministic ? '(det)' : '')).join(', ')}`);
+console.log(`samples: ${samples ?? config.samples}${measure ? ' [measure: run all for pass@k/pass^k]' : ' [first-approve-stop]'}\n`);
 
-const results = await runLoopLive(store, config, ROOT, { perspectives }, (m) => console.log(m));
+const results = await runLoopLive(store, config, ROOT, { perspectives, samples, measure }, (m) => console.log(m));
 
 console.log('\n=== results ===');
 for (const r of results) {
-  console.log(`${r.issueId}: panel=${r.verdict}${r.gateFailed ? ' [gate-failed]' : ''}${r.escalated ? ' [escalated]' : ''} → status=${r.status}`);
+  const n = r.sampleCount && r.sampleCount > 1 ? ` [${r.sampleCount} samples]` : '';
+  console.log(`${r.issueId}: panel=${r.verdict}${n}${r.gateFailed ? ' [gate-failed]' : ''}${r.escalated ? ' [escalated]' : ''} → status=${r.status}`);
 }
 console.log('\nApprove/reject at the gate with recordHumanDecision (needs-human-review issues await you).');

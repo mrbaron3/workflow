@@ -23,7 +23,7 @@ import { runGeneratorSession } from './session.js';
 import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader } from './perspective-session.js';
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
-import { runBoundedRepairLoop, type DriveResult } from './loop.js';
+import { runBoundedRepairLoop, runBestOfN, applyPanelVerdict, type DriveResult, type SampleOutcome } from './loop.js';
 import { openGate, realGhGateRunner, type GhGateRunner } from './gate.js';
 
 export interface LiveOptions {
@@ -31,35 +31,28 @@ export interface LiveOptions {
   perspectives?: PerspectiveSpec[];
   /** Gate backend runner (github only). Injectable for tests; defaults to the real `gh` runner. */
   gateRunner?: GhGateRunner;
+  /** Best-of-N: independent samples to drive per issue (default config.samples; real default = 1). */
+  samples?: number;
+  /** Measurement run: drive ALL samples to completion for pass@k / pass^k, not first-approve-stop (E5). */
+  measure?: boolean;
 }
 
 /**
- * Drive ONE ai-managed issue through the live bounded repair loop: (generate → ground → panel)*
- * → gate. Each attempt is a real generator session grounded in real tsc/vitest and reviewed by
- * real read-only perspective sessions; on request_changes the cross-perspective findings ride
- * into the next attempt as a repair brief and the worktree is reused so edits accumulate
- * (AC-REPAIR-001). The bound is config.maxRepairs+1; exhaustion or a stuck/timed-out generator
- * escalates to needs-human-review with the session kept alive (ARCH-execution-014/015) — never a
- * silent grade. Only the sessions are non-deterministic; the loop is shared with the mock drive.
+ * Drive ONE live sample of an issue: (generate → ground → panel)* bounded repair loop, in its own
+ * worktree/branch `agent/<issue>-s<n>`. `manageIssueStatus` is false under best-of-N (>1 sample)
+ * so the issue's terminal status is applied once by the caller at the winner level, not per sample.
  */
-export async function driveIssueLive(
-  store: Store,
-  config: HarnessConfig,
-  issue: Issue,
-  harnessRoot: string = process.cwd(),
-  opts: LiveOptions = {},
-  log: (m: string) => void = () => {},
-): Promise<DriveResult> {
-  const contract = issue.contract;
-  if (!contract) throw new Error(`${issue.id} has no contract`);
-  if (!config.target) throw new Error('driveIssueLive requires config.target (a real repo)');
-  const target = config.target;
+async function runLiveSample(
+  store: Store, config: HarnessConfig, issue: Issue, sampleIndex: number,
+  harnessRoot: string, opts: LiveOptions & { manageIssueStatus: boolean }, log: (m: string) => void,
+): Promise<SampleOutcome> {
+  const contract = issue.contract!;
+  const target = config.target!;
   const perspectives = opts.perspectives ?? PERSPECTIVES;
-  const issueKey = `${issue.id.toLowerCase()}-s0`;
+  const issueKey = `${issue.id.toLowerCase()}-s${sampleIndex}`;
   const maxAttempts = config.maxRepairs + 1;
+  const manageIssueStatus = opts.manageIssueStatus;
 
-  store.setStatus(issue.id, 'ready-for-generation');
-  store.setStatus(issue.id, 'generation-in-progress');
   const pr = store.addPR(
     PR.parse({
       id: store.nextId('PR'), issueId: issue.id, branch: `agent/${issueKey}`,
@@ -67,21 +60,21 @@ export async function driveIssueLive(
       createdAt: nowISO(), updatedAt: nowISO(),
     }),
   );
-
-  let approvedWorktree: string | null = null; // the checkout at the gate, for the github projection
+  let worktree: string | null = null; // the last completed attempt's checkout = the build at the gate
 
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
-    log(`▶ ${issue.id}: generator session (attempt ${attempt}/${maxAttempts})`);
-    const sess = await runGeneratorSession(config, { issue, contract, sampleIndex: 0, attempt, repairBrief }, harnessRoot, log);
+    log(`▶ ${issue.id} s${sampleIndex}: generator session (attempt ${attempt}/${maxAttempts})`);
+    const sess = await runGeneratorSession(config, { issue, contract, sampleIndex, attempt, repairBrief }, harnessRoot, log);
     if (sess.outcome !== 'completed') {
-      log(`  ⚠ ${issue.id}: generator ${sess.outcome} — escalating, session kept alive`);
+      log(`  ⚠ ${issue.id} s${sampleIndex}: generator ${sess.outcome} — escalating, session kept alive`);
       return { stuck: true };
     }
-    approvedWorktree = sess.worktree; // the reused worktree; the last completed attempt is the build at the gate
-
-    store.setStatus(issue.id, 'ready-for-evaluation');
-    store.setStatus(issue.id, 'evaluation-in-progress');
+    worktree = sess.worktree;
+    if (manageIssueStatus) {
+      store.setStatus(issue.id, 'ready-for-evaluation');
+      store.setStatus(issue.id, 'evaluation-in-progress');
+    }
 
     // 2. ground the checkout with real graders (real tsc/vitest)
     const artifact = groundArtifact({ contract, target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed });
@@ -97,20 +90,70 @@ export async function driveIssueLive(
     // 4. panel grades from the findings.json files (missing/broken -> escalate); functionality is deterministic
     const panel = runPanel(
       store, config,
-      { issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex: 0, attempt, agent: config.generator, featureArea: issue.area },
+      { issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex, attempt, agent: config.generator, featureArea: issue.area },
       { perspectives, grader: sessionBackedGrader(panelSessions.evalRoot) },
     );
     return { panel };
-  }, log);
+  }, { log, manageIssueStatus });
 
-  // Project an approved build to the gate UI (ADR-0006 G1). No-op for the store backend; for github
-  // it pushes the branch + opens the PR the human merges to release. Poll it later with pollGate.
-  if (loop.verdict === 'approve' && (config.gate?.backend ?? 'store') === 'github' && approvedWorktree) {
-    openGate(store, config, { pr, worktree: approvedWorktree, title: `${issue.id}: ${issue.title}` }, opts.gateRunner ?? realGhGateRunner(), log);
+  return { ...loop, sampleIndex, prId: pr.id, approved: loop.verdict === 'approve', worktree };
+}
+
+/**
+ * Drive ONE ai-managed issue through best-of-N live samples → the review gate (ADR-0006 E5). Each
+ * sample is a real generator session grounded in real tsc/vitest and reviewed by real read-only
+ * perspective sessions, bounded by config.maxRepairs+1 with cross-perspective repair (AC-REPAIR-*).
+ * Default is one sample, first-approve-stop; opts.measure runs all opts.samples for pass@k/pass^k.
+ * The WINNING sample (first to approve) is projected to the gate; a stuck/exhausted issue with no
+ * approver escalates to needs-human-review (session kept alive). The seams are each unit-tested;
+ * this orchestration drives live tmux + Claude and is not.
+ */
+export async function driveIssueLive(
+  store: Store,
+  config: HarnessConfig,
+  issue: Issue,
+  harnessRoot: string = process.cwd(),
+  opts: LiveOptions = {},
+  log: (m: string) => void = () => {},
+): Promise<DriveResult> {
+  if (!issue.contract) throw new Error(`${issue.id} has no contract`);
+  if (!config.target) throw new Error('driveIssueLive requires config.target (a real repo)');
+  const n = Math.max(1, opts.samples ?? config.samples);
+  const measure = opts.measure ?? false;
+  const single = n === 1; // single sample keeps the loop's own status management (unchanged behaviour)
+
+  store.setStatus(issue.id, 'ready-for-generation');
+  store.setStatus(issue.id, 'generation-in-progress');
+
+  const { samples, winner } = await runBestOfN(n, measure, (s) =>
+    runLiveSample(store, config, issue, s, harnessRoot, { ...opts, manageIssueStatus: single }, log));
+
+  // Terminal issue status. Single-sample already had it managed inside the loop; best-of-N applies
+  // it once here so the resting state reflects the WINNER, not whichever sample happened to run last.
+  if (!single) {
+    if (winner) {
+      store.setStatus(issue.id, 'ready-for-evaluation');
+      store.setStatus(issue.id, 'evaluation-in-progress');
+      applyPanelVerdict(store, issue.id, 'approve'); // build-approved -> needs-human-review (gate)
+    } else if (store.getIssue(issue.id)!.status !== 'needs-human-review') {
+      store.setStatus(issue.id, 'needs-human-review'); // no sample converged -> escalate
+    }
   }
 
-  log(`  = ${issue.id}: ${loop.verdict}${loop.gateFailed ? ' (gate failed — no lenses convened)' : ''} → ${loop.status} [${loop.attempts} attempt(s)]`);
-  return { issueId: issue.id, prId: pr.id, ...loop };
+  // Project the winning build to the gate UI (ADR-0006 G1). No-op for the store backend.
+  if (winner?.worktree && (config.gate?.backend ?? 'store') === 'github') {
+    const pr = store.getPR(winner.prId)!;
+    openGate(store, config, { pr, worktree: winner.worktree, title: `${issue.id}: ${issue.title}` }, opts.gateRunner ?? realGhGateRunner(), log);
+  }
+
+  const status = store.getIssue(issue.id)!.status;
+  const chosen = winner ?? samples[samples.length - 1]!; // the winner, else the last sample tried
+  log(`  = ${issue.id}: ${samples.length} sample(s)${measure ? ' [measure]' : ''}, ${winner ? `winner s${winner.sampleIndex}` : 'none approved'} → ${status}`);
+  return {
+    issueId: issue.id, prId: chosen.prId, verdict: chosen.verdict, status,
+    gateFailed: chosen.gateFailed, escalated: chosen.escalated, attempts: chosen.attempts,
+    exhausted: chosen.exhausted, sampleCount: samples.length,
+  };
 }
 
 /** One live turn over the ai-managed queue (the watch daemon's live run-once). */

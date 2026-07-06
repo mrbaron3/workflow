@@ -146,3 +146,23 @@ describe('runBoundedRepairLoop: a stuck generator escalates without a silent gra
     expect(pr.status).toBe('changes-requested');
   });
 });
+
+describe('runBoundedRepairLoop: manageIssueStatus=false leaves the issue status for the caller (best-of-N)', () => {
+  it('computes the verdict + PR status but never moves the ISSUE status', async () => {
+    const store = tmpStore('live-nomanage');
+    const issue = addIssue(store, 'ISSUE-1');
+    store.setStatus('ISSUE-1', 'ready-for-generation');
+    store.setStatus('ISSUE-1', 'generation-in-progress');
+    const before = store.getIssue('ISSUE-1')!.status;
+    const pr = addPR(store, 'ISSUE-1');
+
+    const res = await runBoundedRepairLoop(store, CONFIG, 'ISSUE-1', pr,
+      async (): Promise<AttemptOutcome> => ({ panel: approvingPanel }),
+      { manageIssueStatus: false });
+
+    expect(res.verdict).toBe('approve');
+    expect(pr.status).toBe('approved'); // PR status still set (per-PR, not per-issue)
+    expect(store.getIssue('ISSUE-1')!.status).toBe(before); // issue status untouched — caller owns it
+    expect(store.getIssue('ISSUE-1')!.status).not.toBe('needs-human-review');
+  });
+});
