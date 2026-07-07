@@ -394,6 +394,7 @@ interface ManifestIssue {
   dependsOnIssues?: string[]; // predecessor *keys* in this manifest (remapped to ids on spawn)
   dependsOnSystem?: string[];
   implementationNotes?: string[];
+  scope?: { include?: string[]; exclude?: string[] }; // file globs the drafted contract's scope_check enforces
 }
 
 const AC_RE = /\bAC-[A-Z0-9]+-\d+\b/g;
@@ -510,6 +511,7 @@ export function spawnIssues(store: Store, specDir: string, opts: SpawnIssuesOpti
       featureId,
       specPath,
       coversAcIds: m.coversAcIds ?? [],
+      scope: m.scope ?? null,
       dependsOnSystem: m.dependsOnSystem ?? [],
       dependsOnIssues: (m.dependsOnIssues ?? []).map((k) => keyToId.get(k) ?? k),
       implementationNotes: m.implementationNotes ?? [],

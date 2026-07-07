@@ -110,7 +110,10 @@ export function draftContracts(store: Store, specDir: string): DraftContractsRes
     const contract = IssueContract.parse({
       productGoal: goal,
       userStory: issue.title,
-      scope: { include: issue.coversAcIds, exclude: [] },
+      // File-glob boundary from the detail-design manifest (AC-CONTRACT-007). scope_check globs
+      // these against CHANGED FILES, so AC ids must never land here (they match no file — every
+      // real change would violate scope). Undeclared = include:[] = unrestricted.
+      scope: issue.scope ?? { include: [], exclude: [] },
       acceptanceCriteria,
       redLines: reds,
     });

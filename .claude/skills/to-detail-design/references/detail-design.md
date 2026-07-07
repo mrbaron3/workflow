@@ -16,6 +16,9 @@ issues:
     area: backend
     type: story                     # optional, default story
     coversAcIds: [AC-TODODUE-002, AC-TODODUE-003]
+    scope:                          # optional: FILE-GLOB boundary for the drafted contract's scope_check
+      include: ['src/todo/**', 'test/**']
+      exclude: []
     dependsOnIssues: [ISSUE-TODODUE-001]
     dependsOnSystem: [DATA-scheduling-014, ARCH-scheduling-031]
     implementationNotes:            # optional, NOT gated
@@ -23,8 +26,10 @@ issues:
 ```
 
 `key` + `coversAcIds` + `dependsOnIssues` + `dependsOnSystem` are the join-key surface the checks read.
-`title` / `area` / `type` / `implementationNotes` carry the design intent the later contract-drafting
-and the implementer need; they are not gated.
+`title` / `area` / `type` / `scope` / `implementationNotes` carry the design intent the later
+contract-drafting and the implementer need; they are not gated. `scope` globs match **changed files**
+(never AC ids); omitting it drafts an unrestricted contract (`include: []`), so declare it when the
+PR's file boundary is part of the design.
 
 ## Invariants (enforced by `check-detail-design`)
 

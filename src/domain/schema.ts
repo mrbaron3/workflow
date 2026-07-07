@@ -109,6 +109,16 @@ export const Issue = z.object({
   // Nano decomposition (to-detail-design; replaces the old slice .md — DOC_TAXONOMY §NANO).
   // coversAcIds is the 被覆×排他 unit: every spec AC must be covered by exactly one issue in the set.
   coversAcIds: z.array(z.string()).default([]), // spec AC-IDs this issue satisfies
+  // File-scope boundary from to-detail-design (issues.yaml `scope:`): the glob sets the drafted
+  // contract's scope_check enforces against CHANGED FILES. null = undeclared → the contract
+  // drafts unrestricted (include=[]). Never AC ids — an AC id is not a glob and matches no file.
+  scope: z
+    .object({
+      include: z.array(z.string()).default([]),
+      exclude: z.array(z.string()).default([]),
+    })
+    .nullable()
+    .default(null),
   dependsOnSystem: z.array(z.string()).default([]), // system element ids referenced (DOM/DATA/ARCH/…-<CTX>-NNN) — referenced, never copied
   dependsOnIssues: z.array(z.string()).default([]), // predecessor issues, forming the spec's issue DAG
   implementationNotes: z.array(z.string()).default([]), // seam-level HOW hints (optional; internal, not a contract)

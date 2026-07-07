@@ -56,6 +56,14 @@
   - Then その契約が負う受け入れ基準は、coversAcIds が指す署名 AC 群と過不足なく一致する（どの AC も落とさず、
     coversAcIds に無い AC を足さない）。基準の内容は**署名された spec を源**とし、本機能は受け入れ基準を新規著述しない
 
+- **[AC-CONTRACT-007] 正常系: 契約の scope は detail-design の file-glob 境界を源とする**
+  - Given ある issue が spawn 時に detail-design（issues.yaml）の scope（include/exclude の file glob）を持つ、
+    または scope を宣言していない
+  - When 契約をドラフトする
+  - Then scope を持つ issue の契約はその glob をそのまま負い、scope 未宣言の issue の契約は include=[]（無制限。
+    exclude のみ有効）になる。AC-ID が scope.include に混入することはない（scope は**変更ファイル**と突合される
+    glob であり、AC-ID は glob ではない — 混入すると全変更が scope 違反になる）
+
 ## CONTRACT-B 整合・耐障害ゲート
 
 **ユーザーストーリー**

@@ -11,6 +11,9 @@ issues:
     area: <frontend|backend|fullstack|infra|docs|eval|harness>
     type: story                      # optional (default story): story|bug|tech-debt|harness|eval
     coversAcIds: [AC-<SPEC>-NNN]     # spec AC-IDs this issue satisfies (被覆×排他: each AC in exactly one issue)
+    scope:                           # optional FILE-GLOB boundary the drafted contract's scope_check enforces
+      include: ['src/<area>/**', 'test/**']   # globs vs changed files — never AC ids; omit scope = unrestricted
+      exclude: []                    # carve-outs that stay violations even when include matches
     dependsOnIssues: []              # predecessor keys in this manifest (DAG; no cycles)
     dependsOnSystem: [DATA-<CTX>-NNN, ARCH-<CTX>-NNN]   # system element ids referenced, never copied
     implementationNotes:             # optional, NOT gated — seams another unit meshes with; test approach; algorithm pins

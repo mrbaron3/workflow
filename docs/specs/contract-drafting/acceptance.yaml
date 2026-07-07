@@ -24,6 +24,13 @@ verifications:
       - "各 issue の契約が負う受け入れ基準の AC-ID 集合が、その issue の coversAcIds と完全一致する（落とさず・足さず）"
       - "契約の受け入れ基準は署名 spec 由来であり、本機能が新規著述した AC が混入しない"
 
+  AC-CONTRACT-007:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "issues.yaml manifest の scope（include/exclude glob）が spawn された issue に保持され、ドラフトされた契約の scope と一致する"
+      - "scope 未宣言の issue の契約は scope.include=[]（無制限）になり、coversAcIds（AC-ID）が scope.include に混入しない"
+
   AC-CONTRACT-003:
     severity: blocker
     method: unit_test

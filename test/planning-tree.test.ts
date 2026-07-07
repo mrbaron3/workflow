@@ -340,6 +340,30 @@ describe('spawnIssues — ingest a signed spec into the store', () => {
     expect(store.getEpic('EPIC-01')!.issueIds).toEqual(['ISSUE-0001', 'ISSUE-0002']);
   });
 
+  it('persists the manifest\'s scope globs on the issue (the contract\'s scope_check boundary)', () => {
+    const store = tmpStore('spawn-scope');
+    planRoadmap(store, roadmap());
+    spawnSpecs(store);
+    const manifest = `issues:
+  - key: ISSUE-TODO-001
+    title: Persist the todo store
+    area: backend
+    coversAcIds: [AC-TODO-001]
+    scope:
+      include: ['src/store/**']
+      exclude: ['src/store/legacy/**']
+  - key: ISSUE-TODO-002
+    title: Build the todo list UI
+    area: frontend
+    coversAcIds: [AC-TODO-002]
+`;
+    const specPath = authorSignedSpec(store, 'FEAT-001', ['AC-TODO-001', 'AC-TODO-002'], manifest, {});
+    spawnIssues(store, specPath, { now: FIXED });
+
+    expect(store.db.issues[0]!.scope).toEqual({ include: ['src/store/**'], exclude: ['src/store/legacy/**'] });
+    expect(store.db.issues[1]!.scope).toBeNull(); // undeclared: the contract drafts unrestricted
+  });
+
   it('refuses an unsigned spec and persists nothing (北極星: 承認 is a human judgement point)', () => {
     const store = tmpStore('spawn-unsigned');
     planRoadmap(store, roadmap());

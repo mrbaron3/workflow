@@ -139,6 +139,37 @@ describe('draftContracts — signed spec issues become runnable', () => {
     expect(after).toEqual(snapshot); // no regression, no duplicate contract
   });
 
+  it('AC-CONTRACT-007: contract scope carries the manifest\'s file globs — never AC ids', () => {
+    const store = tmpStore('c007');
+    const withScope = `issues:
+  - key: ISSUE-FEAT-001
+    title: scope 付き issue
+    area: backend
+    coversAcIds: [AC-FEAT-001]
+    scope:
+      include: ['src/pipeline/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+  - key: ISSUE-FEAT-002
+    title: scope 無し issue
+    area: frontend
+    coversAcIds: [AC-FEAT-002]
+`;
+    const specPath = signedSpecWithIssues(store, 'feat', ['AC-FEAT-001', 'AC-FEAT-002'], withScope);
+    draftContracts(store, specPath);
+
+    const scoped = store.db.issues.find((i) => i.coversAcIds.includes('AC-FEAT-001'))!;
+    expect(scoped.contract!.scope).toEqual({
+      include: ['src/pipeline/**', 'test/**'],
+      exclude: ['test/acceptance-harness/**'],
+    });
+
+    // The grounded latent bug: coversAcIds used to land in scope.include, where scope_check
+    // globs them against changed FILES — matching nothing, so any real change violated scope.
+    const unscoped = store.db.issues.find((i) => i.coversAcIds.includes('AC-FEAT-002'))!;
+    expect(unscoped.contract!.scope.include).toEqual([]); // unrestricted, NOT ['AC-FEAT-002']
+    expect(unscoped.contract!.scope.exclude).toEqual([]);
+  });
+
   it('AC-CONTRACT-006: drafts only the named spec\'s issues, leaving other specs untouched', () => {
     const store = tmpStore('c006');
     const specA = signedSpecWithIssues(store, 'feat-a', ['AC-FEAT-001', 'AC-FEAT-002'], TWO_ISSUES);
