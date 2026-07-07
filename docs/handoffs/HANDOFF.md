@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（④セッションで更新・最終更新は**上流一気通貫の grounded 完走**（ISSUE-0005 released）後）。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑤セッションで更新・最終更新は**跨 target 回帰実走の grounded 初観測**（ISSUE-0006 released・executedRate 100%）後）。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -35,9 +35,9 @@
 
 | 能力 | 状態 | 根拠 / 欠け |
 |---|---|---|
-| ①自律 | 🟢 **上流一気通貫 grounded** | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。repair loop は発火も収束も実走観測済み。**④で上流一気通貫を grounded 完走**: roadmap→plan-roadmap→spawn-specs→spec 著述・署名→spawn-issues→contract-draft→assign→live drive→panel 3/3 approve→人間ゲート→released（ISSUE-0005・attempt 1 収束・`f486670`）。欠け: 1 issue・1 課題クラス規模、複数 issue の DAG 駆動・複数 spec 並行は未実証。 |
-| ②評価 | 🟢 良好 | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち（数点）。 |
-| ③改善 | 🟢 **三巡完結（spec 経由の巡を含む）** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**grounded 完走 3 巡**: 一巡目 ISSUE-0003＝scope.exclude 修正（adopt 経由・`904d511`）／二巡目 ISSUE-0004＝repair brief 忠実性（adopt 経由・live repair 収束・`d13a2fc`）／**三巡目 ISSUE-0005＝regress 複数 target 実行（④・初の署名 spec 経由・attempt 1 収束・`f486670`）**。ループが自分の欠陥を暴き自分で直した実績5件: 計器の severity 意味論（`8ed3e52`）・brief truncation・regress の AC-id 衝突偽陽性（`5e59195`）・**assign 断線と contract-draft の scope=AC-id バグ（④・上流一気通貫が暴露・`4724bf9`/`f8b4efa`）**。計器ペア: capture 100%×executed **75%**（6/8 pass・sandbox legacy 2件は「curation 時未捕捉」の精密理由で skip）。残る欠け: grader 揺れの較正・legacy task への graderCommands backfill・Analyst 提案粒度のさらなる文脈化。 |
+| ①自律 | 🟢 **上流一気通貫 grounded** | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。repair loop は発火も収束も実走観測済み。**④で上流一気通貫を grounded 完走**: roadmap→plan-roadmap→spawn-specs→spec 著述・署名→spawn-issues→contract-draft→assign→live drive→panel 3/3 approve→人間ゲート→released（ISSUE-0005・attempt 1 収束・`f486670`）。**⑤で二周目（ISSUE-0006）も摩擦ゼロで通過**＝チェーンの再現性確認。欠け: 1 issue・1 課題クラス規模、複数 issue の DAG 駆動・複数 spec 並行は未実証。 |
+| ②評価 | 🟢 良好＋escalation 実走済み | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass（**⑤で grounded 初観測**: 観点出力欠落→needs_human→人間が遅延 findings＋独立検証で解決）・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち・liveness hardCap が徹底レビューに短い（⑤発見）。 |
+| ③改善 | 🟢 **四巡完結・registry 全実行** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**grounded 完走 4 巡**: ISSUE-0003＝scope.exclude（adopt・`904d511`）／ISSUE-0004＝repair brief 忠実性（adopt・live repair・`d13a2fc`）／ISSUE-0005＝regress 複数 target（④・初の spec 経由・`f486670`）／**ISSUE-0006＝legacy backfill（⑤・spec 経由二周目・escalation→人間解決・`3f6ed7f`）**。ループが自分の欠陥を暴いた実績7件: 計器 severity 意味論・brief truncation・AC-id 衝突偽陽性・assign 断線・scope=AC-id バグ・**liveness hardCap 過短と findings 置き場所違反（⑤・escalation が暴露）**。計器ペア: capture 100%×executed **100%**（9/9・7 pass＋2 unverified＝未 released の roman の真実）。残る欠け: grader 揺れの較正・hardCap 較正・findings 収集強化・Analyst 提案粒度。 |
 
 ## 2. システム地図（層・実装・設計正本）
 
@@ -55,6 +55,31 @@
 ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
 
 ## 3. 現在地 — 各セッションの成果（全て `origin/main`）
+
+### ⑤セッション（2026-07-07・backfill 二周目＋跨 target 実走初観測＋escalation の実走）
+
+④で敷いた上流チェーンの**二周目**（FEAT-002）を摩擦ゼロで通し、frontier 筆頭だった legacy backfill を
+released。人間ゲートの **escalation 経路も初めて実走**した:
+
+- `a0d161b`（署名 commit）**FEAT-002 の WHAT** — curate の enrichment（現 target 束縛のコマンド未捕捉 task に
+  FEAT-001 の捕捉写像で後付け・非破壊: 複製なし/上書きなし/跨 target 推測なし/冪等・AC-REGBF-001..003）。
+  roadmap へ additive 追加（FEAT-001 は signed のまま）→ 署名 → ISSUE-0006 spawn → 契約 → assign。
+- **escalate-over-false-pass の grounded 初観測**: testQuality レビュアが **APFS clone を立てて 6 ミューテーションを
+  実走する徹底レビュー**を行い liveness hardCap（1h10m 時点）を超過 → loop は出力欠落を握り潰さず
+  `needs_human` へ escalate（設計どおり）。セッションは kill されず、**16 分後に approve 1.0 の findings を完走**。
+  人間ゲート（operator）が遅延 findings＋独立検証（gate 込み 288 green・typecheck・scope/protected clean）で
+  approve → released（`3f6ed7f`）。**新 failure class 2 件を grounded で発見**: (a) hardCap がミューテーション級の
+  徹底レビューに短すぎる（b) testQuality は findings.json を**自分の review worktree に書いた**（中央 evalRoot
+  でなく — timeout がなくても収集は失敗していた。escalate は二重に正しかった）。
+- **跨 target 回帰実走の初観測（frontier 筆頭の締結）**: released 直後の curate が self 束縛 legacy 6 task を
+  enrichment（grounded 発火）→ config を sandbox へ一時フリップして curate（sandbox 2 task も backfill）→
+  self へ復帰して regress → **9 executed・skip ゼロ（executedRate 75%→100%）**。sandbox 2 task は config が
+  self を向いたまま捕捉コマンドで `.harness/sandbox` に対して実走された（初の跨 target）。結果は
+  **unverified**（正直: ISSUE-0001 roman は未 released なので sandbox main に実装が無く assertion が報告されない
+  — 捏造 pass せず「検証不能」を記録・`regressionUnverifiedTasks` 0→2 は真実の計器）。
+- metrics: passAt1 0.5→**0.6**・released 3→**4**・executedRate **100%**・falsePass 0% 維持。
+- 正直な注記: testQuality の approve 1.0 は store 未記録（収集失敗のため EvalRun は functionality/codeQuality の
+  2 本＋humanVerdict）。遅延 findings は operator が直接検分した（findings.json は `.harness` 揮発）。
 
 ### ④セッション（2026-07-07・上流一気通貫）
 
@@ -152,20 +177,26 @@ sandbox 束縛の2 task は skip 報告）。
   scope=AC-id）も TDD で閉鎖済み（§3④）。
 - ~~回帰実行の複数 target 対応~~ **✅ 完了（④・ISSUE-0005 の payload そのもの）** — curate が grader
   コマンドを EvalTask に捕捉・regress が束縛 target 別に 1 実走ずつグループ実行・前提欠落は理由特定 skip。
-- **legacy task の graderCommands backfill**: registry の既存 6 task は全てコマンド未捕捉（curate は id 冪等で
-  既存を触らない）。sandbox 束縛 2 件が「re-curate to capture」理由で skip され続ける＝計器が指す次の欠け。
-  backfill（curate の enrichment か re-curate CLI）を入れると、実 vitest での**跨 target 実走**が初めて
-  grounded 観測可能になる。
-- **grader 非決定性の較正継続**: testQuality の揺れ（③セッション ~1/3・④は approve+minor で安定）。labels を
-  蓄積し falsePassTrend で監視。humanVerdict は現在 3 issue×パネル分。
+- ~~legacy task の graderCommands backfill~~ **✅ 完了（⑤・ISSUE-0006 released）** — curate の enrichment で
+  registry 9/9 が実行可能性を保持。**跨 target 実走も grounded 初観測**（executedRate 100%・§3⑤）。
+- **liveness hardCap の較正**（⑤発見・新）: ミューテーション検証級の徹底レビューが 1h 超で timeout 扱いになる。
+  observed: testQuality が hardCap 超過 16 分後に approve 1.0 を完走。hardCap の引き上げ／作業指標（pane 変化）
+  での延命／「遅延 findings の再収集」のいずれかを WHAT 化する（escalate 自体は正しい挙動 — 消さない）。
+- **findings 置き場所の強制/収集強化**（⑤発見・新）: レビュアが findings.json を中央 evalRoot でなく自分の
+  review worktree に書くことがある（役割プロンプトの path 指示強化 or 収集側が review worktree もフォールバック
+  探索）。⑤は人間が直接検分して解決した＝自動化の余地。
+- **grader 非決定性の較正継続**: testQuality の揺れ（③ ~1/3・④ approve+minor・⑤ approve 1.0 だが遅延）。
+  labels 蓄積・falsePassTrend 監視。humanVerdict は現在 4 issue 分。
+- **sandbox の unverified 2 task の処遇**: ISSUE-0001（roman）は未 released のため回帰 task が unverified
+  （真実の記録）。roman を released まで駆動して pass 化するか、実験残骸として task を退役させるかは人間判断。
 - **残在庫**: ISSUE-0002（pass^k stabilise）が planned のまま＝adopt 候補。to-spec / to-detail-design skill
-  本体の grounded 実走（④は operator 直接著述で代替）。
+  本体の grounded 実走（④⑤は operator 直接著述で代替）。
 - **回帰実行の運用磨き（続）**: playwright 等 unit_test 以外の grader 対応。複数 issue DAG・複数 spec 並行の駆動。
 
 ## 5. 動かし方（コマンド）
 
 ```bash
-# 決定論の確認（277 green・skip ゼロ）
+# 決定論の確認（288 green・skip ゼロ）
 npm test && npm run typecheck
 npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
 
@@ -229,5 +260,5 @@ npm run harness -- label --run EVAL-NNNNN --human approve|request_changes  # 較
 - `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）・`ADR-0007`（③配線 I1-I4・未吸収＝ビュー吸収が残タスク）。
 - `docs/specs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
 - 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,adopt,assign,improve,regression,repair,contract-draft}.ts`・`src/planning/planning-tree.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
-- テスト: `test/{improvement-loop,adopt,assign,metrics,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 277・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の3ファイルは昇格済み。
+- テスト: `test/{improvement-loop,adopt,assign,metrics,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 288・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の4ファイルは昇格済み。
 - [execution-layer.md](execution-layer.md) — execution 層の grounded 実験の詳細ログ（発火/収束の生データ・過去の不発記録）。**継続に必須ではない**深掘りアーカイブ。

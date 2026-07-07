@@ -3,10 +3,12 @@
  * commands at curate" — second issue through the upstream chain, spec
  * docs/specs/legacy-task-grader-command-backfill (AC-REGBF-001..003).
  *
- * RED at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3): the
- * drive's real Claude session must make it pass but cannot edit it
- * (config.target.protectedPaths). After the fix is human-approved and released, drop the
- * skipIf so it becomes a permanent regression guard (per the promoted siblings here).
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN,
+ * collected only under ACCEPT_HARNESS=1 (ADR-0007 I3), so the drive's real Claude session
+ * had to make it pass but could not edit it (config.target.protectedPaths). The build was
+ * human-approved and released (2026-07-07), so per the steering star ("never repeat the
+ * same failure twice") the skipIf is dropped: it now runs in the ordinary suite, staying in
+ * test/acceptance-harness/ (protectedPaths) so a future self-hosted drive cannot silence it.
  *
  * The seam this file pins: curateEvalTasks(store, config) additionally ENRICHES — a task
  * bound to config.target.repo whose graderCommands is null gains the FEAT-001 capture
@@ -52,7 +54,7 @@ function seedTask(store: Store, id: string, target: string | null, commands?: Re
 const commandsOf = (t: EvalTask): Record<string, string> | null =>
   (t as { graderCommands?: Record<string, string> | null }).graderCommands ?? null;
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('curate backfills legacy tasks (ISSUE-0006)', () => {
+describe('curate backfills legacy tasks (ISSUE-0006)', () => {
   it('ISSUE-0006/AC-REGBF-001 a command-less task bound to the current target gains the FEAT-001 capture — no duplicate, other fields untouched, idempotent', () => {
     const store = freshStore();
     seedTask(store, 'EVAL-TASK-ISSUE-A-AC-1', 'self');
