@@ -164,7 +164,11 @@ store.addIssue(
     contract: {
       productGoal: 'A dependable roman-numeral conversion utility.',
       userStory: 'As a developer I want toRoman/fromRoman to convert between integers and roman numerals with validation.',
-      scope: { include: ['src/**'], exclude: ['test/acceptance/**'] },
+      // include test/** so the generator can add its own tests — the role prompt ("Add automated
+      // tests for each") and the testQuality lens both expect them, and src-only scope made that
+      // structurally impossible (a repair brief asking for tests then tripped scope_check). The
+      // harness-owned test/acceptance/** stays protected (protectedPaths) as the independent grader.
+      scope: { include: ['src/**', 'test/**'], exclude: ['test/acceptance/**'] },
       acceptanceCriteria: [
         { id: 'AC-1', severity: 'blocker', behavior: 'toRoman(n) converts an integer in 1..3999 to its roman numeral.', verification: { method: 'unit_test', expected: ['toRoman(1994) === "MCMXCIV"', 'toRoman(3999) === "MMMCMXCIX"'] } },
         { id: 'AC-2', severity: 'blocker', behavior: 'fromRoman(s) parses a roman numeral back to its integer (round-trips).', verification: { method: 'unit_test', expected: ['fromRoman("MCMXCIV") === 1994', 'fromRoman(toRoman(n)) === n'] } },
