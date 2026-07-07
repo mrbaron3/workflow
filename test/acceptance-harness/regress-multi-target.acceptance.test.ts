@@ -4,10 +4,12 @@
  * (roadmap → spec → sign → spawn-issues → contract-draft → assign), spec
  * docs/specs/regression-multi-target-execution (AC-REGMT-001..004).
  *
- * RED at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3): the
- * drive's real Claude session must make it pass but cannot edit it
- * (config.target.protectedPaths). After the fix is human-approved and released, drop the
- * skipIf so it becomes a permanent regression guard (per the promoted siblings here).
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN,
+ * collected only under ACCEPT_HARNESS=1 (ADR-0007 I3), so the drive's real Claude session
+ * had to make it pass but could not edit it (config.target.protectedPaths). The build was
+ * human-approved and released (2026-07-07), so per the steering star ("never repeat the
+ * same failure twice") the skipIf is dropped: it now runs in the ordinary suite, staying in
+ * test/acceptance-harness/ (protectedPaths) so a future self-hosted drive cannot silence it.
  *
  * The seam this file pins (harness-owned WHAT confirmation, like roman's toRoman/fromRoman):
  *   - EvalTask carries `graderCommands` — a per-VERIFICATION-METHOD command record captured
@@ -89,7 +91,7 @@ function fakeReport(assertions: { name: string; passed: boolean }[]): VitestRepo
   return { success: failed.length === 0, total: assertions.length, passed: assertions.length - failed.length, failedNames: failed.map((a) => a.name), assertions };
 }
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('regression multi-target execution (ISSUE-0005)', () => {
+describe('regression multi-target execution (ISSUE-0005)', () => {
   it('ISSUE-0005/AC-REGMT-001 curate captures the grader command for the task\'s method — and never invents one', () => {
     const store = freshStore();
     seedIssueWithRun(store, 'ISSUE-A');
