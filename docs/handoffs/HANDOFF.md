@@ -37,7 +37,7 @@
 |---|---|---|
 | ①自律 | 🟢 中核 grounded | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。**repair loop は発火も収束も実走観測済み**（このセッション）。欠け: 1 issue・1 課題クラス規模、上流一気通貫は未実証。 |
 | ②評価 | 🟢 良好 | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち（数点）。 |
-| ③改善 | 🟢 **一巡 grounded 済**（最終ゲート判断のみ残） | ADR-0007 で配線を確定し全て決定論実装＋テスト。**実失敗→自動 curate→analyze --create→adopt→self-hosted drive→panel approve の一巡を grounded で観測済み**（ISSUE-0003＝scope.exclude 修正）。しかも一巡の途中で計器自身のバグを grounded が暴き修正（`8ed3e52`）＝③が③を直した。残: 人間の gate 判断（`agentops decide ISSUE-0003`）→ merge → 受け入れテストの恒久回帰化。 |
+| ③改善 | 🟢 **一巡 grounded で完結** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**実失敗→自動 curate→analyze --create→adopt→self-hosted drive→panel approve→人間ゲート approve→released→恒久回帰化 の一巡を grounded で完走**（ISSUE-0003＝scope.exclude 修正・`904d511`）。しかも一巡の途中で計器自身のバグを grounded が暴き修正（`8ed3e52`）＝③が③を直した。前後計器: passAt1 0→0.5・released 0→1・captureRate 1 維持。残る欠け: 回帰 registry（4件）の**実行者**が未実装（write-only）＝次 frontier。 |
 
 ## 2. システム地図（層・実装・設計正本）
 
@@ -83,18 +83,13 @@ grounded で観測したこと（③一巡・実 Claude 走行）:
 前セッションまでの成果（repair loop 発火/収束・PromptRecord・タブ化・モデル上書き等）は §6 の不変条件と
 [execution-layer.md](execution-layer.md) に吸収済み。
 
-## 4. frontier（次の一手）— 一巡の締結と、回帰 registry の実行
+## 4. frontier（次の一手）— 回帰 registry の実行
 
-**残る即時タスク（このセッションの締結）**:
-
-1. **gate 判断（人間）**: `npm run harness -- decide ISSUE-0003 approve|reject`。approve なら
-   `agent/issue-0003-s0` ブランチ（worktree `.harness/worktrees/issue-0003-s0`・単一 build commit）を
-   main へ merge。
-2. **受け入れテストの恒久回帰化**: merge 後、`test/acceptance-harness/scope-exclude.acceptance.test.ts`
-   の `describe.skipIf(!process.env.ACCEPT_HARNESS)` を外して通常 suite に昇格（＝「同じ失敗を二度と」の
-   有形化）。after スナップショット（`status --json`）を取り before と比較。
-3. sandbox の ISSUE-0001（roman bait）は needs-human-review のまま＝実験残骸。decide reject か放置
-   （.harness はローカル揮発なので害なし）。
+**このセッションで締結済み**（一巡完走）: ISSUE-0003 を human gate approve → build（`grade.ts` 修正＋
+5 テスト）を main へ cherry-pick（`904d511`）→ 受け入れグレーダを恒久回帰ガードへ昇格（skipIf 除去・
+protectedPaths 内に残置で tamper-proof）→ before/after 比較（passAt1 0→0.5・released 0→1）→ worktree/branch 掃除。
+before/after スナップショットは `.harness/metrics-{before,after}.json`（ローカル揮発）。
+sandbox の ISSUE-0001（roman bait）は needs-human-review のまま＝実験残骸（.harness 揮発なので害なし）。
 
 **次の frontier 候補（優先順）**:
 
