@@ -112,10 +112,15 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
 
   const inScope = (f: string) =>
     opts.contract.scope.include.length === 0 || opts.contract.scope.include.some((p) => globMatch(p, f));
+  // scope.exclude carves exceptions out of include: a match is a violation even when include also matches.
+  const excluded = (f: string) => opts.contract.scope.exclude.some((p) => globMatch(p, f));
   const protectedHit = opts.changed.filter((f) =>
     (opts.target.protectedPaths ?? []).some((p) => f === p || f.startsWith(p.replace(/\*+$/, ''))),
   );
-  const scopeViolations = [...protectedHit, ...opts.changed.filter((f) => !inScope(f) && !protectedHit.includes(f))];
+  const scopeViolations = [
+    ...protectedHit,
+    ...opts.changed.filter((f) => (!inScope(f) || excluded(f)) && !protectedHit.includes(f)),
+  ];
 
   const satisfied: Record<string, boolean> = {};
   for (const ac of opts.contract.acceptanceCriteria) {
