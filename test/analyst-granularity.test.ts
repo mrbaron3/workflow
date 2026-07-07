@@ -41,8 +41,8 @@ function healthyMetrics(): Metrics {
   };
 }
 
-function finding(criterionId: string, severity: Finding['severity'] = 'blocker'): Finding {
-  return { criterionId, severity, expected: 'e', observed: 'o', reproductionSteps: [], evidence: {}, requiredFix: [`fix ${criterionId}`] };
+function finding(criterionId: string, severity: Finding['severity'] = 'blocker', lineage?: Finding['lineage']): Finding {
+  return { criterionId, severity, expected: 'e', observed: 'o', reproductionSteps: [], evidence: {}, requiredFix: [`fix ${criterionId}`], ...(lineage ? { lineage } : {}) };
 }
 
 let seq = 0;
@@ -56,10 +56,10 @@ function addRun(store: Store, issueId: string, prId: string, attempt: number, fi
 }
 
 describe('R1: a finding that survived a repair attempt → repair-brief suggestion with a draft contract', () => {
-  it('fires when the same criterion recurs in consecutive attempts of the same PR, citing specifics', () => {
+  it('fires when a re-review finding is attested lineage=persisted, citing specifics', () => {
     const store = freshStore();
     addRun(store, 'ISSUE-0007', 'PR-1', 1, [finding('AC-2')]);
-    addRun(store, 'ISSUE-0007', 'PR-1', 2, [finding('AC-2')]); // the brief did not land
+    addRun(store, 'ISSUE-0007', 'PR-1', 2, [finding('AC-2', 'blocker', 'persisted')]); // the brief did not land — attested (ISSUE-0009)
 
     const s = analyzeHarness(store, healthyMetrics());
     const r1 = s.find((x) => /survived a repair/i.test(x.title));
@@ -142,7 +142,7 @@ describe('draft contract piping: suggestion → issue → adopt (the human still
   it('createSuggestionIssues attaches the draft; adopt uses it when no contract is passed', () => {
     const store = freshStore();
     addRun(store, 'ISSUE-0007', 'PR-1', 1, [finding('AC-2')]);
-    addRun(store, 'ISSUE-0007', 'PR-1', 2, [finding('AC-2')]);
+    addRun(store, 'ISSUE-0007', 'PR-1', 2, [finding('AC-2', 'blocker', 'persisted')]);
 
     const suggestions = analyzeHarness(store, healthyMetrics());
     const created = createSuggestionIssues(store, suggestions);

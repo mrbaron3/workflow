@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
-import { Severity, Verdict, type IssueContract } from '../../domain/schema.js';
+import { FindingLineage, Severity, Verdict, type Finding, type IssueContract } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { PerspectiveResult, deterministicPerspectiveGrade, type PerspectiveGrader, type PerspectiveSpec } from '../panel.js';
 import { changedFiles, createDetachedWorktree, removeWorktree } from './worktree.js';
@@ -62,6 +62,9 @@ const RawFinding = z.object({
   expected: z.string().default(''),
   observed: z.string().default(''),
   requiredFix: z.array(z.string()).default([]),
+  // Re-review attestation (ISSUE-0009): strictly 'persisted' | 'new' or absent. An invalid
+  // value fails the whole parse (→ escalate) — never coerced, never defaulted.
+  lineage: FindingLineage.optional(),
 });
 export const PerspectiveFindingsInput = z.object({
   verdict: Verdict,
@@ -91,6 +94,8 @@ export function parsePerspectiveFindings(raw: unknown): PerspectiveResult {
       reproductionSteps: [],
       evidence: { trace: 'findings.json' },
       requiredFix: f.requiredFix,
+      // absent stays absent (legacy) — never silently classified either way
+      ...(f.lineage ? { lineage: f.lineage } : {}),
     })),
     scores: ZERO_SCORES,
     overall,
@@ -125,10 +130,24 @@ export function sessionBackedGrader(evalRoot: string): PerspectiveGrader {
       : file(perspective, contract, artifact, config);
 }
 
-/** The read-only briefing a perspective session runs on (it writes only its findings.json). */
-export function perspectivePrompt(perspective: string, contract: IssueContract, evalRelDir: string): string {
+/** What a re-review prompt shows of a prior finding — enough to recognise the problem. */
+export type PriorFinding = Pick<Finding, 'criterionId' | 'observed'>;
+
+/**
+ * The read-only briefing a perspective session runs on (it writes only its findings.json).
+ * On a re-review (ISSUE-0009), `priorFindings` — the SAME lens's previous-attempt findings —
+ * are presented and the reviewer must attest each reported finding's lineage ('persisted' |
+ * 'new'); with no priors (attempt 1) the prompt is unchanged.
+ */
+export function perspectivePrompt(
+  perspective: string,
+  contract: IssueContract,
+  evalRelDir: string,
+  priorFindings: readonly PriorFinding[] = [],
+): string {
   const lens = PERSPECTIVE_LENS[perspective] ?? 'correctness and quality for this lens';
   const rubric = PERSPECTIVE_RUBRIC[perspective] ?? [];
+  const reReview = priorFindings.length > 0;
   return [
     `You are a code reviewer. Review ONLY through the ${perspective} lens: ${lens}.`,
     `This is a READ-ONLY review: do NOT edit any source file. Read the working tree and judge it`,
@@ -137,14 +156,43 @@ export function perspectivePrompt(perspective: string, contract: IssueContract, 
     ``,
     `## Acceptance criteria`,
     ...contract.acceptanceCriteria.map((a) => `- [${a.id}] (${a.severity}) ${a.behavior}`),
+    ...(reReview
+      ? [
+          ``,
+          `## Prior findings (this lens, previous attempt)`,
+          `This is a re-review after a repair attempt. Your previous review of this lens raised:`,
+          ...priorFindings.map((f) => `- [${f.criterionId}] ${f.observed}`),
+          `You MUST attest the lineage of EVERY finding you report:`,
+          `- "persisted" — the same problem as one listed above is still present.`,
+          `- "new" — a problem you found in this review that is not one of the findings above.`,
+          `Judge by the problem's substance, not by criterion id — a survivor may resurface under`,
+          `a different criterionId, and a fresh problem may hit the same one.`,
+        ]
+      : []),
     ``,
     `## Output`,
     `Write your verdict to ${evalRelDir}/findings.json as JSON:`,
     `{"verdict": "approve" | "request_changes", "score": <0..1>,`,
     ` "findings": [{"criterionId": "...", "severity": "blocker|major|minor",`,
-    `   "observed": "...", "expected": "...", "requiredFix": ["..."]}]}`,
+    ...(reReview
+      ? [`   "observed": "...", "expected": "...", "requiredFix": ["..."],`, `   "lineage": "persisted" | "new"}]}`]
+      : [`   "observed": "...", "expected": "...", "requiredFix": ["..."]}]}`]),
     `Approve only if nothing in your lens needs changing. Do not edit code — only write findings.json.`,
   ].join('\n');
+}
+
+/**
+ * Resolve ONE lens's briefing from the per-lens prior-findings map — the re-review handoff
+ * seam (ISSUE-0009). A lens keyed in the map gets the re-review prompt with ITS OWN priors;
+ * a lens absent from the map (or no map at all — attempt 1) gets the unchanged first-review prompt.
+ */
+export function promptForLens(
+  perspective: string,
+  contract: IssueContract,
+  evalRelDir: string,
+  priorFindings?: Record<string, readonly PriorFinding[]>,
+): string {
+  return perspectivePrompt(perspective, contract, evalRelDir, priorFindings?.[perspective] ?? []);
 }
 
 export interface PerspectiveSessionsInput {
@@ -157,6 +205,9 @@ export interface PerspectiveSessionsInput {
   repo: string;
   /** The committed build to review — the generator's branch (or its commit SHA). */
   buildRef: string;
+  /** Re-review (attempt > 1): each lens's findings from the previous attempt, keyed by lens.
+   *  Absent/empty per lens = first review, that lens's prompt is unchanged (ISSUE-0009). */
+  priorFindings?: Record<string, readonly PriorFinding[]>;
 }
 
 export interface PerspectiveSessionsResult {
@@ -249,7 +300,7 @@ export async function runPerspectiveSessions(
     createDetachedWorktree(input.repo, input.buildRef, reviewWt);
     const dir = path.join(reviewWt, '.agentops', 'eval', p.key);
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'PROMPT.md'), perspectivePrompt(p.key, input.contract, `.agentops/eval/${p.key}`), 'utf8');
+    fs.writeFileSync(path.join(dir, 'PROMPT.md'), promptForLens(p.key, input.contract, `.agentops/eval/${p.key}`, input.priorFindings), 'utf8');
     return { key: p.key, reviewWt, sentinel: path.join(dir, 'findings.json') };
   });
 

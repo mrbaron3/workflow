@@ -123,6 +123,25 @@ describe('runPanel with the real session backend', () => {
     expect(store.runsForIssue(issueId)).toHaveLength(PERSPECTIVES.length); // 6 session + 1 deterministic
   });
 
+  it('ISSUE-0009/AC-LINEAGE-002 a lineage attested in findings.json reaches the stored EvalRun for that perspective', () => {
+    const evalRoot = tmpDir('psg-panel-lineage');
+    for (const p of PERSPECTIVES) if (!p.deterministic && p.key !== 'codeQuality') writeFindings(evalRoot, p.key, { verdict: 'approve' });
+    writeFindings(evalRoot, 'codeQuality', {
+      verdict: 'request_changes',
+      findings: [
+        { criterionId: 'AC-1', severity: 'major', observed: 'still duplicated', expected: 'deduplicated', lineage: 'persisted' },
+        { criterionId: 'AC-1', severity: 'minor', observed: 'unattested note', expected: 'e' }, // legacy: no lineage
+      ],
+    });
+    const store = storeAt('psg-panel-lineage-store');
+    const { issueId, prId } = seedPanel(store);
+
+    runPanel(store, CONFIG, { issueId, prId, contract, artifact: goodArtifact, sampleIndex: 0, attempt: 2, agent: 'claude', featureArea: 'harness' }, { grader: sessionBackedGrader(evalRoot) });
+
+    const run = store.runsForIssue(issueId).find((r) => r.perspective === 'codeQuality')!;
+    expect(run.findings.map((f) => f.lineage)).toEqual(['persisted', undefined]); // attested stored; absence stays absent
+  });
+
   it('escalates when one perspective session left no (or broken) output', () => {
     const evalRoot = tmpDir('psg-panel-miss');
     for (const p of PERSPECTIVES) if (!p.deterministic && p.key !== 'security') writeFindings(evalRoot, p.key, { verdict: 'approve' });

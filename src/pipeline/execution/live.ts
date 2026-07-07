@@ -21,7 +21,7 @@ import { PR, PromptRecord } from '../../domain/schema.js';
 import { pollable } from './guard.js';
 import { runGeneratorSession } from './session.js';
 import { groundArtifact } from './grade.js';
-import { runPerspectiveSessions, sessionBackedGrader } from './perspective-session.js';
+import { runPerspectiveSessions, sessionBackedGrader, type PriorFinding } from './perspective-session.js';
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
 import { runBoundedRepairLoop, runBestOfN, applyPanelVerdict, type DriveResult, type SampleOutcome } from './loop.js';
 import { openGate, realGhGateRunner, type GhGateRunner } from './gate.js';
@@ -36,6 +36,22 @@ export interface LiveOptions {
   samples?: number;
   /** Measurement run: drive ALL samples to completion for pass@k / pass^k, not first-approve-stop (E5). */
   measure?: boolean;
+}
+
+/**
+ * The store→prior-findings selection for a re-review (ISSUE-0009), extracted pure like
+ * collectFindings (AC-LIVE-003) so the deterministic sub-logic is pinned by unit tests, not
+ * buried in the tmux orchestration: each lens is handed ONLY its own findings from the
+ * IMMEDIATELY previous attempt of THIS PR, keyed by lens. perspective=null gate runs carry
+ * no lens and are excluded; attempt 1 (no previous attempt) selects nothing, so every lens
+ * keeps its first-review prompt.
+ */
+export function priorFindingsByLens(store: Store, prId: string, attempt: number): Record<string, readonly PriorFinding[]> {
+  return Object.fromEntries(
+    store.db.evalRuns
+      .filter((r) => r.prId === prId && r.attempt === attempt - 1 && r.perspective !== null)
+      .map((r) => [r.perspective!, r.findings]),
+  );
 }
 
 /**
@@ -90,10 +106,13 @@ async function runLiveSample(
     const artifact = groundArtifact({ contract, target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed, issueId: issue.id });
 
     // 3. real read-only perspective sessions — each in its own detached worktree of the committed
-    //    build (isolated + concurrent), collecting findings.json into the generator worktree's evalRoot
+    //    build (isolated + concurrent), collecting findings.json into the generator worktree's evalRoot.
+    //    A re-review (attempt > 1) hands each lens its OWN previous-attempt findings so the reviewer
+    //    attests lineage (persisted/new) per finding — never inferred downstream (ISSUE-0009).
+    const priorFindings = priorFindingsByLens(store, pr.id, attempt);
     const panelSessions = await runPerspectiveSessions(
       config,
-      { worktree: sess.worktree, contract, perspectives, issueKey, repo: path.resolve(harnessRoot, target.repo), buildRef: sess.branch },
+      { worktree: sess.worktree, contract, perspectives, issueKey, repo: path.resolve(harnessRoot, target.repo), buildRef: sess.branch, priorFindings },
       log,
     );
 

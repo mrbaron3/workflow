@@ -120,27 +120,17 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
 
   // --- failure-class rules (granularity): specifics from the store, not thresholds -----
 
-  // R1: a criterion whose finding recurs in CONSECUTIVE attempts of the same PR — the
-  // repair brief demonstrably did not land. Cites the survivors; drafts the fidelity fix.
-  const byPr = new Map<string, Map<number, Set<string>>>();
-  for (const r of store.db.evalRuns) {
-    const attempts = byPr.get(r.prId) ?? new Map<number, Set<string>>();
-    const crits = attempts.get(r.attempt) ?? new Set<string>();
-    for (const f of r.findings) crits.add(f.criterionId);
-    attempts.set(r.attempt, crits);
-    byPr.set(r.prId, attempts);
-  }
+  // R1: a re-review finding the REVIEWER attested as lineage='persisted' — the repair brief
+  // demonstrably did not land. The attestation is the ONLY evidence (ISSUE-0009): criterionId
+  // recurrence across attempts misattributes both ways (different findings share an AC id; a
+  // true survivor may resurface under a different one), so it is never inferred. Legacy
+  // re-reviews without lineage are indeterminate and never counted.
   const survivors: string[] = [];
-  for (const [prId, attempts] of byPr) {
-    for (const [attempt, crits] of attempts) {
-      const next = attempts.get(attempt + 1);
-      if (!next) continue;
-      for (const c of crits) {
-        if (next.has(c)) {
-          const issueId = store.db.evalRuns.find((r) => r.prId === prId)?.issueId ?? prId;
-          survivors.push(`${issueId} ${c} (attempt ${attempt}→${attempt + 1})`);
-        }
-      }
+  for (const r of store.db.evalRuns) {
+    if (r.attempt <= 1) continue; // lineage is only attested on a re-review
+    for (const f of r.findings) {
+      if (f.lineage !== 'persisted') continue;
+      survivors.push(`${r.issueId} ${f.criterionId} (attempt ${r.attempt - 1}→${r.attempt})`);
     }
   }
   if (survivors.length) {
@@ -149,7 +139,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
       area: 'harness',
       title: `Repair briefs failed to land: ${survivors.length} finding(s) survived a repair attempt`,
       rationale:
-        `The same criterion was flagged again AFTER a repair attempt: ${survivors.join('; ')}. ` +
+        `The reviewer attested these findings as persisted AFTER a repair attempt: ${survivors.join('; ')}. ` +
         `The mechanically-fixable share of this class is brief fidelity (today only requiredFix[0] per ` +
         `criterion reaches the generator) — the attached draft contract targets it; if briefs are already ` +
         `faithful here, close this as investigated.`,

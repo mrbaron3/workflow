@@ -197,6 +197,15 @@ export const PR = z.object({
 });
 export type PR = z.infer<typeof PR>;
 
+/**
+ * ISSUE-0009: on a re-review (attempt > 1) the reviewer ATTESTS each finding's lineage —
+ * 'persisted' = the same problem survived the repair, 'new' = first seen this review.
+ * Optional/additive: absent = legacy record, deliberately indeterminate (never defaulted
+ * to either value — the Analyst must not guess).
+ */
+export const FindingLineage = z.enum(['persisted', 'new']);
+export type FindingLineage = z.infer<typeof FindingLineage>;
+
 export const Finding = z.object({
   criterionId: z.string(),
   severity: Severity,
@@ -205,6 +214,7 @@ export const Finding = z.object({
   reproductionSteps: z.array(z.string()).default([]),
   evidence: z.record(z.string()).default({}), // label -> relative path under evidence dir
   requiredFix: z.array(z.string()).default([]),
+  lineage: FindingLineage.optional(),
 });
 export type Finding = z.infer<typeof Finding>;
 
