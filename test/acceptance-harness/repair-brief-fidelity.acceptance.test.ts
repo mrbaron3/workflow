@@ -5,11 +5,13 @@
  * requiredFix[0] per criterion, so a multi-step fix arrives truncated and the repair
  * attempt cannot land it).
  *
- * env-gate convention (ADR-0007 I3): collected ONLY when ACCEPT_HARNESS=1 — AC-1 is red
- * at baseline BY DESIGN; the ordinary `npm test` must not see it. The execution layer's
- * grader runs with the env set (scripts/real-run-self.ts), making this the independent
- * grader the agent must satisfy but may not edit (config.target.protectedPaths). Once the
- * fix is released, drop the skipIf to promote it into the permanent regression suite.
+ * This began as the env-gated *acceptance grader* for the ③ drive (ADR-0007 I3) — AC-1 red
+ * at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1, satisfiable but not editable
+ * by the driven agent (config.target.protectedPaths). The fix was human-approved and
+ * released (2026-07-07, ISSUE-0004), so per the steering star ("never repeat the same
+ * failure twice") the skipIf is dropped: it now runs in the ordinary suite, and it stays in
+ * test/acceptance-harness/ (protectedPaths) so a FUTURE self-hosted drive cannot silence it —
+ * the tamper-proof guard complementing the agent's own unprotected test/repair-brief-fidelity.test.ts.
  */
 import { describe, it, expect } from 'vitest';
 import { buildPanelRepairBrief, toGenerateBrief } from '../../src/pipeline/repair.js';
@@ -28,7 +30,7 @@ function finding(criterionId: string, severity: Finding['severity'], requiredFix
   return Finding.parse({ criterionId, severity, expected: 'e', observed: 'o', requiredFix });
 }
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('repair briefs forward the full fix list', () => {
+describe('repair briefs forward the full fix list', () => {
   it('AC-1 every requiredFix line of a forwarded finding reaches the generator brief, in order', () => {
     const fixes = ['Fix the parser rejection table', 'Add the boundary test for 3999', 'Document the strictness in the JSDoc'];
     const brief = toGenerateBrief(buildPanelRepairBrief([run('EVAL-1', 'testQuality', [finding('AC-9', 'blocker', fixes)])]));

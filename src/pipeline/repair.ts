@@ -21,9 +21,10 @@ const SEVERITY_RANK: Record<Severity, number> = { blocker: 0, major: 1, minor: 2
 /**
  * Turn a panel's perspective runs into one cross-perspective repair brief (ADR-0006 E7 /
  * AC-PANEL-005): blocker-first, one instruction per criterion (a criterion flagged by several
- * perspectives is merged), each tagged with the perspectives that raised it. If any perspective
- * has blocker findings, only blockers are forwarded — the same "fix what blocks first" policy
- * as the single-run brief, generalised across the panel.
+ * perspectives is merged), each carrying the forwarded finding's FULL requiredFix list in order
+ * (ISSUE-0004) and tagged with the perspectives that raised it. If any perspective has blocker
+ * findings, only blockers are forwarded — the same "fix what blocks first" policy as the
+ * single-run brief, generalised across the panel.
  */
 export function buildPanelRepairBrief(runs: EvalRun[]): PanelRepairBrief {
   // group every finding by criterion, remembering which perspective(s) raised it
@@ -52,7 +53,8 @@ export function buildPanelRepairBrief(runs: EvalRun[]): PanelRepairBrief {
   const instructions: PanelInstruction[] = forwarded.map((m) => ({
     criterionId: m.finding.criterionId,
     severity: m.finding.severity,
-    instruction: m.finding.requiredFix[0] ?? `Resolve ${m.finding.criterionId}`,
+    instructions:
+      m.finding.requiredFix.length > 0 ? [...m.finding.requiredFix] : [`Resolve ${m.finding.criterionId}`],
     perspectives: [...m.perspectives].sort(),
   }));
 
@@ -72,6 +74,6 @@ export function toGenerateBrief(panel: PanelRepairBrief): RepairBrief {
   return {
     fromEvalRunId: panel.fromEvalRunIds[0] ?? '',
     findings: panel.findings,
-    instructions: panel.instructions.map((i) => i.instruction),
+    instructions: panel.instructions.flatMap((i) => i.instructions),
   };
 }

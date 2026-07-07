@@ -50,7 +50,8 @@ export interface RepairBrief {
 export interface PanelInstruction {
   criterionId: string;
   severity: Finding['severity'];
-  instruction: string;
+  /** Every requiredFix line of the forwarded finding, order preserved (ISSUE-0004). */
+  instructions: string[];
   /** Perspectives that flagged this criterion (a criterion flagged by several is merged once). */
   perspectives: string[];
 }
