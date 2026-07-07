@@ -25,6 +25,7 @@ import { runPerspectiveSessions, sessionBackedGrader } from './perspective-sessi
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
 import { runBoundedRepairLoop, runBestOfN, applyPanelVerdict, type DriveResult, type SampleOutcome } from './loop.js';
 import { openGate, realGhGateRunner, type GhGateRunner } from './gate.js';
+import { improveTick } from '../improve.js';
 
 export interface LiveOptions {
   /** Which lenses to convene (default: all 7). Reduce it for a cheap smoke. */
@@ -174,6 +175,9 @@ export async function runLoopLive(
   log(`queue: ${queue.length} ai-managed issue(s) [generator=${config.generator}]`);
   const results: DriveResult[] = [];
   for (const issue of queue) results.push(await driveIssueLive(store, config, issue, harnessRoot, opts, log));
+  // ③ every live turn ends by capturing failures into the regression registry and
+  // reporting (never enacting) improvement suggestions — ADR-0007 I2.
+  improveTick(store, log);
   store.save();
   return results;
 }

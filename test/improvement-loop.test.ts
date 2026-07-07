@@ -15,6 +15,7 @@ import { Store, nowISO } from '../src/store/store.js';
 import { Issue, EvalRun } from '../src/domain/schema.js';
 import { curateEvalTasks } from '../src/pipeline/curator.js';
 import { analyzeHarness, createSuggestionIssues } from '../src/pipeline/analyst.js';
+import { improveTick } from '../src/pipeline/improve.js';
 import type { Metrics } from '../src/metrics/metrics.js';
 
 const dirs: string[] = [];
@@ -143,5 +144,38 @@ describe('the loop closes: a real failure becomes a regression task AND an impro
     // ② a harness/eval improvement is queued as a planned issue the execution loop can drive
     expect(improvements.length).toBeGreaterThan(0);
     expect(improvements.every((i) => i.status === 'planned')).toBe(true);
+  });
+});
+
+describe('improveTick — the ③ tail every live turn ends with (ADR-0007 I2)', () => {
+  it('captures failures into the registry, reports suggestions, and creates NO issues', () => {
+    const store = freshStore();
+    const issue = seedIssue(store);
+    seedRun(store, issue.id, 'AC-1'); // a real failure sits in the store after the turn
+    const issuesBefore = store.db.issues.length;
+
+    const lines: string[] = [];
+    const res = improveTick(store, (m) => lines.push(m));
+
+    // Curator ran: the failed blocker AC is now a [regression] eval task
+    expect(res.curated.some((t) => t.id.endsWith('AC-1') && t.userGoal.startsWith('[regression]'))).toBe(true);
+    expect(store.db.evalTasks.length).toBeGreaterThan(0);
+    // Analyst ran report-only: suggestions surfaced in the log, but the backlog is untouched
+    expect(res.suggestions.length).toBeGreaterThan(0);
+    expect(store.db.issues.length).toBe(issuesBefore); // no auto-created issues (WHAT stays human)
+    expect(lines.some((l) => l.includes('curated'))).toBe(true);
+    expect(lines.some((l) => l.includes('analyst'))).toBe(true);
+  });
+
+  it('is idempotent: a second tick with no new failures curates nothing', () => {
+    const store = freshStore();
+    const issue = seedIssue(store);
+    seedRun(store, issue.id, 'AC-1');
+    improveTick(store);
+    const registrySize = store.db.evalTasks.length;
+
+    const second = improveTick(store);
+    expect(second.curated).toEqual([]);
+    expect(store.db.evalTasks.length).toBe(registrySize);
   });
 });
