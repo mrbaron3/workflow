@@ -1,0 +1,16 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+issues:
+  - key: ISSUE-LIVE-001
+    title: Keep working sessions alive to a finite active cap and collect late findings
+    area: harness
+    type: harness
+    coversAcIds: [AC-LIVE-001, AC-LIVE-002, AC-LIVE-003]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnSystem: [ARCH-execution-014, ARCH-execution-015]
+    implementationNotes:
+      - "monitorLiveness（src/pipeline/execution/tmux.ts）の opts へ additive に: activeCapMs（有限既定・活動継続時の絶対天井）＋注入 seam（clock / capture / sentinelExists / sleep）。既存呼び出しは既定値で従来互換（hardCapMs は非活動時の従来意味を保つが、活動中は activeCapMs まで延命）。"
+      - "遅延収集は perspective-session.ts の phase 3 を tmux 非依存の exported helper `collectFindings(jobs, statuses, evalRoot, opts)` に抽出（fs コピー＋dirty 判定は opts.changed で注入可）。worktree の removal/keep-alive 判断は caller に残す。"
+      - "runReviewSession の kept-alive（stuck は kill しない）と store 昇格の経路は変えない — 変わるのは『判定後に sentinel が在るなら収集する』の一点。"

@@ -23,3 +23,6 @@ epics:
       - id: FEAT-002
         title: "Legacy task grader-command backfill"
         outcome: "FEAT-001 以前に捕捉された registry の legacy task（コマンド未捕捉）が、その target を現に採点している curate の機会に実行可能性を後付け獲得する。移行を手作業や re-curate の破壊なしに終わらせ、跨 target 実走を registry 全体へ波及させる。"
+      - id: FEAT-003
+        title: "Active-session liveness and late findings collection"
+        outcome: "活動継続中（pane 変化あり）のレビュー/生成セッションが短い hardCap で timeout 扱いにならず（有限の絶対天井までは待つ）、stuck/timeout 判定後でも収集時点で存在する findings は捨てられない。⑤の grounded 失敗（1h26m の正当なミューテーション検証レビューが 10 分 cap で失われ人間介入を要した）を封じ、徹底レビューの証拠を評価ループへ回収する。"

@@ -1,0 +1,30 @@
+# 活動セッションの liveness と遅延 findings 収集 — 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - ARCH-execution-014
+  - ARCH-execution-015
+
+verifications:
+  AC-LIVE-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "pane が変化し続けるセッションは hardCap 経過後も timeout にならず、活動天井前に sentinel が現れれば completed を返す"
+
+  AC-LIVE-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "活動を続けたまま活動天井（有限・設定可能）を超えたセッションは timeout になる"
+      - "pane が idleMs 不変で sentinel が無いセッションは従来どおり stuck になる"
+
+  AC-LIVE-003:
+    severity: major
+    method: unit_test
+    expected:
+      - "stuck / timeout と判定された review でも、収集時点で sentinel が存在すれば findings が中央 evalRoot へ収集される"
+      - "checkout を汚した review は遅延収集の対象でも discard される（read-only ガード維持）"

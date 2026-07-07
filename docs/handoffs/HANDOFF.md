@@ -37,7 +37,7 @@
 |---|---|---|
 | ①自律 | 🟢 **上流一気通貫 grounded** | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。repair loop は発火も収束も実走観測済み。**④で上流一気通貫を grounded 完走**: roadmap→plan-roadmap→spawn-specs→spec 著述・署名→spawn-issues→contract-draft→assign→live drive→panel 3/3 approve→人間ゲート→released（ISSUE-0005・attempt 1 収束・`f486670`）。**⑤で二周目（ISSUE-0006）も摩擦ゼロで通過**＝チェーンの再現性確認。欠け: 1 issue・1 課題クラス規模、複数 issue の DAG 駆動・複数 spec 並行は未実証。 |
 | ②評価 | 🟢 良好＋escalation 実走済み | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass（**⑤で grounded 初観測**: 観点出力欠落→needs_human→人間が遅延 findings＋独立検証で解決）・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち・liveness hardCap が徹底レビューに短い（⑤発見）。 |
-| ③改善 | 🟢 **四巡完結・registry 全実行** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**grounded 完走 4 巡**: ISSUE-0003＝scope.exclude（adopt・`904d511`）／ISSUE-0004＝repair brief 忠実性（adopt・live repair・`d13a2fc`）／ISSUE-0005＝regress 複数 target（④・初の spec 経由・`f486670`）／**ISSUE-0006＝legacy backfill（⑤・spec 経由二周目・escalation→人間解決・`3f6ed7f`）**。ループが自分の欠陥を暴いた実績7件: 計器 severity 意味論・brief truncation・AC-id 衝突偽陽性・assign 断線・scope=AC-id バグ・**liveness hardCap 過短と findings 置き場所違反（⑤・escalation が暴露）**。計器ペア: capture 100%×executed **100%**（9/9・7 pass＋2 unverified＝未 released の roman の真実）。残る欠け: grader 揺れの較正・hardCap 較正・findings 収集強化・Analyst 提案粒度。 |
+| ③改善 | 🟢 **四巡完結・registry 全実行** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**grounded 完走 4 巡**: ISSUE-0003＝scope.exclude（adopt・`904d511`）／ISSUE-0004＝repair brief 忠実性（adopt・live repair・`d13a2fc`）／ISSUE-0005＝regress 複数 target（④・初の spec 経由・`f486670`）／**ISSUE-0006＝legacy backfill（⑤・spec 経由二周目・escalation→人間解決・`3f6ed7f`）**。ループが自分の欠陥を暴いた実績6件: 計器 severity 意味論・brief truncation・AC-id 衝突偽陽性・assign 断線・scope=AC-id バグ・**活動中 timeout＋遅延 findings 不収集（⑤・escalation が暴露）**。計器ペア: capture 100%×executed **100%**（9/9・7 pass＋2 unverified＝未 released の roman の真実）。残る欠け: grader 揺れの較正・hardCap 較正・findings 収集強化・Analyst 提案粒度。 |
 
 ## 2. システム地図（層・実装・設計正本）
 
@@ -68,9 +68,11 @@ released。人間ゲートの **escalation 経路も初めて実走**した:
   実走する徹底レビュー**を行い liveness hardCap（1h10m 時点）を超過 → loop は出力欠落を握り潰さず
   `needs_human` へ escalate（設計どおり）。セッションは kill されず、**16 分後に approve 1.0 の findings を完走**。
   人間ゲート（operator）が遅延 findings＋独立検証（gate 込み 288 green・typecheck・scope/protected clean）で
-  approve → released（`3f6ed7f`）。**新 failure class 2 件を grounded で発見**: (a) hardCap がミューテーション級の
-  徹底レビューに短すぎる（b) testQuality は findings.json を**自分の review worktree に書いた**（中央 evalRoot
-  でなく — timeout がなくても収集は失敗していた。escalate は二重に正しかった）。
+  approve → released（`3f6ed7f`）。**新 failure class を grounded で発見**: review の hardCap（10 分）が
+  ミューテーション級の徹底レビューに短すぎ、**活動継続中（pane 変化あり）でも timeout** する。しかも timeout は
+  idle なら先に stuck が発火するため**実質「活動中のセッションにだけ」発火する**＝意味論と値の不整合。
+  遅れて届いた sentinel（review worktree 内 findings.json — これは設計どおりの置き場で、中央 evalRoot へは
+  completed 時にハーネスがコピーする）は収集されず捨てられた（⑥訂正: 当初「置き場所違反」と誤記）。
 - **跨 target 回帰実走の初観測（frontier 筆頭の締結）**: released 直後の curate が self 束縛 legacy 6 task を
   enrichment（grounded 発火）→ config を sandbox へ一時フリップして curate（sandbox 2 task も backfill）→
   self へ復帰して regress → **9 executed・skip ゼロ（executedRate 75%→100%）**。sandbox 2 task は config が
@@ -179,12 +181,10 @@ sandbox 束縛の2 task は skip 報告）。
   コマンドを EvalTask に捕捉・regress が束縛 target 別に 1 実走ずつグループ実行・前提欠落は理由特定 skip。
 - ~~legacy task の graderCommands backfill~~ **✅ 完了（⑤・ISSUE-0006 released）** — curate の enrichment で
   registry 9/9 が実行可能性を保持。**跨 target 実走も grounded 初観測**（executedRate 100%・§3⑤）。
-- **liveness hardCap の較正**（⑤発見・新）: ミューテーション検証級の徹底レビューが 1h 超で timeout 扱いになる。
-  observed: testQuality が hardCap 超過 16 分後に approve 1.0 を完走。hardCap の引き上げ／作業指標（pane 変化）
-  での延命／「遅延 findings の再収集」のいずれかを WHAT 化する（escalate 自体は正しい挙動 — 消さない）。
-- **findings 置き場所の強制/収集強化**（⑤発見・新）: レビュアが findings.json を中央 evalRoot でなく自分の
-  review worktree に書くことがある（役割プロンプトの path 指示強化 or 収集側が review worktree もフォールバック
-  探索）。⑤は人間が直接検分して解決した＝自動化の余地。
+- **liveness の活動延命＋遅延 findings 収集**（⑤発見）: (a) 活動継続中（pane 変化あり）のセッションを短い
+  hardCap で timeout させない — 絶対天井（有限・設定可能）までは待ち、sentinel が現れれば completed。
+  (b) stuck/timeout 判定でも、収集時点で sentinel が存在すれば findings を収集する（遅延完走の証拠を捨てない）。
+  escalate 自体は正しい挙動 — 消さない。（⑥訂正: findings の置き場は設計どおりで違反ではなかった。）
 - **grader 非決定性の較正継続**: testQuality の揺れ（③ ~1/3・④ approve+minor・⑤ approve 1.0 だが遅延）。
   labels 蓄積・falsePassTrend 監視。humanVerdict は現在 4 issue 分。
 - **sandbox の unverified 2 task の処遇**: ISSUE-0001（roman）は未 released のため回帰 task が unverified
