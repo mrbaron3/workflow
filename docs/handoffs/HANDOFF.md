@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（同日2回更新: ③一巡セッション）。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -37,7 +37,7 @@
 |---|---|---|
 | ①自律 | 🟢 中核 grounded | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。**repair loop は発火も収束も実走観測済み**（このセッション）。欠け: 1 issue・1 課題クラス規模、上流一気通貫は未実証。 |
 | ②評価 | 🟢 良好 | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち（数点）。 |
-| ③改善 | 🟡 決定論実装＋テスト済み・**loop 未閉** | Curator/Analyst 実装＋CLI 配線＋決定論テスト済み。欠け: **live 経路に未配線**・**実失敗→昇格→改善→計測の一巡が grounded 未観測**。＝①repair がセッション開始時にいた段階。 |
+| ③改善 | 🟢 **一巡 grounded 済**（最終ゲート判断のみ残） | ADR-0007 で配線を確定し全て決定論実装＋テスト。**実失敗→自動 curate→analyze --create→adopt→self-hosted drive→panel approve の一巡を grounded で観測済み**（ISSUE-0003＝scope.exclude 修正）。しかも一巡の途中で計器自身のバグを grounded が暴き修正（`8ed3e52`）＝③が③を直した。残: 人間の gate 判断（`agentops decide ISSUE-0003`）→ merge → 受け入れテストの恒久回帰化。 |
 
 ## 2. システム地図（層・実装・設計正本）
 
@@ -49,52 +49,64 @@
   実装: `src/pipeline/execution/`（`loop.ts` 制御・`live.ts` live 配線・`session.ts` generator・`perspective-session.ts` reviewer・`tmux.ts` 基質・`worktree.ts`・`grade.ts` 実採点・`gate.ts` ゲート・`scoped-context.ts` 設計注入）。正本: **ADR-0005** ＋ `docs/specs/_system/execution` 4ビュー。
 - **② evaluation（評価）** — 実 tsc/vitest の hard-gate（ADR-0003）＋7観点パネル（functionality は決定論、他6観点は read-only Claude レビュー）。集約 Verdict→ human ゲート。
   実装: `src/pipeline/panel.ts`・`evaluate.ts`・`src/graders/`・`src/metrics/metrics.ts`。正本: **ADR-0006** ＋ `_system/evaluation`。
-- **③ improvement（自己改善）** — `curator.ts`（失敗→回帰 EvalTask 昇格）＋`analyst.ts`（metrics→`type:harness`/`type:eval` 改善 issue 起票）。**改善は同じ roadmap の issue として同じ drive loop で回す**（＝ハーネスが自分を直す）。
+- **③ improvement（自己改善）** — `curator.ts`（失敗→回帰 EvalTask 昇格）＋`analyst.ts`（metrics→`type:harness`/`type:eval` 改善 issue 起票）＋`adopt.ts`（提案→人間 WHAT 確定→drive 可能化）＋`improve.ts`（live turn 末尾の常設 tail）。**改善は同じ roadmap の issue として同じ drive loop で回す**（＝ハーネスが自分を直す）。正本: **ADR-0007**。self-hosting は `config.target.repo='.'`＋env-gate 受け入れテスト（`test/acceptance-harness/`・protectedPaths 保護）。
 - **オーケストレータは決定論**（ADR-0004・`DOM-execution-008`）: poll/dispatch/grade/gate/store を LLM に委ねない。`agentops run`（`coordinator.ts`）は**mock demo 用の別経路**（approve→自動 released）で、execution の **live 経路**（`runLoopLive`）と混同しない。
 
-ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート。
+ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
 
-## 3. 現在地 — このセッションの全成果（全て `origin/main`）
+## 3. 現在地 — このセッションの全成果（③一巡・全て `origin/main`）
 
-出発点は「execution 層は実装・決定論テスト完了、残タスク＝repair loop の grounded 発火観測」。それを解消し、さらに機能追加・③着手まで進めた。
+出発点は「③は決定論実装＋テスト済みだが loop 未閉（live 未配線・grounded 未観測）」。ADR-0007 で配線を
+確定し、断線2つ（Analyst 起票 issue の drive 不能・self-hosting 経路欠如）を繋ぎ、**grounded 一巡を観測**した。
 
-`git log --oneline`（新しい順）:
+`git log --oneline`（新しい順・このセッション分）:
 
-- `27e9b00` docs: handoff に③決定論テスト done を反映
-- `43d73b7` **improvement: ③ self-improvement loop の決定論テスト**（Curator+Analyst・両輪＋ループ閉包）
-- `4742526` docs: ③ frontier ハンドオフ作成（本 HANDOFF に統合済み）
-- `8dd7f17` docs: repair 収束＋タブ機能を記録
-- `d5badec` **execution: ロールセッションを holder tmux の window（タブ）化**（`tmux attach -t agentops` で観察）
-- `b85b18f` **sandbox: 契約 scope を `test/**` へ拡張**（scope_check テンション修正）
-- `71b446c` **docs: repair loop の grounded 発火観測（landmark）**
-- `bac40ef` **execution: PromptRecord（発行プロンプトを store へ監査射影・`DATA-execution-006`）**
-- `6238da4` docs: haiku 実験（当時 repair 不発）の記録
-- `00df909` **execution: per-role モデル選択（`config.models` → `claude --model`）**
+- `8ed3e52` **fix(metrics): captureRate は AC severity で判定（Curator 意味論に一致）＋NUL 混入除去** — grounded が暴いた計器バグ
+- `0306f44` **improvement: self-hosting 基盤**（env-gate 受け入れテスト・種 contract・`real-run-self.ts`・grader コマンドの `KEY=VAL` env プレフィックス）
+- `4f75fe7` **improvement: runLoopLive 末尾に improveTick 常設**（curate 冪等・analyst report-only）
+- `6a8760c` **improvement: 操舵計器 regressionCaptureRate・falsePassTrend**（status/dashboard 表示）
+- `5b0a70b` **improvement: agentops adopt/decide/status --json**（提案→人間 WHAT→drive の遷移＋gate CLI）
+- `0d6b5ac` **docs: ADR-0007 ③改善ループの配線**
 
-決定論: **`npm test` 198 green**＋`npm run typecheck`＋system-design check、すべてパス。
+決定論: **`npm test` 211 green＋2 skipped**（skip は env-gate 受け入れテスト＝設計どおり）＋typecheck パス。
+TDD で追加（ユーザー指示）: adopt 3・計器 5・improveTick 2・grade-env 3。
 
-grounded で観測したこと（実 Claude 走行）:
+grounded で観測したこと（③一巡・実 Claude 走行）:
 
-- **repair 発火**: 弱 generator（haiku）× repair-bait × `MAX_REPAIRS=1` で attempt 1 の request_changes → 2-fix brief → attempt 2 発火。発火条件は「functionality の hard-fail」でなく **弱コーダ × 強い敵対的レビュアの dissent**（testQuality が**コードを実行して**非正準受理バグを発見）。
-- **repair 収束**: scope 修正後、attempt 2 が `test/**` にテスト追加 → 全ゲート pass → panel=approve＝**初の grounded 収束サイクル**。
-- **PromptRecord の実証**: 発火時、attempt 1/2 の発行本文（repair brief 込み）が store に durable 保全＝上書き・wipe される PROMPT.md では失われていたものが残る。
-- **モデル上書きの実証**: generator pane=`Haiku 4.5`・review pane=`Opus 4.8` を確認。
+- **失敗生成**: haiku×HARD×repairs0 → 受け入れは全パスしたが **testQuality が AC-3(major)/AC-2(minor) findings で dissent** → needs-human-review。前セッションと同型の「弱コーダ×敵対的レビュア」失敗クラス。
+- **③自動発火（初観測）**: runLoopLive 末尾の improveTick が Curator を自動実行 → AC-2 が `[regression]` 昇格・Analyst 提案4件を report-only 出力。
+- **計器の自己修正**: captureRate が null を報告 → 原因は「finding severity で分母を絞る」実装と「AC severity で判定する」Curator の意味論不一致。**grounded でしか出ない失敗形**（blocker AC への minor finding）。TDD で修正（`8ed3e52`）。ついでに区切り文字への U+0000 リテラル混入も発見・除去。
+- **提案→adopt→self-hosted drive**: `analyze --create` で ISSUE-0002〜0004 起票 → ISSUE-0003 を種 contract（scope.exclude 修正）で adopt → **ハーネス自身の worktree で実 Claude が `grade.ts` を修正＋5テスト追加 → 独立検証 218/218 green（受け入れ2件が skip→実走 green 化）→ panel 3観点全 approve → gate 停止**。attempt 1 収束。
+- **metrics 前後**: passAt1 0→0.5・falsePassRate 0%（labels 2件・grader agreement 100%）・captureRate 100%・registry 0→4。before スナップショット `.harness/metrics-before.json`（`status --json`）。
+- **正直な注記**: (a) EVAL-00001/2 の humanVerdict ラベルは operator（Claude）が決定論的証拠に基づき付与 — 人間の再ラベルで上書き可。(b) adopt した ISSUE-0003 のタイトルは Analyst のテンプレ提案（pass@1 改善）で、contract の中身（scope.exclude 修正）への尖らせは人間判断の WHAT 確定として行った（ADR-0007 I1 の設計どおりだが、提案とcontract の意味的距離は残る＝Analyst 提案の粒度改善は将来課題）。
 
-## 4. frontier（次の一手）— ③改善ループを grounded で閉じる
+前セッションまでの成果（repair loop 発火/収束・PromptRecord・タブ化・モデル上書き等）は §6 の不変条件と
+[execution-layer.md](execution-layer.md) に吸収済み。
 
-**ゴール**: 実失敗 → Curator が回帰 EvalTask 昇格 → Analyst が harness 改善 issue 起票 → その issue を execution 層で駆動 → metrics（pass@k/pass^k・false-pass率）で改善確認、という一巡を **grounded で一度回して観測**する（execution repair と同じ流儀：機構は決定論で在る→実走で loop が閉じるのを見る）。
+## 4. frontier（次の一手）— 一巡の締結と、回帰 registry の実行
 
-**最初の"種"はこのセッションの実失敗**（一級データ）:
+**残る即時タスク（このセッションの締結）**:
 
-- **scope_check テンション**: `testQuality` の brief が「テスト追加」を要求するのに契約 scope が `src/**` のみ、という**自己矛盾**（役割プロンプト `agents/generator.md` も両方を命じる）。修正済み（scope 拡張）だが**回帰 eval には未昇格**＝Curator/契約 lint の昇格候補。
-- **grader 非決定性**: `testQuality` が同等コードで approve/request_changes に **~1/3 揺れる**。humanVerdict 較正データ＝Analyst が「stabilise」を提案すべき入力。
+1. **gate 判断（人間）**: `npm run harness -- decide ISSUE-0003 approve|reject`。approve なら
+   `agent/issue-0003-s0` ブランチ（worktree `.harness/worktrees/issue-0003-s0`・単一 build commit）を
+   main へ merge。
+2. **受け入れテストの恒久回帰化**: merge 後、`test/acceptance-harness/scope-exclude.acceptance.test.ts`
+   の `describe.skipIf(!process.env.ACCEPT_HARNESS)` を外して通常 suite に昇格（＝「同じ失敗を二度と」の
+   有形化）。after スナップショット（`status --json`）を取り before と比較。
+3. sandbox の ISSUE-0001（roman bait）は needs-human-review のまま＝実験残骸。decide reject か放置
+   （.harness はローカル揮発なので害なし）。
 
-**具体ステップ案**:
+**次の frontier 候補（優先順）**:
 
-1. Curator/Analyst を **live 経路（`runLoopLive` 後）へ配線するか、まず CLI（`agentops curate`/`analyze --create`）で手動一巡**するか判断（設計判断：頻度・いつ回すか。mock の `agentops run` と混同しない）。
-2. ~~専用決定論テスト補強~~ **✅ 完了**（`test/improvement-loop.test.ts`・`43d73b7`）。
-3. **grounded で一巡観測**: 失敗する panel run → curate で EvalTask 昇格 → analyze `--create` で harness issue → その issue を drive → metrics 前後比較。
-4. 操舵指標の計器化: 「回帰化された失敗の率」「false-pass率の推移」を metrics/dashboard に出す。
+- **回帰 EvalTask の実行者**（ADR-0007 帰結に明記の次スライス）: registry は 4 件に育ったが write-only。
+  v0 案＝`unit_test` method の task を source issue の target grader で再実行し AC-id 突合。captureRate の
+  隣に「実行された回帰の率」を並べる。
+- **Analyst 提案の粒度改善**: テンプレ提案（pass@1 低い等）と adopt される contract の意味的距離が grounded で
+  可視化された（§3 正直な注記 b）。失敗クラス（scope テンション・grader 揺れ）から**具体的な** issue 文面を
+  生成する決定論ルールを増やす。ISSUE-0002（pass^k stabilise）/ISSUE-0004（repair brief 改善）が planned のまま
+  在庫＝次の adopt 候補。
+- **grader 非決定性の較正継続**: testQuality の揺れ（前セッション ~1/3）。labels を蓄積し falsePassTrend で監視。
+- **上流一気通貫**: roadmap→spec→sign→spawn→drive を1本通す（上流は未変更のまま）。
 
 ## 5. 動かし方（コマンド）
 
@@ -110,11 +122,15 @@ GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1 \
   npx tsx scripts/real-run-sandbox.ts                  # repair 発火狙い（弱コーダ×bait×repair 許可）
 tmux attach -t agentops                                # ライブ観察（各ロールがタブ・完了で自動クローズ・stuck は残る）
 
-# 改善ループ（既存 CLI 経路・cmdCurate/cmdAnalyze @ src/cli/index.ts）
-#   curate:            失敗した blocker AC を回帰 EvalTask へ昇格
-#   analyze --create:  metrics から type:harness/eval の改善 issue を起票
-
-# ゲート（人間判断）: recordHumanDecision(store,'ISSUE-0001','approve'|'reject') を tsx で直呼び（CLI 未整備）
+# 改善ループ③（live turn 末尾で curate/analyst-report は自動。手動 CLI:）
+npm run harness -- curate                    # 失敗した blocker AC → 回帰 EvalTask（冪等）
+npm run harness -- analyze --create          # metrics → type:harness/eval issue 起票（人間判断）
+npm run harness -- adopt ISSUE-NNNN --contract scripts/seeds/scope-exclude.contract.yaml
+                                             # 提案の WHAT を確定 → contract-drafted（drive 可能に）
+npx tsx scripts/real-run-self.ts             # target をこのリポジトリ自身へ（store は wipe しない）
+npm run harness -- decide ISSUE-NNNN approve # 人間ゲート（approve→released＋humanVerdict 収穫）
+npm run harness -- status --json             # 機械可読スナップショット（改善 before/after 比較）
+npm run harness -- label --run EVAL-NNNNN --human approve|request_changes  # 較正ラベル
 ```
 
 **ハーネスは手動 attach 方針**（ターミナル非依存）: `agentops` セッションは `home` タブで生き続けるので一度 attach して張り付けば以降の run のタブがそこに自動で現れる。自動ポップアップは iTerm2 の `tmux -CC` 専用で Ghostty 非対応のため採用しない。
@@ -139,8 +155,8 @@ tmux attach -t agentops                                # ライブ観察（各�
 ## 8. canonical（深掘り・必要時のみ）
 
 - `docs/NORTH_STAR.md` — 三能力・操舵指標・反証サイン（最上位要求）。
-- `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）。
+- `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）・`ADR-0007`（③配線 I1-I4・未吸収＝ビュー吸収が残タスク）。
 - `docs/specs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
-- 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,repair}.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
-- テスト: `test/{improvement-loop,repair-loop,live-repair,panel,build-commit,launch-command,config,prompt-record,send-prompt}.test.ts` ほか（計198）。
+- 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,adopt,improve,repair}.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
+- テスト: `test/{improvement-loop,adopt,metrics,grade-env,repair-loop,live-repair,panel,build-commit,prompt-record}.test.ts` ほか（計 211＋skip 2）。`test/acceptance-harness/` は env-gate（`ACCEPT_HARNESS=1` でのみ収集）。
 - [execution-layer.md](execution-layer.md) — execution 層の grounded 実験の詳細ログ（発火/収束の生データ・過去の不発記録）。**継続に必須ではない**深掘りアーカイブ。
