@@ -61,6 +61,7 @@ ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-b
 
 `git log --oneline`（新しい順・このセッション分）:
 
+- （追記2）**③二巡目完走（ISSUE-0004・`d13a2fc`）＝ Analyst 粒度改善の実証** — 失敗クラス3ルール（R1 repair不着→brief 忠実性 draft 同梱・R2 GATE 再発・R3 registry 衛生）＋draft contract 配管（提案→添付→adopt が省略時に使用）を TDD で実装後、ISSUE-0004 を brief 忠実性 contract（repair.ts の requiredFix[0] truncation＝実欠陥）で adopt→self drive。**self-hosted 初の live repair 発火→収束**（attempt 1 で testQuality の新 rubric が**ミューテーション指摘**「severity 昇格行を消してもテストが落ちない」→ 1-fix brief → attempt 2 補強 → approve）＝TDD 三層の第2層の grounded 初成果。ゲート approve→released・恒久回帰化（253 green・skip ゼロ）。regress は merge 前に 2 FAIL を検出（ISSUE-0004=正検出・ISSUE-0003=**AC-id 衝突の偽陽性**→merge 後解消も潜伏中＝次タスク）。TDD ラウンドに REFACTOR 明示も追記（`3dc8a73`・ユーザー指摘）。
 - （追記）**TDD の三層強制** — ①generator 役割プロンプトに TDD プロトコル義務化（red→green・AC-id タグ規約・テスト弱体化禁止）②testQuality lens（独立レビュア）に妥当性 rubric（壊れたら fail するか・同語反復検出・タグ検査・実走許可）③決定論ゲート: report が在るのに AC-id タグ付き assertion ゼロの unit_test AC は **unsatisfied**（従来は suite-green へフォールバック＝沈黙 pass の穴を閉鎖・`satisfiedFromReport` に抽出）
 - `ba5da28` **improvement: 回帰 registry の実行者**（`runRegressionTasks`・`RegressionRun`・`agentops regress`・executedRate 計器・EvalTask.target 束縛）
 - `8ed3e52` **fix(metrics): captureRate は AC severity で判定（Curator 意味論に一致）＋NUL 混入除去** — grounded が暴いた計器バグ
@@ -103,14 +104,16 @@ sandbox 束縛の2 task は skip 報告）。
 
 **次の frontier 候補（優先順）**:
 
-- **Analyst 提案の粒度改善**: テンプレ提案（pass@1 低い等）と adopt される contract の意味的距離が grounded で
-  可視化された（§3 正直な注記 b）。失敗クラス（scope テンション・grader 揺れ）から**具体的な** issue 文面を
-  生成する決定論ルールを増やす。ISSUE-0002（pass^k stabilise）/ISSUE-0004（repair brief 改善）が planned のまま
-  在庫＝次の adopt 候補。
+- **回帰 executor の AC-id 衝突修正**（grounded 実証済みの偽陽性）: 裸の AC-id 突合が issue を跨いで衝突
+  （ISSUE-0004 merge 前、その baseline-red 受け入れテストの `AC-1` が **ISSUE-0003 の task にもマッチ**して
+  偽 FAIL。merge 後は全 green に隠れて**潜伏**）。案: 受け入れテスト title の issue 名前空間化
+  （`ISSUE-XXXX/AC-N`）or task→acceptance ファイル束縛。
+- ~~Analyst 提案の粒度改善~~ **✅ 完了**（R1-R3＋draft 配管・ISSUE-0004 二巡目で実証）。残在庫:
+  ISSUE-0002（pass^k stabilise）が planned のまま＝adopt 候補。
 - **grader 非決定性の較正継続**: testQuality の揺れ（前セッション ~1/3）。labels を蓄積し falsePassTrend で監視。
+  新 rubric（ミューテーション指摘の実績）が揺れを減らすかも観測対象。
 - **上流一気通貫**: roadmap→spec→sign→spawn→drive を1本通す（上流は未変更のまま）。
-- **回帰実行の運用磨き**: unverified（AC-id を運ぶ assertion が無い task）への tag 付け運用・playwright 等
-  unit_test 以外の grader 対応・sandbox など別 target への実行切替。
+- **回帰実行の運用磨き**: playwright 等 unit_test 以外の grader 対応・sandbox など別 target への実行切替。
 
 ## 5. 動かし方（コマンド）
 
