@@ -37,7 +37,7 @@
 |---|---|---|
 | ①自律 | 🟢 中核 grounded | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。**repair loop は発火も収束も実走観測済み**（このセッション）。欠け: 1 issue・1 課題クラス規模、上流一気通貫は未実証。 |
 | ②評価 | 🟢 良好 | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち（数点）。 |
-| ③改善 | 🟢 **一巡 grounded で完結** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**実失敗→自動 curate→analyze --create→adopt→self-hosted drive→panel approve→人間ゲート approve→released→恒久回帰化 の一巡を grounded で完走**（ISSUE-0003＝scope.exclude 修正・`904d511`）。しかも一巡の途中で計器自身のバグを grounded が暴き修正（`8ed3e52`）＝③が③を直した。前後計器: passAt1 0→0.5・released 0→1・captureRate 1 維持。残る欠け: 回帰 registry（4件）の**実行者**が未実装（write-only）＝次 frontier。 |
+| ③改善 | 🟢 **一巡完結＋回帰実行者 grounded** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**実失敗→自動 curate→analyze --create→adopt→self-hosted drive→panel approve→人間ゲート approve→released→恒久回帰化 の一巡を grounded で完走**（ISSUE-0003＝scope.exclude 修正・`904d511`）。一巡の途中で計器自身のバグを grounded が暴き修正（`8ed3e52`）＝③が③を直した。**回帰 registry の実行者も実装・grounded 済**（`ba5da28`・`agentops regress`＝ISSUE-0003 の2 task が各3 assertion 突合で pass・sandbox 束縛分は正直に skip）。計器ペア: capture 100%×executed 50%。残る欠け: unverified/束縛外 task の解消運用・Analyst 提案の粒度。 |
 
 ## 2. システム地図（層・実装・設計正本）
 
@@ -91,17 +91,24 @@ protectedPaths 内に残置で tamper-proof）→ before/after 比較（passAt1 
 before/after スナップショットは `.harness/metrics-{before,after}.json`（ローカル揮発）。
 sandbox の ISSUE-0001（roman bait）は needs-human-review のまま＝実験残骸（.harness 揮発なので害なし）。
 
+**締結済み（同日追記）**: **回帰 registry の実行者を実装・grounded 実走済み**（`ba5da28`）。
+`runRegressionTasks`＝target の unit_tests grader を1回実走し assertion 名×AC-id 突合で
+pass/fail/unverified 判定。EvalTask は curate 時に `target`（repo）へ**束縛**（registry は複数 target 混在・
+AC-id は issue 間衝突するため。null=legacy は skip＋報告）。結果は `RegressionRun`（EvalRun と別置き＝
+pass@k の分母を汚染しない）。improveTick が live turn 末尾で常設実行。計器 `regressionExecutedRate` が
+captureRate の隣に並ぶ（grounded 実測: capture 100%×executed 50%・ISSUE-0003 の2 task pass・
+sandbox 束縛の2 task は skip 報告）。
+
 **次の frontier 候補（優先順）**:
 
-- **回帰 EvalTask の実行者**（ADR-0007 帰結に明記の次スライス）: registry は 4 件に育ったが write-only。
-  v0 案＝`unit_test` method の task を source issue の target grader で再実行し AC-id 突合。captureRate の
-  隣に「実行された回帰の率」を並べる。
 - **Analyst 提案の粒度改善**: テンプレ提案（pass@1 低い等）と adopt される contract の意味的距離が grounded で
   可視化された（§3 正直な注記 b）。失敗クラス（scope テンション・grader 揺れ）から**具体的な** issue 文面を
   生成する決定論ルールを増やす。ISSUE-0002（pass^k stabilise）/ISSUE-0004（repair brief 改善）が planned のまま
   在庫＝次の adopt 候補。
 - **grader 非決定性の較正継続**: testQuality の揺れ（前セッション ~1/3）。labels を蓄積し falsePassTrend で監視。
 - **上流一気通貫**: roadmap→spec→sign→spawn→drive を1本通す（上流は未変更のまま）。
+- **回帰実行の運用磨き**: unverified（AC-id を運ぶ assertion が無い task）への tag 付け運用・playwright 等
+  unit_test 以外の grader 対応・sandbox など別 target への実行切替。
 
 ## 5. 動かし方（コマンド）
 
@@ -117,8 +124,9 @@ GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1 \
   npx tsx scripts/real-run-sandbox.ts                  # repair 発火狙い（弱コーダ×bait×repair 許可）
 tmux attach -t agentops                                # ライブ観察（各ロールがタブ・完了で自動クローズ・stuck は残る）
 
-# 改善ループ③（live turn 末尾で curate/analyst-report は自動。手動 CLI:）
-npm run harness -- curate                    # 失敗した blocker AC → 回帰 EvalTask（冪等）
+# 改善ループ③（live turn 末尾で curate/regress/analyst-report は自動。手動 CLI:）
+npm run harness -- curate                    # 失敗した blocker AC → 回帰 EvalTask（冪等・target 束縛）
+npm run harness -- regress                   # 束縛済み registry を実 grader で再検証（pass/FAIL/unverified）
 npm run harness -- analyze --create          # metrics → type:harness/eval issue 起票（人間判断）
 npm run harness -- adopt ISSUE-NNNN --contract scripts/seeds/scope-exclude.contract.yaml
                                              # 提案の WHAT を確定 → contract-drafted（drive 可能に）
