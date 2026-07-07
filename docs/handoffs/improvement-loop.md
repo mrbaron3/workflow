@@ -20,7 +20,7 @@
 |---|---|---|
 | ①自律 | 🟢 中核 grounded | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。repair は発火・収束を実走確認。欠け: 1 issue・1 課題クラス規模。上流（planning→spec→design→issue）一気通貫は未実証。 |
 | ②評価 | 🟢 良好 | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち（数点のみ）。 |
-| ③改善 | 🟡 決定論実装済み・**loop 未閉** | Curator/Analyst 実装＋CLI 配線済み。欠け: **live 経路に未配線**（CLI/mock 手動のみ）・**実失敗→昇格→改善→計測の一巡が grounded 未観測**。 |
+| ③改善 | 🟡 決定論実装＋テスト済み・**loop 未閉** | Curator/Analyst 実装＋CLI 配線＋**決定論テスト済み**（`test/improvement-loop.test.ts`・commit `43d73b7`＝両輪とループ閉包を固定）。欠け: **live 経路に未配線**（CLI/mock 手動のみ）・**実失敗→昇格→改善→計測の一巡が grounded 未観測**。 |
 
 操舵指標（最優先）＝**「同じ種類の失敗を二度繰り返さない」**（失敗を回帰評価ケースへ捕捉）。
 
@@ -60,7 +60,7 @@
 **具体ステップ案**:
 
 1. Curator/Analyst を **live 経路へ配線するか、まず CLI（`cmdCurate`/`cmdAnalyze`）で手動一巡する**かを判断（`agentops run`＝mock demo と execution の live 経路を混同しない）。
-2. Curator/Analyst の**専用決定論テスト**を補強（現状 metrics.test.ts 経由で薄い・要確認）。
+2. ~~Curator/Analyst の専用決定論テストを補強~~ **✅ 完了**（`test/improvement-loop.test.ts`・`43d73b7`）。両輪＋ループ閉包（実失敗→回帰 EvalTask＋planned 改善 issue）を決定論で固定済み。次は grounded。
 3. **grounded で一巡観測**: 実 panel run で失敗を作る → curate で EvalTask 昇格 → analyze `--create` で harness issue → その issue を drive → metrics 前後比較。
 4. 操舵指標の計器化: 「同じ失敗が回帰化された率」「false-pass率の推移」を dashboard/metrics に出す。
 
