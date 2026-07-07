@@ -42,6 +42,9 @@ import { draftContracts } from '../pipeline/contract-draft.js';
 import { runAll, runIssue } from '../pipeline/coordinator.js';
 import { makeRunner } from '../agents/runner.js';
 import { curateEvalTasks } from '../pipeline/curator.js';
+import { adoptIssue } from '../pipeline/adopt.js';
+import { recordHumanDecision, type HumanDecision } from '../pipeline/execution/loop.js';
+import * as YAML from 'yaml';
 import { analyzeHarness, createSuggestionIssues } from '../pipeline/analyst.js';
 import { computeMetrics, statusReport, writeDashboard } from '../dashboard/dashboard.js';
 
@@ -385,9 +388,12 @@ async function cmdRun(flags: Args['flags']): Promise<void> {
   log(`\n${statusReport(store, computeMetrics(store))}`);
 }
 
-function cmdStatus(): void {
+function cmdStatus(flags: Args['flags']): void {
   const store = requireInit();
-  log(statusReport(store, computeMetrics(store)));
+  const metrics = computeMetrics(store);
+  // --json: the machine-readable snapshot (e.g. before/after an improvement issue lands).
+  if (flags.json) return void log(JSON.stringify(metrics, null, 2));
+  log(statusReport(store, metrics));
 }
 
 function cmdDashboard(flags: Args['flags']): void {
@@ -427,6 +433,49 @@ function cmdAnalyze(flags: Args['flags']): void {
   } else {
     log(c.dim('Re-run with --create to add these as type:harness / type:eval issues.'));
   }
+}
+
+function cmdAdopt(pos: string[], flags: Args['flags']): void {
+  const store = requireInit();
+  const issueId = pos[0];
+  const file = flags.contract;
+  if (!issueId || typeof file !== 'string') {
+    log(c.red('usage: agentops adopt <ISSUE-ID> --contract <yaml>') + c.dim('   (confirm a proposed harness/eval issue into drivable work — ADR-0007)'));
+    process.exit(1);
+  }
+  const abs = path.resolve(ROOT, file);
+  if (!fs.existsSync(abs)) {
+    log(c.red(`✗ no such contract file: ${file}`));
+    process.exit(1);
+  }
+  // The YAML file IS the IssueContract; an optional top-level `dependsOnSystem` rides
+  // beside it and lands on the Issue (scoped design context, ARCH-execution-007).
+  const raw = YAML.parse(fs.readFileSync(abs, 'utf8')) as Record<string, unknown>;
+  const { dependsOnSystem, ...contract } = raw;
+  const config = loadConfig(ROOT);
+  const issue = adoptIssue(store, config, issueId, {
+    contract,
+    dependsOnSystem: Array.isArray(dependsOnSystem) ? (dependsOnSystem as string[]) : undefined,
+  });
+  store.save();
+  log(c.green('✓ adopted') + ` ${c.b(issue.id)} ${issue.title}`);
+  log(`  status=${c.b(issue.status)} assignedAgent=${c.b(String(issue.assignedAgent))} · ${issue.contract!.acceptanceCriteria.length} AC`);
+  log(`\nNext: the execution loop polls it (e.g. ${c.b('npx tsx scripts/real-panel-run.ts')}).`);
+}
+
+function cmdDecide(pos: string[]): void {
+  const store = requireInit();
+  const issueId = pos[0];
+  const decision = pos[1];
+  if (!issueId || (decision !== 'approve' && decision !== 'reject')) {
+    log(c.red('usage: agentops decide <ISSUE-ID> approve|reject') + c.dim('   (the human review gate — ADR-0006 G1/G3)'));
+    process.exit(1);
+  }
+  const res = recordHumanDecision(store, issueId, decision as HumanDecision);
+  store.save();
+  if (!res.changed) return void log(c.yellow(`no-op:`) + ` ${issueId} is already released`);
+  log(c.green('✓ decided') + ` ${c.b(issueId)}: ${decision} → status=${c.b(res.status)}`);
+  if (res.labeledRunIds.length) log(c.dim(`  humanVerdict recorded on ${res.labeledRunIds.length} run(s): ${res.labeledRunIds.join(', ')}`));
 }
 
 function cmdLabel(flags: Args['flags']): void {
@@ -512,10 +561,12 @@ ${c.b('Commands')}
   plan [--seed F]      LEGACY: ingest a seed roadmap into epics + Issue Contracts (demo)
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
        [--agent A] [--samples N] [--max-repairs N]
-  status               pass@k / pass^k / cost summary
+  status [--json]      pass@k / pass^k / cost summary (--json: machine-readable snapshot)
   dashboard [--open]   write .harness/dashboard.html
   curate               promote blocker criteria into the Eval Task Registry
   analyze [--create]   propose harness/eval improvement issues
+  adopt <ID> --contract F  confirm a proposal's WHAT (attach contract) → drivable (ADR-0007)
+  decide <ID> approve|reject  the human review gate for a needs-human-review build
   label --run ID --human approve|request_changes
   demo [--open]        run the entire loop on the sample roadmap
   help
@@ -548,13 +599,17 @@ async function main(): Promise<void> {
     case 'run':
       return cmdRun(flags);
     case 'status':
-      return cmdStatus();
+      return cmdStatus(flags);
     case 'dashboard':
       return cmdDashboard(flags);
     case 'curate':
       return cmdCurate();
     case 'analyze':
       return cmdAnalyze(flags);
+    case 'adopt':
+      return cmdAdopt(pos, flags);
+    case 'decide':
+      return cmdDecide(pos);
     case 'label':
       return cmdLabel(flags);
     case 'demo':
