@@ -38,6 +38,8 @@ canonical round-trip check を欠いた実装を書き、strong reviewer が**�
 - **grounded 実走で発見した2バグを修正**: (1) `sendPrompt` の submit race（Enter 取りこぼし→typed-but-unsent→stuck）を submit-and-verify retry で解消（`tmux.ts`・`PaneDriver` seam）。(2) worktree 作成が stale dir に非冪等（`worktree.ts` `clearWorktree` で解消）。両方 決定論テスト付き。
 - **per-role モデル選択**（option (a) 実装）: `config.models.{generator,reviewer}` → 各セッションの `claude --model`。純関数 `buildLaunchCommand`（`tmux.ts`）に切り出して決定論テスト（`test/launch-command.test.ts`）。既定 undefined＝ユーザ既定モデル継承（＝従来挙動）。無効モデルは pre-validate せず claude に投げて `monitorLiveness` が stuck として surface（never-silent 方針）。sandbox は `GEN_MODEL`/`REVIEW_MODEL` env で opt-in。`config.models` 素通し（`loadConfig`）を `test/config.test.ts` で固定。
 - **発行プロンプトの監査保全**（`PromptRecord`・`DATA-execution-006`）: Session は揮発（`DOM-execution-002`）で `.agentops/PROMPT.md` は repair ごとに上書き＋wipe されるので、attempt 1 の本文と repair brief が失われていた。それを store（`DB.promptRecords`・additive `default([])`）へ**監査射影**として写す（実行時揮発性は不変）。1 行＝`(issue, sample, attempt, role)`＋`model`/`outcome`/本文インライン。seam の上（`live.ts` の `runLiveSample`）で書き、session 層は本文を返すだけ（`SessionResult.prompt`）。stuck attempt は EvalRun を生まないので `outcome` 付きの唯一の足跡。決定論テスト `test/prompt-record.test.ts`。上記「発火観測」で実走実証。
+- **sandbox scope 拡張**（scope_check テンション修正・option A）: `scripts/real-run-sandbox.ts` の契約 `scope.include` を `['src/**','test/**']` に（`test/acceptance/**` は protected 維持）。役割プロンプトの「テスト追加」命令と scope の矛盾を解消し、testQuality 起点の repair が **approve まで収束**できるように（上記「発火観測」の派生 finding 参照）。fixture のみ・共有プロンプト/本番コードは不変。
+- **tmux タブ表示**（`tmux.ts` の substrate 変更）: 各ロールを独立セッションでなく**単一 holder セッション `WINDOW_HOLDER`（既定 `agentops`・env 上書き可）のウィンドウ（タブ）**として起こす。`tmux attach -t agentops` 一発で全 generator/reviewer をタブ一覧。完了タブは `killSession`→`kill-window` で閉じ、**stuck は残す**（`ARCH-execution-014`＝そのタブで人間が引き継ぐ）。常駐 `home` タブで holder を延命（最後のロールタブが閉じても死なない）。`buildLaunchCommand`（純関数）は不変＝決定論テスト無影響（191 green）。tmux レベル smoke で検証。設計は元々「its own tmux window」表現＝矛盾なし。
 
 ## grounded 実走の知見
 
@@ -93,10 +95,12 @@ attempt 2 は **scope_check（blocker）で gate-fail → needs-human-review**�
   たまたま strict 実装を選んだから。generator 非決定性ゆえ**単観点でも数回引けば ~1/3 で dissent → 発火**する（今回は 1 回で当たった）。
 - **prompt 監査（`PromptRecord`）がこの実験の計測器になった**: attempt=2 の存在＝発火の判定に使い、repair brief 本文もそのまま保全。
   上書き・wipe される PROMPT.md では消えていた brief が store に残る＝機能の価値が実走で実証。
-- **⚠ 派生 finding（要検討・未修正）**: attempt 2 の gate-fail は **testQuality の repair brief が「テストを追加せよ」と要求するのに、contract の
-  `scope.include` が `src/**` のみ（`test/**` は scope 外）**という矛盾から来た可能性が高い。brief に従うと scope 違反で `scope_check` が落ちる。
-  = レビュアが要求するカバレッジを generator が scope 内で満たせない構造的テンション。generator の scope に test dir を足すか、
-  testQuality の要求を in-scope に限定するか、いずれ判断が要る（この課題クラス固有か、契約設計の一般問題かは要調査）。
+- **派生 finding → 調査＋修正済み（2026-07-07）**: attempt 2 の gate-fail は **testQuality の brief が「テスト追加」を要求するのに contract の
+  `scope.include` が `src/**` のみ**という**自己矛盾の契約**が原因だった（役割プロンプト `agents/generator.md` も「Add automated tests for each」と「scope 内だけ触れ」を同時に命じる）。
+  grader は正しく scope 外編集を escalate（never-silent）——直すべきは grader でなく契約。**option A: sandbox の `scope.include` を `['src/**','test/**']` に拡張**
+  （`test/acceptance/**` は protected 維持＝独立 grader は不可侵）。**grounded で収束を確認**: 再ループの 2 走行目で発火し、attempt 2 が
+  `src/roman.ts`＋`test/roman.test.ts`（今度は in-scope）を書いて **functionality・testQuality とも approve → panel=approve で収束**（初の grounded 収束サイクル）。
+  副次メモ: `scope_check` は `scope.exclude` を見ず `include`＋`protectedPaths` のみで判定（`grade.ts:103-108`）＝`scope.exclude` は grader 上は飾り（今回は害なし・別途 grader 仕様判断なら要検討）。
 
 ## 落とし穴・不変条件
 
@@ -107,3 +111,4 @@ attempt 2 は **scope_check（blocker）で gate-fail → needs-human-review**�
 - **headless 非目標**: 実 agent は対話 tmux セッション（`claude -n`）。`claude -p` は使わない・`makeRunner` は mock 以外 throw。
 - **オーケストレータは決定論**: poll/dispatch/grade/gate/store を LLM に委ねない。`agentops run`（coordinator）は mock demo 用の別経路（approve→自動 released）で execution 層の live 経路と混同しない。
 - 環境: tmux 3.7・claude 2.1.x（既定モデル＝Opus 4.8。`config.models.{generator,reviewer}` で role 別に上書き可・未指定は既定継承）。generator worktree=`ao-issue-*-s*`、review=`ao-eval-issue-*-s*-<観点>`。
+- **セッションはタブ**: 全ロールは holder セッション `agentops`（`AGENTOPS_TMUX_SESSION` で上書き可）の**ウィンドウ**として起きる。ライブ観察は `tmux attach -t agentops`（完了タブは自動で閉じ・stuck タブは残る）。tmux セッション名でなく**ウィンドウ名**が `ao-issue-*` / `ao-eval-*`。
