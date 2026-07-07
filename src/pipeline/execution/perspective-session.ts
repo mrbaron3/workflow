@@ -19,7 +19,7 @@ import { Severity, Verdict, type IssueContract } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { PerspectiveResult, deterministicPerspectiveGrade, type PerspectiveGrader, type PerspectiveSpec } from '../panel.js';
 import { changedFiles, createDetachedWorktree, removeWorktree } from './worktree.js';
-import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness } from './tmux.js';
+import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
 import { mapPool } from './pool.js';
 
 /** The review focus each perspective session is briefed on (single source; no per-file personas). */
@@ -161,17 +161,63 @@ export interface PerspectiveSessionsInput {
 
 export interface PerspectiveSessionsResult {
   evalRoot: string;
-  /** perspectives whose session completed and left a findings.json (others → runPanel escalates). */
+  /** perspectives whose findings.json was collected — completed sessions plus stuck/timeout ones
+   *  whose findings existed at collection time (others → runPanel escalates). */
   completed: string[];
   touchedCode: string[]; // perspectives that illegally edited the tree (read-only violation)
 }
 
-interface ReviewJob {
+export interface ReviewJob {
   key: string;
   reviewWt: string;
   sentinel: string; // where this review writes findings.json (in its own worktree)
 }
-type ReviewStatus = 'completed' | 'touched' | 'stuck';
+/** A review's recorded liveness verdict, preserved as-is (never collapsed) so late collection
+ *  can tell the operator which failure mode — stuck or timeout — the review actually had. */
+export type ReviewStatus = LivenessOutcome;
+
+export interface CollectFindingsOpts {
+  /** Injectable dirty-checkout probe (default: git-backed changedFiles) — the read-only guard. */
+  changed?: (worktree: string) => string[];
+  log?: (m: string) => void;
+}
+
+/**
+ * Phase-3 collection, tmux-free and deterministic (AC-LIVE-003): pull each review's findings.json
+ * into the central evalRoot, deciding by SENTINEL EXISTENCE AT COLLECTION TIME, not just the
+ * recorded liveness status. A review judged stuck/timeout may still have finished its findings by
+ * now (the ⑤ race: a review that outlived its cap had its evidence thrown away) — if the file
+ * exists, it is collected exactly like a completed review's and feeds the panel. The read-only
+ * guard (AC-PANEL-008) is applied uniformly at this same point: a review that edited its checkout
+ * is discarded, late or not. A review with no sentinel even now contributes nothing — runPanel
+ * escalates that lens via the missing-file path (never a silent drop).
+ */
+export function collectFindings(
+  jobs: readonly ReviewJob[],
+  statuses: readonly ReviewStatus[],
+  evalRoot: string,
+  opts: CollectFindingsOpts = {},
+): { completed: string[]; touchedCode: string[] } {
+  const changed = opts.changed ?? changedFiles;
+  const log = opts.log ?? (() => {});
+  const completed: string[] = [];
+  const touchedCode: string[] = [];
+  jobs.forEach((job, i) => {
+    if (!fs.existsSync(job.sentinel)) return; // nothing to collect, even late
+    const edited = changed(job.reviewWt);
+    if (edited.length > 0) {
+      log(`  ⚠ ${job.key}: edited its checkout (${edited.join(', ')}) — review discarded`);
+      touchedCode.push(job.key);
+      return;
+    }
+    const dest = findingsPath(evalRoot, job.key);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.copyFileSync(job.sentinel, dest); // into the central evalRoot the panel grades from
+    if (statuses[i] !== 'completed') log(`  ▸ ${job.key}: late findings collected from a ${statuses[i] ?? 'stuck'} review`);
+    completed.push(job.key);
+  });
+  return { completed, touchedCode };
+}
 
 /**
  * Convene the LLM perspectives as read-only Claude sessions (ADR-0006 E1/E3) and collect each
@@ -182,8 +228,8 @@ type ReviewStatus = 'completed' | 'touched' | 'stuck';
  * Three phases so git worktree bookkeeping never races the fan-out: (1) create every review's
  * worktree + prompt sequentially — fast; (2) run the sessions CONCURRENTLY up to
  * config.panel.maxConcurrent (E4) — the slow part; (3) collect/teardown sequentially. A review that
- * edited its checkout is attributable and discarded; a stuck review keeps its session + worktree
- * alive (ARCH-execution-014). functionality is skipped (graded by code, E2). NOT unit-tested
+ * edited its checkout is attributable and discarded; a stuck/timeout review keeps its session +
+ * worktree alive (ARCH-execution-014). functionality is skipped (graded by code, E2). NOT unit-tested
  * (drives live tmux + Claude); the parse/grade + isolation seams are.
  */
 export async function runPerspectiveSessions(
@@ -211,19 +257,13 @@ export async function runPerspectiveSessions(
   const reviewerModel = config.models?.reviewer; // undefined = inherit the user's default model
   const statuses = await mapPool(jobs, maxConcurrent, (job) => runReviewSession(input.issueKey, job, log, reviewerModel));
 
-  // phase 3 (sequential): collect findings from clean reviews, tear down finished worktrees
-  const completed: string[] = [];
-  const touchedCode: string[] = [];
+  // phase 3 (sequential): collect findings — by sentinel existence at collection time, so a
+  // stuck/timeout review whose findings landed after the verdict still contributes (AC-LIVE-003)
+  // — then tear down finished worktrees. A stuck/timeout review keeps session + worktree alive
+  // for a human (ARCH-execution-014) even when its findings were collected late.
+  const { completed, touchedCode } = collectFindings(jobs, statuses, evalRoot, { log });
   jobs.forEach((job, i) => {
-    const status = statuses[i]!;
-    if (status === 'completed') {
-      const dest = findingsPath(evalRoot, job.key);
-      fs.mkdirSync(path.dirname(dest), { recursive: true });
-      fs.copyFileSync(job.sentinel, dest); // into the central evalRoot the panel grades from
-      completed.push(job.key);
-    }
-    if (status === 'touched') touchedCode.push(job.key);
-    if (status !== 'stuck') removeWorktree(input.repo, job.reviewWt); // stuck → left alive for a human
+    if (statuses[i] === 'completed') removeWorktree(input.repo, job.reviewWt);
   });
 
   return { evalRoot, completed, touchedCode };
@@ -235,24 +275,23 @@ async function runReviewSession(issueKey: string, job: ReviewJob, log: (m: strin
   log(`  ▸ ${session}: read-only review`);
   // acceptEdits + Bash so the review can inspect the tree and write findings.json WITHOUT hanging
   // on an approval prompt. Read-only is enforced by ISOLATION (own worktree) + the changedFiles
-  // guard below; a review that edits its checkout is discarded and never touches the build.
+  // guard in collectFindings; a review that edits its checkout is discarded and never touches the build.
   launchSession({ session, cwd: job.reviewWt, allowedTools: ['Read', 'Write', 'Bash'], permissionMode: 'acceptEdits', model });
   await waitForReady(session);
   const submitted = await sendPrompt(session, `Read .agentops/eval/${job.key}/PROMPT.md and do exactly what it says.`);
   if (!submitted) log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
-  const outcome = await monitorLiveness(session, job.sentinel, { idleMs: 90_000, hardCapMs: 1000 * 60 * 10, pollMs: 3000 });
+  // No per-review soft cap: a review still visibly working (⑤ ran 1h26m past the old 10-min
+  // cap and its findings were lost) is kept alive up to this finite ceiling; going idle on
+  // the way still surfaces as stuck via idleMs.
+  const outcome = await monitorLiveness(session, job.sentinel, { idleMs: 90_000, activeCapMs: 1000 * 60 * 60 * 2, pollMs: 3000 });
 
   if (outcome !== 'completed') {
     log(`  ⚠ ${session}: ${outcome} — session + worktree kept alive; inspect: tmux attach -t ${session}`);
-    return 'stuck';
+    return outcome;
   }
   killSession(session);
-  // read-only guard (AC-PANEL-008): a clean detached checkout is dirty only if the review edited it
-  const edited = changedFiles(job.reviewWt);
-  if (edited.length > 0) {
-    log(`  ⚠ ${session}: edited its checkout (${edited.join(', ')}) — review discarded`);
-    return 'touched'; // no findings collected → runPanel escalates this perspective
-  }
+  // The read-only guard (AC-PANEL-008) runs in collectFindings, at collection time, so a
+  // late-collected stuck/timeout review passes the SAME dirty-checkout gate as a completed one.
   return 'completed';
 }
 

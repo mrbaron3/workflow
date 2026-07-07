@@ -173,6 +173,22 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 
 export type LivenessOutcome = 'completed' | 'stuck' | 'timeout';
 
+export interface MonitorLivenessOpts {
+  /** Pane unchanged this long with no sentinel = stuck (input-waiting / hung). */
+  idleMs: number;
+  /** Finite wall-clock ceiling for the whole watch: exceeding it without a sentinel is a
+   *  timeout even mid-activity. Required so every caller commits to a finite bound — never
+   *  an infinite wait. This and idleMs are the only two knobs that decide outcomes. */
+  activeCapMs: number;
+  pollMs: number;
+  /** Injectable seams (default: real clock / timer / tmux pane / fs) so cap and stuck
+   *  decisions are unit-testable on a virtual clock without a live session. */
+  clock?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  capture?: (session: string) => string;
+  sentinelExists?: (sentinelPath: string) => boolean;
+}
+
 /**
  * Watch a session until it completes or stops making progress (ARCH-execution-014/015).
  * Completion is confirmed ONLY by the sentinel (DOM-execution-005). In parallel we watch the
@@ -180,27 +196,32 @@ export type LivenessOutcome = 'completed' | 'stuck' | 'timeout';
  * is unchanged for `idleMs` with no sentinel means the session is waiting for input or hung
  * — a stuck session, which must be surfaced, not silently timed out (DOM-execution-009).
  *
+ * There is no per-session soft wall-clock cap (ISSUE-0007: a review that kept working 1h26m
+ * past a 10-min cap was timed out and its findings lost). Exactly two knobs decide the
+ * outcome: `idleMs` surfaces a session that stops working as stuck — including one that goes
+ * idle deep into the watch — and `activeCapMs` finitely bounds one that never stops.
+ *
  *   - 'completed' : sentinel appeared
  *   - 'stuck'     : pane idle for idleMs, no sentinel (input-waiting / hung)
- *   - 'timeout'   : exceeded hardCapMs regardless of pane activity
+ *   - 'timeout'   : exceeded the finite active ceiling (activeCapMs) without a sentinel
  */
-export async function monitorLiveness(
-  session: string,
-  sentinelPath: string,
-  opts: { idleMs: number; hardCapMs: number; pollMs: number },
-): Promise<LivenessOutcome> {
-  const start = Date.now();
-  let lastPane = capturePane(session);
-  let lastChange = Date.now();
+export async function monitorLiveness(session: string, sentinelPath: string, opts: MonitorLivenessOpts): Promise<LivenessOutcome> {
+  const now = opts.clock ?? Date.now;
+  const wait = opts.sleep ?? sleep;
+  const capture = opts.capture ?? capturePane;
+  const sentinelExists = opts.sentinelExists ?? ((p: string) => fs.existsSync(p));
+  const start = now();
+  let lastPane = capture(session);
+  let lastChange = now();
   for (;;) {
-    if (fs.existsSync(sentinelPath)) return 'completed';
-    if (Date.now() - start > opts.hardCapMs) return 'timeout';
-    const pane = capturePane(session);
+    if (sentinelExists(sentinelPath)) return 'completed';
+    if (now() - start > opts.activeCapMs) return 'timeout';
+    const pane = capture(session);
     if (pane !== lastPane) {
       lastPane = pane;
-      lastChange = Date.now();
+      lastChange = now();
     }
-    if (Date.now() - lastChange > opts.idleMs) return 'stuck';
-    await sleep(opts.pollMs);
+    if (now() - lastChange > opts.idleMs) return 'stuck';
+    await wait(opts.pollMs);
   }
 }

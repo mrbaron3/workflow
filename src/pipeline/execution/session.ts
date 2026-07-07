@@ -101,7 +101,7 @@ export async function runGeneratorSession(
 
   const outcome = await monitorLiveness(session, sentinelPath, {
     idleMs: 90_000, // pane unchanged this long with no sentinel = stuck
-    hardCapMs: 1000 * 60 * 20,
+    activeCapMs: 1000 * 60 * 60 * 4, // finite ceiling for a still-working session (ISSUE-0007) — never an infinite wait
     pollMs: 3000,
   });
   const paneTail = capturePane(session).split('\n').filter(Boolean).slice(-25).join('\n');
