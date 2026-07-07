@@ -26,12 +26,22 @@ interface CmdResult {
 }
 
 function run(command: string, cwd: string): CmdResult {
-  const [cmd, ...args] = tokenize(command);
+  const tokens = tokenize(command);
+  // sh-style leading KEY=VAL assignments (ADR-0007 I3): spawnSync uses no shell, so peel
+  // them into the child env explicitly — grader commands in config can then gate
+  // env-conditional suites, e.g. `ACCEPT_HARNESS=1 vitest run`.
+  const env: Record<string, string> = {};
+  while (tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]!)) {
+    const [key, ...rest] = tokens.shift()!.split('=');
+    env[key!] = rest.join('=');
+  }
+  const [cmd, ...args] = tokens;
   const res = spawnSync(cmd!, args, {
     cwd,
     encoding: 'utf8',
     timeout: 1000 * 60 * 10,
     maxBuffer: 64 * 1024 * 1024,
+    ...(Object.keys(env).length ? { env: { ...process.env, ...env } } : {}),
   });
   return { ok: res.status === 0, output: `${res.stdout ?? ''}\n${res.stderr ?? ''}` };
 }
