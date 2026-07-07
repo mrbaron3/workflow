@@ -16,13 +16,17 @@ import type { HarnessConfig } from '../config.js';
 import type { Store } from '../store/store.js';
 
 export interface AdoptInput {
-  /** Raw contract (e.g. parsed YAML) — validated against IssueContract here, loudly. */
-  contract: unknown;
+  /**
+   * Raw contract (e.g. parsed YAML) — validated against IssueContract here, loudly.
+   * Omitted = use the DRAFT the Analyst attached to the proposal (still validated);
+   * adopting is the human confirmation either way.
+   */
+  contract?: unknown;
   /** Optional system design ids the generator's scoped context should resolve. */
   dependsOnSystem?: string[];
 }
 
-export function adoptIssue(store: Store, config: HarnessConfig, issueId: string, input: AdoptInput): Issue {
+export function adoptIssue(store: Store, config: HarnessConfig, issueId: string, input: AdoptInput = {}): Issue {
   const issue = store.getIssue(issueId);
   if (!issue) throw new Error(`no such issue: ${issueId}`);
   if (issue.status !== 'planned' && issue.status !== 'ready-for-contract') {
@@ -30,7 +34,9 @@ export function adoptIssue(store: Store, config: HarnessConfig, issueId: string,
       `${issueId} is '${issue.status}' — adopt only confirms a proposal (planned/ready-for-contract) into drivable work`,
     );
   }
-  const contract = IssueContract.parse(input.contract); // an invalid WHAT never reaches the loop
+  const raw = input.contract ?? issue.contract;
+  if (!raw) throw new Error(`${issueId} has no contract: the proposal carries no draft — pass one via --contract`);
+  const contract = IssueContract.parse(raw); // an invalid WHAT never reaches the loop
 
   if (issue.status === 'planned') store.setStatus(issueId, 'ready-for-contract');
   store.setStatus(issueId, 'contract-drafted');

@@ -458,27 +458,30 @@ function cmdAnalyze(flags: Args['flags']): void {
 function cmdAdopt(pos: string[], flags: Args['flags']): void {
   const store = requireInit();
   const issueId = pos[0];
-  const file = flags.contract;
-  if (!issueId || typeof file !== 'string') {
-    log(c.red('usage: agentops adopt <ISSUE-ID> --contract <yaml>') + c.dim('   (confirm a proposed harness/eval issue into drivable work — ADR-0007)'));
-    process.exit(1);
-  }
-  const abs = path.resolve(ROOT, file);
-  if (!fs.existsSync(abs)) {
-    log(c.red(`✗ no such contract file: ${file}`));
+  if (!issueId) {
+    log(c.red('usage: agentops adopt <ISSUE-ID> [--contract <yaml>]') + c.dim('   (omit --contract to confirm the proposal’s attached draft — ADR-0007)'));
     process.exit(1);
   }
   // The YAML file IS the IssueContract; an optional top-level `dependsOnSystem` rides
   // beside it and lands on the Issue (scoped design context, ARCH-execution-007).
-  const raw = YAML.parse(fs.readFileSync(abs, 'utf8')) as Record<string, unknown>;
-  const { dependsOnSystem, ...contract } = raw;
+  // Without --contract the Analyst's attached draft is used (adoptIssue validates either).
+  let contract: unknown;
+  let dependsOnSystem: string[] | undefined;
+  const file = flags.contract;
+  if (typeof file === 'string') {
+    const abs = path.resolve(ROOT, file);
+    if (!fs.existsSync(abs)) {
+      log(c.red(`✗ no such contract file: ${file}`));
+      process.exit(1);
+    }
+    const { dependsOnSystem: dos, ...rest } = YAML.parse(fs.readFileSync(abs, 'utf8')) as Record<string, unknown>;
+    contract = rest;
+    dependsOnSystem = Array.isArray(dos) ? (dos as string[]) : undefined;
+  }
   const config = loadConfig(ROOT);
-  const issue = adoptIssue(store, config, issueId, {
-    contract,
-    dependsOnSystem: Array.isArray(dependsOnSystem) ? (dependsOnSystem as string[]) : undefined,
-  });
+  const issue = adoptIssue(store, config, issueId, { contract, dependsOnSystem });
   store.save();
-  log(c.green('✓ adopted') + ` ${c.b(issue.id)} ${issue.title}`);
+  log(c.green('✓ adopted') + ` ${c.b(issue.id)} ${issue.title} ${c.dim(typeof file === 'string' ? `(contract: ${file})` : '(contract: attached draft)')}`);
   log(`  status=${c.b(issue.status)} assignedAgent=${c.b(String(issue.assignedAgent))} · ${issue.contract!.acceptanceCriteria.length} AC`);
   log(`\nNext: the execution loop polls it (e.g. ${c.b('npx tsx scripts/real-panel-run.ts')}).`);
 }
@@ -586,7 +589,7 @@ ${c.b('Commands')}
   curate               promote blocker criteria into the Eval Task Registry
   regress              execute the bound registry against the target's real graders
   analyze [--create]   propose harness/eval improvement issues
-  adopt <ID> --contract F  confirm a proposal's WHAT (attach contract) → drivable (ADR-0007)
+  adopt <ID> [--contract F]  confirm a proposal's WHAT → drivable; omit F to use the attached draft (ADR-0007)
   decide <ID> approve|reject  the human review gate for a needs-human-review build
   label --run ID --human approve|request_changes
   demo [--open]        run the entire loop on the sample roadmap
