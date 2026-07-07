@@ -1,11 +1,13 @@
 /**
  * Low-level tmux session substrate (ARCH-execution-003, realising DOM-execution-002/005).
  *
- * A role runs as an INTERACTIVE, detached, attachable Claude Code session inside its own
- * tmux window — not `claude -p` headless (North Star: headless is a non-goal; a human can
- * `tmux attach` to review/intervene). The exact recipe below was validated by a live smoke
- * test: no trust prompt in a fresh dir, `acceptEdits` writes files without per-edit prompts,
- * `send-keys -l` drives the input, and the agent hands control back by writing a sentinel.
+ * A role runs as an INTERACTIVE, attachable Claude Code session inside its own tmux WINDOW (tab) —
+ * not `claude -p` headless (North Star: headless is a non-goal; a human can `tmux attach` to
+ * review/intervene). All role windows live under ONE holder session (WINDOW_HOLDER) so a single
+ * `tmux attach -t agentops` shows every generator/reviewer as a tab. The launch recipe was
+ * validated by a live smoke test: no trust prompt in a fresh dir, `acceptEdits` writes files
+ * without per-edit prompts, `send-keys -l` drives the input, and the agent hands control back by
+ * writing a sentinel.
  *
  * These are thin wrappers over the `tmux` CLI; all orchestration decisions (when to launch,
  * when to grade) live in deterministic code above this seam (ARCH-execution-011).
@@ -35,6 +37,38 @@ function tmux(args: string[]): { ok: boolean; stdout: string; stderr: string } {
 }
 
 /**
+ * Every role session runs as a WINDOW (tab) of ONE holder tmux session, so a human can watch all
+ * the generator/reviewer sessions at once with a single `tmux attach -t <holder>` instead of
+ * hunting for N separate detached sessions. Overridable via env (a pre-existing session of this
+ * name is reused). A finished session's tab is closed (killSession → kill-window); a stuck one is
+ * kept (ARCH-execution-014) so a human can attach to that exact tab and take over.
+ */
+export const WINDOW_HOLDER = process.env.AGENTOPS_TMUX_SESSION || 'agentops';
+
+/** tmux target for a role session's window: `<holder>:<session>` (the session id IS the window name). */
+function target(session: string): string {
+  return `${WINDOW_HOLDER}:${session}`;
+}
+
+/**
+ * Ensure the holder session exists (detached), carrying a persistent idle "home" tab so it survives
+ * while individual role tabs open and close — without the home window, closing the only role tab
+ * would kill the holder and race the next launch. Idempotent: reuses an existing holder.
+ */
+function ensureHolder(cols: number, rows: number): void {
+  if (tmux(['has-session', '-t', WINDOW_HOLDER]).ok) return;
+  const home =
+    "printf '%s\\n' 'agentops dashboard — generator/reviewer sessions open here as tabs; a finished tab closes.'; " +
+    'while true; do sleep 3600; done';
+  const r = tmux(['new-session', '-d', '-s', WINDOW_HOLDER, '-n', 'home', '-x', String(cols), '-y', String(rows), home]);
+  if (!r.ok) throw new Error(`tmux new-session (holder) failed: ${r.stderr || r.stdout}`);
+  // pin our -n window names (tmux would otherwise auto-rename each window to its running command,
+  // which would both mislabel the tabs and break name-based targeting below)
+  tmux(['set-option', '-t', WINDOW_HOLDER, 'automatic-rename', 'off']);
+  tmux(['set-option', '-t', WINDOW_HOLDER, 'allow-rename', 'off']);
+}
+
+/**
  * Build the `claude` command line the tmux window runs. Pure + exported so the flag wiring
  * (allowedTools, permission mode, optional `--model`) is unit-testable without spawning tmux —
  * the same seam discipline as buildGeneratorPrompt and the PaneDriver. An invalid model string is
@@ -51,23 +85,12 @@ export function buildLaunchCommand(opts: LaunchOpts): string {
   );
 }
 
-/** Launch an interactive Claude Code session, detached, in its own tmux window. */
+/** Launch an interactive Claude Code session as a WINDOW (tab) of the holder session. */
 export function launchSession(opts: LaunchOpts): void {
-  killSession(opts.session); // idempotent: clear any stale window of the same name
-  const res = tmux([
-    'new-session',
-    '-d',
-    '-s',
-    opts.session,
-    '-x',
-    String(opts.cols ?? 200),
-    '-y',
-    String(opts.rows ?? 50),
-    '-c',
-    opts.cwd,
-    buildLaunchCommand(opts),
-  ]);
-  if (!res.ok) throw new Error(`tmux new-session failed: ${res.stderr || res.stdout}`);
+  killSession(opts.session); // idempotent: close any stale tab of the same name
+  ensureHolder(opts.cols ?? 200, opts.rows ?? 50);
+  const res = tmux(['new-window', '-t', WINDOW_HOLDER, '-n', opts.session, '-c', opts.cwd, buildLaunchCommand(opts)]);
+  if (!res.ok) throw new Error(`tmux new-window failed: ${res.stderr || res.stdout}`);
 }
 
 /** The three pane operations sendPrompt needs, behind a seam so its retry logic is unit-testable. */
@@ -80,15 +103,15 @@ export interface PaneDriver {
 const tmuxPaneDriver: PaneDriver = {
   // `-l` sends the string literally so tokens like `{`/`Enter` aren't interpreted as keys.
   type(session, text) {
-    const r = tmux(['send-keys', '-t', session, '-l', text]);
+    const r = tmux(['send-keys', '-t', target(session), '-l', text]);
     if (!r.ok) throw new Error(`tmux send-keys (text) failed: ${r.stderr}`);
   },
   enter(session) {
-    const r = tmux(['send-keys', '-t', session, 'Enter']);
+    const r = tmux(['send-keys', '-t', target(session), 'Enter']);
     if (!r.ok) throw new Error(`tmux send-keys (Enter) failed: ${r.stderr}`);
   },
   capture(session) {
-    return tmux(['capture-pane', '-t', session, '-p']).stdout;
+    return tmux(['capture-pane', '-t', target(session), '-p']).stdout;
   },
 };
 
@@ -131,15 +154,19 @@ export async function sendPrompt(session: string, prompt: string, opts: SendProm
 
 /** The visible pane text — used for evidence/debugging, never as a grading signal. */
 export function capturePane(session: string): string {
-  return tmux(['capture-pane', '-t', session, '-p']).stdout;
+  return tmux(['capture-pane', '-t', target(session), '-p']).stdout;
 }
 
+/** True iff the holder has a window (tab) for this session. */
 export function sessionExists(session: string): boolean {
-  return tmux(['has-session', '-t', session]).ok;
+  const r = tmux(['list-windows', '-t', WINDOW_HOLDER, '-F', '#{window_name}']);
+  return r.ok && r.stdout.split('\n').includes(session);
 }
 
+/** Close a role session's tab (kill its window). Ignore failure — it may already be gone. The
+ *  holder's persistent home tab means closing the last role tab never kills the dashboard. */
 export function killSession(session: string): void {
-  tmux(['kill-session', '-t', session]); // ignore failure (may not exist)
+  tmux(['kill-window', '-t', target(session)]);
 }
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

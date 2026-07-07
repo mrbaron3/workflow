@@ -17,6 +17,7 @@ import { Store } from '../src/store/store.js';
 import { loadConfig } from '../src/config.js';
 import { runLoopLive } from '../src/pipeline/execution/live.js';
 import { PERSPECTIVES } from '../src/pipeline/panel.js';
+import { WINDOW_HOLDER } from '../src/pipeline/execution/tmux.js';
 
 const ROOT = process.cwd();
 if (!Store.isInitialized(ROOT)) {
@@ -35,7 +36,9 @@ const config = loadConfig(ROOT);
 const samples = process.env.SAMPLES ? Math.max(1, Number(process.env.SAMPLES)) : undefined;
 const measure = process.env.MEASURE === '1';
 console.log(`lenses: ${perspectives.map((p) => p.key + (p.deterministic ? '(det)' : '')).join(', ')}`);
-console.log(`samples: ${samples ?? config.samples}${measure ? ' [measure: run all for pass@k/pass^k]' : ' [first-approve-stop]'}\n`);
+console.log(`samples: ${samples ?? config.samples}${measure ? ' [measure: run all for pass@k/pass^k]' : ' [first-approve-stop]'}`);
+// Every generator/reviewer session opens as a tab of this one holder — attach to watch them live.
+console.log(`▶ watch live:  tmux attach -t ${WINDOW_HOLDER}   (each session is a tab; finished tabs close)\n`);
 
 const results = await runLoopLive(store, config, ROOT, { perspectives, samples, measure }, (m) => console.log(m));
 
