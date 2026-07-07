@@ -50,7 +50,14 @@ function renderHtml(store: Store, m: Metrics): string {
     card(
       'false pass / fail',
       m.falsePassRate === null ? 'n/a' : `${pct(m.falsePassRate)} / ${pct(m.falseFailRate ?? 0)}`,
-      m.falsePassRate === null ? 'no human labels yet' : 'vs human review',
+      m.falsePassRate === null
+        ? 'no human labels yet'
+        : `vs human review${m.falsePassTrend.length >= 2 ? ` · trend ${m.falsePassTrend.slice(-4).map((p) => pct(p.rate)).join('→')}` : ''}`,
+    ),
+    card(
+      'regression capture',
+      m.regressionCaptureRate === null ? 'n/a' : pct(m.regressionCaptureRate),
+      m.regressionCaptureRate === null ? 'no blocker AC failures observed' : 'failed ACs promoted to eval tasks (③)',
     ),
   ].join('\n');
 
@@ -257,6 +264,14 @@ export function statusReport(store: Store, m: Metrics): string {
   } else {
     L.push(`  false-pass/fail: n/a (no human labels — run \`agentops label\` to add some)`);
   }
+  if (m.falsePassTrend.length >= 2) {
+    L.push(`  false-pass trend:    ${m.falsePassTrend.slice(-6).map((p) => pct1(p.rate)).join(' → ')}`);
+  }
+  L.push(
+    m.regressionCaptureRate === null
+      ? `  regression capture:  n/a (no blocker AC failures observed)`
+      : `  regression capture:  ${bar20(m.regressionCaptureRate)} ${pct1(m.regressionCaptureRate)} (③ failed ACs → eval tasks)`,
+  );
   if (m.byAgent.length) {
     L.push('');
     L.push('  by agent:');

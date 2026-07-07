@@ -66,6 +66,14 @@ export interface Metrics {
   falsePassRate: number | null;
   falseFailRate: number | null;
   graderAgreement: number | null;
+  /**
+   * ③ steering star, first half (capture): the share of observed blocker-AC failures that
+   * exist in the Eval Task Registry as regression tasks (curator id convention
+   * EVAL-TASK-<issue>-<ac>). null = no blocker AC failure observed yet.
+   */
+  regressionCaptureRate: number | null;
+  /** false-pass rate over a sliding window of the human-labelled runs, oldest → newest. */
+  falsePassTrend: { upTo: string; rate: number }[];
   passCurve: { k: number; passAtK: number; passHatK: number }[];
   byAgent: AgentStats[];
   heatmap: Heatmap;
@@ -248,6 +256,35 @@ export function computeMetrics(store: Store): Metrics {
     graderAgreement = agree / labeled.length;
   }
 
+  // The same false-pass definition over the labelled timeline (sliding window) — the
+  // number that should fall as ③ improvements land, where the point value can't show it.
+  const TREND_WINDOW = 10;
+  const chrono = [...labeled].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const falsePassTrend = chrono.map((r, i) => {
+    const win = chrono.slice(Math.max(0, i - TREND_WINDOW + 1), i + 1);
+    const fp = win.filter((x) => x.verdict === 'approve' && x.humanVerdict === 'request_changes').length;
+    return { upTo: r.createdAt, rate: fp / win.length };
+  });
+
+  // ③ capture rate: every failed blocker AC (a finding that references a contract AC)
+  // should have been promoted to a regression EvalTask. Lens/gate findings (criterionId
+  // outside the contract's AC set) are not promotable and stay out of the denominator.
+  const failedPairs = new Set<string>();
+  for (const issue of runIssues) {
+    const acIds = new Set((issue.contract?.acceptanceCriteria ?? []).map((a) => a.id));
+    for (const r of store.runsForIssue(issue.id)) {
+      for (const f of r.findings) {
+        if (f.severity === 'blocker' && acIds.has(f.criterionId)) failedPairs.add(`${issue.id} ${f.criterionId}`);
+      }
+    }
+  }
+  const taskIds = new Set(store.db.evalTasks.map((t) => t.id));
+  const captured = [...failedPairs].filter((k) => {
+    const [issueId, acId] = k.split(' ');
+    return taskIds.has(`EVAL-TASK-${issueId}-${acId}`);
+  }).length;
+  const regressionCaptureRate = failedPairs.size ? captured / failedPairs.size : null;
+
   return {
     totals: {
       epics: epics.length,
@@ -272,6 +309,8 @@ export function computeMetrics(store: Store): Metrics {
     falsePassRate,
     falseFailRate,
     graderAgreement,
+    regressionCaptureRate,
+    falsePassTrend,
     passCurve,
     byAgent: [...agentAcc.entries()]
       .map(([agent, a]) => ({

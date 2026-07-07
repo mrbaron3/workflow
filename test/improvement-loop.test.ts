@@ -64,7 +64,8 @@ function metrics(over: Partial<Metrics> = {}): Metrics {
     totals: { epics: 0, issues: 1, issuesRun: 1, released: 0, samples: 2, evalRuns: 2 },
     passAt1: 1, passAtK: 1, passHatK: 1, headlineK: 2, repairSuccessRate: 1, prPassRate: 1,
     avgRepairAttempts: 1, instabilityRate: 0, cost: { usd: 0, tokens: 0, seconds: 0 },
-    falsePassRate: 0, falseFailRate: 0, graderAgreement: 1, passCurve: [], byAgent: [],
+    falsePassRate: 0, falseFailRate: 0, graderAgreement: 1, regressionCaptureRate: null,
+    falsePassTrend: [], passCurve: [], byAgent: [],
     heatmap: { areas: [], types: [], counts: {}, max: 0 }, issues: [],
     ...over,
   };

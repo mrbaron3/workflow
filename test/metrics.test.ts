@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Store } from '../src/store/store.js';
 import { computeMetrics } from '../src/metrics/metrics.js';
+import { curateEvalTasks } from '../src/pipeline/curator.js';
 import { Issue, EvalRun, type Verdict } from '../src/domain/schema.js';
 
 function tmpStore(name: string): Store {
@@ -99,5 +100,56 @@ describe('computeMetrics: pass@k vs pass^k', () => {
     expect(m.falsePassRate).toBeCloseTo(0.5, 5);
     expect(m.falseFailRate).toBeCloseTo(0, 5);
     expect(m.graderAgreement).toBeCloseTo(0.5, 5);
+  });
+});
+
+describe('③ steering instruments (ADR-0007 I4)', () => {
+  it('regressionCaptureRate: null with no failures, 0 while uncaptured, 1 once curated', () => {
+    const store = tmpStore('metrics-capture');
+    addIssue(store, 'ISSUE-0001');
+    addRun(store, 'ISSUE-0001', 0, 1, 'approve'); // no findings
+    expect(computeMetrics(store).regressionCaptureRate).toBeNull(); // nothing failed yet
+
+    addRun(store, 'ISSUE-0001', 0, 2, 'request_changes'); // blocker finding on AC-001
+    expect(computeMetrics(store).regressionCaptureRate).toBe(0); // failed, not yet in the registry
+
+    curateEvalTasks(store); // promotes AC-001 as EVAL-TASK-ISSUE-0001-AC-001
+    expect(computeMetrics(store).regressionCaptureRate).toBe(1); // the steering star: captured
+  });
+
+  it('regressionCaptureRate ignores lens/gate findings that do not reference a contract AC', () => {
+    const store = tmpStore('metrics-capture-lens');
+    addIssue(store, 'ISSUE-0001');
+    addRun(store, 'ISSUE-0001', 0, 1, 'request_changes');
+    // rewrite the finding to a non-AC criterion (a lens-level or gate finding)
+    store.db.evalRuns[0]!.findings[0]!.criterionId = 'GATE-scope_check';
+    expect(computeMetrics(store).regressionCaptureRate).toBeNull(); // no AC failure observed
+  });
+
+  it('falsePassTrend follows the labelled timeline, windowed, oldest → newest', () => {
+    const store = tmpStore('metrics-trend');
+    addIssue(store, 'ISSUE-0001');
+    // three labelled runs, in time order: false-pass, correct, correct
+    addRun(store, 'ISSUE-0001', 0, 1, 'approve');
+    addRun(store, 'ISSUE-0001', 1, 1, 'request_changes');
+    addRun(store, 'ISSUE-0001', 2, 1, 'approve');
+    store.db.evalRuns[0]!.createdAt = '2026-01-01T00:00:00.000Z';
+    store.db.evalRuns[1]!.createdAt = '2026-01-02T00:00:00.000Z';
+    store.db.evalRuns[2]!.createdAt = '2026-01-03T00:00:00.000Z';
+    store.db.evalRuns[0]!.humanVerdict = 'request_changes'; // grader approved → false pass
+    store.db.evalRuns[1]!.humanVerdict = 'request_changes'; // agreement
+    store.db.evalRuns[2]!.humanVerdict = 'approve'; // agreement
+
+    const m = computeMetrics(store);
+    expect(m.falsePassTrend.map((p) => p.rate)).toEqual([1, 1 / 2, 1 / 3]); // cumulative within the window
+    expect(m.falsePassTrend[0]!.upTo).toBe('2026-01-01T00:00:00.000Z');
+    expect(m.falsePassTrend.at(-1)!.upTo).toBe('2026-01-03T00:00:00.000Z');
+  });
+
+  it('falsePassTrend is empty with no labels (nothing to trend)', () => {
+    const store = tmpStore('metrics-trend-empty');
+    addIssue(store, 'ISSUE-0001');
+    addRun(store, 'ISSUE-0001', 0, 1, 'approve');
+    expect(computeMetrics(store).falsePassTrend).toEqual([]);
   });
 });
