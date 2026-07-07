@@ -20,3 +20,6 @@ epics:
       - id: FEAT-001
         title: "Regression multi-target execution"
         outcome: "回帰 task が束縛 target とともに実行可能性（grader コマンド）も保持し、config.target がどこを向いていても、ディスク上に在る target の task は再検証され続ける（executedRate の頭打ち解消）。"
+      - id: FEAT-002
+        title: "Legacy task grader-command backfill"
+        outcome: "FEAT-001 以前に捕捉された registry の legacy task（コマンド未捕捉）が、その target を現に採点している curate の機会に実行可能性を後付け獲得する。移行を手作業や re-curate の破壊なしに終わらせ、跨 target 実走を registry 全体へ波及させる。"

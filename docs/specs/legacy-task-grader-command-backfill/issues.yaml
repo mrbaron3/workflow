@@ -1,0 +1,16 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+issues:
+  - key: ISSUE-REGBF-001
+    title: Enrich command-less legacy tasks with grader commands at curate
+    area: harness
+    type: harness
+    coversAcIds: [AC-REGBF-001, AC-REGBF-002, AC-REGBF-003]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnSystem: [ARCH-execution-015]
+    implementationNotes:
+      - "捕捉写像は FEAT-001 が curator.ts に実装済み（captureGraderCommands）。enrichment はそれを再利用する — 新しい写像を発明しない。"
+      - "curate の既存 id skip（重複防止）と enrichment（空欄埋め）は別の関心: skip は task 生成の冪等、enrichment は graderCommands===null のときだけ発動。"
+      - "curateEvalTasks の返り値の後方互換（created）を壊さない。enriched の報告を足すのは可（additive）。"

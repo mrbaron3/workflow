@@ -1,0 +1,29 @@
+# legacy task の grader コマンド backfill — 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - ARCH-execution-015
+
+verifications:
+  AC-REGBF-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "現 config.target と同 target 束縛のコマンド未捕捉 task が、curate 後に FEAT-001 と同じ写像で grader コマンドを保持する"
+      - "task は複製されず、id・userGoal・steps・expected・severity・target・createdAt が不変。curate の再実行で結果が変わらない（冪等）"
+
+  AC-REGBF-002:
+    severity: major
+    method: unit_test
+    expected:
+      - "捕捉済み graderCommands を持つ task は、config が別コマンドを持っていても curate 後に元のコマンドのまま変化しない"
+
+  AC-REGBF-003:
+    severity: major
+    method: unit_test
+    expected:
+      - "現 config.target と異なる target に束縛されたコマンド未捕捉 task は、curate 後もコマンド未捕捉のまま"
+      - "target 未束縛（null）の task は、curate 後もコマンド未捕捉のまま"
