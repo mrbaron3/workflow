@@ -101,6 +101,43 @@ export interface GroundOpts {
   changed: string[];
 }
 
+export interface SatisfiedResult {
+  satisfied: Record<string, boolean>;
+  /** unit_test ACs no assertion carries — surfaced in notes/findings, never silently passed. */
+  untaggedUnitTestAcs: string[];
+}
+
+/**
+ * Per-criterion satisfaction from the test report (TDD gate). An AC is satisfied iff the
+ * assertions whose titles carry its AC id all pass. When a report EXISTS but no assertion
+ * carries a unit_test AC's id, the AC is NOT satisfied — the old suite-green fallback let a
+ * generator skip AC-tagged tests entirely and still pass, which gutted test-first discipline
+ * (the generator role prompt mandates the tagging; this makes the mandate mechanical).
+ * Non-unit_test methods (e.g. playwright) keep the fallback: vitest cannot verify them.
+ * With no report at all (no unit_tests grader configured) everything falls back to true —
+ * grading without a test grader is an operator choice, not the agent's silent pass.
+ */
+export function satisfiedFromReport(contract: IssueContract, report: VitestReport | null): SatisfiedResult {
+  const satisfied: Record<string, boolean> = {};
+  const untaggedUnitTestAcs: string[] = [];
+  for (const ac of contract.acceptanceCriteria) {
+    if (!report) {
+      satisfied[ac.id] = true;
+      continue;
+    }
+    const matched = report.assertions.filter((a) => a.name.includes(ac.id));
+    if (matched.length > 0) {
+      satisfied[ac.id] = matched.every((a) => a.passed);
+    } else if (ac.verification.method === 'unit_test') {
+      satisfied[ac.id] = false;
+      untaggedUnitTestAcs.push(ac.id);
+    } else {
+      satisfied[ac.id] = report.success;
+    }
+  }
+  return { satisfied, untaggedUnitTestAcs };
+}
+
 /** Run the real graders against the checkout and produce a grounded BuildArtifact. */
 export function groundArtifact(opts: GroundOpts): BuildArtifact {
   const g = opts.target.graders ?? {};
@@ -123,11 +160,7 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
     ...opts.changed.filter((f) => (!inScope(f) || excluded(f)) && !protectedHit.includes(f)),
   ];
 
-  const satisfied: Record<string, boolean> = {};
-  for (const ac of opts.contract.acceptanceCriteria) {
-    const matched = report?.assertions.filter((a) => a.name.includes(ac.id)) ?? [];
-    satisfied[ac.id] = matched.length > 0 ? matched.every((a) => a.passed) : unitTestsPass;
-  }
+  const { satisfied, untaggedUnitTestAcs } = satisfiedFromReport(opts.contract, report);
 
   const notes = [
     '[grounded] real graders ran against the worktree.',
@@ -136,6 +169,9 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
     'quality.* are NOT grounded (no rubric grader) — only functional gates are real.',
   ];
   if (report && !report.success) notes.push(`vitest failures: ${report.failedNames.join('; ')}`);
+  if (untaggedUnitTestAcs.length) {
+    notes.push(`TDD gate: no assertion carries the AC id(s) ${untaggedUnitTestAcs.join(', ')} — write tests whose titles include them (untagged = unsatisfied).`);
+  }
 
   return {
     branch: opts.branch,

@@ -33,6 +33,26 @@ export const PERSPECTIVE_LENS: Record<string, string> = {
 };
 
 /**
+ * Per-lens VALIDITY rubric appended to the briefing. testQuality is the independent agent
+ * that reviews test CONTENT (the generator grades its own homework otherwise): it judges
+ * whether the tests would actually catch a regression, not merely that tests exist.
+ */
+export const PERSPECTIVE_RUBRIC: Record<string, string[]> = {
+  testQuality: [
+    `Validity rubric — judge the tests as evidence, not as decoration:`,
+    `- For each test, ask: would it FAIL if the behaviour it names broke? Flag tautologies`,
+    `  (assertions that restate the implementation or can never fail) as findings.`,
+    `- Every acceptance criterion must have at least one test whose title carries its AC id`,
+    `  (the harness binds grading and regression re-runs to those titles); flag untagged or`,
+    `  missing criteria.`,
+    `- Flag tests that mirror the implementation's internals instead of the contract's`,
+    `  observable behaviour, and assertions weakened to pass (loose tolerances, skipped cases).`,
+    `- You may run the test suite (and targeted mutations of your own reasoning) to check;`,
+    `  running code is encouraged, editing it is forbidden.`,
+  ],
+};
+
+/**
  * What a perspective session writes to findings.json. Lenient on the finding shape (an LLM
  * fills it) — normalised into the strict Finding schema by parsePerspectiveFindings.
  */
@@ -108,10 +128,12 @@ export function sessionBackedGrader(evalRoot: string): PerspectiveGrader {
 /** The read-only briefing a perspective session runs on (it writes only its findings.json). */
 export function perspectivePrompt(perspective: string, contract: IssueContract, evalRelDir: string): string {
   const lens = PERSPECTIVE_LENS[perspective] ?? 'correctness and quality for this lens';
+  const rubric = PERSPECTIVE_RUBRIC[perspective] ?? [];
   return [
     `You are a code reviewer. Review ONLY through the ${perspective} lens: ${lens}.`,
     `This is a READ-ONLY review: do NOT edit any source file. Read the working tree and judge it`,
     `against the acceptance criteria below.`,
+    ...(rubric.length ? ['', ...rubric] : []),
     ``,
     `## Acceptance criteria`,
     ...contract.acceptanceCriteria.map((a) => `- [${a.id}] (${a.severity}) ${a.behavior}`),

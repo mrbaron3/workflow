@@ -61,6 +61,8 @@ ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-b
 
 `git log --oneline`（新しい順・このセッション分）:
 
+- （追記）**TDD の三層強制** — ①generator 役割プロンプトに TDD プロトコル義務化（red→green・AC-id タグ規約・テスト弱体化禁止）②testQuality lens（独立レビュア）に妥当性 rubric（壊れたら fail するか・同語反復検出・タグ検査・実走許可）③決定論ゲート: report が在るのに AC-id タグ付き assertion ゼロの unit_test AC は **unsatisfied**（従来は suite-green へフォールバック＝沈黙 pass の穴を閉鎖・`satisfiedFromReport` に抽出）
+- `ba5da28` **improvement: 回帰 registry の実行者**（`runRegressionTasks`・`RegressionRun`・`agentops regress`・executedRate 計器・EvalTask.target 束縛）
 - `8ed3e52` **fix(metrics): captureRate は AC severity で判定（Curator 意味論に一致）＋NUL 混入除去** — grounded が暴いた計器バグ
 - `0306f44` **improvement: self-hosting 基盤**（env-gate 受け入れテスト・種 contract・`real-run-self.ts`・grader コマンドの `KEY=VAL` env プレフィックス）
 - `4f75fe7` **improvement: runLoopLive 末尾に improveTick 常設**（curate 冪等・analyst report-only）
@@ -146,6 +148,7 @@ npm run harness -- label --run EVAL-NNNNN --human approve|request_changes  # 較
 - **grounded だけが暴くバグがある**（mock はプロンプトを出さない）: 実例＝submit race・worktree 非冪等（修正済・決定論テスト付き）。
 - **回帰化されない失敗は"改善が外れているサイン"**: 見つけた失敗を直すだけで終わらせず回帰 eval へ昇格する（③の心臓）。
 - **決定論境界**: orchestrator（poll/dispatch/grade/gate/store）は決定論コード、非決定な実エージェントはセッション内（HOW 遂行）に閉じる。
+- **TDD は三層で強制**: 役割プロンプト（generator の red→green 義務・AC-id タグ規約）×独立レビュア（testQuality lens の妥当性 rubric）×決定論ゲート（タグ無し unit_test AC は unsatisfied・`satisfiedFromReport`）。タグ規約は grading と回帰実行（`agentops regress`）の両方が突合に依存する基盤規約。
 - **副次 finding（未修正・害なし）**: `scope_check` は `scope.exclude` を見ず `include`＋`protectedPaths` のみで判定（`grade.ts:103-108`）＝`scope.exclude` は grader 上は飾り。
 
 ## 7. 環境・資源の住処
