@@ -269,6 +269,14 @@ export async function runPerspectiveSessions(
   return { evalRoot, completed, touchedCode };
 }
 
+/**
+ * Review-session liveness wiring (ISSUE-0007). Exported so the permanent guard
+ * (test/acceptance-harness/active-liveness.acceptance.test.ts) can pin it: the released
+ * panel's surviving major finding was that these were untested inline literals — a mutation
+ * re-tightening the cap to 10 minutes (the exact ⑤ failure) survived every test.
+ */
+export const REVIEW_LIVENESS = { idleMs: 90_000, activeCapMs: 1000 * 60 * 60 * 2, pollMs: 3000 } as const;
+
 /** Run one read-only review session in its prepared worktree; returns its status (no git bookkeeping). */
 async function runReviewSession(issueKey: string, job: ReviewJob, log: (m: string) => void, model?: string): Promise<ReviewStatus> {
   const session = `ao-eval-${issueKey}-${job.key}`;
@@ -281,9 +289,9 @@ async function runReviewSession(issueKey: string, job: ReviewJob, log: (m: strin
   const submitted = await sendPrompt(session, `Read .agentops/eval/${job.key}/PROMPT.md and do exactly what it says.`);
   if (!submitted) log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
   // No per-review soft cap: a review still visibly working (⑤ ran 1h26m past the old 10-min
-  // cap and its findings were lost) is kept alive up to this finite ceiling; going idle on
-  // the way still surfaces as stuck via idleMs.
-  const outcome = await monitorLiveness(session, job.sentinel, { idleMs: 90_000, activeCapMs: 1000 * 60 * 60 * 2, pollMs: 3000 });
+  // cap and its findings were lost) is kept alive up to the finite REVIEW_LIVENESS ceiling;
+  // going idle on the way still surfaces as stuck via idleMs.
+  const outcome = await monitorLiveness(session, job.sentinel, REVIEW_LIVENESS);
 
   if (outcome !== 'completed') {
     log(`  ⚠ ${session}: ${outcome} — session + worktree kept alive; inspect: tmux attach -t ${session}`);

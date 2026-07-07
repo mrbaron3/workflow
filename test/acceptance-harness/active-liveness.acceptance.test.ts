@@ -3,10 +3,17 @@
  * active cap and collect late findings" — spec
  * docs/specs/active-session-liveness-and-late-findings-collection (AC-LIVE-001..003).
  *
- * RED at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3): the
- * drive's real Claude session must make it pass but cannot edit it
- * (config.target.protectedPaths). After the fix is human-approved and released, drop the
- * skipIf so it becomes a permanent regression guard (per the promoted siblings here).
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN,
+ * collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). The build was human-approved and
+ * released (2026-07-07, after a repair round; panel left one major finding), so the skipIf
+ * is dropped: permanent regression guard, in protectedPaths, tamper-proof to future drives.
+ *
+ * The released panel's surviving MAJOR finding (testQuality, attempt 2) was: the production
+ * callsite values fixing ⑤ were untested inline literals — "re-tighten the review cap to
+ * 10 minutes" survived every test. The gate made closing that gap a release condition, so
+ * this guard also PINS THE WIRING (human-owned follow-up, same closure): the callers'
+ * liveness opts are exported constants asserted below — floors chosen to keep the grounded
+ * ⑤ case (a legitimate 1h26m review) alive, while staying finite (never an infinite wait).
  *
  * Seams this file pins (harness-owned WHAT confirmation):
  *   - monitorLiveness opts gains `activeCapMs` (finite ceiling for ACTIVE sessions) plus
@@ -65,7 +72,28 @@ async function runLiveness(o: {
   return monitorLiveness('ao-fake-session', '/nonexistent/sentinel.json', opts);
 }
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('active-session liveness + late findings collection (ISSUE-0007)', () => {
+describe('liveness wiring pin — the ⑤ regression cannot silently return (ISSUE-0007 gate condition)', () => {
+  it('review sessions: finite active ceiling ≥ 90min (covers the grounded 86-min review), idle-stuck preserved', () => {
+    const o = (perspectiveSession as Record<string, unknown>)['REVIEW_LIVENESS'] as
+      | { idleMs: number; activeCapMs: number; pollMs: number }
+      | undefined;
+    expect(o, 'perspective-session must export REVIEW_LIVENESS').toBeDefined();
+    expect(Number.isFinite(o!.activeCapMs)).toBe(true); // never an infinite wait
+    expect(o!.activeCapMs).toBeGreaterThanOrEqual(90 * 60 * 1000); // ⑤: 1h26m legit review survives
+    expect(o!.idleMs).toBeLessThanOrEqual(10 * 60 * 1000); // stuck detection stays prompt
+  });
+
+  it('generator sessions: finite active ceiling ≥ 2h', async () => {
+    const session = (await import('../../src/pipeline/execution/session.js')) as unknown as Record<string, unknown>;
+    const o = session['GENERATOR_LIVENESS'] as { idleMs: number; activeCapMs: number; pollMs: number } | undefined;
+    expect(o, 'session must export GENERATOR_LIVENESS').toBeDefined();
+    expect(Number.isFinite(o!.activeCapMs)).toBe(true);
+    expect(o!.activeCapMs).toBeGreaterThanOrEqual(2 * 60 * 60 * 1000);
+    expect(o!.idleMs).toBeLessThanOrEqual(10 * 60 * 1000);
+  });
+});
+
+describe('active-session liveness + late findings collection (ISSUE-0007)', () => {
   it('ISSUE-0007/AC-LIVE-001 an actively-working session survives past hardCap and completes when the sentinel appears', async () => {
     // Sentinel appears well AFTER hardCapMs (100) but before activeCapMs (10_000) — the ⑤ shape.
     await expect(runLiveness({ paneActive: true, sentinelAt: 600 })).resolves.toBe('completed');

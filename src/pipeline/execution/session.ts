@@ -51,6 +51,14 @@ async function waitForReady(session: string, timeoutMs: number): Promise<void> {
   }
 }
 
+/**
+ * Generator-session liveness wiring (ISSUE-0007). Exported so the permanent guard
+ * (test/acceptance-harness/active-liveness.acceptance.test.ts) can pin it — the panel's
+ * surviving major finding was that these caps were untested inline literals. Finite
+ * activeCapMs ceiling for a still-working session; idle still surfaces as stuck via idleMs.
+ */
+export const GENERATOR_LIVENESS = { idleMs: 90_000, activeCapMs: 1000 * 60 * 60 * 4, pollMs: 3000 } as const;
+
 export async function runGeneratorSession(
   config: HarnessConfig,
   input: GeneratorSessionInput,
@@ -99,11 +107,7 @@ export async function runGeneratorSession(
   );
   if (!submitted) log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
 
-  const outcome = await monitorLiveness(session, sentinelPath, {
-    idleMs: 90_000, // pane unchanged this long with no sentinel = stuck
-    activeCapMs: 1000 * 60 * 60 * 4, // finite ceiling for a still-working session (ISSUE-0007) — never an infinite wait
-    pollMs: 3000,
-  });
+  const outcome = await monitorLiveness(session, sentinelPath, GENERATOR_LIVENESS);
   const paneTail = capturePane(session).split('\n').filter(Boolean).slice(-25).join('\n');
 
   // Only a clean completion tears the session down; a stuck/timed-out session is kept ALIVE
