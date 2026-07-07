@@ -266,21 +266,26 @@ export function computeMetrics(store: Store): Metrics {
     return { upTo: r.createdAt, rate: fp / win.length };
   });
 
-  // ③ capture rate: every failed blocker AC (a finding that references a contract AC)
-  // should have been promoted to a regression EvalTask. Lens/gate findings (criterionId
+  // ③ capture rate: every failed blocker AC should have been promoted to a regression
+  // EvalTask. "Failed" keys on the AC's OWN severity (curator semantics): any finding —
+  // even a minor one — against a blocker AC marks it failed, exactly as the curator tags
+  // it [regression]. (Grounded 2026-07-07: a live lens filed a minor finding against a
+  // blocker AC; keying on finding severity missed it.) Lens/gate findings (criterionId
   // outside the contract's AC set) are not promotable and stay out of the denominator.
   const failedPairs = new Set<string>();
   for (const issue of runIssues) {
-    const acIds = new Set((issue.contract?.acceptanceCriteria ?? []).map((a) => a.id));
+    const blockerAcIds = new Set(
+      (issue.contract?.acceptanceCriteria ?? []).filter((a) => a.severity === 'blocker').map((a) => a.id),
+    );
     for (const r of store.runsForIssue(issue.id)) {
       for (const f of r.findings) {
-        if (f.severity === 'blocker' && acIds.has(f.criterionId)) failedPairs.add(`${issue.id} ${f.criterionId}`);
+        if (blockerAcIds.has(f.criterionId)) failedPairs.add(`${issue.id} ${f.criterionId}`);
       }
     }
   }
   const taskIds = new Set(store.db.evalTasks.map((t) => t.id));
   const captured = [...failedPairs].filter((k) => {
-    const [issueId, acId] = k.split(' ');
+    const [issueId, acId] = k.split(' ');
     return taskIds.has(`EVAL-TASK-${issueId}-${acId}`);
   }).length;
   const regressionCaptureRate = failedPairs.size ? captured / failedPairs.size : null;

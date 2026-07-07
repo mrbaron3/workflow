@@ -126,6 +126,18 @@ describe('③ steering instruments (ADR-0007 I4)', () => {
     expect(computeMetrics(store).regressionCaptureRate).toBeNull(); // no AC failure observed
   });
 
+  it('regressionCaptureRate keys on the AC severity, not the finding severity (curator semantics)', () => {
+    // Grounded discovery (2026-07-07 live run): a review lens filed a MINOR finding against a
+    // BLOCKER AC — the curator tags that AC [regression], so the instrument must count it too.
+    const store = tmpStore('metrics-capture-sev');
+    addIssue(store, 'ISSUE-0001');
+    addRun(store, 'ISSUE-0001', 0, 1, 'request_changes');
+    store.db.evalRuns[0]!.findings[0]!.severity = 'minor'; // minor finding, blocker AC-001
+    expect(computeMetrics(store).regressionCaptureRate).toBe(0); // still an observed failure
+    curateEvalTasks(store);
+    expect(computeMetrics(store).regressionCaptureRate).toBe(1); // and it is capturable
+  });
+
   it('falsePassTrend follows the labelled timeline, windowed, oldest → newest', () => {
     const store = tmpStore('metrics-trend');
     addIssue(store, 'ISSUE-0001');
