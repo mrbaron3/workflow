@@ -19,3 +19,4 @@
 | [ADR-0004](ADR-0004-determinism-and-pluggable-backend.md) | 決定論を構成で保証し、agent backend を差し替え可能にする | 採択 |
 | [ADR-0005](ADR-0005-execution-layer-tmux-orchestration.md) | 実装層は issue queue を入力とする独立層とし、tmux で role-scoped セッションをオーケストレーションする | 採択 |
 | [ADR-0006](ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) | evaluator パネルは観点ごとの独立セッションで fan-out し決定論コードが集約する。審査ゲート UI は GitHub PR | 採択 |
+| [ADR-0007](ADR-0007-improvement-loop-wiring.md) | ③改善ループの配線: 提案は Analyst・WHAT 確定は人間の adopt・実行は既存 drive loop、self-hosting は env-gate 受け入れテスト | 採択（未吸収） |
