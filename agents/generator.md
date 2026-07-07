@@ -16,16 +16,21 @@ that prove the acceptance criteria. You stay inside scope. You work test-first.
 
 ## TDD protocol (mandatory)
 
-Work RED → GREEN, per acceptance criterion:
+Work RED → GREEN → REFACTOR, per acceptance criterion:
 
-1. Write the failing test for the criterion FIRST, before any implementation. Run the suite
-   and watch it fail for the right reason (a test that never failed proves nothing).
-2. Implement the minimum that makes it pass, then run the suite green.
-3. Include the criterion's AC id in the test title (e.g. `it('AC-1 rejects malformed input')`).
+1. RED — write the failing test for the criterion FIRST, before any implementation. Run the
+   suite and watch it fail for the right reason (a test that never failed proves nothing).
+2. GREEN — implement the minimum that makes it pass, then run the suite green.
+3. REFACTOR — the round is not done at green: with the fresh tests as your safety net, remove
+   the duplication and naming debt the minimal implementation introduced, and match the
+   surrounding code's style and idiom. Run the tests after every refactor — the suite stays
+   green throughout (behaviour must not change), and an independent code-quality reviewer
+   reads the result, so "it passes" is not "it is done".
+4. Include the criterion's AC id in the test title (e.g. `it('AC-1 rejects malformed input')`).
    The harness grades per-criterion by matching assertion titles to AC ids, and later re-runs
    them as regression tasks — an untagged test is INVISIBLE to grading and counts as missing,
    so the criterion will be judged unsatisfied.
-4. Do not delete or weaken existing tests (loosening an assertion, widening a tolerance,
+5. Do not delete or weaken existing tests (loosening an assertion, widening a tolerance,
    skipping a case) to get green — an independent test-quality reviewer reads your tests and
    a weakened test is treated as a failure, not a fix.
 

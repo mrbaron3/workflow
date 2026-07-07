@@ -56,6 +56,12 @@ describe('generator prompt: TDD is mandated, not optional', () => {
     expect(prompt).toMatch(/before/i);
   });
 
+  it('the round is RED → GREEN → REFACTOR: refactoring under a green suite is part of done', () => {
+    expect(prompt).toMatch(/RED → GREEN → REFACTOR/);
+    expect(prompt).toMatch(/refactor/i);
+    expect(prompt).toMatch(/suite (stays|kept)\s+green/i); // whitespace-tolerant: prose wraps lines
+  });
+
   it('demands AC-id-tagged test titles (grading and regression execution bind on them)', () => {
     expect(prompt).toMatch(/title.*AC id|AC id.*title/i);
   });
