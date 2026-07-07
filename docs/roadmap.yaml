@@ -1,0 +1,22 @@
+# ハーネス自身の roadmap（planning-tree 入力・roadmap-planner v2 出力契約）。
+#
+# `agentops plan-roadmap --seed docs/roadmap.yaml` → `agentops spawn-specs` で
+# feature ごとの署名可能な spec dir が docs/specs/ に生える。AC はここに書かない
+# （to-spec で著述し人間が署名する — AC-PLAN-006）。
+# 北極星: docs/NORTH_STAR.md（改善はプロダクトと同じ roadmap・同じ loop で回す）。
+
+vision: "エージェント群が自律的に開発を行い、その開発プロセスを評価し、改善できる（NORTH_STAR の三能力）。"
+principles:
+  - "同じ種類の失敗を二度繰り返さない: 失敗は必ず回帰評価ケースへ捕捉する。"
+  - "状態は store が単一の真実（ADR-0001）: resume・監査は状態だけから可能。"
+  - "never-silent: 実行できない検証は理由付きで報告する。捏造も沈黙もしない。"
+
+epics:
+  - id: EPIC-01
+    title: "Improvement loop operations"
+    theme: "platform"
+    outcome: "③改善ループの回帰資産が運用に耐える: 捕捉した失敗が target 切替や時間経過で死蔵されない。"
+    features:
+      - id: FEAT-001
+        title: "Regression multi-target execution"
+        outcome: "回帰 task が束縛 target とともに実行可能性（grader コマンド）も保持し、config.target がどこを向いていても、ディスク上に在る target の task は再検証され続ける（executedRate の頭打ち解消）。"

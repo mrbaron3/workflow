@@ -1,0 +1,36 @@
+# 回帰 task の複数 target 実行 — 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - ARCH-execution-015
+
+verifications:
+  AC-REGMT-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "curate 後の回帰 task が、束縛 target とその AC の検証メソッドに対応する grader コマンドを保持する"
+      - "config.target.graders に無いメソッドのコマンドは task に捕捉されない（捏造しない）"
+
+  AC-REGMT-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "target A に束縛されコマンド捕捉済みの task は、config.target が B でも A がディスク上に在れば実走され、RegressionRun（pass/fail/unverified）が記録される"
+      - "同一 target に束縛された複数 task は 1 回の grader 実走を共有する（実走回数が target 数を超えない）"
+
+  AC-REGMT-003:
+    severity: major
+    method: unit_test
+    expected:
+      - "束縛 target repo がディスク上に無い task は、repo 不在を特定する理由付きで skip 報告され、RegressionRun が作られない"
+      - "コマンド未捕捉かつ config.target と不一致の task は、コマンド不明を特定する理由付きで skip 報告され、RegressionRun が作られない"
+
+  AC-REGMT-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "コマンド未捕捉（legacy）で config.target と同じ target に束縛された task は、config.target.graders のコマンドで実走され、RegressionRun が記録される"

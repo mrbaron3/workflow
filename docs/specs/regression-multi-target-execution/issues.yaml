@@ -1,0 +1,16 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+issues:
+  - key: ISSUE-REGMT-001
+    title: Bind grader commands at curate and execute regression tasks per target
+    area: harness
+    type: harness
+    coversAcIds: [AC-REGMT-001, AC-REGMT-002, AC-REGMT-003, AC-REGMT-004]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnSystem: [ARCH-execution-015]
+    implementationNotes:
+      - "EvalTask（src/domain/schema.ts・Zod SSOT）へ additive にコマンド捕捉フィールドを足す。既存 task は未捕捉＝legacy として扱う（マイグレーション不要・null/absent 既定）。"
+      - "runRegressionTasks（src/pipeline/regression.ts）は runnable task を束縛 target ごとにグループし、(target, コマンド) の組ごとに 1 回だけ report runner（注入 seam）を呼ぶ。"
+      - "捕捉は curateEvalTasks（src/pipeline/curator.ts）: config.target.graders から task.graders のメソッド分だけ写す（無いメソッドは写さない）。"
