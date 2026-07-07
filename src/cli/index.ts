@@ -44,6 +44,7 @@ import { makeRunner } from '../agents/runner.js';
 import { curateEvalTasks } from '../pipeline/curator.js';
 import { runRegressionTasks } from '../pipeline/regression.js';
 import { adoptIssue } from '../pipeline/adopt.js';
+import { assignIssue } from '../pipeline/assign.js';
 import { recordHumanDecision, type HumanDecision } from '../pipeline/execution/loop.js';
 import * as YAML from 'yaml';
 import { analyzeHarness, createSuggestionIssues } from '../pipeline/analyst.js';
@@ -339,6 +340,21 @@ function cmdContractDraft(pos: string[]): void {
   log(`\nNext: ${c.b('agentops run')} drives each issue: Generate → Evaluate → Repair → Release.`);
 }
 
+function cmdAssign(pos: string[]): void {
+  const store = requireInit();
+  const issueId = pos[0];
+  if (!issueId) {
+    log(c.red('usage: agentops assign <ISSUE-ID>') + c.dim('   (delegate a contract-drafted spec issue to the AI backend)'));
+    process.exit(1);
+  }
+  const config = loadConfig(ROOT);
+  const issue = assignIssue(store, config, issueId);
+  store.save();
+  log(c.green('✓ assigned') + ` ${c.b(issue.id)} ${issue.title} → ${c.b(String(issue.assignedAgent))}`);
+  log(`  status=${c.b(issue.status)} · ${issue.contract!.acceptanceCriteria.length} AC ${c.dim('(now in the execution guard’s pollable queue)')}`);
+  log(`\nNext: the execution loop polls it (e.g. ${c.b('npx tsx scripts/real-panel-run.ts')}).`);
+}
+
 function cmdPlanTree(): void {
   const store = requireInit();
   const rm = store.db.roadmap;
@@ -580,6 +596,7 @@ ${c.b('Commands')}
   spawn-specs          materialize one authorable spec dir per in-plan feature
   spawn-issues <spec-dir>  ingest a signed spec's issues.yaml into the store (ISSUE-NNNN)
   contract-draft <spec-dir>  draft Issue Contracts from a signed spec → contract-drafted
+  assign <ISSUE-ID>    delegate a contract-drafted spec issue to the AI backend (opt-in)
   plan-tree            print the planning tree (roadmap → epic → feature → spec)
   plan [--seed F]      LEGACY: ingest a seed roadmap into epics + Issue Contracts (demo)
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
@@ -618,6 +635,8 @@ async function main(): Promise<void> {
       return cmdSpawnIssues(pos);
     case 'contract-draft':
       return cmdContractDraft(pos);
+    case 'assign':
+      return cmdAssign(pos);
     case 'plan-tree':
       return cmdPlanTree();
     case 'run':
