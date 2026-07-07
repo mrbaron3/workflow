@@ -42,6 +42,7 @@ import { draftContracts } from '../pipeline/contract-draft.js';
 import { runAll, runIssue } from '../pipeline/coordinator.js';
 import { makeRunner } from '../agents/runner.js';
 import { curateEvalTasks } from '../pipeline/curator.js';
+import { runRegressionTasks } from '../pipeline/regression.js';
 import { adoptIssue } from '../pipeline/adopt.js';
 import { recordHumanDecision, type HumanDecision } from '../pipeline/execution/loop.js';
 import * as YAML from 'yaml';
@@ -410,11 +411,30 @@ function cmdDashboard(flags: Args['flags']): void {
 
 function cmdCurate(): void {
   const store = requireInit();
-  const { created } = curateEvalTasks(store);
+  const { created } = curateEvalTasks(store, loadConfig(ROOT)); // bind new tasks to the current target
   store.save();
   log(c.green(`✓ curated ${created.length} eval task(s)`) + ` (registry now ${store.db.evalTasks.length})`);
   for (const t of created.slice(0, 12)) log(`  ${c.dim(t.id)} ${t.userGoal}`);
   if (created.length > 12) log(c.dim(`  …and ${created.length - 12} more`));
+}
+
+function cmdRegress(): void {
+  const store = requireInit();
+  const config = loadConfig(ROOT);
+  const { results, skipped } = runRegressionTasks(store, config);
+  store.save();
+  const fails = results.filter((r) => r.result === 'fail');
+  const unverified = results.filter((r) => r.result === 'unverified');
+  log(c.b(`Regression executor — ${results.length} executed, ${skipped.length} skipped`) + c.dim(` (registry ${store.db.evalTasks.length})`));
+  for (const r of results) {
+    const chip = r.result === 'pass' ? c.green('pass') : r.result === 'fail' ? c.red('FAIL') : c.yellow('unverified');
+    log(`  ${chip}  ${r.taskId} ${c.dim(`(${r.matchedAssertions} assertion(s))`)}`);
+    for (const f of r.failedNames) log(c.red(`         ✗ ${f}`));
+  }
+  for (const s of skipped) log(c.dim(`  skip  ${s.taskId} — ${s.reason}`));
+  if (fails.length) log(`\n${c.red(`${fails.length} captured failure(s) are BACK`)} — the steering star is being violated; fix before releasing.`);
+  else if (unverified.length) log(`\n${c.yellow(`${unverified.length} task(s) unverifiable`)} — no assertion carries their AC id; tag tests or refine the tasks.`);
+  else if (results.length) log(`\n${c.green('all executed regressions hold')}`);
 }
 
 function cmdAnalyze(flags: Args['flags']): void {
@@ -522,7 +542,7 @@ async function cmdDemo(flags: Args['flags']): Promise<void> {
   store.save();
 
   // 4. curate
-  const { created } = curateEvalTasks(store);
+  const { created } = curateEvalTasks(store, cfg);
   store.save();
   log(c.green('④ curate') + ` ${created.length} regression eval task(s)`);
 
@@ -564,6 +584,7 @@ ${c.b('Commands')}
   status [--json]      pass@k / pass^k / cost summary (--json: machine-readable snapshot)
   dashboard [--open]   write .harness/dashboard.html
   curate               promote blocker criteria into the Eval Task Registry
+  regress              execute the bound registry against the target's real graders
   analyze [--create]   propose harness/eval improvement issues
   adopt <ID> --contract F  confirm a proposal's WHAT (attach contract) → drivable (ADR-0007)
   decide <ID> approve|reject  the human review gate for a needs-human-review build
@@ -604,6 +625,8 @@ async function main(): Promise<void> {
       return cmdDashboard(flags);
     case 'curate':
       return cmdCurate();
+    case 'regress':
+      return cmdRegress();
     case 'analyze':
       return cmdAnalyze(flags);
     case 'adopt':

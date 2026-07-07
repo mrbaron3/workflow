@@ -46,7 +46,7 @@ function run(command: string, cwd: string): CmdResult {
   return { ok: res.status === 0, output: `${res.stdout ?? ''}\n${res.stderr ?? ''}` };
 }
 
-interface VitestReport {
+export interface VitestReport {
   success: boolean;
   total: number;
   passed: number;
@@ -54,7 +54,8 @@ interface VitestReport {
   assertions: { name: string; passed: boolean }[];
 }
 
-function runVitest(command: string, cwd: string): VitestReport {
+/** Run a vitest command and parse its JSON report. Exported for the regression executor. */
+export function runVitest(command: string, cwd: string): VitestReport {
   const out = path.join(os.tmpdir(), `agentops-vitest-${process.pid}-${reportSeq++}.json`);
   run(`${command} --reporter=json --outputFile=${out}`, cwd);
   let json: unknown = null;

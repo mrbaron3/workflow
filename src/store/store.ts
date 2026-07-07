@@ -20,6 +20,7 @@ import type {
   Issue,
   PR,
   PromptRecord,
+  RegressionRun,
   Roadmap,
   SpecState,
 } from '../domain/schema.js';
@@ -181,6 +182,18 @@ export class Store {
   addEvalTask(t: EvalTask): EvalTask {
     this.db.evalTasks.push(t);
     return t;
+  }
+
+  // --- regression executions (③ re-verification of captured failures) ------
+
+  addRegressionRun(r: RegressionRun): RegressionRun {
+    this.db.regressionRuns.push(r);
+    return r;
+  }
+
+  /** All executions of one eval task, in insertion (chronological) order. */
+  regressionRunsForTask(taskId: string): RegressionRun[] {
+    return this.db.regressionRuns.filter((r) => r.taskId === taskId);
   }
 
   // --- prompt records (audit trail of issued prompts) ----------------------

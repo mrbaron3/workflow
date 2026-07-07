@@ -255,9 +255,35 @@ export const EvalTask = z.object({
   expected: z.array(z.string()).default([]),
   graders: z.array(VerificationMethod).default([]),
   severity: Severity.default('blocker'),
+  /**
+   * Which target repo this task's graders bind to (config.target.repo at curation time).
+   * The registry can mix tasks from different targets (sandbox vs self-hosted) and AC ids
+   * collide across issues, so the regression executor only runs tasks bound to the CURRENT
+   * target. null = legacy/unbound: skipped and reported, never guessed. Additive.
+   */
+  target: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type EvalTask = z.infer<typeof EvalTask>;
+
+/**
+ * One execution of a regression EvalTask against its target's real graders — the second
+ * half of the steering star ("never repeat the same failure twice"): captured failures are
+ * re-verified, durably (ADR-0001). Kept SEPARATE from EvalRun on purpose: EvalRuns are the
+ * per-(PR, attempt) scorecards that pass@k / pass^k count over; regression executions must
+ * not inflate those denominators. `unverified` = the task's AC id matched no assertion in
+ * the report — surfaced, never treated as a pass (never-silent).
+ */
+export const RegressionRun = z.object({
+  id: z.string(), // REGRUN-...
+  taskId: z.string(), // EVAL-TASK-... this executed
+  target: z.string(), // repo the graders ran against
+  result: z.enum(['pass', 'fail', 'unverified']),
+  matchedAssertions: z.number().int().nonnegative().default(0),
+  failedNames: z.array(z.string()).default([]),
+  createdAt: z.string(),
+});
+export type RegressionRun = z.infer<typeof RegressionRun>;
 
 /**
  * The exact prompt text issued to a role session, preserved for audit (DATA-execution-006).
@@ -337,6 +363,7 @@ export const DB = z.object({
   prs: z.array(PR).default([]),
   evalRuns: z.array(EvalRun).default([]),
   evalTasks: z.array(EvalTask).default([]),
+  regressionRuns: z.array(RegressionRun).default([]), // ③ regression executions (additive)
   promptRecords: z.array(PromptRecord).default([]), // audit trail of issued prompts (additive)
   specStates: z.array(SpecState).default([]),
 });

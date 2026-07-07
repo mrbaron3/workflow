@@ -59,6 +59,17 @@ function renderHtml(store: Store, m: Metrics): string {
       m.regressionCaptureRate === null ? 'n/a' : pct(m.regressionCaptureRate),
       m.regressionCaptureRate === null ? 'no blocker AC failures observed' : 'failed ACs promoted to eval tasks (③)',
     ),
+    card(
+      'regression executed',
+      m.regressionExecutedRate === null ? 'n/a' : pct(m.regressionExecutedRate),
+      m.regressionExecutedRate === null
+        ? 'registry is empty'
+        : m.regressionFailingTasks > 0
+          ? `${m.regressionFailingTasks} captured failure(s) are BACK`
+          : m.regressionUnverifiedTasks > 0
+            ? `${m.regressionUnverifiedTasks} unverifiable task(s)`
+            : 'captured failures re-verified, holding',
+    ),
   ].join('\n');
 
   const epicRows = store.db.epics
@@ -272,6 +283,15 @@ export function statusReport(store: Store, m: Metrics): string {
       ? `  regression capture:  n/a (no blocker AC failures observed)`
       : `  regression capture:  ${bar20(m.regressionCaptureRate)} ${pct1(m.regressionCaptureRate)} (③ failed ACs → eval tasks)`,
   );
+  if (m.regressionExecutedRate !== null) {
+    const health =
+      m.regressionFailingTasks > 0
+        ? `${m.regressionFailingTasks} FAILING`
+        : m.regressionUnverifiedTasks > 0
+          ? `${m.regressionUnverifiedTasks} unverified`
+          : 'holding';
+    L.push(`  regression executed: ${bar20(m.regressionExecutedRate)} ${pct1(m.regressionExecutedRate)} (③ registry re-verified · ${health})`);
+  }
   if (m.byAgent.length) {
     L.push('');
     L.push('  by agent:');

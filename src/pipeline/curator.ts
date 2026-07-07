@@ -7,12 +7,20 @@
 
 import { EvalTask } from '../domain/schema.js';
 import { Store, nowISO } from '../store/store.js';
+import type { HarnessConfig } from '../config.js';
 
 export interface CurateResult {
   created: EvalTask[];
 }
 
-export function curateEvalTasks(store: Store): CurateResult {
+/**
+ * `config` (optional, backward compatible) binds each new task to the target repo it was
+ * observed failing against (EvalTask.target) — the regression executor only runs tasks
+ * bound to the current target, because the registry can mix targets and AC ids collide
+ * across issues. Without a config the task stays unbound (target: null) and is skipped
+ * by the executor, reported, never guessed.
+ */
+export function curateEvalTasks(store: Store, config?: HarnessConfig): CurateResult {
   const created: EvalTask[] = [];
   // Which (issue, criterion) pairs have actually failed at least once?
   const failed = new Set<string>();
@@ -38,6 +46,7 @@ export function curateEvalTasks(store: Store): CurateResult {
             expected: ac.verification.expected,
             graders: [ac.verification.method],
             severity: 'blocker',
+            target: config?.target?.repo ?? null,
             createdAt: nowISO(),
             // tag regressions in userGoal so they're visible without a schema change
             ...(everFailed ? { userGoal: `[regression] ${ac.behavior}` } : {}),

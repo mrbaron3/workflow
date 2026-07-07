@@ -175,9 +175,10 @@ export async function runLoopLive(
   log(`queue: ${queue.length} ai-managed issue(s) [generator=${config.generator}]`);
   const results: DriveResult[] = [];
   for (const issue of queue) results.push(await driveIssueLive(store, config, issue, harnessRoot, opts, log));
-  // ③ every live turn ends by capturing failures into the regression registry and
-  // reporting (never enacting) improvement suggestions — ADR-0007 I2.
-  improveTick(store, log);
+  // ③ every live turn ends by capturing failures into the regression registry,
+  // re-verifying the bound registry against the target's real graders, and reporting
+  // (never enacting) improvement suggestions — ADR-0007 I2.
+  improveTick(store, log, { config });
   store.save();
   return results;
 }

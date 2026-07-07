@@ -72,6 +72,16 @@ export interface Metrics {
    * EVAL-TASK-<issue>-<ac>). null = no blocker AC failure observed yet.
    */
   regressionCaptureRate: number | null;
+  /**
+   * ③ steering star, second half (re-verification): the share of registry tasks that have
+   * been EXECUTED at least once (RegressionRun exists). null = empty registry. A registry
+   * that only grows but never runs shows up here, not as a silent 100%.
+   */
+  regressionExecutedRate: number | null;
+  /** Tasks whose LATEST execution failed — captured failures that are BACK. */
+  regressionFailingTasks: number;
+  /** Tasks whose latest execution matched no assertion — capturable but not verifiable. */
+  regressionUnverifiedTasks: number;
   /** false-pass rate over a sliding window of the human-labelled runs, oldest → newest. */
   falsePassTrend: { upTo: string; rate: number }[];
   passCurve: { k: number; passAtK: number; passHatK: number }[];
@@ -290,6 +300,16 @@ export function computeMetrics(store: Store): Metrics {
   }).length;
   const regressionCaptureRate = failedPairs.size ? captured / failedPairs.size : null;
 
+  // ③ re-verification: judge each task by its LATEST execution (insertion order is
+  // chronological — the store only appends).
+  const latestRun = new Map<string, (typeof store.db.regressionRuns)[number]>();
+  for (const r of store.db.regressionRuns) latestRun.set(r.taskId, r);
+  const tasks = store.db.evalTasks;
+  const executed = tasks.filter((t) => latestRun.has(t.id));
+  const regressionExecutedRate = tasks.length ? executed.length / tasks.length : null;
+  const regressionFailingTasks = executed.filter((t) => latestRun.get(t.id)!.result === 'fail').length;
+  const regressionUnverifiedTasks = executed.filter((t) => latestRun.get(t.id)!.result === 'unverified').length;
+
   return {
     totals: {
       epics: epics.length,
@@ -315,6 +335,9 @@ export function computeMetrics(store: Store): Metrics {
     falseFailRate,
     graderAgreement,
     regressionCaptureRate,
+    regressionExecutedRate,
+    regressionFailingTasks,
+    regressionUnverifiedTasks,
     falsePassTrend,
     passCurve,
     byAgent: [...agentAcc.entries()]
