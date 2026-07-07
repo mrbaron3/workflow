@@ -427,11 +427,12 @@ function cmdDashboard(flags: Args['flags']): void {
 
 function cmdCurate(): void {
   const store = requireInit();
-  const { created } = curateEvalTasks(store, loadConfig(ROOT)); // bind new tasks to the current target
+  const { created, enriched } = curateEvalTasks(store, loadConfig(ROOT)); // bind new tasks to the current target
   store.save();
   log(c.green(`✓ curated ${created.length} eval task(s)`) + ` (registry now ${store.db.evalTasks.length})`);
   for (const t of created.slice(0, 12)) log(`  ${c.dim(t.id)} ${t.userGoal}`);
   if (created.length > 12) log(c.dim(`  …and ${created.length - 12} more`));
+  if (enriched.length) log(c.green(`✓ enriched ${enriched.length} legacy task(s) with grader commands`));
 }
 
 function cmdRegress(): void {
@@ -561,9 +562,10 @@ async function cmdDemo(flags: Args['flags']): Promise<void> {
   store.save();
 
   // 4. curate
-  const { created } = curateEvalTasks(store, cfg);
+  const { created, enriched } = curateEvalTasks(store, cfg);
   store.save();
-  log(c.green('④ curate') + ` ${created.length} regression eval task(s)`);
+  log(c.green('④ curate') + ` ${created.length} regression eval task(s)` +
+    (enriched.length ? `, ${enriched.length} legacy task(s) enriched with grader commands` : ''));
 
   // 5. analyze (+create)
   const suggestions = analyzeHarness(store, computeMetrics(store));

@@ -3,6 +3,8 @@
  * (especially ones that have actually failed in a run) into the Eval Task Registry as
  * regression tasks. Over time the registry grows from real failures rather than being
  * hand-written up front — exactly the "grow the eval set from production" practice.
+ * It also backfills command-less legacy tasks bound to the current target with the
+ * same grader-command capture new tasks get, so they regain a means of execution.
  */
 
 import { EvalTask, type VerificationMethod } from '../domain/schema.js';
@@ -11,6 +13,8 @@ import type { HarnessConfig, TargetRepoConfig } from '../config.js';
 
 export interface CurateResult {
   created: EvalTask[];
+  /** Legacy tasks that gained grader commands via the backfill pass (AC-REGBF-001). */
+  enriched: EvalTask[];
 }
 
 /** config.target.graders key per verification method (the config key for unit_test is plural). */
@@ -29,6 +33,30 @@ function captureGraderCommands(method: VerificationMethod, target?: TargetRepoCo
   const key = GRADER_KEY_BY_METHOD[method];
   const command = key ? target?.graders?.[key] : undefined;
   return command ? { [method]: command } : null;
+}
+
+/**
+ * Backfill pass: a command-less legacy task bound to the CURRENT config.target.repo
+ * gains the same capture as a freshly curated one — capture records what this config
+ * actually grades, so tasks bound to another target (or unbound) are out of scope, and
+ * an already-captured command is never overwritten (the curation-time record is truth,
+ * ADR-0001; config drift must not rewrite history).
+ */
+function backfillGraderCommands(store: Store, config?: HarnessConfig): EvalTask[] {
+  const target = config?.target;
+  if (!target?.repo) return [];
+  const enriched: EvalTask[] = [];
+  for (const task of store.db.evalTasks) {
+    if (task.graderCommands !== null || task.target !== target.repo) continue;
+    const commands: Record<string, string> = {};
+    for (const method of task.graders) {
+      Object.assign(commands, captureGraderCommands(method, target));
+    }
+    if (Object.keys(commands).length === 0) continue; // nothing configured → nothing fabricated
+    task.graderCommands = commands;
+    enriched.push(task);
+  }
+  return enriched;
 }
 
 /**
@@ -74,5 +102,5 @@ export function curateEvalTasks(store: Store, config?: HarnessConfig): CurateRes
       );
     }
   }
-  return { created };
+  return { created, enriched: backfillGraderCommands(store, config) };
 }

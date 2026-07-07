@@ -35,9 +35,12 @@ export interface ImproveTickResult {
 }
 
 export function improveTick(store: Store, log: (m: string) => void = () => {}, opts: ImproveTickOptions = {}): ImproveTickResult {
-  const { created } = curateEvalTasks(store, opts.config);
+  const { created, enriched } = curateEvalTasks(store, opts.config);
   if (created.length) {
     log(`③ curated ${created.length} regression eval task(s) → registry ${store.db.evalTasks.length}`);
+  }
+  if (enriched.length) {
+    log(`③ enriched ${enriched.length} legacy eval task(s) with grader commands`);
   }
 
   let regression: RegressResult | null = null;
