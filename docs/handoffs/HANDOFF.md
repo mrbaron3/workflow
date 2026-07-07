@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑥セッションで更新・最終更新は **ISSUE-0007（liveness 延命＋遅延収集）released ＋配線ピン**後）。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑦セッションで更新・最終更新は **ISSUE-0009（finding lineage＝Analyst 誤帰属の是正）released** 後）。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -37,7 +37,7 @@
 |---|---|---|
 | ①自律 | 🟢 **上流一気通貫 grounded** | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。repair loop は発火も収束も実走観測済み。**④で上流一気通貫を grounded 完走**: roadmap→plan-roadmap→spawn-specs→spec 著述・署名→spawn-issues→contract-draft→assign→live drive→panel 3/3 approve→人間ゲート→released（ISSUE-0005・attempt 1 収束・`f486670`）。**⑤⑥で二・三周目（ISSUE-0006/0007）も通過**＝チェーンの再現性確認（⑥は live repair 実戦込み）。欠け: 1 issue・1 課題クラス規模、複数 issue の DAG 駆動・複数 spec 並行は未実証。 |
 | ②評価 | 🟢 良好＋escalation 実走済み | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass（**⑤で grounded 初観測**: 観点出力欠落→needs_human→人間が遅延 findings＋独立検証で解決）・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち（現在 5 issue 分）・repair brief の実効性（⑥実戦: 6 fix 中 3 残存）。liveness の欠けは⑥で解消。 |
-| ③改善 | 🟢 **五巡完結・registry 全実行** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**grounded 完走 5 巡**: ISSUE-0003＝scope.exclude（adopt・`904d511`）／ISSUE-0004＝repair brief 忠実性（adopt・live repair・`d13a2fc`）／ISSUE-0005＝regress 複数 target（④・初の spec 経由・`f486670`）／ISSUE-0006＝legacy backfill（⑤・escalation→人間解決・`3f6ed7f`）／**ISSUE-0007＝liveness 延命＋遅延収集（⑥・repair 実戦・条件付き承認＋配線ピン・`cc8cf3b`）**。ループが自分の欠陥を暴いた実績7件: 計器 severity 意味論・brief truncation・AC-id 衝突偽陽性・assign 断線・scope=AC-id バグ・活動中 timeout＋遅延 findings 不収集（⑤）・**本番配線が untested inline literal（⑥・testQuality の変異検証が発見→ガードで pin）**。計器ペア: capture 100%×executed **100%**（11/11・9 pass＋2 unverified＝未 released の roman の真実）。残る欠け: grader 揺れの較正・repair 実効性（0.33）・Analyst 提案粒度。 |
+| ③改善 | 🟢 **六巡完結・診断器の自己修正** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**grounded 完走 6 巡**: ISSUE-0003＝scope.exclude／ISSUE-0004＝brief 忠実性（live repair）／ISSUE-0005＝regress 複数 target（④・初の spec 経由）／ISSUE-0006＝legacy backfill（⑤）／ISSUE-0007＝liveness 延命（⑥・条件付き承認）／**ISSUE-0009＝finding lineage（⑦・Analyst 誤帰属の是正・`33b6e8f`）**。ループが自分の欠陥を暴いた実績8件: 計器 severity 意味論・brief truncation・AC-id 衝突偽陽性・assign 断線・scope=AC-id バグ・活動中 timeout＋遅延収集（⑤）・untested inline literal（⑥）・**Analyst の lineage 誤帰属＝③の診断器自身の誤診（⑦・偽陽性/偽陰性を店の証拠で実証→attested lineage へ）**。計器ペア: capture 100%×executed **100%**（13/13・11 pass＋2 unverified＝roman の真実）。残る欠け: grader 揺れの較正・attested lineage の grounded 初実走待ち・Analyst 提案粒度。 |
 
 ## 2. システム地図（層・実装・設計正本）
 
@@ -55,6 +55,30 @@
 ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
 
 ## 3. 現在地 — 各セッションの成果（全て `origin/main`）
+
+### ⑦セッション（2026-07-08・finding lineage — ③の診断器自身の誤診を是正）
+
+ユーザー指示「repair brief の実効性に進む」に対し、**WHAT 確定前に店の証拠で診断を検証**したところ、
+Analyst の「repair briefs failed to land（3 件残存）」が**全件誤帰属**と判明（⑥ ISSUE-0007 の実データ:
+criterionId 一致は lens 跨ぎで別内容を「同じ」と主張＝偽陽性、真の残存 `?? 'stuck'` は AC id を移動して
+検出漏れ＝偽陰性）。brief 忠実性（添付 draft の処方）は ISSUE-0004 で解決済み — **誤診のまま adopt して
+いれば無駄な一巡を回すところだった**。
+
+- **WHAT の転換**: lineage（残存/新規）は意味判断 → レビュア（セッション）の attested 判断へ帰属。
+  決定論層（Analyst）は `lineage='persisted'` の attested 事実のみ集計（ADR-0004 の境界の再適用）。
+  `analyze --create` → ISSUE-0009 を `scripts/seeds/finding-lineage.contract.yaml`（AC-LINEAGE-001..003・
+  criterionId 推測禁止をレッドライン化）で adopt。ISSUE-0008/0010 は planned 在庫。
+- **drive**（`33b6e8f`）: attempt 1 → testQuality major（レンダリング片側のみのテスト）→ repair 4 fix →
+  attempt 2 major 解消・**残存 minor 1 件**（Analyst の `attempt<=1` 境界が未 pin）→ 条件付き承認（⑥の型）:
+  境界 pin（attempt 1 への無意味な persisted 添付は brief 失敗にしない）を昇格ガードへ追加して released。
+  実装: perspectivePrompt が prior findings を提示し attested lineage を義務化・zod 検証で EvalRun まで保存・
+  live.ts が再レビューへ同 lens の直前 findings を配線・R1 ルールは attested persisted のみ。
+- **自己言及の締め**: この run の tail でも旧 Analyst が「3 findings survived」と誤帰属（attempt1:
+  LINEAGE-001/002 vs attempt2: LINEAGE-003＝別物）＝**この issue の必要性を run 自身が再実証**して沈んだ。
+- metrics（正直）: passAt1 0.5→0.43・repairSuccess 0.33→0.25（major は解消したが minor 残存で非収束扱い）・
+  released 5→**6**・executed 100% 維持・315 green skip ゼロ（恒久ガード6本目）。
+- 未観測: **attested lineage の grounded 初実走**は次の repair round（released 後初の request_changes→再レビュー）
+  で起きる — 観測対象として残す。
 
 ### ⑥セッション（2026-07-07/08・liveness 封じ込め＋repair 実戦＋ゲート条件付き承認の初例）
 
@@ -206,9 +230,13 @@ sandbox 束縛の2 task は skip 報告）。
   registry 9/9 が実行可能性を保持。**跨 target 実走も grounded 初観測**（executedRate 100%・§3⑤）。
 - ~~liveness の活動延命＋遅延 findings 収集~~ **✅ 完了（⑥・ISSUE-0007 released＋配線ピン）** — 活動継続は
   有限天井（review 2h/generator 4h・ガードが床値を pin）まで延命・遅延 findings は収集時点の事実で回収。
-- **repair brief の実効性（Analyst が計器から自動起票候補化）**: ⑥の実戦で 6 fix 中 3 findings が attempt 2 に
-  残存（repairSuccess 0.5→0.33）。brief の粒度か、レビュア指摘（テスト設計レベルの major）が 1 repair で
-  満たしにくいのか — `analyze --create` で起票して adopt するのが次の一巡候補。
+- ~~repair brief の実効性~~ **✅ 是正完了（⑦・ISSUE-0009 released）** — 「brief 不着」は Analyst の誤帰属だった
+  （brief 忠実性は ISSUE-0004 済み）。lineage を attested 化し、diagnosis が真実を語る土台を敷設。
+  **観測待ち**: released 後初の repair round で attested lineage が grounded 実走する（再レビューが prior
+  findings を見て persisted/new を判定）— 次の drive で観測。
+- **repair 収束率そのもの（0.25）**: 誤帰属是正後も「1 repair で approve に至らない」事実は残る（⑥⑦とも
+  major は解消・minor が新規/残存）。attested lineage 蓄積後に「persisted が多い＝brief 問題 / new が多い＝
+  レビュア深掘り」を見分けてから次の一手（ISSUE-0008 在庫の adopt 判断もそれまで保留が正直）。
 - **テストの「本番配線」盲点の一般化**: ⑥の major（inline literal の caps が未テスト）は他所にもあり得る
   （例: pollMs・maxConcurrent・panel の閾値）。テスト規約（役割プロンプト/testQuality rubric）へ「変異が
   生き残る定数配線は export＋pin」を足すか検討。
@@ -223,7 +251,7 @@ sandbox 束縛の2 task は skip 報告）。
 ## 5. 動かし方（コマンド）
 
 ```bash
-# 決定論の確認（298 green・skip ゼロ）
+# 決定論の確認（315 green・skip ゼロ）
 npm test && npm run typecheck
 npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
 
@@ -287,5 +315,5 @@ npm run harness -- label --run EVAL-NNNNN --human approve|request_changes  # 較
 - `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）・`ADR-0007`（③配線 I1-I4・未吸収＝ビュー吸収が残タスク）。
 - `docs/specs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
 - 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,adopt,assign,improve,regression,repair,contract-draft}.ts`・`src/planning/planning-tree.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
-- テスト: `test/{improvement-loop,adopt,assign,metrics,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 298・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の5ファイルは昇格済み（active-liveness には⑥のゲート条件＝配線ピンも同居）。
+- テスト: `test/{improvement-loop,adopt,assign,metrics,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 315・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の6ファイルは昇格済み（active-liveness / finding-lineage には⑥⑦のゲート条件ピンも同居）。
 - [execution-layer.md](execution-layer.md) — execution 層の grounded 実験の詳細ログ（発火/収束の生データ・過去の不発記録）。**継続に必須ではない**深掘りアーカイブ。

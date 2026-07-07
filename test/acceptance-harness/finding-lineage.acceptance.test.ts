@@ -6,10 +6,11 @@
  * persisted crossed AC ids and was missed). Contract: scripts/seeds/finding-lineage.contract.yaml
  * (AC-LINEAGE-001..003).
  *
- * RED at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3): the
- * drive's real Claude session must make it pass but cannot edit it
- * (config.target.protectedPaths). After the fix is human-approved and released, drop the
- * skipIf so it becomes a permanent regression guard (per the promoted siblings here).
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN,
+ * collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). The build was human-approved and
+ * released (2026-07-08, one repair round; the surviving minor — the rule's attempt<=1
+ * boundary unpinned — was made a RELEASE CONDITION and is pinned below, ⑥'s conditional-
+ * approval pattern). skipIf dropped: permanent regression guard, protectedPaths.
  *
  * Seams this file pins:
  *   - perspectivePrompt gains an OPTIONAL prior-findings argument: a re-review prompt
@@ -90,7 +91,16 @@ function seedRun(
 const failedToLand = (s: { title: string; rationale: string }[]) =>
   s.filter((x) => /failed to land|不着/i.test(x.title));
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('finding lineage — attested, never inferred (ISSUE-0009)', () => {
+describe('finding lineage — attested, never inferred (ISSUE-0009)', () => {
+  it('gate condition: a first attempt is never a brief failure — even a (nonsensical) persisted attestation on attempt 1 is ignored', () => {
+    // The released panel's surviving minor: analyst.ts guards `attempt <= 1` but no test pinned
+    // it. A brief only exists AFTER a repair round, so attempt-1 findings can survive nothing.
+    const store = freshStore();
+    seedIssue(store, 'ISSUE-D');
+    seedRun(store, 'ISSUE-D', 1, 'codeQuality', [{ criterionId: 'AC-Z-1', lineage: 'persisted' }]);
+    expect(failedToLand(analyzeHarness(store, healthyMetrics()))).toHaveLength(0);
+  });
+
   it('ISSUE-0009/AC-LINEAGE-001 a re-review prompt presents prior findings and demands a persisted/new attestation; attempt 1 is unchanged', () => {
     const prior = [
       { criterionId: 'AC-Z-1', severity: 'major', observed: 'the cap is an untested inline literal', expected: 'pin it' },
