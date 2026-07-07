@@ -37,11 +37,11 @@ function violations(changed: string[]): string[] {
 }
 
 describe('scope_check honors scope.exclude', () => {
-  it('AC-1 a changed file matching scope.exclude is a violation even when scope.include matches it', () => {
+  it('ISSUE-0003/AC-1 a changed file matching scope.exclude is a violation even when scope.include matches it', () => {
     expect(violations(['src/generated/out.ts'])).toContain('src/generated/out.ts');
   });
 
-  it('AC-2 in-scope files not matching scope.exclude stay clean (no regression)', () => {
+  it('ISSUE-0003/AC-2 in-scope files not matching scope.exclude stay clean (no regression)', () => {
     expect(violations(['src/feature.ts'])).toEqual([]);
   });
 });

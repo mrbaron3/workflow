@@ -31,7 +31,7 @@ function finding(criterionId: string, severity: Finding['severity'], requiredFix
 }
 
 describe('repair briefs forward the full fix list', () => {
-  it('AC-1 every requiredFix line of a forwarded finding reaches the generator brief, in order', () => {
+  it('ISSUE-0004/AC-1 every requiredFix line of a forwarded finding reaches the generator brief, in order', () => {
     const fixes = ['Fix the parser rejection table', 'Add the boundary test for 3999', 'Document the strictness in the JSDoc'];
     const brief = toGenerateBrief(buildPanelRepairBrief([run('EVAL-1', 'testQuality', [finding('AC-9', 'blocker', fixes)])]));
     const text = brief.instructions.join('\n');
@@ -41,7 +41,7 @@ describe('repair briefs forward the full fix list', () => {
     expect(text.indexOf(fixes[1]!)).toBeLessThan(text.indexOf(fixes[2]!));
   });
 
-  it('AC-2 blocker-first forwarding and perspective attribution are unchanged', () => {
+  it('ISSUE-0004/AC-2 blocker-first forwarding and perspective attribution are unchanged', () => {
     const blocker = finding('AC-9', 'blocker', ['only fix']);
     const minor = finding('AC-8', 'minor', ['cosmetic fix']);
     const panel = buildPanelRepairBrief([

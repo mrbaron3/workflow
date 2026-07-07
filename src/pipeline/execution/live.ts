@@ -87,7 +87,7 @@ async function runLiveSample(
     }
 
     // 2. ground the checkout with real graders (real tsc/vitest)
-    const artifact = groundArtifact({ contract, target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed });
+    const artifact = groundArtifact({ contract, target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed, issueId: issue.id });
 
     // 3. real read-only perspective sessions — each in its own detached worktree of the committed
     //    build (isolated + concurrent), collecting findings.json into the generator worktree's evalRoot

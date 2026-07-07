@@ -104,10 +104,11 @@ sandbox 束縛の2 task は skip 報告）。
 
 **次の frontier 候補（優先順）**:
 
-- **回帰 executor の AC-id 衝突修正**（grounded 実証済みの偽陽性）: 裸の AC-id 突合が issue を跨いで衝突
-  （ISSUE-0004 merge 前、その baseline-red 受け入れテストの `AC-1` が **ISSUE-0003 の task にもマッチ**して
-  偽 FAIL。merge 後は全 green に隠れて**潜伏**）。案: 受け入れテスト title の issue 名前空間化
-  （`ISSUE-XXXX/AC-N`）or task→acceptance ファイル束縛。
+- ~~回帰 executor の AC-id 衝突修正~~ **✅ 完了** — 突合を issue 名前空間化（`assertionsForCriterion`＝
+  grading と executor が共有する単一規則: `ISSUE-XXXX/AC-N` scoped 優先・bare フォールバックは他 issue の
+  scoped assertion を除外）。恒久ガード2ファイルのタイトルを scoped 化（突合 7→1 assertion に収斂）・
+  generator 規約にも scoped タグ推奨を追記。grading 側の同種汚染（全 suite 採点で他 issue の同名 AC を
+  拾う）も同時に閉鎖。
 - ~~Analyst 提案の粒度改善~~ **✅ 完了**（R1-R3＋draft 配管・ISSUE-0004 二巡目で実証）。残在庫:
   ISSUE-0002（pass^k stabilise）が planned のまま＝adopt 候補。
 - **grader 非決定性の較正継続**: testQuality の揺れ（前セッション ~1/3）。labels を蓄積し falsePassTrend で監視。

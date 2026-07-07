@@ -146,6 +146,54 @@ describe('runRegressionTasks — executes bound tasks, never silently passes', (
   });
 });
 
+describe('AC-id collision (grounded 2026-07-07): matching is issue-scoped when titles are', () => {
+  const mkTask = (store: Store, issueId: string, ac: string): EvalTask =>
+    store.addEvalTask(EvalTask.parse({
+      id: `EVAL-TASK-${issueId}-${ac}`, sourceIssueId: issueId, featureArea: 'harness',
+      userGoal: 'g', graders: ['unit_test'], severity: 'blocker', createdAt: nowISO(), target: '.',
+    }));
+
+  it('reproduces the false positive under scoped titles: another issue\'s red AC-1 no longer bleeds', () => {
+    // The grounded incident: ISSUE-0004's baseline-red "AC-1" acceptance assertion matched
+    // ISSUE-0003's task too (bare `includes('AC-1')`) → false FAIL on a holding regression.
+    const store = freshStore();
+    mkTask(store, 'ISSUE-0003', 'AC-1');
+    mkTask(store, 'ISSUE-0004', 'AC-1');
+
+    const res = runRegressionTasks(store, CONFIG, {
+      report: runner([
+        { name: 'scope_check ISSUE-0003/AC-1 excluded file is a violation', passed: true },
+        { name: 'briefs ISSUE-0004/AC-1 every requiredFix line reaches the brief', passed: false },
+      ]),
+    });
+    const by = (id: string) => res.results.find((r) => r.taskId === id)!;
+    expect(by('EVAL-TASK-ISSUE-0003-AC-1').result).toBe('pass'); // was the false FAIL
+    expect(by('EVAL-TASK-ISSUE-0004-AC-1').result).toBe('fail'); // the true detection stays
+  });
+
+  it('scoped assertions are preferred; bare-tagged assertions of OTHER scoped issues never count', () => {
+    const store = freshStore();
+    mkTask(store, 'ISSUE-0003', 'AC-1');
+    const res = runRegressionTasks(store, CONFIG, {
+      report: runner([
+        { name: 'ISSUE-0003/AC-1 the durable guard', passed: true },
+        { name: 'ISSUE-0009/AC-1 someone else, red', passed: false }, // scoped elsewhere: ignored
+      ]),
+    });
+    expect(res.results[0]!.result).toBe('pass');
+    expect(res.results[0]!.matchedAssertions).toBe(1); // only its own scoped assertion
+  });
+
+  it('legacy bare titles still verify a task when no scoped assertion exists (fallback)', () => {
+    const store = freshStore();
+    mkTask(store, 'ISSUE-0001', 'AC-2');
+    const res = runRegressionTasks(store, CONFIG, {
+      report: runner([{ name: 'roman AC-2 parses back (round-trip)', passed: true }]),
+    });
+    expect(res.results[0]!.result).toBe('pass'); // sandbox-era suites keep working
+  });
+});
+
 describe('③ instrument: regression execution sits next to capture', () => {
   it('regressionExecutedRate / failing / unverified derive from the latest run per task', () => {
     const store = freshStore();

@@ -19,7 +19,7 @@ import path from 'node:path';
 import { RegressionRun, type EvalTask } from '../domain/schema.js';
 import type { HarnessConfig } from '../config.js';
 import { Store, nowISO } from '../store/store.js';
-import { runVitest, type VitestReport } from './execution/grade.js';
+import { assertionsForCriterion, runVitest, type VitestReport } from './execution/grade.js';
 
 /** The one non-deterministic seam: produce a vitest report for the grader command. */
 export type RegressReportRunner = (unitTestsCommand: string, cwd: string) => VitestReport;
@@ -72,7 +72,9 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
 
   for (const task of runnable) {
     const acId = taskAcId(task);
-    const matched = acId ? report.assertions.filter((a) => a.name.includes(acId)) : [];
+    // Issue-scoped matching (assertionsForCriterion): the grounded false positive was another
+    // issue's identically-named red AC bleeding into this task via bare substring matching.
+    const matched = acId ? assertionsForCriterion(report.assertions, acId, task.sourceIssueId) : [];
     const failed = matched.filter((a) => !a.passed);
     const result = matched.length === 0 ? 'unverified' : failed.length === 0 ? 'pass' : 'fail';
     results.push(

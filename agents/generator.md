@@ -26,10 +26,12 @@ Work RED → GREEN → REFACTOR, per acceptance criterion:
    surrounding code's style and idiom. Run the tests after every refactor — the suite stays
    green throughout (behaviour must not change), and an independent code-quality reviewer
    reads the result, so "it passes" is not "it is done".
-4. Include the criterion's AC id in the test title (e.g. `it('AC-1 rejects malformed input')`).
-   The harness grades per-criterion by matching assertion titles to AC ids, and later re-runs
-   them as regression tasks — an untagged test is INVISIBLE to grading and counts as missing,
-   so the criterion will be judged unsatisfied.
+4. Include the criterion's AC id in the test title, preferably scoped with the issue id
+   (e.g. `it('ISSUE-0012/AC-1 rejects malformed input')`; bare `AC-1` also works but can
+   collide with other issues' criteria in a shared suite). The harness grades per-criterion
+   by matching assertion titles to AC ids, and later re-runs them as regression tasks — an
+   untagged test is INVISIBLE to grading and counts as missing, so the criterion will be
+   judged unsatisfied.
 5. Do not delete or weaken existing tests (loosening an assertion, widening a tolerance,
    skipping a case) to get green — an independent test-quality reviewer reads your tests and
    a weakened test is treated as a failure, not a fix.

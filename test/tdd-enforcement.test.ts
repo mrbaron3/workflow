@@ -118,4 +118,30 @@ describe('satisfiedFromReport: unit_test ACs require a tagged assertion (no sile
     expect(r.satisfied).toEqual({ 'AC-1': true, 'AC-2': true });
     expect(r.untaggedUnitTestAcs).toEqual([]);
   });
+
+  it('issue-scoped titles win, and another issue\'s scoped red AC-1 never contaminates grading', () => {
+    // Same collision class the regression executor hit grounded, on the grading side: judging
+    // ISSUE-0007's build over the WHOLE suite must not pick up ISSUE-0003/AC-1 assertions.
+    const r = satisfiedFromReport(
+      contract,
+      report([
+        { name: 'ISSUE-0007/AC-1 the criterion under grade', passed: true },
+        { name: 'ISSUE-0003/AC-1 an older issue, currently red', passed: false },
+      ]),
+      'ISSUE-0007',
+    );
+    expect(r.satisfied['AC-1']).toBe(true);
+  });
+
+  it('bare fallback (no scoped assertion for this issue) ignores other issues\' scoped titles', () => {
+    const r = satisfiedFromReport(
+      contract,
+      report([
+        { name: 'plain AC-1 tagged by the generator', passed: true },
+        { name: 'ISSUE-0003/AC-1 someone else, red', passed: false },
+      ]),
+      'ISSUE-0007',
+    );
+    expect(r.satisfied['AC-1']).toBe(true); // bare pool excludes explicitly-scoped strangers
+  });
 });

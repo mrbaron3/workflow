@@ -99,12 +99,37 @@ export interface GroundOpts {
   worktree: string;
   branch: string;
   changed: string[];
+  /** Scopes AC-id matching to this issue's assertions (assertionsForCriterion). */
+  issueId?: string;
 }
 
 export interface SatisfiedResult {
   satisfied: Record<string, boolean>;
   /** unit_test ACs no assertion carries — surfaced in notes/findings, never silently passed. */
   untaggedUnitTestAcs: string[];
+}
+
+/** An assertion title explicitly scoped to SOME issue (`ISSUE-XXXX/AC-N …`). */
+const SCOPED_TAG = /ISSUE-[^/\s]+\//;
+
+/**
+ * The assertions that verify one criterion — the ONE matching rule grading and the
+ * regression executor share. AC ids are issue-scoped names ('AC-1' recurs in every
+ * contract), so bare substring matching bleeds across issues — grounded 2026-07-07:
+ * ISSUE-0004's baseline-red AC-1 acceptance assertion false-failed ISSUE-0003's holding
+ * regression task. Rule: assertions tagged `<issueId>/<acId>` win when any exist; the
+ * bare fallback (legacy suites) never admits an assertion explicitly scoped to some issue.
+ */
+export function assertionsForCriterion(
+  assertions: VitestReport['assertions'],
+  acId: string,
+  issueId?: string | null,
+): VitestReport['assertions'] {
+  if (issueId) {
+    const scoped = assertions.filter((a) => a.name.includes(`${issueId}/${acId}`));
+    if (scoped.length > 0) return scoped;
+  }
+  return assertions.filter((a) => a.name.includes(acId) && !SCOPED_TAG.test(a.name));
 }
 
 /**
@@ -116,8 +141,10 @@ export interface SatisfiedResult {
  * Non-unit_test methods (e.g. playwright) keep the fallback: vitest cannot verify them.
  * With no report at all (no unit_tests grader configured) everything falls back to true —
  * grading without a test grader is an operator choice, not the agent's silent pass.
+ * `issueId` scopes the match (assertionsForCriterion) so grading over the whole suite
+ * never picks up another issue's identically-named criteria.
  */
-export function satisfiedFromReport(contract: IssueContract, report: VitestReport | null): SatisfiedResult {
+export function satisfiedFromReport(contract: IssueContract, report: VitestReport | null, issueId?: string | null): SatisfiedResult {
   const satisfied: Record<string, boolean> = {};
   const untaggedUnitTestAcs: string[] = [];
   for (const ac of contract.acceptanceCriteria) {
@@ -125,7 +152,7 @@ export function satisfiedFromReport(contract: IssueContract, report: VitestRepor
       satisfied[ac.id] = true;
       continue;
     }
-    const matched = report.assertions.filter((a) => a.name.includes(ac.id));
+    const matched = assertionsForCriterion(report.assertions, ac.id, issueId);
     if (matched.length > 0) {
       satisfied[ac.id] = matched.every((a) => a.passed);
     } else if (ac.verification.method === 'unit_test') {
@@ -160,7 +187,7 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
     ...opts.changed.filter((f) => (!inScope(f) || excluded(f)) && !protectedHit.includes(f)),
   ];
 
-  const { satisfied, untaggedUnitTestAcs } = satisfiedFromReport(opts.contract, report);
+  const { satisfied, untaggedUnitTestAcs } = satisfiedFromReport(opts.contract, report, opts.issueId);
 
   const notes = [
     '[grounded] real graders ran against the worktree.',
