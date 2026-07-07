@@ -272,6 +272,15 @@ export const EvalTask = z.object({
    * target. null = legacy/unbound: skipped and reported, never guessed. Additive.
    */
   target: z.string().nullable().default(null),
+  /**
+   * Grader commands captured at curation time, keyed by VERIFICATION METHOD (e.g.
+   * 'unit_test' → the runnable command from config.target.graders). The task carries its
+   * own means of execution, so repointing config.target at another repo later cannot
+   * orphan it. Only methods with a configured command are captured — never fabricated.
+   * null = legacy/uncaptured: runnable only via the config fallback when bound to the
+   * current target. Additive.
+   */
+  graderCommands: z.record(z.string()).nullable().default(null),
   createdAt: z.string(),
 });
 export type EvalTask = z.infer<typeof EvalTask>;

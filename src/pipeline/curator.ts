@@ -5,12 +5,30 @@
  * hand-written up front — exactly the "grow the eval set from production" practice.
  */
 
-import { EvalTask } from '../domain/schema.js';
+import { EvalTask, type VerificationMethod } from '../domain/schema.js';
 import { Store, nowISO } from '../store/store.js';
-import type { HarnessConfig } from '../config.js';
+import type { HarnessConfig, TargetRepoConfig } from '../config.js';
 
 export interface CurateResult {
   created: EvalTask[];
+}
+
+/** config.target.graders key per verification method (the config key for unit_test is plural). */
+const GRADER_KEY_BY_METHOD: Partial<Record<VerificationMethod, keyof NonNullable<TargetRepoConfig['graders']>>> = {
+  unit_test: 'unit_tests',
+  typecheck: 'typecheck',
+};
+
+/**
+ * The grader command config provides for this AC's verification method, as the task's own
+ * captured means of execution (EvalTask.graderCommands) — so repointing config.target later
+ * cannot orphan the task. A method with no configured command captures nothing (null, the
+ * legacy shape): commands are recorded, never fabricated.
+ */
+function captureGraderCommands(method: VerificationMethod, target?: TargetRepoConfig): Record<string, string> | null {
+  const key = GRADER_KEY_BY_METHOD[method];
+  const command = key ? target?.graders?.[key] : undefined;
+  return command ? { [method]: command } : null;
 }
 
 /**
@@ -47,6 +65,7 @@ export function curateEvalTasks(store: Store, config?: HarnessConfig): CurateRes
             graders: [ac.verification.method],
             severity: 'blocker',
             target: config?.target?.repo ?? null,
+            graderCommands: captureGraderCommands(ac.verification.method, config?.target),
             createdAt: nowISO(),
             // tag regressions in userGoal so they're visible without a schema change
             ...(everFailed ? { userGoal: `[regression] ${ac.behavior}` } : {}),
