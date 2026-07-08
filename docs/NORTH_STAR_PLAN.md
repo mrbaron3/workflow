@@ -12,16 +12,16 @@
 
 済んでいること（全て grounded・origin/main）:
 
-- **一巡が回ることは三能力とも実証済み**: 上流一気通貫 ×4（ISSUE-0005/0006/0007/0011）・
-  改善ループ完走 ×7（released 7）・repair 実戦・escalation・条件付き承認・跨 target 回帰・
-  **attested lineage grounded 実走済み（⑨・ISSUE-0011 の再レビューで両観点が persisted を attested）**。
-- **自律軸が計測可能になった（⑨・A1 締結）**: interventionsPerIssue 0.375・
-  howNonInterventionRate 62.5%（⑥⑦⑨の条件付き承認 3 件が attested・遡及込み）。
-  「介入ゼロ」という嘘の初期値が是正され、反証サイン「人間が HOW に介入しないと進まない」が
-  検出可能になった。
-- 計器（2026-07-08 ⑨実測）: passAt1 0.38 / pass^1 0.50 / repairSuccess 0.20 / falsePass 0% /
-  captureRate 100% / executedRate 100%（unverified 2 = roman 残骸・処遇判断済み §4）/
-  331 green skip ゼロ。
+- **一巡が回ることは三能力とも実証済み**: 上流一気通貫 ×5（ISSUE-0005/0006/0007/0011/0012）・
+  改善ループ完走 ×8（released 8）・repair 実戦・escalation・条件付き承認・跨 target 回帰・
+  **attested lineage grounded 実走 ×2（⑨⑩・repair round 2 巡分の persisted 判定が store に）**。
+- **自律軸が計測可能になった（⑨・A1 締結）**: interventionsPerIssue 0.444・
+  howNonInterventionRate 55.6%（⑥⑦⑨⑩の条件付き承認 4 件が attested・遡及込み）。
+- **在庫が循環可能になった（⑩・C2/C3 締結・M1 出口到達）**: decline/retire 器官＋ルール同一性
+  dedup が released。**⑧の処遇判断は store 適用済み**（roman task 2 件 retire → ISSUE-0010/0002/
+  0008 close・R3 沈黙と unverified 0 を実測確認）。
+- 計器（2026-07-08 ⑩実測）: passAt1 0.33 / pass^1 0.44 / repairSuccess 0.17 / falsePass 0% /
+  captureRate 100% / executedRate 100%（unverified 0） / 345 green skip ゼロ。
 
 残りを一言で: **(a) 測れていない軸を測る、(b) 横幅（規模・並行・多様性）、
 (c) 縦深（診断→改善の精度）、(d) 自分以外を開発する実証。**
@@ -47,7 +47,7 @@
 | ID | 欠け | 星との接続 | 経路 | 完了条件 |
 |---|---|---|---|---|
 | B1 | **grader 較正セット不足**（humanVerdict 5 issue 分・testQuality の揺れが定量化できない） | falsePass 0% が「分母が小さいだけ」の可能性を排除できない | 運用（drive 毎に decide/label で蓄積） | labeled runs ≥20・falsePassTrend が統計的に意味を持つ |
-| B2 | **repair 収束率 0.20 の原因未判別**（persisted 多＝brief 問題 / new 多＝レビュア深掘り、の判別データが無い）。**⑨で初の attested データ 1 round 分**: ISSUE-0011 は 4 fix 中 2 persisted（codeQuality の型設計・testQuality の実経路検証 — どちらも brief には載っていた＝brief 不着でなく実装の取りこぼし側） | 「同じ失敗を二度繰り返さない」の repair 版が盲目 | 観測（C1 済み）→分析。**WHAT 化はデータを見てから**（⑦の教訓: 誤診のまま adopt しない） | attested lineage ≥2 repair rounds の実データで、証拠付きの次の一手 issue が立つ（現在 1/2） |
+| B2 | **repair 収束の判別データが 2/2 rounds 揃った（⑨⑩）— WHAT 化は人間判断待ち**。attested 実データ: ⑨ ISSUE-0011 = 4 fix 中 2 persisted・⑩ ISSUE-0012 = 5 fix 中 5 persisted。**全 persisted が brief に載っていた指摘の実装取りこぼし側で、かつ全て refactor/テスト厳密性クラス**（挙動欠陥ゼロ）＝「brief 不着」でも「レビュア深掘り」でもなく **generator が品質系 findings を軽視する第三の型**。R1 が添付する draft（brief 忠実性）は ISSUE-0004 で解決済みの診断で、この証拠と不整合 — **adopt する場合は draft を差し替えること**（経路候補: generator 役割プロンプトの repair 規約強化 = C4 の prompt 系改善） | 「同じ失敗を二度繰り返さない」の repair 版が盲目 → 証拠が揃った | 分析完了 → 上流チェーン（WHAT 確定は人間） | ~~≥2 rounds~~ 達成。次: 証拠に基づく WHAT 確定（誤診 draft のまま adopt しない — ⑦の教訓） |
 | B3 | **「本番配線」盲点の一般化未着手**（⑥ major: inline literal の定数は変異が全テスト生存。pollMs / maxConcurrent / panel 閾値等に同類があり得る） | false-pass の構造的な穴（テストが本番配線を見ていない） | 上流チェーン（FEAT-006: 規約＋rubric＋棚卸し） | 棚卸しで見つけた該当箇所がピン化・testQuality rubric に項目・変異テストで再発検出 |
 
 ### ③ 改善（操舵: pass@k/pass^k 時間推移 ↑・eval レジストリ成長・修正回数 ↓）
@@ -55,8 +55,8 @@
 | ID | 欠け | 星との接続 | 経路 | 完了条件 |
 |---|---|---|---|---|
 | C1 | ~~**attested lineage の grounded 初実走待ち**~~ **✅ 観測済み（⑨）** — ISSUE-0011 の repair round で両観点の再レビューが prior findings を見て persisted を attested（EVAL-00033/00034）。Analyst R1 も attested 事実のみで「2 findings survived」を正しく報告（⑦以前の誤帰属と対照） | ③の診断器が真実を語る根拠 → 実証された | 観測 | ~~完了条件~~ 達成: lineage 付き EvalRun が store に残存 |
-| C2 | **Analyst の dedup がタイトル完全一致**（閾値ルールは計器値をタイトルに焼き込むため、値が動くたび在庫が複製される — 0004「0%」と 0008「33%」の併存が実例。次の `--create` で「25%」が立つ） | 在庫が「未判断キュー」でなくノイズ製造器になる | 上流チェーン（FEAT-005 に同梱） | 同一ルールの再発火が既存 open 在庫に集約される回帰テスト |
-| C3 | **decline 器官が無い**（adopt の対。`ISSUE_STATUSES` に closed 無し・EvalTask に retired 無し・Analyst R1 自身が "close as investigated" と言うのに手段が無い — ⑧の処遇判断で欠如が実証された） | 判断点（WHAT 確定）の半分が記録不能＝在庫が単調増加 | 上流チェーン（FEAT-005） | ⑧の処遇判断（§4）が store に適用され R3 が発火しなくなる |
+| C2 | ~~**Analyst の dedup がタイトル完全一致**~~ **✅ 締結（⑩・ISSUE-0012 released）** — Suggestion に安定 ruleId・dedup は「open 在庫に同ルール」で集約・終端（closed/released）は再起票を妨げない | 在庫がノイズ製造器 → ルールごとに高々 1 open へ収束 | 上流チェーン（FEAT-005） | ~~完了条件~~ 達成: 集約/非沈黙の回帰テストが恒久ガードに |
+| C3 | ~~**decline 器官が無い**~~ **✅ 締結（⑩・ISSUE-0012 released）** — `agentops decline/retire`（理由必須・終端・監査可能・自動化禁止・介入語彙外）。**⑧の処遇判断を store へ適用済み**: roman task 2 retire → ISSUE-0010/0002/0008 close・analyze で R3 沈黙・unverified 2→0 を実測 | 判断点の半分が記録不能 → adopt/decline が対に | 上流チェーン（FEAT-005） | ~~完了条件~~ 達成 |
 | C4 | **改善対象の広がり未実証**（北極星は grader / prompt / skill / routing / 新エージェントまで謳うが、実績は harness コード修正と rubric 追記が主） | 「改善可能」の射程が狭い | 観測→上流チェーン（B2 の判別結果が prompt/routing 系の一手を要求した時に踏む） | harness コード以外の対象（prompt/routing 等）への改善 issue が 1 巡 released |
 
 ### 横断
@@ -71,12 +71,12 @@
 順序の理由は北極星の文そのもの — 「自律が運用を回し、**評価が良し悪しを証拠で判定し**、
 **改善が次の自律をより賢くする**」。測れない軸を残したまま横幅を広げない。
 
-- **M1 操舵の完備** = ~~A1~~✅＋C2＋C3（＋B1 の蓄積開始・現在 labeled 13 runs / 5 issue 分。
-  注: 条件付き承認の巡は recordHumanDecision が label を収穫しない — approve 側の運が無いため。
-  蓄積を進めるなら `agentops label` での個別付与が要る）。
-  roadmap: **EPIC-02（~~FEAT-004✅~~/005/006）**。B3 も規約系なのでここに同梱。
-  残り: FEAT-005（decline 器官＋dedup 衛生 → ⑧処遇判断の store 適用）・FEAT-006（配線ピン規約）。
-  出口: 星の全軸が計測可能✅・在庫が判断可能なキューとして循環・⑧の処遇判断が store に適用済み。
+- **M1 操舵の完備** = ~~A1✅＋C2✅＋C3✅~~ **✅ 出口到達（⑩）**: 星の全軸が計測可能✅・
+  在庫が判断可能なキューとして循環✅・⑧の処遇判断が store に適用済み✅。
+  roadmap: **EPIC-02（FEAT-004✅/005✅/006 残）** — FEAT-006（配線ピン規約・B3）は M1 出口には
+  不要だった規約系の残在庫。B1 の蓄積は継続（labeled 13 runs / 5 issue 分。注: 条件付き承認の
+  巡は recordHumanDecision が label を収穫しない — approve 側 run が無いため。蓄積を進めるなら
+  `agentops label` での個別付与が要る）。
 - **M2 自律の横幅** = A2＋A3＋A4（D2 従属）。
   roadmap: **EPIC-03（FEAT-007/008）**。spec 著述を skill 実走で行い A4 を同時に消化する。
   出口: 「1 issue・1 spec 規模」の但し書きがスコアカードから消える。
@@ -96,9 +96,11 @@
 | ISSUE-0008（repair briefs 33%） | **退役＝supersede** | 診断根拠（brief 不着）は⑦で反証済み・brief 忠実性は ISSUE-0004 で解決済み。症状（0.25）は R1（attested lineage）が証拠付きで再提案する配線済み。title-dedup の%焼き込みにより保留の備忘機能も無い |
 | ISSUE-0010（registry hygiene）＋roman task 2 件 | **task 退役→close** | EVAL-TASK-ISSUE-0001-AC-1/2 は揮発 sandbox（wipe される）残骸でガード価値ほぼゼロ（跨 target 初観測の歴史的役割は⑤で記録済み）。**task を先に退役しないと title-dedup が R3 を永久に黙らせるため、順序は task→issue** |
 
-適用: **退役器官（C3）が無いため store は planned のまま**。本表が判断の正本であり、
-FEAT-005 released 時にこの表を store へ適用する（それが FEAT-005 の受け入れ観測の一部）。
-それまで `analyze --create` は慎重に（repair-brief 提案が「25%」の新タイトルで複製される）。
+適用: **✅ 適用済み（⑩・FEAT-005 released 直後）** — 決定どおり task→issue の順で
+EVAL-TASK-ISSUE-0001-AC-1/2 retire → ISSUE-0010 → ISSUE-0002 → ISSUE-0008 close（理由は
+本表を各レコードの closedReason / retiredReason に転記済み）。適用後の実測: analyze で
+R3 沈黙・executedRate 100%・unverified 0。dedup がルール同一性化されたため
+`analyze --create` の複製懸念も解消（ルールごとに高々 1 open）。
 
 ## 5. 未確定の WHAT（人間判断待ち）
 
