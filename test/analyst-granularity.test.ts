@@ -36,6 +36,7 @@ function healthyMetrics(): Metrics {
     avgRepairAttempts: 1, instabilityRate: 0, cost: { usd: 0, tokens: 0, seconds: 0 },
     falsePassRate: 0, falseFailRate: 0, graderAgreement: 1, regressionCaptureRate: null,
     regressionExecutedRate: null, regressionFailingTasks: 0, regressionUnverifiedTasks: 0,
+    interventionsPerIssue: 0, howNonInterventionRate: 1,
     falsePassTrend: [], passCurve: [], byAgent: [],
     heatmap: { areas: [], types: [], counts: {}, max: 0 }, issues: [],
   };

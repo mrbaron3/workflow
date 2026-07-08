@@ -292,12 +292,10 @@ export function statusReport(store: Store, m: Metrics): string {
           : 'holding';
     L.push(`  regression executed: ${bar20(m.regressionExecutedRate)} ${pct1(m.regressionExecutedRate)} (③ registry re-verified · ${health})`);
   }
-  const nonIntervention = m.howNonInterventionRate ?? null;
-  const perIssue = m.interventionsPerIssue ?? null;
   L.push(
-    nonIntervention === null || perIssue === null
+    m.howNonInterventionRate === null || m.interventionsPerIssue === null
       ? `  autonomy (HOW):      n/a (no issue driven yet)`
-      : `  autonomy (HOW):      ${bar20(nonIntervention)} ${pct1(nonIntervention)} intervention-free · ${perIssue.toFixed(2)} interventions/issue`,
+      : `  autonomy (HOW):      ${bar20(m.howNonInterventionRate)} ${pct1(m.howNonInterventionRate)} intervention-free · ${m.interventionsPerIssue.toFixed(2)} interventions/issue`,
   );
   if (m.byAgent.length) {
     L.push('');

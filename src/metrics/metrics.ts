@@ -87,16 +87,13 @@ export interface Metrics {
    * (total intervention records / issues with ≥1 EvalRun). Judgment points (adopt /
    * assign / sign / decide / label) have no intervention kind and never count here.
    * null = no issue driven yet — unobserved, never conflated with 0.
-   * Optional in the TYPE only so Metrics fixtures predating the autonomy axis keep
-   * compiling (additive change); computeMetrics always emits it.
    */
-  interventionsPerIssue?: number | null;
+  interventionsPerIssue: number | null;
   /**
    * Autonomy axis: share of driven issues with ZERO intervention records — the issues
    * released through judgment points alone. null = no issue driven yet (not 0, not 1).
-   * Optional in the TYPE only (see interventionsPerIssue); always emitted.
    */
-  howNonInterventionRate?: number | null;
+  howNonInterventionRate: number | null;
   /** false-pass rate over a sliding window of the human-labelled runs, oldest → newest. */
   falsePassTrend: { upTo: string; rate: number }[];
   passCurve: { k: number; passAtK: number; passHatK: number }[];

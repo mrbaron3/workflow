@@ -7,6 +7,8 @@ import { computeMetrics } from '../src/metrics/metrics.js';
 import { INTERVENTION_KINDS, recordIntervention } from '../src/pipeline/intervene.js';
 import { EvalRun, Issue, type Verdict } from '../src/domain/schema.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
+import { adoptIssue } from '../src/pipeline/adopt.js';
+import { assignIssue } from '../src/pipeline/assign.js';
 import { driveOnce, recordHumanDecision } from '../src/pipeline/execution/loop.js';
 import type { PerspectiveGrader } from '../src/pipeline/panel.js';
 import type { AgentRunner } from '../src/agents/runner.js';
@@ -154,10 +156,16 @@ const allApprove: PerspectiveGrader = () => ({
 });
 
 describe('autonomy-axis instruments (ISSUE-0011)', () => {
-  it('ISSUE-0011/AC-INTV-002 a real judgment-point flow (drive → calibration label → human approve → released) leaves zero intervention rows and reads 0 / 1', async () => {
+  it('ISSUE-0011/AC-INTV-002 a real judgment-point flow (adopt → assign → drive → calibration label → human approve → released) leaves zero intervention rows and reads 0 / 1', async () => {
     const store = tmpStore('intv-judgment-flow');
-    // adopt + assign: a contract-drafted issue delegated to the running backend.
-    addIssue(store, 'ISSUE-0001', 'contract-drafted', 'mock');
+    // Every judgment point the AC's Given enumerates runs through its REAL code path —
+    // seeding post-adopt state directly would leave adoptIssue/assignIssue unwatched
+    // (a mutant recording an intervention inside either passed the whole suite).
+    addIssue(store, 'ISSUE-0001', 'planned');
+    adoptIssue(store, CONFIG, 'ISSUE-0001'); // WHAT 確定 (uses the issue's own contract)
+    assignIssue(store, CONFIG, 'ISSUE-0001'); // 委任 → assignedAgent=config.generator
+    expect(store.getIssue('ISSUE-0001')!.status).toBe('contract-drafted');
+    expect(store.getIssue('ISSUE-0001')!.assignedAgent).toBe('mock');
 
     // drive → panel approve → human gate (no HOW touched by a human anywhere).
     await driveOnce(store, CONFIG, { runner: cleanRunner(), panel: { grader: allApprove } });

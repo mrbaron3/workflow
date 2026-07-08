@@ -3,9 +3,20 @@
  * expose autonomy-axis instruments" — spec
  * docs/specs/autonomy-axis-instruments-human-how-intervention-accounting (AC-INTV-001..004).
  *
- * Red at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). After the
- * build is human-approved and released, the skipIf is dropped and this file stays in
- * protectedPaths as the permanent regression guard.
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN,
+ * collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). The build was human-approved and
+ * released (2026-07-08, one repair round; both lenses left one persisted-attested major —
+ * the FIRST grounded run of ⑦'s attested lineage). Both majors were made RELEASE
+ * CONDITIONS and are pinned below (⑥'s conditional-approval pattern, recorded this time
+ * via the very organ this issue built: INTV-0001 on ISSUE-0011). skipIf dropped:
+ * permanent regression guard, protectedPaths.
+ *
+ * Gate-condition pins (⑨):
+ *   - codeQuality persisted major: the two instruments are REQUIRED `number | null` on
+ *     Metrics (a type-level pin below breaks typecheck if the `?` ever returns).
+ *   - testQuality persisted major: the REAL adopt/assign judgment-point code paths leave
+ *     zero intervention rows (a mutant recording an intervention inside adoptIssue
+ *     passed the whole 330-test suite — this pin kills it).
  *
  * Semantics this file pins (spec is the SoT — NORTH_STAR_PLAN §5 settled there):
  *   - Human JUDGMENT POINTS (adopt / assign / sign / decide / label) are NOT interventions.
@@ -31,7 +42,22 @@ import os from 'node:os';
 import path from 'node:path';
 import { Store, nowISO } from '../../src/store/store.js';
 import { EvalRun, Issue } from '../../src/domain/schema.js';
-import { computeMetrics } from '../../src/metrics/metrics.js';
+import { computeMetrics, type Metrics } from '../../src/metrics/metrics.js';
+import { adoptIssue } from '../../src/pipeline/adopt.js';
+import { assignIssue } from '../../src/pipeline/assign.js';
+import { DEFAULT_CONFIG } from '../../src/config.js';
+
+// Gate condition (codeQuality persisted major): the autonomy-axis instruments are REQUIRED
+// `number | null` — optional would add a third "absent" state on top of the null-means-
+// unobserved semantics. `undefined extends T` holds only for optional/undefined-bearing
+// fields, so re-adding the `?` turns this constant's type into `never` and breaks the
+// typecheck gate.
+const instrumentsAreRequired: undefined extends Metrics['interventionsPerIssue']
+  ? never
+  : undefined extends Metrics['howNonInterventionRate']
+    ? never
+    : true = true;
+void instrumentsAreRequired;
 
 // Dynamic import with a COMPUTED specifier: the module does not exist at baseline (that IS
 // the red). A static — or even literal dynamic — import of a missing module breaks the
@@ -85,7 +111,24 @@ const instruments = (store: Store): { perIssue: unknown; rate: unknown } => {
   return { perIssue: m.interventionsPerIssue, rate: m.howNonInterventionRate };
 };
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('autonomy-axis instruments — attested HOW-intervention accounting (ISSUE-0011)', () => {
+describe('autonomy-axis instruments — attested HOW-intervention accounting (ISSUE-0011)', () => {
+  it('ISSUE-0011/AC-INTV-002 gate condition: the real adopt/assign judgment-point paths leave zero intervention rows', async () => {
+    await seam(); // the organ must exist for the boundary to mean anything
+    const store = freshStore();
+    seedIssue(store, 'ISSUE-A', 'planned');
+    adoptIssue(store, { ...DEFAULT_CONFIG, generator: 'mock' }, 'ISSUE-A'); // WHAT 確定 — real path
+    assignIssue(store, { ...DEFAULT_CONFIG, generator: 'mock' }, 'ISSUE-A'); // 委任 — real path
+    seedRun(store, 'ISSUE-A', 'approve'); // subsequently driven
+
+    // The release panel demonstrated a mutant recording an intervention inside adoptIssue
+    // that survived the entire suite; this assertion is its permanent killer.
+    const reopened = new Store(store.root) as unknown as { db: { interventions?: unknown[] } };
+    expect(reopened.db.interventions ?? []).toHaveLength(0);
+    const { perIssue, rate } = instruments(store);
+    expect(perIssue).toBe(0);
+    expect(rate).toBe(1);
+  });
+
   it('ISSUE-0011/AC-INTV-001 a HOW intervention persists as an attested, auditable fact bound to its issue', async () => {
     const { INTERVENTION_KINDS, recordIntervention } = await seam();
     const kinds = INTERVENTION_KINDS as readonly string[];

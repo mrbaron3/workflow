@@ -555,7 +555,7 @@ function cmdIntervene(pos: string[], flags: Args['flags']): void {
   const fact = recordIntervention(store, { issueId, kind, reason });
   log(c.green('✓ intervention recorded') + ` ${c.b(fact.id)} on ${c.b(issueId)} (${fact.kind})`);
   const m = computeMetrics(store);
-  if (typeof m.interventionsPerIssue === 'number' && typeof m.howNonInterventionRate === 'number') {
+  if (m.interventionsPerIssue !== null && m.howNonInterventionRate !== null) {
     log(c.dim(`  autonomy axis now: ${m.interventionsPerIssue.toFixed(2)} interventions/issue · ${(m.howNonInterventionRate * 100).toFixed(1)}% intervention-free`));
   }
 }
