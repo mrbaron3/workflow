@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑧セッションで更新・最終更新は **planned 在庫の処遇判断＋北極星達成計画（docs/NORTH_STAR_PLAN.md）新設** 後）。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑨セッションで更新・最終更新は **ISSUE-0011 自律軸計器の締結（A1・M1 前半）＋attested lineage grounded 初実走（C1）** 後）。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -35,9 +35,9 @@
 
 | 能力 | 状態 | 根拠 / 欠け |
 |---|---|---|
-| ①自律 | 🟢 **上流一気通貫 grounded** | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。repair loop は発火も収束も実走観測済み。**④で上流一気通貫を grounded 完走**: roadmap→plan-roadmap→spawn-specs→spec 著述・署名→spawn-issues→contract-draft→assign→live drive→panel 3/3 approve→人間ゲート→released（ISSUE-0005・attempt 1 収束・`f486670`）。**⑤⑥で二・三周目（ISSUE-0006/0007）も通過**＝チェーンの再現性確認（⑥は live repair 実戦込み）。欠け: 1 issue・1 課題クラス規模、複数 issue の DAG 駆動・複数 spec 並行は未実証。 |
-| ②評価 | 🟢 良好＋escalation 実走済み | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass（**⑤で grounded 初観測**: 観点出力欠落→needs_human→人間が遅延 findings＋独立検証で解決）・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち（現在 5 issue 分）・repair brief の実効性（⑥実戦: 6 fix 中 3 残存）。liveness の欠けは⑥で解消。 |
-| ③改善 | 🟢 **六巡完結・診断器の自己修正** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**grounded 完走 6 巡**: ISSUE-0003＝scope.exclude／ISSUE-0004＝brief 忠実性（live repair）／ISSUE-0005＝regress 複数 target（④・初の spec 経由）／ISSUE-0006＝legacy backfill（⑤）／ISSUE-0007＝liveness 延命（⑥・条件付き承認）／**ISSUE-0009＝finding lineage（⑦・Analyst 誤帰属の是正・`33b6e8f`）**。ループが自分の欠陥を暴いた実績8件: 計器 severity 意味論・brief truncation・AC-id 衝突偽陽性・assign 断線・scope=AC-id バグ・活動中 timeout＋遅延収集（⑤）・untested inline literal（⑥）・**Analyst の lineage 誤帰属＝③の診断器自身の誤診（⑦・偽陽性/偽陰性を店の証拠で実証→attested lineage へ）**。計器ペア: capture 100%×executed **100%**（13/13・11 pass＋2 unverified＝roman の真実）。残る欠け: grader 揺れの較正・attested lineage の grounded 初実走待ち・Analyst 提案粒度。 |
+| ①自律 | 🟢 **上流一気通貫 grounded＋自律軸が計測可能に（⑨）** | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。repair loop は発火も収束も実走観測済み。**④で上流一気通貫を grounded 完走**: roadmap→plan-roadmap→spawn-specs→spec 著述・署名→spawn-issues→contract-draft→assign→live drive→panel 3/3 approve→人間ゲート→released（ISSUE-0005・attempt 1 収束・`f486670`）。**⑤⑥⑨で二・三・四周目（ISSUE-0006/0007/0011）も通過**＝チェーンの再現性確認。**⑨で自律軸計器が敷設され真実が出た**: interventionsPerIssue 0.375・intervention-free 62.5%（⑥⑦⑨の条件付き承認 3 件＝人間の HOW 持ち込みが attested・INTV-0001..0003）。欠け: 1 issue・1 課題クラス規模、複数 issue の DAG 駆動・複数 spec 並行は未実証。 |
+| ②評価 | 🟢 良好＋escalation 実走済み | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass（**⑤で grounded 初観測**: 観点出力欠落→needs_human→人間が遅延 findings＋独立検証で解決）・humanVerdict 較正・PromptRecord 監査。欠け: false-pass率↓は humanVerdict 蓄積待ち（現在 13 runs / 5 issue 分。**条件付き承認の巡は label が収穫されない** — approve 側 run が無いため・B1 の含意）・repair の取りこぼし（⑨実戦: 4 fix 中 2 persisted）。 |
+| ③改善 | 🟢 **七巡完結・attested lineage 実走** | ADR-0007 で配線を確定し全て決定論実装＋テスト。**grounded 完走 7 巡**: ISSUE-0003＝scope.exclude／ISSUE-0004＝brief 忠実性（live repair）／ISSUE-0005＝regress 複数 target（④・初の spec 経由）／ISSUE-0006＝legacy backfill（⑤）／ISSUE-0007＝liveness 延命（⑥・条件付き承認）／ISSUE-0009＝finding lineage（⑦・Analyst 誤帰属の是正）／**ISSUE-0011＝自律軸計器（⑨・介入の store 写像・条件付き承認をその計器自身が記録する自己言及締結）**。**attested lineage は⑨で grounded 実走**: 再レビュー両観点が prior findings を見て persisted を attested（EVAL-00033/34）・Analyst R1 が attested 事実のみで正しく報告（⑦以前の誤帰属と対照）。ループが自分の欠陥を暴いた実績8件＋⑨の変異実証（adoptIssue への介入注入が 330 テスト生存→昇格ガードで恒久 kill）。計器ペア: capture 100%×executed **100%**（16/16・14 pass＋2 unverified＝roman の真実）。残る欠け: grader 揺れの較正・repair 取りこぼしの判別（B2・attested データ 1/2 rounds）・Analyst 提案粒度。 |
 
 ## 2. システム地図（層・実装・設計正本）
 
@@ -55,6 +55,40 @@
 ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
 
 ## 3. 現在地 — 各セッションの成果（全て `origin/main`）
+
+### ⑨セッション（2026-07-08・M1 前半 = 自律軸計器の締結＋attested lineage 初実走）
+
+M1「操舵の完備」の先頭 FEAT-004 を上流チェーン四周目で released。**介入が store の事実になり、
+「介入ゼロ」という嘘の初期値が是正された**:
+
+- **上流**: plan-roadmap（EPIC-02/03 を additive 取り込み）→ spawn-specs（5 stub）→
+  **to-spec skill 実走で FEAT-004 spec 著述**（`5c9d3ec`・A4 の初消化。他 4 stub は未著述のまま
+  非追跡 — 空 spec は pre-commit の著述 lint が正しく拒否する）。**介入意味論を spec 正本で確定**
+  （NORTH_STAR_PLAN §5 の宿題）: 判断点（adopt/assign/sign/decide/label）は記録**語彙に存在せず**
+  数えられない — 誤カウントを集計ロジックでなく語彙の非表現可能性で構造的に排除。
+  署名→ISSUE-0011→契約→assign→受け入れグレーダ先置き（`3af92c8`）。
+- **グレーダ著述の新規約**: 未存在モジュール seam は**計算 specifier の遅延動的 import**で参照
+  （リテラル動的 import でも tsc が解決を試みて baseline typecheck が壊れる・トップレベル await
+  だと skipIf 前にロードが走り suite が壊れる — ⑥規約の拡張）。
+- **drive**（`acc8c05`）: attempt 1 → 両観点 request_changes（4 findings）→ repair → attempt 2 →
+  **両観点 1 major 残存・どちらも `lineage: persisted` の attested 判定＝⑦の attested lineage の
+  grounded 初実走（C1 締結・EVAL-00033/34）**。Analyst R1 も attested 事実のみで「2 findings
+  survived」を正しく報告。maxRepairs 到達→人間ゲート。
+- **ゲート（⑥⑦型の条件付き承認）**: 挙動は独立検証で健全（受け入れ込み 330 green・typecheck・
+  scope/protected clean）。残存 major は (1) 計器 2 つが Metrics 型で optional（never-silent 意味論
+  の型未固定）(2) 実 adoptIssue/assignIssue 経路が介入 store に未検証（**adoptIssue に介入注入する
+  変異が全 suite 生存と実証済み**）。→ ピン 2 本を release 条件として同一締結内で実施（`edb2483`）:
+  required `number | null` 化＋型レベルピン・実経路 flow test 化＋恒久 killer を昇格ガードへ。
+  グレーダは skipIf 除去で恒久昇格（**331 green skip ゼロ**）。
+- **自己言及の締め**: この条件付き承認自体が HOW 介入なので、**released 直後にその計器自身へ
+  INTV-0001 として記録**。⑥⑦の 2 例も遡及記録（INTV-0002/0003・spec 完了条件の運用観測）→
+  **自律軸の初値: interventionsPerIssue 0.375・intervention-free 62.5%**（8 drive 済み issue 中
+  3 件に人間の HOW — スコアカード①が数字で語れるようになった）。
+- metrics（正直）: passAt1 0.43→0.38・repairSuccess 0.25→**0.20**（persisted 2 件で非収束扱い）・
+  released 6→**7**・regress は merge 前 3 FAIL 正検出→merge 後 16/16 executed（14 pass＋
+  2 unverified=roman）・falsePass 0% 維持。
+- B2 の初データ（1/2 rounds）: persisted 2 件はどちらも brief に載っていた指摘の**実装取りこぼし側**
+  （brief 不着ではない）。もう 1 round 分の attested データで判別に進む（M3）。
 
 ### ⑧セッション（2026-07-08・planned 在庫の処遇判断＋北極星達成計画の著述）
 
@@ -261,14 +295,20 @@ sandbox 束縛の2 task は skip 報告）。
   grader 較正＝B1（運用・humanVerdict 蓄積 ≥20 目標）・roman unverified 2 task と planned 在庫＝**⑧で処遇
   判断済み**（退役・store 適用は FEAT-005 released 時）・skill 本体実走＝A4（FEAT-008 同梱）・
   複数 issue DAG／複数 spec 並行＝A2/A3（EPIC-03）・playwright 等 grader＝A6（M4 従属）。
-- **次の一手 = M1「操舵の完備」**: EPIC-02 の spec 著述（to-spec）→ 署名 → spawn-issues → assign → drive。
-  FEAT-004（自律軸計器）の介入意味論（WHAT 確定・承認・審査は介入に数えない）は NORTH_STAR_PLAN §5 を
-  spec 著述時に確定する。
+- ~~M1 前半 = FEAT-004 自律軸計器~~ **✅ 完了（⑨・ISSUE-0011 released）** — A1 締結（介入の attested
+  記録＋計器・⑥⑦⑨の 3 例カウント済み）・C1 締結（attested lineage grounded 実走）・介入意味論確定
+  （spec 正本）・to-spec skill 初実走（A4 一部消化）。
+- **次の一手 = M1 後半**: **FEAT-005（decline 器官＋Analyst dedup 衛生）**の spec 著述→署名→spawn→
+  assign→drive。released 時に⑧の処遇判断（NORTH_STAR_PLAN §4: ISSUE-0002/0008/0010・roman task 2 件）
+  を store へ適用する（それが受け入れ観測の一部・task→issue の順序厳守）。続いて FEAT-006（配線ピン
+  規約）。それまで `analyze --create` は慎重に（dedup の%焼き込み複製・⑧注意書きどおり）。
+  spec stub は spawn 済み: `docs/specs/proposal-lifecycle-decline-organ-and-analyst-dedup-hygiene`
+  （未著述・非追跡。著述→commit→sign の順）。
 
 ## 5. 動かし方（コマンド）
 
 ```bash
-# 決定論の確認（315 green・skip ゼロ）
+# 決定論の確認（331 green・skip ゼロ）
 npm test && npm run typecheck
 npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
 
@@ -301,6 +341,11 @@ npx tsx scripts/real-run-self.ts             # target をこのリポジトリ�
 npm run harness -- decide ISSUE-NNNN approve # 人間ゲート（approve→released＋humanVerdict 収穫）
 npm run harness -- status --json             # 機械可読スナップショット（改善 before/after 比較）
 npm run harness -- label --run EVAL-NNNNN --human approve|request_changes  # 較正ラベル
+npm run harness -- intervene ISSUE-NNNN --kind <k> --reason <text>
+                                             # 人間の HOW 介入を attested 記録（⑨・判断点は語彙外で
+                                             # 記録不能。kinds: conditional-approval-implementation /
+                                             # workspace-hand-edit / repair-brief-hand-edit /
+                                             # manual-evidence-collection）
 ```
 
 **ハーネスは手動 attach 方針**（ターミナル非依存）: `agentops` セッションは `home` タブで生き続けるので一度 attach して張り付けば以降の run のタブがそこに自動で現れる。自動ポップアップは iTerm2 の `tmux -CC` 専用で Ghostty 非対応のため採用しない。
@@ -316,6 +361,13 @@ npm run harness -- label --run EVAL-NNNNN --human approve|request_changes  # 較
 - **TDD は三層で強制**: 役割プロンプト（generator の red→green 義務・AC-id タグ規約）×独立レビュア（testQuality lens の妥当性 rubric）×決定論ゲート（タグ無し unit_test AC は unsatisfied・`satisfiedFromReport`）。タグ規約は grading と回帰実行（`agentops regress`）の両方が突合に依存する基盤規約。
 - **contract の scope は file glob**（AC-CONTRACT-007・④）: scope_check は**変更ファイル**と glob 突合する。AC-id を scope に入れると全変更が違反になる（④で閉鎖済み・issues.yaml の `scope:` が単一の宣言点）。
 - **spec 経由 issue は assign が要る**（④）: contract-drafted になっても `assignedAgent=null` のままでは実行ガードに拾われない（opt-in 既定非処理は仕様・DOM-execution-006）。委任は `agentops assign`＝人間の判断点。adopt（提案の WHAT 確定）とは対で別物。
+- **人間の HOW 介入は `agentops intervene` で必ず記録する**（⑨・AC-INTV-001）: 条件付き承認でピンを
+  実装した・worktree を人手で直した・brief を加筆した — その場で attested 記録しないと自律軸計器が
+  嘘をつく。判断点（adopt/assign/sign/decide/label）は記録不能（語彙外）なので迷わない。
+- **受け入れグレーダの未存在 seam は計算 specifier の遅延動的 import**（⑨・⑥規約の拡張）: リテラル
+  動的 import でも tsc がモジュール解決を試みる（TS2307）・トップレベル await import は skipIf 前に
+  走って baseline suite を壊す。`'../../src/pipeline/' + 'intervene.js'` の形で型消去し、test 本体内で
+  import する（実例: `test/acceptance-harness/intervention-accounting.acceptance.test.ts`）。
 - ~~副次 finding: `scope_check` が `scope.exclude` を見ない~~ **✅ 修正済み** — ③一巡目の released 成果
   そのもの（ISSUE-0003・agent が自律修正・恒久回帰ガード `test/acceptance-harness/scope-exclude` が監視）。
 
@@ -332,5 +384,5 @@ npm run harness -- label --run EVAL-NNNNN --human approve|request_changes  # 較
 - `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）・`ADR-0007`（③配線 I1-I4・未吸収＝ビュー吸収が残タスク）。
 - `docs/specs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
 - 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,adopt,assign,improve,regression,repair,contract-draft}.ts`・`src/planning/planning-tree.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
-- テスト: `test/{improvement-loop,adopt,assign,metrics,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 315・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の6ファイルは昇格済み（active-liveness / finding-lineage には⑥⑦のゲート条件ピンも同居）。
+- テスト: `test/{improvement-loop,adopt,assign,metrics,intervention,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 331・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の7ファイルは昇格済み（active-liveness / finding-lineage / intervention-accounting には⑥⑦⑨のゲート条件ピンも同居）。
 - [execution-layer.md](execution-layer.md) — execution 層の grounded 実験の詳細ログ（発火/収束の生データ・過去の不発記録）。**継続に必須ではない**深掘りアーカイブ。
