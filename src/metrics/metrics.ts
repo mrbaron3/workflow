@@ -82,6 +82,21 @@ export interface Metrics {
   regressionFailingTasks: number;
   /** Tasks whose latest execution matched no assertion — capturable but not verifiable. */
   regressionUnverifiedTasks: number;
+  /**
+   * Autonomy axis (north star ⑥⑦): attested human HOW-interventions per driven issue
+   * (total intervention records / issues with ≥1 EvalRun). Judgment points (adopt /
+   * assign / sign / decide / label) have no intervention kind and never count here.
+   * null = no issue driven yet — unobserved, never conflated with 0.
+   * Optional in the TYPE only so Metrics fixtures predating the autonomy axis keep
+   * compiling (additive change); computeMetrics always emits it.
+   */
+  interventionsPerIssue?: number | null;
+  /**
+   * Autonomy axis: share of driven issues with ZERO intervention records — the issues
+   * released through judgment points alone. null = no issue driven yet (not 0, not 1).
+   * Optional in the TYPE only (see interventionsPerIssue); always emitted.
+   */
+  howNonInterventionRate?: number | null;
   /** false-pass rate over a sliding window of the human-labelled runs, oldest → newest. */
   falsePassTrend: { upTo: string; rate: number }[];
   passCurve: { k: number; passAtK: number; passHatK: number }[];
@@ -310,6 +325,18 @@ export function computeMetrics(store: Store): Metrics {
   const regressionFailingTasks = executed.filter((t) => latestRun.get(t.id)!.result === 'fail').length;
   const regressionUnverifiedTasks = executed.filter((t) => latestRun.get(t.id)!.result === 'unverified').length;
 
+  // Autonomy axis: only attested records count (the vocabulary excludes judgment points,
+  // so nothing here can miscount them). Denominator = driven issues; with none driven
+  // both instruments are null — unobserved must not read as "fully autonomous" or its
+  // opposite (never-silent).
+  const intervened = new Set(store.db.interventions.map((r) => r.issueId));
+  const interventionsPerIssue = runIssues.length
+    ? store.db.interventions.length / runIssues.length
+    : null;
+  const howNonInterventionRate = runIssues.length
+    ? runIssues.filter((i) => !intervened.has(i.id)).length / runIssues.length
+    : null;
+
   return {
     totals: {
       epics: epics.length,
@@ -338,6 +365,8 @@ export function computeMetrics(store: Store): Metrics {
     regressionExecutedRate,
     regressionFailingTasks,
     regressionUnverifiedTasks,
+    interventionsPerIssue,
+    howNonInterventionRate,
     falsePassTrend,
     passCurve,
     byAgent: [...agentAcc.entries()]

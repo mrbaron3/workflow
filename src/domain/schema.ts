@@ -341,6 +341,39 @@ export const PromptRecord = z.object({
 });
 export type PromptRecord = z.infer<typeof PromptRecord>;
 
+// --- human HOW-interventions (autonomy axis, ISSUE-0011) --------------------
+
+/**
+ * The attested HOW-involvement vocabulary. The WHAT/HOW boundary from the spec
+ * (docs/specs/autonomy-axis-instruments-human-how-intervention-accounting) is baked into
+ * the vocabulary itself: human JUDGMENT POINTS (adopt / assign / sign / decide / label)
+ * are part of the autonomy definition, not interventions — no kind exists for them, so
+ * miscounting a judgment as an intervention is structurally impossible.
+ */
+export const INTERVENTION_KINDS = [
+  'conditional-approval-implementation', // ⑥⑦: human implements a gate/release condition inside a conditional approval
+  'workspace-hand-edit', // human edits an agent's worktree or artifact by hand
+  'repair-brief-hand-edit', // human authors or augments a repair brief
+  'manual-evidence-collection', // ⑤: human collects evidence the harness should have produced
+] as const;
+export const InterventionKind = z.enum(INTERVENTION_KINDS);
+export type InterventionKind = z.infer<typeof InterventionKind>;
+
+/**
+ * One attested human HOW-intervention, bound to an issue. Only explicit records are
+ * intervention facts — nothing may infer one from other store state (⑦'s lesson: a
+ * guessing diagnostician produces false positives/negatives). `createdAt` is the RECORD
+ * time: retroactive records on released issues are ordinary facts (AC-INTV-004).
+ */
+export const Intervention = z.object({
+  id: z.string(), // INTV-0001
+  issueId: z.string(),
+  kind: InterventionKind,
+  reason: z.string().min(1),
+  createdAt: z.string(),
+});
+export type Intervention = z.infer<typeof Intervention>;
+
 // --- spec authoring (M20 signing) ------------------------------------------
 
 /**
@@ -394,6 +427,7 @@ export const DB = z.object({
   evalTasks: z.array(EvalTask).default([]),
   regressionRuns: z.array(RegressionRun).default([]), // ③ regression executions (additive)
   promptRecords: z.array(PromptRecord).default([]), // audit trail of issued prompts (additive)
+  interventions: z.array(Intervention).default([]), // attested human HOW-interventions (additive)
   specStates: z.array(SpecState).default([]),
 });
 export type DB = z.infer<typeof DB>;

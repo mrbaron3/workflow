@@ -9,6 +9,7 @@
  *   curate    promote blocker criteria into the Eval Task Registry (regressions)
  *   analyze   propose harness/eval improvement issues from the metrics
  *   label     attach a human verdict to an eval run (for false-pass/fail)
+ *   intervene attest a human HOW-intervention on an issue (autonomy axis)
  *   demo      end-to-end: init + plan + run + curate + analyze + dashboard
  */
 
@@ -45,6 +46,7 @@ import { curateEvalTasks } from '../pipeline/curator.js';
 import { runRegressionTasks } from '../pipeline/regression.js';
 import { adoptIssue } from '../pipeline/adopt.js';
 import { assignIssue } from '../pipeline/assign.js';
+import { INTERVENTION_KINDS, recordIntervention } from '../pipeline/intervene.js';
 import { recordHumanDecision, type HumanDecision } from '../pipeline/execution/loop.js';
 import * as YAML from 'yaml';
 import { analyzeHarness, createSuggestionIssues } from '../pipeline/analyst.js';
@@ -539,6 +541,25 @@ function cmdLabel(flags: Args['flags']): void {
   log(c.green('✓ labelled') + ` ${runId}: grader=${run.verdict} human=${parsed.data} ${agree ? c.green('(agree)') : c.red('(disagree)')}`);
 }
 
+function cmdIntervene(pos: string[], flags: Args['flags']): void {
+  const store = requireInit();
+  const issueId = pos[0];
+  const { kind, reason } = flags;
+  if (!issueId || typeof kind !== 'string' || typeof reason !== 'string') {
+    log(c.red('usage: agentops intervene <ISSUE-ID> --kind <kind> --reason <text>') + c.dim('   (attest a human HOW-intervention; judgment points are not recordable)'));
+    log(c.dim(`  kinds: ${INTERVENTION_KINDS.join(' | ')}`));
+    process.exit(1);
+  }
+  // recordIntervention persists on success (an attested fact is durable immediately)
+  // and throws loudly otherwise — the top-level catch prints the reason.
+  const fact = recordIntervention(store, { issueId, kind, reason });
+  log(c.green('✓ intervention recorded') + ` ${c.b(fact.id)} on ${c.b(issueId)} (${fact.kind})`);
+  const m = computeMetrics(store);
+  if (typeof m.interventionsPerIssue === 'number' && typeof m.howNonInterventionRate === 'number') {
+    log(c.dim(`  autonomy axis now: ${m.interventionsPerIssue.toFixed(2)} interventions/issue · ${(m.howNonInterventionRate * 100).toFixed(1)}% intervention-free`));
+  }
+}
+
 async function cmdDemo(flags: Args['flags']): Promise<void> {
   log(c.b('AgentOps demo — running the whole loop on the sample roadmap.\n'));
   // 1. init (fresh — wipe any previous demo state so numbers don't stack)
@@ -611,6 +632,7 @@ ${c.b('Commands')}
   adopt <ID> [--contract F]  confirm a proposal's WHAT → drivable; omit F to use the attached draft (ADR-0007)
   decide <ID> approve|reject  the human review gate for a needs-human-review build
   label --run ID --human approve|request_changes
+  intervene <ID> --kind K --reason T  attest a human HOW-intervention (autonomy axis)
   demo [--open]        run the entire loop on the sample roadmap
   help
 
@@ -659,6 +681,8 @@ async function main(): Promise<void> {
       return cmdDecide(pos);
     case 'label':
       return cmdLabel(flags);
+    case 'intervene':
+      return cmdIntervene(pos, flags);
     case 'demo':
       return cmdDemo(flags);
     case 'help':

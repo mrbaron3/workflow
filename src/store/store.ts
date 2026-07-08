@@ -17,6 +17,7 @@ import type {
   EvalRun,
   EvalTask,
   Feature,
+  Intervention,
   Issue,
   PR,
   PromptRecord,
@@ -194,6 +195,18 @@ export class Store {
   /** All executions of one eval task, in insertion (chronological) order. */
   regressionRunsForTask(taskId: string): RegressionRun[] {
     return this.db.regressionRuns.filter((r) => r.taskId === taskId);
+  }
+
+  // --- interventions (attested human HOW-involvement — autonomy axis) ------
+
+  addIntervention(r: Intervention): Intervention {
+    this.db.interventions.push(r);
+    return r;
+  }
+
+  /** All attested interventions on one issue, in record order (per-issue audit). */
+  interventionsForIssue(issueId: string): Intervention[] {
+    return this.db.interventions.filter((r) => r.issueId === issueId);
   }
 
   // --- prompt records (audit trail of issued prompts) ----------------------
