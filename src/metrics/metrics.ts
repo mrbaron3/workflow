@@ -13,6 +13,7 @@
  */
 
 import type { EvalRun, Issue } from '../domain/schema.js';
+import { activeEvalTasks, buildTaskId } from '../domain/eval-task.js';
 import type { Store } from '../store/store.js';
 import { aggregatePanelVerdict } from '../pipeline/panel.js';
 
@@ -308,7 +309,7 @@ export function computeMetrics(store: Store): Metrics {
   const taskIds = new Set(store.db.evalTasks.map((t) => t.id));
   const captured = [...failedPairs].filter((k) => {
     const [issueId, acId] = k.split(' ');
-    return taskIds.has(`EVAL-TASK-${issueId}-${acId}`);
+    return taskIds.has(buildTaskId(issueId!, acId!));
   }).length;
   const regressionCaptureRate = failedPairs.size ? captured / failedPairs.size : null;
 
@@ -320,7 +321,7 @@ export function computeMetrics(store: Store): Metrics {
   // history of what was once captured.
   const latestRun = new Map<string, (typeof store.db.regressionRuns)[number]>();
   for (const r of store.db.regressionRuns) latestRun.set(r.taskId, r);
-  const tasks = store.db.evalTasks.filter((t) => !t.retiredAt);
+  const tasks = activeEvalTasks(store.db.evalTasks);
   const executed = tasks.filter((t) => latestRun.has(t.id));
   const regressionExecutedRate = tasks.length ? executed.length / tasks.length : null;
   const regressionFailingTasks = executed.filter((t) => latestRun.get(t.id)!.result === 'fail').length;

@@ -16,6 +16,7 @@
  */
 
 import type { EvalTask, Issue } from '../domain/schema.js';
+import { isRetired } from '../domain/eval-task.js';
 import { Store, nowISO } from '../store/store.js';
 
 export interface DeclineInput {
@@ -25,7 +26,7 @@ export interface DeclineInput {
 }
 
 /** Decline an issue: non-terminal → terminal `closed`, with the reason/time persisted. */
-export function closeIssue(store: Store, input: DeclineInput): Issue {
+export function declineIssue(store: Store, input: DeclineInput): Issue {
   const reason = input.reason?.trim();
   if (!reason) throw new Error(`decline requires a reason: ${input.issueId} was given none`);
   const issue = store.getIssue(input.issueId);
@@ -42,6 +43,12 @@ export function closeIssue(store: Store, input: DeclineInput): Issue {
   return updated;
 }
 
+/**
+ * Seam-pinned alias: the acceptance guard (protectedPaths) imports `closeIssue` — the name
+ * pins the seam, `declineIssue` carries the organ's domain verb (gate pin, ISSUE-0012).
+ */
+export const closeIssue = declineIssue;
+
 export interface RetireInput {
   taskId: string;
   /** Why the task lost its guard value — mandatory; travels with every future report. */
@@ -54,11 +61,10 @@ export function retireEvalTask(store: Store, input: RetireInput): EvalTask {
   if (!reason) throw new Error(`retire requires a reason: ${input.taskId} was given none`);
   const task = store.getEvalTask(input.taskId);
   if (!task) throw new Error(`no such eval task: ${input.taskId}`);
-  if (task.retiredAt) {
+  if (isRetired(task)) {
     throw new Error(`${input.taskId} is already retired (${task.retiredReason ?? 'no reason recorded'})`);
   }
-  task.retiredReason = reason;
-  task.retiredAt = nowISO();
+  const updated = store.updateEvalTask(input.taskId, { retiredReason: reason, retiredAt: nowISO() });
   store.save();
-  return task;
+  return updated;
 }

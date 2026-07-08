@@ -201,6 +201,14 @@ export class Store {
     return this.db.evalTasks.find((t) => t.id === id);
   }
 
+  /** Mirror of updateIssue: every task mutation goes through the Store (the adapter seam). */
+  updateEvalTask(id: string, patch: Partial<EvalTask>): EvalTask {
+    const t = this.getEvalTask(id);
+    if (!t) throw new Error(`no such eval task: ${id}`);
+    Object.assign(t, patch);
+    return t;
+  }
+
   // --- regression executions (③ re-verification of captured failures) ------
 
   addRegressionRun(r: RegressionRun): RegressionRun {

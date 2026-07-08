@@ -46,7 +46,8 @@ import { curateEvalTasks } from '../pipeline/curator.js';
 import { runRegressionTasks } from '../pipeline/regression.js';
 import { adoptIssue } from '../pipeline/adopt.js';
 import { assignIssue } from '../pipeline/assign.js';
-import { closeIssue, retireEvalTask } from '../pipeline/lifecycle.js';
+import { declineIssue, retireEvalTask } from '../pipeline/lifecycle.js';
+import { activeEvalTasks } from '../domain/eval-task.js';
 import { INTERVENTION_KINDS, recordIntervention } from '../pipeline/intervene.js';
 import { recordHumanDecision, type HumanDecision } from '../pipeline/execution/loop.js';
 import * as YAML from 'yaml';
@@ -514,8 +515,8 @@ function cmdDecline(pos: string[], flags: Args['flags']): void {
     log(c.red('usage: agentops decline <ISSUE-ID> --reason <text>') + c.dim('   (a judgment point: terminal, audited — adopt’s counterpart)'));
     process.exit(1);
   }
-  // closeIssue persists on success (a judgment is a durable fact) and throws loudly otherwise.
-  const issue = closeIssue(store, { issueId, reason });
+  // declineIssue persists on success (a judgment is a durable fact) and throws loudly otherwise.
+  const issue = declineIssue(store, { issueId, reason });
   log(c.green('✓ declined') + ` ${c.b(issue.id)} ${issue.title}`);
   log(`  status=${c.b(issue.status)} · ${c.dim(String(issue.closedReason))}`);
 }
@@ -531,7 +532,7 @@ function cmdRetire(pos: string[], flags: Args['flags']): void {
   // retireEvalTask persists on success and throws loudly otherwise.
   const task = retireEvalTask(store, { taskId, reason });
   log(c.green('✓ retired') + ` ${c.b(task.id)} ${c.dim(String(task.retiredReason))}`);
-  log(c.dim(`  registry: ${store.db.evalTasks.filter((t) => !t.retiredAt).length} active / ${store.db.evalTasks.length} total (records are never deleted)`));
+  log(c.dim(`  registry: ${activeEvalTasks(store.db.evalTasks).length} active / ${store.db.evalTasks.length} total (records are never deleted)`));
 }
 
 function cmdDecide(pos: string[]): void {

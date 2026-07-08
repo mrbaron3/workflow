@@ -8,6 +8,7 @@
  */
 
 import { EvalTask, type VerificationMethod } from '../domain/schema.js';
+import { buildTaskId } from '../domain/eval-task.js';
 import { Store, nowISO } from '../store/store.js';
 import type { HarnessConfig, TargetRepoConfig } from '../config.js';
 
@@ -78,7 +79,7 @@ export function curateEvalTasks(store: Store, config?: HarnessConfig): CurateRes
     if (store.runsForIssue(issue.id).length === 0) continue;
     for (const ac of issue.contract?.acceptanceCriteria ?? []) {
       if (ac.severity !== 'blocker') continue;
-      const id = `EVAL-TASK-${issue.id}-${ac.id}`;
+      const id = buildTaskId(issue.id, ac.id);
       if (store.db.evalTasks.some((t) => t.id === id)) continue;
       const everFailed = failed.has(`${issue.id}:${ac.id}`);
       created.push(

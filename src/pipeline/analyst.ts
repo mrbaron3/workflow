@@ -8,6 +8,7 @@
  */
 
 import { Issue, type IssueContract, type IssueType } from '../domain/schema.js';
+import { activeEvalTasks } from '../domain/eval-task.js';
 import { TERMINAL_STATUSES } from '../domain/states.js';
 import { Store, nowISO } from '../store/store.js';
 import type { Metrics } from '../metrics/metrics.js';
@@ -196,7 +197,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
   // the loop the retire organ exists to close.
   const latest = new Map<string, string>(); // taskId -> latest result
   for (const r of store.db.regressionRuns) latest.set(r.taskId, r.result);
-  const activeTasks = store.db.evalTasks.filter((t) => !t.retiredAt);
+  const activeTasks = activeEvalTasks(store.db.evalTasks);
   const unbound = activeTasks.filter((t) => t.target === null).map((t) => t.id);
   const unverified = activeTasks.filter((t) => latest.get(t.id) === 'unverified').map((t) => t.id);
   if (unbound.length || unverified.length) {

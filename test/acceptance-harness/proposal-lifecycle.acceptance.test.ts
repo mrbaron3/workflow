@@ -3,9 +3,18 @@
  * analyst dedup" — spec docs/specs/proposal-lifecycle-decline-organ-and-analyst-dedup-hygiene
  * (AC-LIFE-001..004).
  *
- * Red at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). After the
- * build is human-approved and released, the skipIf is dropped and this file stays in
- * protectedPaths as the permanent regression guard.
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN,
+ * collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). The build was human-approved and
+ * released (2026-07-08, one repair round; five persisted-attested findings remained, all
+ * behavior-preserving refactor/test pins). All five were made RELEASE CONDITIONS in the
+ * same closure (⑥'s conditional-approval pattern, recorded via `agentops intervene`):
+ * Store.updateEvalTask encapsulation, the shared active/retired predicate and task-id
+ * convention (src/domain/eval-task.ts), the declineIssue/closeIssue vocabulary alias, and
+ * the store-level history-immutability pin below. skipIf dropped: permanent guard.
+ *
+ * Gate-condition pin (⑩, testQuality persisted major): Store.setStatus's terminal-entry
+ * carve-out has two halves; the reject half ("nothing already terminal can be
+ * re-terminalized") had NO test — a mutant dropping it passed all 344 tests. Pinned below.
  *
  * Semantics this file pins (spec is the SoT):
  *   - decline/retire are human JUDGMENT POINTS — the closing/retiring organ is explicit,
@@ -129,7 +138,24 @@ function runner(assertions: { name: string; passed: boolean }[]): RegressReportR
 const passAt1Rule = <T extends { title: string }>(s: T[]): T[] => s.filter((x) => /first-attempt success/i.test(x.title));
 const r3Rule = <T extends { title: string }>(s: T[]): T[] => s.filter((x) => /registry hygiene/i.test(x.title));
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('proposal lifecycle — decline/retire organs and rule-identity dedup (ISSUE-0012)', () => {
+describe('proposal lifecycle — decline/retire organs and rule-identity dedup (ISSUE-0012)', () => {
+  it('ISSUE-0012/AC-LIFE-001 gate condition: setStatus can never re-terminalize history (released↛closed, closed↛released), while one-step terminal entry stays legal', async () => {
+    const { closeIssue } = await seam();
+    const store = freshStore();
+
+    seedIssue(store, 'ISSUE-R', 'released');
+    expect(() => store.setStatus('ISSUE-R', 'closed')).toThrow(/[Ii]llegal|released/);
+
+    seedIssue(store, 'ISSUE-C', 'planned');
+    (closeIssue as Closer)(store, { issueId: 'ISSUE-C', reason: 'r' });
+    expect(() => store.setStatus('ISSUE-C', 'released')).toThrow(/[Ii]llegal|closed/);
+
+    // The positive half of the carve-out: non-terminal → terminal in one step is the
+    // decline organ's only entrance and the release path's shortcut — must stay legal.
+    seedIssue(store, 'ISSUE-N', 'needs-human-review');
+    expect(store.setStatus('ISSUE-N', 'released').status).toBe('released');
+  });
+
   it('ISSUE-0012/AC-LIFE-001 a non-terminal issue declines with a reason into a terminal closed state: audited, never pollable, adopt/assign reject it', async () => {
     const { closeIssue } = await seam();
     const close = closeIssue as Closer;

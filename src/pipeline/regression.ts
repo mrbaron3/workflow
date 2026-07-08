@@ -23,6 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { RegressionRun, type EvalTask } from '../domain/schema.js';
+import { isRetired, parseTaskId } from '../domain/eval-task.js';
 import type { HarnessConfig } from '../config.js';
 import { Store, nowISO } from '../store/store.js';
 import { assertionsForCriterion, runVitest, type VitestReport } from './execution/grade.js';
@@ -43,20 +44,13 @@ export interface RegressOptions {
 }
 
 /**
- * The (issue, AC) a task verifies, from the curator's id convention EVAL-TASK-<issue>-<ac>.
- * `sourceIssueId` is authoritative when present; without it the id itself still IS the
- * convention, so a hand-seeded/legacy row that follows it stays verifiable rather than
- * reading as eternally 'unverified'.
+ * The (issue, AC) a task verifies, from the curator's id convention EVAL-TASK-<issue>-<ac>
+ * (single shared encoding: domain/eval-task.ts). `sourceIssueId` is authoritative when
+ * present; without it the id itself still IS the convention, so a hand-seeded/legacy row
+ * that follows it stays verifiable rather than reading as eternally 'unverified'.
  */
 function taskCriterion(task: EvalTask): { issueId: string; acId: string } | null {
-  if (task.sourceIssueId) {
-    const prefix = `EVAL-TASK-${task.sourceIssueId}-`;
-    return task.id.startsWith(prefix)
-      ? { issueId: task.sourceIssueId, acId: task.id.slice(prefix.length) }
-      : null;
-  }
-  const m = /^EVAL-TASK-(ISSUE-\d+)-(.+)$/.exec(task.id);
-  return m ? { issueId: m[1]!, acId: m[2]! } : null;
+  return parseTaskId(task.id, task.sourceIssueId);
 }
 
 export function runRegressionTasks(store: Store, config: HarnessConfig, opts: RegressOptions = {}): RegressResult {
@@ -74,7 +68,7 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
     // Retired tasks (FEAT-005) come first: retirement is the definitive judgment, so it is
     // reported over any missing precondition. Never executed, never a RegressionRun — but
     // never silent either: the human's reason travels with the report.
-    if (task.retiredAt) {
+    if (isRetired(task)) {
       skipped.push({ taskId: task.id, reason: `retired (${task.retiredReason ?? 'no reason recorded'})` });
       continue;
     }
