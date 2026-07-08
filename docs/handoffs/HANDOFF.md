@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑦セッションで更新・最終更新は **ISSUE-0009（finding lineage＝Analyst 誤帰属の是正）released** 後）。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑧セッションで更新・最終更新は **planned 在庫の処遇判断＋北極星達成計画（docs/NORTH_STAR_PLAN.md）新設** 後）。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -55,6 +55,28 @@
 ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
 
 ## 3. 現在地 — 各セッションの成果（全て `origin/main`）
+
+### ⑧セッション（2026-07-08・planned 在庫の処遇判断＋北極星達成計画の著述）
+
+drive なし（計器変化なし）。**判断と計画のセッション**:
+
+- **処遇判断（人間確定）**: ISSUE-0002 **退役**（起票前提 pass^1=0% は現値 57% で消滅・悪化すればルールが
+  新数値で再起票）／ISSUE-0008 **退役＝supersede**（診断根拠「brief 不着」は⑦で反証済み・症状 0.25 は
+  R1=attested lineage が証拠付きで再提案する配線済み）／ISSUE-0010 は **task 退役→close**（roman 2 task は
+  揮発 sandbox 残骸。**task を先に退役しないと title-dedup が R3 を永久に黙らせるため順序は task→issue**）。
+- **発見＝退役器官の欠如**: `ISSUE_STATUSES` に closed 無し・EvalTask に retired 無し・`decide` は build
+  専用・Analyst R1 自身が "close as investigated" と言うのに手段が無い（**adopt/decline の非対称**）。
+  ユーザー判断: 今は実装せず記録のみ → 器官は **FEAT-005** として roadmap 在庫へ。store 上 3 件は
+  planned のまま（適用は FEAT-005 released 時・判断の正本は NORTH_STAR_PLAN §4）。
+  **注意**: それまで `analyze --create` は慎重に — repair-brief 提案が「(25%)」の新タイトルで複製される
+  （dedup がタイトル完全一致のため。Analyst dedup 衛生も FEAT-005 に同梱）。
+- **北極星達成計画を新設**: `docs/NORTH_STAR_PLAN.md` — NORTH_STAR（不変の星）と roadmap.yaml（機械の
+  WHAT 頂点）の間の**判断層**。ギャップ台帳 A1..D2（各: 欠け／星との接続／経路／完了条件）＋
+  マイルストーン M1 操舵の完備 → M2 自律の横幅 → M3 縦深（観測駆動・roadmap へ未降ろし）→ M4 実プロダクト
+  実証（WHAT 未確定・人間判断待ち）。**frontier の正本は以後この計画文書**（§4 は要約）。
+- roadmap.yaml へ additive 追加（`PlannedRoadmap.parse` 検証済み・未署名・spawn-specs 未実行）:
+  **EPIC-02**（FEAT-004 自律軸計器／FEAT-005 decline 器官＋dedup 衛生／FEAT-006 本番配線ピン規約）・
+  **EPIC-03**（FEAT-007 依存順複数 issue drive／FEAT-008 複数 spec 並行＋skill 実走著述）。
 
 ### ⑦セッション（2026-07-08・finding lineage — ③の診断器自身の誤診を是正）
 
@@ -196,7 +218,7 @@ grounded で観測したこと（③一巡・実 Claude 走行）:
 前セッションまでの成果（repair loop 発火/収束・PromptRecord・タブ化・モデル上書き等）は §6 の不変条件と
 [execution-layer.md](execution-layer.md) に吸収済み。
 
-## 4. frontier（次の一手）— 回帰 registry の実行
+## 4. frontier（次の一手）— 正本は [../NORTH_STAR_PLAN.md](../NORTH_STAR_PLAN.md)（⑧新設）
 
 **このセッションで締結済み**（一巡完走）: ISSUE-0003 を human gate approve → build（`grade.ts` 修正＋
 5 テスト）を main へ cherry-pick（`904d511`）→ 受け入れグレーダを恒久回帰ガードへ昇格（skipIf 除去・
@@ -234,19 +256,14 @@ sandbox 束縛の2 task は skip 報告）。
   （brief 忠実性は ISSUE-0004 済み）。lineage を attested 化し、diagnosis が真実を語る土台を敷設。
   **観測待ち**: released 後初の repair round で attested lineage が grounded 実走する（再レビューが prior
   findings を見て persisted/new を判定）— 次の drive で観測。
-- **repair 収束率そのもの（0.25）**: 誤帰属是正後も「1 repair で approve に至らない」事実は残る（⑥⑦とも
-  major は解消・minor が新規/残存）。attested lineage 蓄積後に「persisted が多い＝brief 問題 / new が多い＝
-  レビュア深掘り」を見分けてから次の一手（ISSUE-0008 在庫の adopt 判断もそれまで保留が正直）。
-- **テストの「本番配線」盲点の一般化**: ⑥の major（inline literal の caps が未テスト）は他所にもあり得る
-  （例: pollMs・maxConcurrent・panel の閾値）。テスト規約（役割プロンプト/testQuality rubric）へ「変異が
-  生き残る定数配線は export＋pin」を足すか検討。
-- **grader 非決定性の較正継続**: testQuality の揺れ（③ ~1/3・④ approve+minor・⑤ approve 1.0 だが遅延）。
-  labels 蓄積・falsePassTrend 監視。humanVerdict は現在 4 issue 分。
-- **sandbox の unverified 2 task の処遇**: ISSUE-0001（roman）は未 released のため回帰 task が unverified
-  （真実の記録）。roman を released まで駆動して pass 化するか、実験残骸として task を退役させるかは人間判断。
-- **残在庫**: ISSUE-0002（pass^k stabilise）が planned のまま＝adopt 候補。to-spec / to-detail-design skill
-  本体の grounded 実走（④⑤は operator 直接著述で代替）。
-- **回帰実行の運用磨き（続）**: playwright 等 unit_test 以外の grader 対応。複数 issue DAG・複数 spec 並行の駆動。
+- **（⑧で吸収）以降の open frontier は [../NORTH_STAR_PLAN.md](../NORTH_STAR_PLAN.md) のギャップ台帳が正本**:
+  repair 収束率 0.25 の判別＝B2/C1（M3・観測駆動・WHAT 化はデータを見てから）・本番配線ピン＝B3（FEAT-006）・
+  grader 較正＝B1（運用・humanVerdict 蓄積 ≥20 目標）・roman unverified 2 task と planned 在庫＝**⑧で処遇
+  判断済み**（退役・store 適用は FEAT-005 released 時）・skill 本体実走＝A4（FEAT-008 同梱）・
+  複数 issue DAG／複数 spec 並行＝A2/A3（EPIC-03）・playwright 等 grader＝A6（M4 従属）。
+- **次の一手 = M1「操舵の完備」**: EPIC-02 の spec 著述（to-spec）→ 署名 → spawn-issues → assign → drive。
+  FEAT-004（自律軸計器）の介入意味論（WHAT 確定・承認・審査は介入に数えない）は NORTH_STAR_PLAN §5 を
+  spec 著述時に確定する。
 
 ## 5. 動かし方（コマンド）
 

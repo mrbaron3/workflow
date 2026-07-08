@@ -26,3 +26,32 @@ epics:
       - id: FEAT-003
         title: "Active-session liveness and late findings collection"
         outcome: "活動継続中（pane 変化あり）のレビュー/生成セッションが短い hardCap で timeout 扱いにならず（有限の絶対天井までは待つ）、stuck/timeout 判定後でも収集時点で存在する findings は捨てられない。⑤の grounded 失敗（1h26m の正当なミューテーション検証レビューが 10 分 cap で失われ人間介入を要した）を封じ、徹底レビューの証拠を評価ループへ回収する。"
+
+  # M1「操舵の完備」（docs/NORTH_STAR_PLAN.md §3 — ギャップ A1/C2/C3/B3）
+  - id: EPIC-02
+    title: "Steering instruments and proposal lifecycle"
+    theme: "platform"
+    outcome: "北極星の操舵指標の全軸（特に自律軸＝HOW 介入）が計測され、Analyst の提案在庫が adopt/close の対で監査可能に循環する。"
+    features:
+      - id: FEAT-004
+        title: "Autonomy-axis instruments (human HOW-intervention accounting)"
+        outcome: "人間の HOW への介入（条件付き承認での実装持ち込み・repair への人手等）が store に事実として残り、status に issue あたり介入回数と HOW 非介入率が並ぶ。WHAT 確定・承認・審査は介入に数えない（判断点は消さない）。⑥⑦の条件付き承認 2 例が遡及して数えられる。"
+      - id: FEAT-005
+        title: "Proposal lifecycle: decline organ and analyst dedup hygiene"
+        outcome: "adopt の対となる退役が監査可能な状態遷移として存在し（Issue の closed・EvalTask の retired・理由必須）、Analyst の dedup がルール同一性で効く（計器値の変動で在庫が複製されない）。⑧の処遇判断（NORTH_STAR_PLAN §4: ISSUE-0002/0008/0010・roman task 2 件）が store に適用され、R3 の再発火が止まる。"
+      - id: FEAT-006
+        title: "Production-wiring pin convention"
+        outcome: "「テストに素通りされる inline 定数配線」クラス（⑥ major の一般化）が generator 規約と testQuality rubric で封じられ、既存の該当箇所（pollMs / maxConcurrent / panel 閾値等）が棚卸しでピン化される。"
+
+  # M2「自律の横幅」（docs/NORTH_STAR_PLAN.md §3 — ギャップ A2/A3/A4）
+  - id: EPIC-03
+    title: "Autonomy breadth: dependency-ordered issues and parallel specs"
+    theme: "platform"
+    outcome: "「1 issue・1 spec 規模」の但し書きが消える: 依存を持つ複数 issue と複数 spec が人手なしで秩序立って drive される。"
+    features:
+      - id: FEAT-007
+        title: "Dependency-ordered multi-issue drive"
+        outcome: "dependsOnIssues が実行ガードで尊重され、1 spec から生えた依存チェーン（2+ issues）が依存順に自動 drive される。未 released の依存によるブロックは理由付きで可視（never-silent）。"
+      - id: FEAT-008
+        title: "Parallel spec execution with grounded skill authoring"
+        outcome: "2 spec の issue 群が同時 in-flight でも tmux/worktree/コストが衝突せず完走する。その spec 著述自体を to-spec / to-detail-design skill の実走で行い、skill 本体の grounded 未検証（④⑤の operator 直接著述代替）を同時に解消する。"
