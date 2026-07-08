@@ -122,6 +122,20 @@ export const Issue = z.object({
   dependsOnSystem: z.array(z.string()).default([]), // system element ids referenced (DOM/DATA/ARCH/…-<CTX>-NNN) — referenced, never copied
   dependsOnIssues: z.array(z.string()).default([]), // predecessor issues, forming the spec's issue DAG
   implementationNotes: z.array(z.string()).default([]), // seam-level HOW hints (optional; internal, not a contract)
+  /**
+   * Decline audit (FEAT-005): why/when a human closed this issue. Set ONLY by the decline
+   * organ (pipeline/lifecycle.ts closeIssue — a judgment point, never automated); null on
+   * every non-closed issue. Additive — absent on older records.
+   */
+  closedReason: z.string().nullable().default(null),
+  closedAt: z.string().nullable().default(null),
+  /**
+   * Which Analyst diagnostic rule filed this proposal (FEAT-005). The rule — not the title
+   * text, which bakes in moving metric values — is the dedup identity: at most one OPEN
+   * proposal per rule, while a terminal (closed/released) one never suppresses re-filing.
+   * null = not rule-filed (spec-spawned or hand-created). Additive.
+   */
+  sourceRuleId: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -291,6 +305,15 @@ export const EvalTask = z.object({
    * current target. Additive.
    */
   graderCommands: z.record(z.string()).nullable().default(null),
+  /**
+   * Retirement audit (FEAT-005): why/when a human retired this task from execution. Set
+   * ONLY by pipeline/lifecycle.ts retireEvalTask (a judgment point, never automated).
+   * Retirement is a STATE, not an erasure: the record stays (capture history — and
+   * regressionCaptureRate — are untouched); only execution and the executed/unverified
+   * accounting exclude a retired task. null = active. Additive — absent on older records.
+   */
+  retiredReason: z.string().nullable().default(null),
+  retiredAt: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type EvalTask = z.infer<typeof EvalTask>;

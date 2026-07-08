@@ -8,6 +8,7 @@
  */
 
 import { Issue, type IssueContract, type IssueType } from '../domain/schema.js';
+import { TERMINAL_STATUSES } from '../domain/states.js';
 import { Store, nowISO } from '../store/store.js';
 import type { Metrics } from '../metrics/metrics.js';
 
@@ -16,6 +17,14 @@ export interface Suggestion {
   area: 'harness' | 'eval';
   title: string;
   rationale: string;
+  /**
+   * Stable identity of the diagnostic rule that fired (FEAT-005). Titles bake in metric
+   * values and so change on every re-fire; the RULE is what recurs, so it — not the title —
+   * is the dedup key: at most one OPEN proposal per rule, and a terminal (closed/released)
+   * proposal never suppresses re-filing. Optional for hand-rolled suggestions, which keep
+   * the legacy title dedup.
+   */
+  ruleId?: string;
   /**
    * Adopt-grade starting point (granularity, handoff frontier): the grounded ③ loop showed
    * threshold-only suggestions sit far from the contract a human actually adopts. A rule
@@ -69,6 +78,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
 
   if (m.passHatK < 0.5) {
     s.push({
+      ruleId: 'stabilise-pass-hat-k',
       type: 'eval',
       area: 'eval',
       title: `Stabilise low pass^${k} (${(m.passHatK * 100).toFixed(0)}%)`,
@@ -79,6 +89,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
   }
   if (m.passAt1 < 0.5) {
     s.push({
+      ruleId: 'improve-pass-at-1',
       type: 'harness',
       area: 'harness',
       title: `Improve first-attempt success (pass@1 ${(m.passAt1 * 100).toFixed(0)}%)`,
@@ -89,6 +100,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
   }
   if (m.instabilityRate > 0.3) {
     s.push({
+      ruleId: 'reduce-instability',
       type: 'eval',
       area: 'eval',
       title: `Reduce sample disagreement (instability ${(m.instabilityRate * 100).toFixed(0)}%)`,
@@ -99,6 +111,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
   }
   if (m.repairSuccessRate < 0.6) {
     s.push({
+      ruleId: 'repair-brief-actionability',
       type: 'harness',
       area: 'harness',
       title: `Make repair briefs more actionable (repair success ${(m.repairSuccessRate * 100).toFixed(0)}%)`,
@@ -109,6 +122,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
   }
   if (m.falsePassRate === null) {
     s.push({
+      ruleId: 'human-calibration-set',
       type: 'eval',
       area: 'eval',
       title: 'Build a human-labelled calibration set',
@@ -135,6 +149,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
   }
   if (survivors.length) {
     s.push({
+      ruleId: 'r1-repair-persisted',
       type: 'harness',
       area: 'harness',
       title: `Repair briefs failed to land: ${survivors.length} finding(s) survived a repair attempt`,
@@ -164,6 +179,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
       (n, r) => n + r.findings.filter((f) => f.criterionId === `GATE-${gate}`).length, 0);
     if (count < 2) continue;
     s.push({
+      ruleId: `r2-gate-recurrence:${gate}`,
       type: 'harness',
       area: 'harness',
       title: `Recurring ${gate} gate failures (${count}×)`,
@@ -175,12 +191,17 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
   }
 
   // R3: registry hygiene — captured failures that CANNOT currently be re-verified.
+  // Retired tasks (FEAT-005) are outside the premise: a human already judged them to have
+  // no guard value, so they are not "hygiene debt" — re-proposing them forever is exactly
+  // the loop the retire organ exists to close.
   const latest = new Map<string, string>(); // taskId -> latest result
   for (const r of store.db.regressionRuns) latest.set(r.taskId, r.result);
-  const unbound = store.db.evalTasks.filter((t) => t.target === null).map((t) => t.id);
-  const unverified = store.db.evalTasks.filter((t) => latest.get(t.id) === 'unverified').map((t) => t.id);
+  const activeTasks = store.db.evalTasks.filter((t) => !t.retiredAt);
+  const unbound = activeTasks.filter((t) => t.target === null).map((t) => t.id);
+  const unverified = activeTasks.filter((t) => latest.get(t.id) === 'unverified').map((t) => t.id);
   if (unbound.length || unverified.length) {
     s.push({
+      ruleId: 'r3-registry-hygiene',
       type: 'eval',
       area: 'eval',
       title: `Regression registry hygiene: ${unbound.length} unbound, ${unverified.length} unverified task(s)`,
@@ -201,6 +222,7 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
   }
   if (hot && hot.n > 0) {
     s.push({
+      ruleId: `hot-cell:${hot.area}:${hot.type}`,
       type: 'harness',
       area: 'harness',
       title: `Address top failure: ${hot.area} × ${hot.type} (${hot.n} hits)`,
@@ -217,8 +239,19 @@ export function analyzeHarness(store: Store, m: Metrics): Suggestion[] {
 export function createSuggestionIssues(store: Store, suggestions: Suggestion[]): Issue[] {
   const created: Issue[] = [];
   for (const sug of suggestions) {
-    // de-dupe by title
-    if (store.db.issues.some((i) => i.title === sug.title)) continue;
+    // Dedup identity (FEAT-005): the RULE, not the title — titles bake in metric values, so
+    // exact-title matching duplicated inventory whenever a value moved and permanently
+    // silenced re-filing whenever it matched a terminal issue. A rule-filed suggestion
+    // collapses into an OPEN issue from the same rule (or an open exact-title twin, so
+    // pre-ruleId inventory is not duplicated); terminal (closed/released) issues never
+    // suppress — the re-fire is fresh evidence. Hand-rolled suggestions without a ruleId
+    // keep the legacy any-status title dedup.
+    const duplicate = sug.ruleId
+      ? store.db.issues.some(
+          (i) => !TERMINAL_STATUSES.has(i.status) && (i.sourceRuleId === sug.ruleId || i.title === sug.title),
+        )
+      : store.db.issues.some((i) => i.title === sug.title);
+    if (duplicate) continue;
     const issue = Issue.parse({
       id: store.nextId('ISSUE'),
       type: sug.type,
@@ -229,6 +262,7 @@ export function createSuggestionIssues(store: Store, suggestions: Suggestion[]):
       status: 'planned', // a draft contract does NOT make it drivable — adopt is the confirmation
       assignedAgent: null,
       contract: sug.draftContract ?? null,
+      sourceRuleId: sug.ruleId ?? null,
       createdAt: nowISO(),
       updatedAt: nowISO(),
     });

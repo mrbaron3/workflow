@@ -313,10 +313,14 @@ export function computeMetrics(store: Store): Metrics {
   const regressionCaptureRate = failedPairs.size ? captured / failedPairs.size : null;
 
   // ③ re-verification: judge each task by its LATEST execution (insertion order is
-  // chronological — the store only appends).
+  // chronological — the store only appends). Retired tasks (FEAT-005) leave the
+  // denominator and the failing/unverified aggregation — they are excluded from
+  // execution, so counting them would dirty the instruments forever — while the
+  // capture-rate above deliberately still sees them: retiring never rewrites the
+  // history of what was once captured.
   const latestRun = new Map<string, (typeof store.db.regressionRuns)[number]>();
   for (const r of store.db.regressionRuns) latestRun.set(r.taskId, r);
-  const tasks = store.db.evalTasks;
+  const tasks = store.db.evalTasks.filter((t) => !t.retiredAt);
   const executed = tasks.filter((t) => latestRun.has(t.id));
   const regressionExecutedRate = tasks.length ? executed.length / tasks.length : null;
   const regressionFailingTasks = executed.filter((t) => latestRun.get(t.id)!.result === 'fail').length;

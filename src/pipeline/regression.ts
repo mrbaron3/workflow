@@ -42,11 +42,21 @@ export interface RegressOptions {
   harnessRoot?: string;
 }
 
-/** The AC id a task verifies, from the curator's id convention EVAL-TASK-<issue>-<ac>. */
-function taskAcId(task: EvalTask): string | null {
-  if (!task.sourceIssueId) return null;
-  const prefix = `EVAL-TASK-${task.sourceIssueId}-`;
-  return task.id.startsWith(prefix) ? task.id.slice(prefix.length) : null;
+/**
+ * The (issue, AC) a task verifies, from the curator's id convention EVAL-TASK-<issue>-<ac>.
+ * `sourceIssueId` is authoritative when present; without it the id itself still IS the
+ * convention, so a hand-seeded/legacy row that follows it stays verifiable rather than
+ * reading as eternally 'unverified'.
+ */
+function taskCriterion(task: EvalTask): { issueId: string; acId: string } | null {
+  if (task.sourceIssueId) {
+    const prefix = `EVAL-TASK-${task.sourceIssueId}-`;
+    return task.id.startsWith(prefix)
+      ? { issueId: task.sourceIssueId, acId: task.id.slice(prefix.length) }
+      : null;
+  }
+  const m = /^EVAL-TASK-(ISSUE-\d+)-(.+)$/.exec(task.id);
+  return m ? { issueId: m[1]!, acId: m[2]! } : null;
 }
 
 export function runRegressionTasks(store: Store, config: HarnessConfig, opts: RegressOptions = {}): RegressResult {
@@ -61,6 +71,13 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
   // command only when bound to that same target. Missing preconditions skip WITH the reason.
   const runnable: { task: EvalTask; command: string }[] = [];
   for (const task of store.db.evalTasks) {
+    // Retired tasks (FEAT-005) come first: retirement is the definitive judgment, so it is
+    // reported over any missing precondition. Never executed, never a RegressionRun — but
+    // never silent either: the human's reason travels with the report.
+    if (task.retiredAt) {
+      skipped.push({ taskId: task.id, reason: `retired (${task.retiredReason ?? 'no reason recorded'})` });
+      continue;
+    }
     if (!task.graders.includes('unit_test')) {
       skipped.push({ taskId: task.id, reason: `grader ${task.graders.join('/') || '(none)'} not executable (v0 runs unit_test only)` });
       continue;
@@ -100,10 +117,10 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
   for (const [target, { command, tasks }] of byTarget) {
     const report = runReport(command, path.resolve(root, target));
     for (const task of tasks) {
-      const acId = taskAcId(task);
+      const criterion = taskCriterion(task);
       // Issue-scoped matching (assertionsForCriterion): the grounded false positive was another
       // issue's identically-named red AC bleeding into this task via bare substring matching.
-      const matched = acId ? assertionsForCriterion(report.assertions, acId, task.sourceIssueId) : [];
+      const matched = criterion ? assertionsForCriterion(report.assertions, criterion.acId, criterion.issueId) : [];
       const failed = matched.filter((a) => !a.passed);
       const result = matched.length === 0 ? 'unverified' : failed.length === 0 ? 'pass' : 'fail';
       results.push(

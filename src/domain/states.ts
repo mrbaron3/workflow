@@ -27,12 +27,18 @@ export const ISSUE_STATUSES = [
   'ready-to-merge',
   'released',
   'needs-human-review',
+  // Declined (FEAT-005): a human retired the issue with a reason (Issue.closedReason/At).
+  // Terminal like `released`, but as a judgment ("not doing this") rather than history
+  // ("this shipped") — which is why closing a released issue is forbidden while closing
+  // any non-terminal one is allowed. The machine never enters it on its own: no TRANSITIONS
+  // edge points here; only Store.setStatus's terminal-entry carve-out does.
+  'closed',
 ] as const;
 
 export type IssueStatus = (typeof ISSUE_STATUSES)[number];
 
 /** Statuses from which no automatic progress is possible. */
-export const TERMINAL_STATUSES: ReadonlySet<IssueStatus> = new Set(['released']);
+export const TERMINAL_STATUSES: ReadonlySet<IssueStatus> = new Set(['released', 'closed']);
 
 /**
  * Allowed forward transitions. `needs-human-review` is reachable from everywhere
@@ -64,6 +70,7 @@ export const TRANSITIONS: Record<IssueStatus, IssueStatus[]> = {
     'approved',
     'released',
   ],
+  closed: [],
 };
 
 export function canTransition(from: IssueStatus, to: IssueStatus): boolean {

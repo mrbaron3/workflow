@@ -46,6 +46,7 @@ import { curateEvalTasks } from '../pipeline/curator.js';
 import { runRegressionTasks } from '../pipeline/regression.js';
 import { adoptIssue } from '../pipeline/adopt.js';
 import { assignIssue } from '../pipeline/assign.js';
+import { closeIssue, retireEvalTask } from '../pipeline/lifecycle.js';
 import { INTERVENTION_KINDS, recordIntervention } from '../pipeline/intervene.js';
 import { recordHumanDecision, type HumanDecision } from '../pipeline/execution/loop.js';
 import * as YAML from 'yaml';
@@ -505,6 +506,34 @@ function cmdAdopt(pos: string[], flags: Args['flags']): void {
   log(`\nNext: the execution loop polls it (e.g. ${c.b('npx tsx scripts/real-panel-run.ts')}).`);
 }
 
+function cmdDecline(pos: string[], flags: Args['flags']): void {
+  const store = requireInit();
+  const issueId = pos[0];
+  const reason = flags.reason;
+  if (!issueId || typeof reason !== 'string') {
+    log(c.red('usage: agentops decline <ISSUE-ID> --reason <text>') + c.dim('   (a judgment point: terminal, audited — adopt’s counterpart)'));
+    process.exit(1);
+  }
+  // closeIssue persists on success (a judgment is a durable fact) and throws loudly otherwise.
+  const issue = closeIssue(store, { issueId, reason });
+  log(c.green('✓ declined') + ` ${c.b(issue.id)} ${issue.title}`);
+  log(`  status=${c.b(issue.status)} · ${c.dim(String(issue.closedReason))}`);
+}
+
+function cmdRetire(pos: string[], flags: Args['flags']): void {
+  const store = requireInit();
+  const taskId = pos[0];
+  const reason = flags.reason;
+  if (!taskId || typeof reason !== 'string') {
+    log(c.red('usage: agentops retire <EVAL-TASK-ID> --reason <text>') + c.dim('   (excluded from execution and its instruments; the record and capture history stay)'));
+    process.exit(1);
+  }
+  // retireEvalTask persists on success and throws loudly otherwise.
+  const task = retireEvalTask(store, { taskId, reason });
+  log(c.green('✓ retired') + ` ${c.b(task.id)} ${c.dim(String(task.retiredReason))}`);
+  log(c.dim(`  registry: ${store.db.evalTasks.filter((t) => !t.retiredAt).length} active / ${store.db.evalTasks.length} total (records are never deleted)`));
+}
+
 function cmdDecide(pos: string[]): void {
   const store = requireInit();
   const issueId = pos[0];
@@ -630,6 +659,8 @@ ${c.b('Commands')}
   regress              execute the bound registry against the target's real graders
   analyze [--create]   propose harness/eval improvement issues
   adopt <ID> [--contract F]  confirm a proposal's WHAT → drivable; omit F to use the attached draft (ADR-0007)
+  decline <ID> --reason T  retire an issue into terminal closed (judgment point, audited; never automatic)
+  retire <TASK-ID> --reason T  retire a regression eval task from execution (capture history stays)
   decide <ID> approve|reject  the human review gate for a needs-human-review build
   label --run ID --human approve|request_changes
   intervene <ID> --kind K --reason T  attest a human HOW-intervention (autonomy axis)
@@ -677,6 +708,10 @@ async function main(): Promise<void> {
       return cmdAnalyze(flags);
     case 'adopt':
       return cmdAdopt(pos, flags);
+    case 'decline':
+      return cmdDecline(pos, flags);
+    case 'retire':
+      return cmdRetire(pos, flags);
     case 'decide':
       return cmdDecide(pos);
     case 'label':

@@ -25,7 +25,7 @@ import type {
   Roadmap,
   SpecState,
 } from '../domain/schema.js';
-import { assertTransition, type IssueStatus } from '../domain/states.js';
+import { assertTransition, TERMINAL_STATUSES, type IssueStatus } from '../domain/states.js';
 
 export function nowISO(): string {
   return new Date().toISOString();
@@ -131,10 +131,22 @@ export class Store {
     return i;
   }
 
-  /** Move an issue to a new status, enforcing the state machine. */
+  /**
+   * Move an issue to a new status, enforcing the state machine — except that a terminal
+   * status is enterable from any NON-terminal status in one step. For `closed` this is the
+   * rule itself: no TRANSITIONS edge enters it on purpose, so this carve-out is the decline
+   * organ's only entrance (FEAT-005). For `released` it IS a loss of single-step strictness
+   * (canTransition still forbids e.g. planned → released, but this method no longer rejects
+   * it): every non-terminal status already reaches `released` legally in two steps via the
+   * always-allowed `needs-human-review` escape hatch, and callers that mark history in
+   * place (seeding a released issue where it stands, as the acceptance seam does) rely on
+   * the direct jump. History stays immutable either way: nothing already terminal can be
+   * re-terminalized here.
+   */
   setStatus(id: string, to: IssueStatus): Issue {
     const i = this.requireIssue(id);
-    assertTransition(i.status, to);
+    const enteringTerminal = TERMINAL_STATUSES.has(to) && !TERMINAL_STATUSES.has(i.status);
+    if (!enteringTerminal) assertTransition(i.status, to);
     i.status = to;
     i.updatedAt = nowISO();
     return i;
@@ -183,6 +195,10 @@ export class Store {
   addEvalTask(t: EvalTask): EvalTask {
     this.db.evalTasks.push(t);
     return t;
+  }
+
+  getEvalTask(id: string): EvalTask | undefined {
+    return this.db.evalTasks.find((t) => t.id === id);
   }
 
   // --- regression executions (③ re-verification of captured failures) ------
