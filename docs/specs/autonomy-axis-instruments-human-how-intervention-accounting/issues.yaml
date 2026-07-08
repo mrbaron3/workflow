@@ -1,0 +1,16 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+issues:
+  - key: ISSUE-INTV-001
+    title: Record attested human HOW-interventions and expose autonomy-axis instruments
+    area: harness
+    type: harness
+    coversAcIds: [AC-INTV-001, AC-INTV-002, AC-INTV-003, AC-INTV-004]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnSystem: [DOM-execution-007, ARCH-evaluation-006, ARCH-evaluation-008]
+    implementationNotes:
+      - "schema は additive: DB へ interventions 配列（id・issueId・kind・reason・createdAt）を追加。kind の語彙は HOW 関与のみ（例: conditional-approval-implementation / manual-workspace-edit / manual-brief-edit / manual-evidence-recovery）— WHAT 判断点（adopt/assign/sign/decide/label）を表す値を語彙に入れない（意味論は spec 正本）。"
+      - "記録の変異点は 1 箇所（CLI 例: `agentops intervene <ISSUE-ID> --kind <k> --reason <r>`）。issue の存在は検証するが status は問わない（AC-INTV-004 の遡及）。reason 必須・語彙外 kind は zod で loud に拒否。"
+      - "計器は src/metrics/metrics.ts の Metrics へ additive に: interventionsPerIssue（介入総数 / drive 済み issue 数）・howNonInterventionRate（drive 済み issue のうち介入ゼロの割合）。drive 済み（sample を持つ）issue が無ければ両方 null。status --json と dashboard に併記。"

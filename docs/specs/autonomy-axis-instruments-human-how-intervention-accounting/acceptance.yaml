@@ -1,0 +1,37 @@
+# 自律軸計器（人間の HOW 介入の会計）— 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - DOM-execution-007
+  - ARCH-evaluation-006
+  - ARCH-evaluation-008
+
+verifications:
+  AC-INTV-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "種別と理由を添えた HOW 介入の記録が issue に紐づく事実として store に永続し、種別・理由・記録時刻を監査できる"
+      - "理由の欠落・語彙外の種別（WHAT 判断点 adopt/assign/sign/decide/label 相当を含む）は記録されず、理由付きで loud に拒否される"
+
+  AC-INTV-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "判断点の行使（WHAT 確定・委任・承認/審査・較正ラベル）だけを受けて released に至った issue は、介入回数 0・HOW 非介入側として集計される"
+
+  AC-INTV-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "介入記録のある issue と無い issue が混在する store で、issue あたり介入回数（drive 済み issue に対する介入総数の比）と HOW 非介入率（drive 済み issue のうち介入記録ゼロの割合）が機械可読出力に数値で並ぶ"
+      - "drive 済み issue が無い store では両計器とも null（0 や 1 と混同しない）"
+
+  AC-INTV-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "released 済み issue への介入記録が新規記録と同様に受理・監査可能で、再算出した issue あたり介入回数と HOW 非介入率に反映される"
