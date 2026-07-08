@@ -1,0 +1,17 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+issues:
+  - key: ISSUE-LIFE-001
+    title: Add decline/retire organs and rule-identity analyst dedup
+    area: harness
+    type: harness
+    coversAcIds: [AC-LIFE-001, AC-LIFE-002, AC-LIFE-003, AC-LIFE-004]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnSystem: [ARCH-evaluation-007, ARCH-evaluation-008, DOM-execution-006]
+    implementationNotes:
+      - "ISSUE_STATUSES へ additive に 'closed' を追加し TERMINAL_STATUSES へ含める。Issue へ closedReason（nullable additive・close 時必須）。変異点は 1 箇所（CLI 例: `agentops close ISSUE-NNNN --reason <text>`）。released / closed からの close は拒否。pollable / adopt / assign が closed を拾わないこと。"
+      - "EvalTask へ retired（nullable additive: { reason, at } 等）。変異点は 1 箇所（CLI 例: `agentops retire EVAL-TASK-... --reason <text>`）。runRegressionTasks は retired を実行せず理由付き報告（skipped とは区別しても skipped 扱いでもよいが reason に retired を明示）。metrics の executedRate / regressionUnverifiedTasks の分母・集計から retired を除外。captureRate は変えない（捕捉の歴史は不変）。"
+      - "Analyst の Suggestion へ安定 rule id（例: 'stabilise-pass-hat-k' / 'improve-pass-at-1' / 'repair-briefs-failed-to-land' / 'registry-hygiene' 等）を持たせ、createSuggestionIssues が Issue.sourceRule（nullable additive）へ写す。dedup は「非終端（open）在庫に同 rule の issue が在れば skip」。sourceRule 無し（legacy）はタイトル完全一致 fallback を維持。R3 の unbound / unverified 集計から retired を除外。"
+      - "decline / retire はどこからも自動発火させない（improveTick / analyst は提案のみ）。INTERVENTION_KINDS に判断点を追加しない。"

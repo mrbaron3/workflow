@@ -1,0 +1,41 @@
+# 提案ライフサイクル（decline 器官と Analyst dedup 衛生）— 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - ARCH-evaluation-007
+  - ARCH-evaluation-008
+  - DOM-execution-006
+
+verifications:
+  AC-LIFE-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "非終端 issue の理由付き decline が終端の退役状態として永続し、理由・時刻を store から監査できる"
+      - "退役済み issue は pollable（実行ガード）に現れず、adopt / assign も拒否する"
+      - "理由の欠落・存在しない issue・released / 退役済みへの decline は理由付きで loud に拒否され、何も永続しない"
+
+  AC-LIFE-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "retired task は回帰実行で実 grader が走らず、retired として理由付きで報告される（RegressionRun を作らない・沈黙しない）"
+      - "executedRate と unverified 集計の分母から retired が除外され、captureRate は退役の前後で不変（task レコードは削除されない）"
+      - "理由の欠落・存在しない task の retire は loud に拒否される"
+
+  AC-LIFE-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同一ルールが異なる計器値（＝異なるタイトル文言）で再発火しても、open な同ルール提案が在れば新しい issue は作られない"
+      - "同ルールの提案が closed / released で終端していれば、再発火は新しい issue を起票できる（終端は再起票を永久沈黙させない）"
+
+  AC-LIFE-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "unbound / unverified な task が全て retired の registry では Analyst の R3（registry hygiene）が発火しない"
+      - "retired でない unbound / unverified が 1 つでも残れば R3 は従来どおり発火する"
