@@ -16,6 +16,7 @@ import { Store, nowISO } from '../store/store.js';
 import type { AgentRunner } from './../agents/runner.js';
 import { makeRunner } from './../agents/runner.js';
 import { evaluate } from './evaluate.js';
+import { unreleasedDependencies, formatBlockedLine } from './execution/guard.js';
 import { buildRepairBrief } from './repair.js';
 import type { RepairBrief } from '../domain/artifact.js';
 
@@ -122,18 +123,36 @@ export async function runIssue(
   return { issueId: issue.id, title: issue.title, approved: approvedAny, samples };
 }
 
-/** Run every issue that has a drafted contract and hasn't been run yet. */
+/**
+ * Run every issue that has a drafted contract and hasn't been run yet, respecting the
+ * spec's issue DAG (AC-DAG-003): an issue is dispatched only after every dependsOnIssues
+ * predecessor is `released`, and eligibility is RE-EVALUATED after each issue completes —
+ * so a dependent whose predecessor was released by this very call is picked up in the
+ * same call (no call-start snapshot). Deps-empty issues keep the previous behaviour
+ * exactly (insertion order). Issues still blocked when nothing more can run (a
+ * predecessor never released) are logged, never silently dropped. `runner` is an
+ * additive injection seam (runIssue already had one; runAll only lacked the
+ * pass-through); it defaults to the config-selected backend.
+ */
 export async function runAll(
   store: Store,
   config: HarnessConfig,
   log: (msg: string) => void = () => {},
+  runner?: AgentRunner,
 ): Promise<RunIssueResult[]> {
-  const runner = makeRunner(config);
-  const pending = store.db.issues.filter((i) => i.status === 'contract-drafted');
+  const r = runner ?? makeRunner(config);
   const results: RunIssueResult[] = [];
-  for (const issue of pending) {
+  const attempted = new Set<string>(); // guards the loop even if an issue's status never moves
+  const pending = () => store.db.issues.filter((i) => i.status === 'contract-drafted' && !attempted.has(i.id));
+  for (;;) {
+    const issue = pending().find((i) => unreleasedDependencies(store, i).length === 0);
+    if (!issue) break;
+    attempted.add(issue.id);
     log(`▶ ${issue.id} ${issue.title} [${config.generator}, ${config.samples} samples]`);
-    results.push(await runIssue(store, config, runner, issue, log));
+    results.push(await runIssue(store, config, r, issue, log));
+  }
+  for (const issue of pending()) {
+    log(formatBlockedLine(issue.id, unreleasedDependencies(store, issue)));
   }
   return results;
 }

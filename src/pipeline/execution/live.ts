@@ -18,7 +18,7 @@ import type { Issue } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
 import { PR, PromptRecord } from '../../domain/schema.js';
-import { pollable } from './guard.js';
+import { pollable, blockedByDependencies, formatBlockedLine } from './guard.js';
 import { runGeneratorSession } from './session.js';
 import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader, type PriorFinding } from './perspective-session.js';
@@ -192,6 +192,11 @@ export async function runLoopLive(
 ): Promise<DriveResult[]> {
   const queue = pollable(store, config);
   log(`queue: ${queue.length} ai-managed issue(s) [generator=${config.generator}]`);
+  // Dependency blocks are surfaced every turn (AC-DAG-001): an issue held back by the
+  // guard names what it waits on in the log — it never just vanishes from the queue.
+  for (const b of blockedByDependencies(store, config)) {
+    log(formatBlockedLine(b.issueId, b.waitingOn));
+  }
   const results: DriveResult[] = [];
   for (const issue of queue) results.push(await driveIssueLive(store, config, issue, harnessRoot, opts, log));
   // ③ every live turn ends by capturing failures into the regression registry,

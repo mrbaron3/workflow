@@ -487,7 +487,16 @@ export function spawnIssues(store: Store, specDir: string, opts: SpawnIssuesOpti
   const systemDir = opts.systemDir ? path.resolve(opts.systemDir) : path.resolve(specAbs, '..', '_system');
   const systemElementIds = readSystemElementIds(systemDir);
 
-  const lint = lintDesign({ specAcIds, issues: manifest.map(toIssueCore), systemElementIds });
+  // A dependsOnIssues entry names a manifest key (remapped to its allocated id below) OR an
+  // EXISTING store issue id directly (a cross-spec predecessor). Only the manifest-internal
+  // edges join the DAG lint; a key that is neither is unknown and fails it loudly (AC-DAG-004).
+  const manifestKeys = new Set(manifest.map((m) => m.key));
+  const storeIssueIds = new Set(store.db.issues.map((i) => i.id));
+  const lintCores = manifest.map(toIssueCore).map((core) => ({
+    ...core,
+    dependsOnIssues: core.dependsOnIssues.filter((k) => manifestKeys.has(k) || !storeIssueIds.has(k)),
+  }));
+  const lint = lintDesign({ specAcIds, issues: lintCores, systemElementIds });
 
   if (issueSpawnVerdict(store, specPath, lint) === 'skip') return { spawned: 0, ids: [] };
 
