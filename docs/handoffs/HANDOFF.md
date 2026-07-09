@@ -336,6 +336,9 @@ sandbox 束縛の2 task は skip 報告）。
   2. **FEAT-006 配線ピン規約**（EPIC-02 残・B3）: spec stub spawn 済み
      `docs/specs/production-wiring-pin-convention`（未著述・非追跡）。
   3. **M2 自律の横幅**（EPIC-03・FEAT-007 依存順 DAG／FEAT-008 複数 spec 並行＋skill 実走）。
+- **M4（実プロダクト）は後回し確定（⑩・2026-07-09 人間判断）**: ハーネス「一通り完成」
+  （≒ M2＋M3 landed）まで着手しない・テーマは着手時に決める。ただし**M4 はハーネスを凍結せず**、
+  実プロダクト drive が暴くハーネスの欠けは同じ ③ loop で直す（双方向）。正本は NORTH_STAR_PLAN §3 M4・§5。
 
 ## 5. 動かし方（コマンド）
 
