@@ -21,12 +21,18 @@
   dedup が released。**⑧の処遇判断は store 適用済み**（roman task 2 件 retire → ISSUE-0010/0002/
   0008 close・R3 沈黙と unverified 0 を実測確認）。
 - **repair 不収束の主因を閉鎖（⑪・B2 締結）**: panel brief の finding 落としを内容同一性マージへ
-  修正（ISSUE-0016 released）。repairSuccess 0.14 の相当部分は冤罪だったことが確定 —
-  fix 後の repair round で数値の回復を観測する（残る観測は B2 行）。
-- 計器（2026-07-09 ⑪実測）: passAt1 0.30 / pass^1 0.40 / repairSuccess 0.14 / falsePass 0% /
-  captureRate 100% / executedRate 100%（unverified 0・retired 2 理由付き報告） /
-  自律軸 0.50 介入/issue・50.0% intervention-free（条件付き承認 5 件目まで attested）/
-  361 green skip ゼロ。
+  修正（ISSUE-0016 released）。repairSuccess の相当部分は冤罪だったことが確定。
+- **M2「自律の横幅」出口到達（⑫⑬）**: 依存順 DAG drive（FEAT-007）→ その実戦の上で
+  2 spec 同時 in-flight（FEAT-008・cap=2・実測 peak 2 を 0020 自身の計器が記録）＋配線ピン規約
+  （FEAT-006）。**EPIC-01/02/03 の全 8 features released ＝ ハーネス roadmap 完全 drain**。
+  skill 実走（to-spec / to-detail-design）も締結（A4）。新発見 D3（omnibus ゲート）は台帳へ。
+- 計器（2026-07-09 ⑬実測）: released 13 / passAt1 0.21 / falsePass 0% / captureRate 100% /
+  executedRate 100%（failing 0・unverified 0）/ 自律軸 0.64 介入/issue・35.7% intervention-free
+  （条件付き承認 9 件 attested — この型の主因 B2 は⑪閉鎖済みで、以後の巡で介入減を観測する）/
+  並行計器 peak 2 / cap 2 / driven 2 / **404 green skip ゼロ**。
+- **M4 の着手条件がほぼ成立**: 「M2＋M3 landed・roadmap 概ね drain」のうち M2✅・drain✅。
+  M3 は主因閉鎖✅＋効果測定（post-fix repair rounds の persisted 減）が観測中 — 揃い次第、
+  **M4 のテーマ確定（人間の WHAT・§5）が次の判断点**。
 
 残りを一言で: **(a) 測れていない軸を測る、(b) 横幅（規模・並行・多様性）、
 (c) 縦深（診断→改善の精度）、(d) 自分以外を開発する実証。**
@@ -41,9 +47,9 @@
 | ID | 欠け | 星との接続 | 経路 | 完了条件 |
 |---|---|---|---|---|
 | A1 | ~~**自律軸の計器が無い**~~ **✅ 締結（⑨・ISSUE-0011 released）** — attested 介入記録（判断点は語彙外）＋ status の interventionsPerIssue / howNonInterventionRate。⑥⑦の 2 例＋⑨自身の条件付き承認が遡及/即時に記録済み（INTV-0001..0003） | 測れない軸は steer できない → **計測可能になった** | 上流チェーン（FEAT-004） | ~~完了条件~~ 達成: `status --json` に両計器が並び 3 例がカウント済み（0.375 / 62.5%） |
-| A2 | **複数 issue の DAG 駆動未実証**（`dependsOnIssues` は schema のみ・実行ガードが尊重するか未検証） | 「roadmap→epic→issue」の下流トレースが 1 issue 規模で止まっている | 上流チェーン（FEAT-007） | 依存チェーン（2+ issues）が依存順に自動 drive・未 released 依存のブロックが理由付きで見える |
-| A3 | **複数 spec 並行未実証**（tmux/worktree/コスト衝突の挙動不明） | 同上（規模の欠け） | 上流チェーン（FEAT-008） | 2 spec の issue 群が同時 in-flight で完走 |
-| A4 | **to-spec / to-detail-design skill 本体の grounded 未実走**（④⑤⑥は operator 直接著述で代替） | 上流の著述自体が再現可能な部品になっていない | 運用（M2 の spec 著述を skill 経由で行う） | skill 実走ログ＋lint/sign 通過 |
+| A2 | ~~複数 issue の DAG 駆動未実証~~ **✅ 締結（⑫⑬・ISSUE-0018 released → 実戦）** — guard が依存を尊重し `⧗ ISSUE-0020 blocked: waiting on ISSUE-0019 (contract-drafted)` が live ログに実出現・released 後の turn で自動 pickup を実観測（turn 1→2 で両側） | 下流トレースが 1 issue 規模 → 依存チェーンが秩序立って流れる | 上流チェーン（FEAT-007） | ~~完了条件~~ 達成 |
+| A3 | ~~複数 spec 並行未実証~~ **✅ 締結（⑬・ISSUE-0019/0020/0021 released）** — cap=2 の turn で 2 spec の issue（0020/0021）が同時 in-flight・2-attempt サイクルを並行完走・実測は 0020 自身が建てた計器が store に記録（peak 2 / cap 2 / driven 2） | 規模の欠け → 並行が実測付きで回る | 上流チェーン（FEAT-008） | ~~完了条件~~ 達成 |
+| A4 | ~~skill 本体の grounded 未実走~~ **✅ 締結（⑨〜⑬）** — to-spec は⑨以降の全 spec 著述で実走・to-detail-design は⑬（FEAT-008 の 2 issue 依存分解・check-detail-design 通過）で初実走 | 上流の著述が再現可能な部品に | 運用 | ~~完了条件~~ 達成 |
 | A5 | **generator が claude のみ**（codex/gemini は enum・pluggable 設計のみ。「誰の・何のため」は複数エージェント前提） | 北極星の「誰の・何のため」に対する欠け | 上流チェーン（M4 で必要になってから） | claude 以外で 1 released・`byAgent` が 2 行になる |
 | A6 | **unit_test 以外の grader 未対応**（playwright 等） | 実プロダクト（D1）の AC が unit_test だけでは書けない | 上流チェーン（M4 従属） | unit_test 以外の method で AC 1 件が証拠採点される |
 
@@ -53,7 +59,7 @@
 |---|---|---|---|---|
 | B1 | **grader 較正セット不足**（humanVerdict 5 issue 分・testQuality の揺れが定量化できない） | falsePass 0% が「分母が小さいだけ」の可能性を排除できない | 運用（drive 毎に decide/label で蓄積） | labeled runs ≥20・falsePassTrend が統計的に意味を持つ |
 | B2 | ~~repair 収束率低迷の原因未判別~~ **✅ 主因を閉鎖（⑪・ISSUE-0016 released）**。判別の経緯: ⑩の暫定診断「generator 軽視」を PromptRecord 検分で自己訂正 — persisted 7 件中 5 件は brief 不達（`buildPanelRepairBrief` の同一 criterion 内 finding 落とし・criterionId ≠ finding 同一性）。修正: 合流キーを内容同一性（criterionId＋requiredFix 連言）へ・blocker-first は finding フィルタ化・恒久ガード＋変異 killer 2 本。**closing の run 自身が旧マージの最後の犠牲を実演**（attempt 1 の兄弟 minor が brief から落ち persisted）。**残る観測**: fix 後の repair round で persisted が実際に減るか（R1 の標準在庫 ISSUE-0017 が歴史 8 件を保持 — fix 後データが貯まった時点で decline か再 adopt を判断）。generator 部分実装の側（⑨ adopt/assign の 1 件）は fix 後データで再評価 | 「同じ失敗を二度繰り返さない」の repair 版 → 主因閉鎖・効果測定待ち | 完了（③ adopt 経路） | ~~ガード~~ 済み。次: post-fix repair rounds ≥2 で persisted 減の grounded 観測 |
-| B3 | **「本番配線」盲点の一般化未着手**（⑥ major: inline literal の定数は変異が全テスト生存。pollMs / maxConcurrent / panel 閾値等に同類があり得る） | false-pass の構造的な穴（テストが本番配線を見ていない） | 上流チェーン（FEAT-006: 規約＋rubric＋棚卸し） | 棚卸しで見つけた該当箇所がピン化・testQuality rubric に項目・変異テストで再発検出 |
+| B3 | ~~「本番配線」盲点の一般化未着手~~ **✅ 締結（⑬・ISSUE-0021 released）** — generator 規約（agents/generator.md）＋testQuality rubric に検査項目＋棚卸しピン（DEFAULT_PANEL_MAX_CONCURRENT 単一ソース化・SUBMIT_RETRY export）。matcher は変異検証済み anchor（bare /pin/i が skiPINg にマッチする脆弱性まで閉鎖） | false-pass の構造穴 → 三層で封鎖 | 上流チェーン（FEAT-006） | ~~完了条件~~ 達成 |
 
 ### ③ 改善（操舵: pass@k/pass^k 時間推移 ↑・eval レジストリ成長・修正回数 ↓）
 
@@ -69,7 +75,8 @@
 | ID | 欠け | 星との接続 | 経路 | 完了条件 |
 |---|---|---|---|---|
 | D1 | **実プロダクト未経験**（ハーネスは自分自身と roman bait しか開発していない） | 究極目標「人間は WHAT のみ→動くソフトウェア」の実証が自己言及の外に無い | 上流チェーン（M4）。**何を作るかは人間の WHAT — 未確定（§5）** | ハーネス外の実 target で WHAT→released 一気通貫・A1 計器が HOW 介入ゼロを示す |
-| D2 | **並行時の資源運用**（コスト/tmux/worktree の天井と計器） | 横幅（A2/A3）を安全に踏む前提 | M2 で必要になった分だけ直接TDD | 並行 drive 中の資源計器が status に出る |
+| D2 | ~~並行時の資源運用~~ **✅ 初期分締結（⑬・ISSUE-0020）** — 並行 turn の実測（peak/driven/cap）が store の事実＋status 計器に。コスト天井・多 turn 集計は未着手（必要になった分だけ） | 横幅の安全前提 → 最低限の可視化あり | 直接TDD | 資源計器が status に出る ✅（コスト系は将来） |
+| D3 | **受け入れゲートが suite 全体収集＝issue 横断の payload 漏出**（⑬ grounded 発見: 複数 issue のグレーダを先置きすると、最初に drive された issue の generator が「全グレーダ green」を強制され**他 issue の実装まで背負う** — ISSUE-0019 が 0020/0021 の payload を omnibus 実装した。単一 issue 時代には構造的に不可視だった M2 の新失敗クラス） | 複数 issue 分解の意味（PR サイズ・帰属・並行の意義）が omnibus 化で崩れる | 上流チェーン（issue-scoped acceptance 収集: 駆動中 issue のグレーダだけを RED 対象にする — 例: guard ファイルと issue の対応を宣言し gate が選択収集） | 2+ issue の同時先置きで、各 build が自 issue の AC 差分だけを実装して released になる |
 
 ## 3. マイルストーン（依存順・「測る→広げる→深める→実証する」）
 
@@ -82,9 +89,10 @@
   不要だった規約系の残在庫。B1 の蓄積は継続（labeled 13 runs / 5 issue 分。注: 条件付き承認の
   巡は recordHumanDecision が label を収穫しない — approve 側 run が無いため。蓄積を進めるなら
   `agentops label` での個別付与が要る）。
-- **M2 自律の横幅** = A2＋A3＋A4（D2 従属）。
-  roadmap: **EPIC-03（FEAT-007/008）**。spec 著述を skill 実走で行い A4 を同時に消化する。
-  出口: 「1 issue・1 spec 規模」の但し書きがスコアカードから消える。
+- **M2 自律の横幅** = ~~A2✅＋A3✅＋A4✅（D2 初期分✅）~~ **✅ 出口到達（⑫⑬）**:
+  「1 issue・1 spec 規模」の但し書きがスコアカードから消えた。roadmap: **EPIC-03
+  （FEAT-007✅/008✅）＋EPIC-02 残の FEAT-006✅** — **EPIC-01/02/03 全 8 features released
+  ＝ roadmap 完全 drain**。⑬が暴いた新ギャップ D3（omnibus ゲート）は台帳へ。
 - **M3 評価→改善の縦深** = ~~C1（観測）~~✅→B2（判別・attested データ 1/2 rounds）→次の一手（C4 に波及し得る）。
   **roadmap へはまだ降ろさない**（判別データを見てから WHAT 化 — ⑦の教訓）。
   M1/M2 の drive が repair round を供給するので、M3 は並走する観測として進む。

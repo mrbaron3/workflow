@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑪セッションで更新・最終更新は **ISSUE-0016 panel brief 完全化の締結＝B2（repair 不収束の主因）閉鎖** 後）。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑫⑬セッションで更新・最終更新は **M2「自律の横幅」出口到達＝EPIC-01/02/03 全 8 features released（roadmap 完全 drain）** 後）。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -35,7 +35,7 @@
 
 | 能力 | 状態 | 根拠 / 欠け |
 |---|---|---|
-| ①自律 | 🟢 **上流一気通貫 ×5＋自律軸が計測可能** | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。**④で上流一気通貫を grounded 完走**（ISSUE-0005・attempt 1 収束）、**⑤⑥⑨⑩で五周**（ISSUE-0006/0007/0011/0012）＝チェーンの再現性確認。**自律軸計器（⑨）が真実を語る**: interventionsPerIssue 0.50・intervention-free 50.0%（⑥⑦⑨⑩⑪の条件付き承認 5 件が attested・INTV-0001..0005）— この「品質ピンを人間が持ち込む」型の主因（brief の finding 落とし）は**⑪で閉鎖済み**＝以後の巡で介入減を観測する。欠け: 1 issue・1 課題クラス規模、複数 issue の DAG 駆動・複数 spec 並行は未実証。 |
+| ①自律 | 🟢 **上流一気通貫 ×5＋自律軸が計測可能** | issue を人間が HOW に触れず 実装→採点→パネル→ゲート→release まで駆動。**④で上流一気通貫を grounded 完走**（ISSUE-0005・attempt 1 収束）、**⑤⑥⑨⑩で五周**（ISSUE-0006/0007/0011/0012）＝チェーンの再現性確認。**自律軸計器（⑨）が真実を語る**: interventionsPerIssue 0.50・intervention-free 50.0%（⑥⑦⑨⑩⑪の条件付き承認 5 件が attested・INTV-0001..0005）— この「品質ピンを人間が持ち込む」型の主因（brief の finding 落とし）は**⑪で閉鎖済み**＝以後の巡で介入減を観測する。**⑫⑬で規模の但し書きが消えた**: 依存順 DAG drive 実戦（ISSUE-0020 のブロック→自動 pickup）・2 spec 同時 in-flight（cap=2・実測 peak 2 を store 記録）。欠け: 自律軸の回復観測（B2 閉鎖後の巡で介入減となるか）・D3（omnibus ゲート）。 |
 | ②評価 | 🟢 良好＋escalation 実走済み | 実 tsc/vitest＝証拠採点・7観点パネル・escalate-over-false-pass（**⑤で grounded 初観測**）・humanVerdict 較正・PromptRecord 監査。レビュアの**ミューテーション実証**が定着（⑨ adoptIssue 介入注入・⑩ setStatus 境界 — どちらも「全 suite 生存する変異」を実演して品質 findings の根拠にした）。欠け: false-pass率↓は humanVerdict 蓄積待ち（13 runs / 5 issue 分。**条件付き承認の巡は label が収穫されない** — approve 側 run が無いため・B1 の含意）。 |
 | ③改善 | 🟢 **八巡完結・在庫が循環し診断が証拠で語る** | ADR-0007 配線＋grounded 完走 8 巡: ISSUE-0003 scope.exclude／0004 brief 忠実性／0005 regress 複数 target（④）／0006 legacy backfill（⑤）／0007 liveness（⑥）／0009 finding lineage（⑦）／0011 自律軸計器（⑨）／**0012 提案ライフサイクル（⑩・decline/retire 器官＋ルール dedup・⑧処遇判断の store 適用で R3 沈黙を実測）**。**B2（repair 不収束の主因）は⑪で判別→閉鎖まで完結**: PromptRecord 検分が⑩の暫定診断を反証し（persisted の多数は brief 不達だった）、ISSUE-0016 で brief の finding 落としを内容同一性マージへ修正（九巡目 released）。計器ペア: capture 100%×executed **100%**（19/19 active 全 pass・retired 2 は理由付き報告・unverified **0**）。残る欠け: grader 揺れの較正・B2 効果測定（post-fix repair rounds）・FEAT-006 配線ピン規約。 |
 
@@ -55,6 +55,38 @@
 ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
 
 ## 3. 現在地 — 各セッションの成果（全て `origin/main`）
+
+### ⑫⑬セッション（2026-07-09・M2 出口到達 = 依存順 DAG→並行 drive→roadmap 完全 drain）
+
+FEAT-007/008/006 を三連で released し、**M2「自律の横幅」出口＋EPIC-01/02/03 の全 8 features
+drain** に到達。上流著述は to-spec＋**to-detail-design 初実走**（A4 締結）:
+
+- **FEAT-007（ISSUE-0018・⑫）**: guard の依存尊重＋`blockedByDependencies`（never-silent）・
+  mock 経路のチェーン依存順完走（適格性の都度再評価）・spawn 衛生は既存 lint 済みと判明し
+  後方互換 AC 化（**グレーダの baseline RED/GREEN 検査が三度目の誤診を捕捉** — AC ブロックを
+  変えず散文のみ訂正・再署名）。ゲート条件 2 ピン（multi-dep 報告の slice 変異・opt-in
+  フィルタ変異 — 全 377 生存を実証されどちらも kill 確認）。
+- **FEAT-008 の分解が FEAT-007 の実戦になった**: 2 issue 依存チェーン（0019 dispatch ← 0020
+  計器）を spawn → turn 1 のログに `⧗ ISSUE-0020 blocked: waiting on ISSUE-0019
+  (contract-drafted)` が実出現 → 0019 released 後の turn 2 で自動 pickup（A2 の両側を実測）。
+- **grounded 新発見 = D3（omnibus ゲート）**: ACCEPT_HARNESS ゲートは suite 全体を収集する
+  ため、3 issue 分のグレーダ先置きが **0019 の generator に 0020/0021 の payload まで実装を
+  強制**した（単一 issue 時代に不可視だった M2 の新失敗クラス）。build 自体は健全（399 green・
+  scope 内）のため omnibus ごと approve し、ギャップは NORTH_STAR_PLAN D3 へ（issue-scoped
+  acceptance 収集が対策候補）。
+- **turn 2 = A3/M2 出口の観測**: cap=2 で 0020＋0021（**2 spec**）が同時 in-flight・並行
+  2-attempt 完走・実測（peak 2 / cap 2 / driven 2）を **0020 自身が建てた計器が store に記録**。
+  0021 の generator は scope 制約（agents/ 非含有）を正しく認識し規約文の移設を owner へ
+  註記 — 締結でこちらが agents/generator.md へ移設。
+- **条件付き承認 ×3（7〜9 例目・全ピン変異 kill 確認）**: sampleKey 単射ピン・計器 required 型
+  （⑨規約 — 今回の codeQuality は optional を見逃し = B1 較正ノート）・issuesDriven 母集団ピン・
+  turnRecords append-only ピン・rubric matcher の anchor 強化（bare /pin/i が skiPINg にマッチ
+  する脆弱性など、レビュアが「protected は owner の責務」と正しく切り分けて指摘）。
+- metrics（正直）: released 10→**13**・passAt1 0.21（品質 minor 残存を非収束と数える厳格さ
+  維持）・intervention-free 35.7%（9 件 — 主因 B2 は⑪閉鎖済み・以後の巡で減少を観測）・
+  executedRate 100%・failing/unverified 0・**404 green skip ゼロ**。
+- **M4 の着手条件がほぼ成立**（M2✅・drain✅・M3 は効果測定のみ残） — **次の判断点は M4 の
+  テーマ確定（人間の WHAT）**。
 
 ### ⑪セッション（2026-07-09・B2 閉鎖 = repair 不収束の主因は brief の finding 落としだった）
 
@@ -365,12 +397,17 @@ sandbox 束縛の2 task は skip 報告）。
   C2/C3 締結・⑧処遇判断の store 適用済み（R3 沈黙・unverified 0 実測）・B2 判別データ 2/2 完了。
 - ~~B2 の WHAT 確定~~ **✅ 完了（⑪・ISSUE-0016 released）** — panel brief の finding 落としを
   内容同一性マージで閉鎖。効果測定（persisted 減）は次の repair round から。
+- ~~M2 自律の横幅／FEAT-006~~ **✅ 完了（⑫⑬）** — EPIC-01/02/03 全 8 features released・
+  roadmap 完全 drain・M2 出口到達（詳細は §3 ⑫⑬）。
 - **次の一手（候補・優先順は人間判断）**:
-  1. **M2 自律の横幅**（EPIC-03・FEAT-007 依存順 DAG／FEAT-008 複数 spec 並行＋skill 実走）—
-     B2 閉鎖により repair 品質の土台が整い、drive 本数を増やす横幅拡大の前提が立った。
-     M2 の複数 drive は B2 効果測定（post-fix repair rounds）のデータ供給源にもなる。
-  2. **FEAT-006 配線ピン規約**（EPIC-02 残・B3）: spec stub spawn 済み
-     `docs/specs/production-wiring-pin-convention`（未著述・非追跡）。
+  1. **M4 のテーマ確定（人間の WHAT・最大の判断点）** — 着手条件「ハーネス一通り完成」が
+     ほぼ成立（M2✅・drain✅・M3 は B2 効果測定の観測のみ残）。NORTH_STAR_PLAN §5 の選定基準
+     参照。確定後: 外部 target 用の roadmap EPIC を降ろし、GitHub ゲート（config.gate.backend=
+     'github'・未 grounded）の初実走もここで。
+  2. **D3（omnibus ゲート）の WHAT 化** — issue-scoped acceptance 収集。複数 issue 先置きの
+     健全性は M4 の複数 issue 開発の前提になり得る。
+  3. **B2 効果測定の継続観測**（⑫⑬の repair round では persisted 減の初期傾向: ⑫ 1/3・
+     ⑬ 0020 で lineage:new 中心 — もう数巡で ISSUE-0017 の処遇判断）。
 - **M4（実プロダクト）は後回し確定（⑩・2026-07-09 人間判断）**: ハーネス「一通り完成」
   （≒ M2＋M3 landed）まで着手しない・テーマは着手時に決める。ただし**M4 はハーネスを凍結せず**、
   実プロダクト drive が暴くハーネスの欠けは同じ ③ loop で直す（双方向）。正本は NORTH_STAR_PLAN §3 M4・§5。
@@ -378,7 +415,7 @@ sandbox 束縛の2 task は skip 報告）。
 ## 5. 動かし方（コマンド）
 
 ```bash
-# 決定論の確認（361 green・skip ゼロ）
+# 決定論の確認（404 green・skip ゼロ）
 npm test && npm run typecheck
 npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
 
@@ -460,6 +497,6 @@ npm run harness -- retire EVAL-TASK-... --reason <text>
 - `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）・`ADR-0007`（③配線 I1-I4・未吸収＝ビュー吸収が残タスク）。
 - `docs/specs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
 - 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,adopt,assign,improve,regression,repair,contract-draft}.ts`・`src/planning/planning-tree.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
-- テスト: `test/{improvement-loop,adopt,assign,metrics,intervention,proposal-lifecycle,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 361・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の9ファイルは昇格済み（active-liveness / finding-lineage / intervention-accounting / proposal-lifecycle / panel-brief-completeness には⑥⑦⑨⑩⑪のゲート条件ピンも同居）。
+- テスト: `test/{improvement-loop,adopt,assign,metrics,intervention,proposal-lifecycle,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 404・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の12ファイル全て昇格済み（ゲート条件ピンは各ガードに同居・⑥⑦⑨〜⑬）。**D3 注意（⑬）: ゲートは suite 全体収集なので、複数 issue のグレーダを同時に先置きすると最初の drive が omnibus 実装を強制される** — issue-scoped 収集が WHAT 候補（NORTH_STAR_PLAN D3）。
 - 共有語彙: `src/domain/eval-task.ts`（⑩新設）— active/retired 述語（`isRetired`/`activeEvalTasks`）と EVAL-TASK id 規約（`buildTaskId`/`parseTaskId`）の単一の家。registry を読む/書くコードはここを通す（重複綴りを再導入しない）。
 - [execution-layer.md](execution-layer.md) — execution 層の grounded 実験の詳細ログ（発火/収束の生データ・過去の不発記録）。**継続に必須ではない**深掘りアーカイブ。
