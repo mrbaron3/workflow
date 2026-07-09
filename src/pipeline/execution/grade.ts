@@ -90,11 +90,14 @@ function parseVitest(json: unknown): VitestReport {
     }
   }
   const passed = assertions.filter((a) => a.passed).length;
+  // Dormancy is not failure (gate pin, ⑭ release closure): a never-ran assertion neither
+  // fails the fallback verdict nor lands in failedNames — the `vitest failures:` note must
+  // name real reds only, never guards issue-scoped activation left dormant.
   return {
-    success: j.success ?? assertions.every((a) => a.passed),
+    success: j.success ?? assertions.every((a) => a.passed || a.skipped),
     total: assertions.length,
     passed,
-    failedNames: assertions.filter((a) => !a.passed).map((a) => a.name),
+    failedNames: assertions.filter((a) => !a.passed && !a.skipped).map((a) => a.name),
     assertions,
   };
 }
@@ -116,6 +119,13 @@ export interface SatisfiedResult {
   satisfied: Record<string, boolean>;
   /** unit_test ACs no assertion carries — surfaced in notes/findings, never silently passed. */
   untaggedUnitTestAcs: string[];
+  /**
+   * ACs whose EVERY matching assertion is dormant (never ran): the driven issue's own
+   * guard failed to activate — e.g. a pre-placed guard still gating on the legacy
+   * full-activation spelling under scoped grading. Unsatisfied AND named in notes,
+   * so the red is diagnosable instead of silent (ARCH-execution-015).
+   */
+  dormantAcs: string[];
 }
 
 /** An assertion title explicitly scoped to SOME issue (`ISSUE-XXXX/AC-N …`); captures the issue id. */
@@ -156,6 +166,7 @@ export function assertionsForCriterion(
 export function satisfiedFromReport(contract: IssueContract, report: VitestReport | null, issueId?: string | null): SatisfiedResult {
   const satisfied: Record<string, boolean> = {};
   const untaggedUnitTestAcs: string[] = [];
+  const dormantAcs: string[] = [];
   for (const ac of contract.acceptanceCriteria) {
     if (!report) {
       satisfied[ac.id] = true;
@@ -164,6 +175,9 @@ export function satisfiedFromReport(contract: IssueContract, report: VitestRepor
     const matched = assertionsForCriterion(report.assertions, ac.id, issueId);
     if (matched.length > 0) {
       satisfied[ac.id] = matched.every((a) => a.passed);
+      // every matching assertion never ran → the own guard did not activate: keep the
+      // AC unsatisfied but NAME the gap (a bare red with no reason is a silent trap).
+      if (matched.every((a) => a.skipped)) dormantAcs.push(ac.id);
     } else if (ac.verification.method === 'unit_test') {
       satisfied[ac.id] = false;
       untaggedUnitTestAcs.push(ac.id);
@@ -171,7 +185,7 @@ export function satisfiedFromReport(contract: IssueContract, report: VitestRepor
       satisfied[ac.id] = report.success;
     }
   }
-  return { satisfied, untaggedUnitTestAcs };
+  return { satisfied, untaggedUnitTestAcs, dormantAcs };
 }
 
 /**
@@ -222,12 +236,17 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
     ...opts.changed.filter((f) => (!inScope(f) || excluded(f)) && !protectedHit.includes(f)),
   ];
 
-  const { satisfied, untaggedUnitTestAcs } = satisfiedFromReport(opts.contract, report, opts.issueId);
+  const { satisfied, untaggedUnitTestAcs, dormantAcs } = satisfiedFromReport(opts.contract, report, opts.issueId);
 
+  // Dormant assertions never ran — count them so the pass note reads honestly under
+  // scoped grading (12/40 with 28 dormant is a healthy build, not a mostly-failing one).
+  const dormantCount = report ? report.assertions.filter((a) => a.skipped).length : 0;
   const notes = [
     '[grounded] real graders ran against the worktree.',
     g.typecheck ? `typecheck: ${typecheckPasses ? 'pass' : 'FAIL'}` : 'typecheck: (skipped)',
-    report ? `unit_tests: ${unitTestsPass ? 'pass' : 'FAIL'} (${report.passed}/${report.total} assertions)` : 'unit_tests: (skipped)',
+    report
+      ? `unit_tests: ${unitTestsPass ? 'pass' : 'FAIL'} (${report.passed}/${report.total} assertions${dormantCount ? `, ${dormantCount} dormant` : ''})`
+      : 'unit_tests: (skipped)',
     'quality.* are NOT grounded (no rubric grader) — only functional gates are real.',
   ];
   if (report && !report.success) notes.push(`vitest failures: ${report.failedNames.join('; ')}`);
@@ -236,6 +255,11 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
   if (report && opts.issueId) notes.push(...dormantGuardNotes(report.assertions, opts.issueId));
   if (untaggedUnitTestAcs.length) {
     notes.push(`TDD gate: no assertion carries the AC id(s) ${untaggedUnitTestAcs.join(', ')} — write tests whose titles include them (untagged = unsatisfied).`);
+  }
+  if (dormantAcs.length) {
+    notes.push(
+      `activation gap: AC ${dormantAcs.join(', ')} matched only dormant assertions — the driven issue's own pre-placed guard never activated (check its acceptsIssue declaration); unsatisfied, never silent.`,
+    );
   }
 
   return {
