@@ -83,6 +83,7 @@
 | D1 | **実プロダクト未経験**（ハーネスは自分自身と roman bait しか開発していない） | 究極目標「人間は WHAT のみ→動くソフトウェア」の実証が自己言及の外に無い | 上流チェーン（M4）。**何を作るかは人間の WHAT — 未確定（§5）** | ハーネス外の実 target で WHAT→released 一気通貫・A1 計器が HOW 介入ゼロを示す |
 | D2 | ~~並行時の資源運用~~ **✅ 初期分締結（⑬・ISSUE-0020）** — 並行 turn の実測（peak/driven/cap）が store の事実＋status 計器に。コスト天井・多 turn 集計は未着手（必要になった分だけ） | 横幅の安全前提 → 最低限の可視化あり | 直接TDD | 資源計器が status に出る ✅（コスト系は将来） |
 | D3 | ~~受け入れゲートが suite 全体収集＝issue 横断の payload 漏出~~ **✅ 実装を締結（⑭・FEAT-009/ISSUE-0022 released）** — issue-scoped acceptance 収集: 活性化の単一の家 `accept.ts`（`acceptsIssue`/`scopedAcceptEnv`・帰属は guard の明示宣言・describe 粒度）＋grade の駆動 issue env 注入＋非活性の理由付き列挙（never-silent）＋全活性/恒久昇格の不変。self-drive 設定から suite 全体活性 prefix を撤去（omnibus の入口を閉鎖）。条件付き承認 10 例目（休眠≠失敗の報告整合・own-all-dormant の LOUD 化・衝突優先順位ピン — 全変異 kill）。**残る観測**: 台帳の完了条件そのもの＝2+ issue の同時先置きで各 build が自 issue の AC 差分だけで released になる grounded 実測（次の複数 issue 開発、自然には M4 で起きる） | 複数 issue 分解の意味（PR サイズ・帰属・並行の意義）が omnibus 化で崩れる → 構造は閉鎖・実測待ち | 完了（上流チェーン・EPIC-04） | 実装✅。次: 2+ issue 同時先置きの grounded 観測で本行を完全に畳む |
+| D4 | **外部 target の WHAT 著述が harness repo 固定**（⑭で M4 の repo 関係整理中に特定: spawn-specs の root が CLI 未露出・sign の git 操作が harness cwd 固定。実行半分（worktree/grader/panel/回帰の跨 target）は grounded 済みだが、著述半分（roadmap→spawn→署名）は自分の repo にしか効かない） | M4 の repo 分離モデル（⑭人間確定: テーマ repo が自分の WHAT — roadmap/requirements/_system — を所有し自己記述的であること）が上流チェーンの入口で成立しない | 上流チェーン（target-rooted authoring: spawn root の CLI 露出・sign/lint/pre-commit の target git 対応。ライブラリ層 specsRoot は既在） | 外部 repo の docs/requirements/<slug> を spawn→著述→署名→spawn-issues→contract→drive まで一気通貫し、署名 blob がテーマ repo の git に pin される |
 
 ## 3. マイルストーン（依存順・「測る→広げる→深める→実証する」）
 
@@ -139,6 +140,17 @@ R3 沈黙・executedRate 100%・unverified 0。dedup がルール同一性化さ
   選定基準の提案（着手時の参考・拘束ではない）: (i) AC が unit_test 中心で書ける規模から
   始める（A6 を最初から要求しない）、(ii) 失敗しても実害の無い自前プロダクト、
   (iii) 複数 issue に自然に割れる規模（M2 の成果を使う）。
+  **仮候補（⑭・2026-07-09・未確定）**: 「YouTube の動画内容・コメント投稿時間・いいね数等を
+  分析し、作るべきチャンネルの方向性を決めるツール」— 選定基準への適合は高い（コアを純関数化＋
+  YouTube Data API を fixture seam 化すれば unit_test 中心・実害なし・API/取込/分析/提案/出力に
+  自然分解）。**本決定は着手時**。
+- **M4 の repo 関係モデル ✅ 確定（⑭・2026-07-09 人間確定）**: workflow repo＝**開発組織**
+  （機構・store・組織自身の WHAT）／テーマ repo＝**開発対象**（コード・テスト・受け入れガード・
+  **自分の WHAT**: NORTH_STAR/roadmap/requirements/_system — DOC_TAXONOMY の理想ツリーを
+  テーマ repo に適用）。接点は 2 つ: `config.target`（repo/graders/protectedPaths/systemDir）と
+  **人間ゲート＝テーマ repo の GitHub PR**（backend='github'・M4 で初 grounded）。M4 は
+  ハーネスを凍結しない（テーマ drive が暴く欠けは同じ loop でこの repo の issue に）。
+  前提ギャップは D4（target-rooted authoring）— M4 準備の最初のハーネス作業。
 - ~~**M1 の介入計器の意味論**~~ **✅ 確定（⑨）**: spec
   `docs/specs/autonomy-axis-instruments-human-how-intervention-accounting` が正本 —
   判断点（adopt/assign/sign/decide/label）は記録語彙に存在せず数えられない。数えるのは

@@ -451,9 +451,15 @@ sandbox 束縛の2 task は skip 報告）。
   issue-scoped acceptance 収集（accept.ts 単一の家・scoped env 注入・非活性の理由付き列挙・
   全活性/恒久昇格不変）。残るは完了条件の grounded 実測（2+ issue 同時先置き — M4 で自然に観測）。
 - **次の一手（候補・優先順は人間判断）**:
+  0. **D4（target-rooted authoring）の WHAT 化 = M4 準備の最初のハーネス作業** — ⑭で M4 の
+     repo 関係モデルが人間確定（workflow=開発組織／テーマ repo=開発対象で**自分の WHAT を所有**・
+     接点は config.target と GitHub PR gate — 正本 NORTH_STAR_PLAN §5）。著述半分（spawn root
+     未露出・sign の git が harness cwd 固定）を外部 repo 対応に。テーマの仮候補（YouTube 分析
+     ツール）も §5 に記録済み — **本決定は着手時**。
   1. **M4 のテーマ確定（人間の WHAT・最大の判断点）** — 着手条件「ハーネス一通り完成」が
      ほぼ成立（M2✅・drain✅=EPIC-01..04 全 9 features・M3 は B2 効果測定の観測のみ残）。
-     NORTH_STAR_PLAN §5 の選定基準参照。確定後: 外部 target 用の roadmap EPIC を降ろし、
+     NORTH_STAR_PLAN §5 の選定基準参照。確定後: テーマ repo を scaffold（Development 配下・
+     DOC_TAXONOMY 理想ツリー）し、外部 target 用の roadmap を**テーマ repo に**降ろし、
      GitHub ゲート（config.gate.backend='github'・未 grounded）の初実走もここで。
      複数 issue の先置きが D3 完了条件の観測を兼ねる。
   2. **B2 効果測定の継続観測**（⑫⑬の repair round では persisted 減の初期傾向: ⑫ 1/3・
