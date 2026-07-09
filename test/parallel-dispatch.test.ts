@@ -259,8 +259,10 @@ describe('per-turn concurrency instruments (AC-PAR-003)', () => {
     mkIssue(store, 'ISSUE-B');
 
     // Cap 4 but only 2 issues can ever be in flight: the achievable concurrency is
-    // strictly below the cap, so a recorder that echoes the cap (or min(cap, queue))
-    // instead of measuring is caught here.
+    // strictly below the cap, so a recorder that echoes the cap instead of measuring is
+    // caught here. (min(cap, queue) is indistinguishable from the measurement at this
+    // eager-dispatch seam by construction — all min(cap, n) workers go in flight before
+    // any completes — so no test at this seam can kill that variant.)
     const { worker, peaks } = recordingWorker([]);
     await runLoopLive(store, cfgWithCap(4), store.root, { driveIssue: worker }, () => {});
 

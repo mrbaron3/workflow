@@ -9,9 +9,16 @@
  * side), and the inventoried existing offenders (panel cap default double-encoded at
  * config + callsite fallback; tmux submit retry literals).
  *
- * Red at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). After
- * the build is human-approved and released, the skipIf is dropped and this file stays in
- * protectedPaths as the permanent regression guard.
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN,
+ * collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). The build was human-approved and
+ * released (2026-07-09, ⑬; driven CONCURRENTLY with ISSUE-0020 — the A3/M2-exit turn).
+ * skipIf dropped: permanent guard, protectedPaths.
+ *
+ * Gate-condition pins (⑬, reviewer-flagged as harness-owner follow-ups since this file is
+ * protected): the matchers are anchored to text unique to the wiring sections — a bare
+ * /pin/i was tautological (it matches 'skiPINg' in the TDD section) and
+ * /mutation|mutant|survive/i was satisfied by rubric boilerplate, so deleting the actual
+ * mandate/criterion stayed green. Mutation-verified anchors below.
  *
  * Seams this file pins (⑥'s REVIEW_LIVENESS precedent — named exported constants):
  *   - config exports the panel-concurrency default as a single source (the callsite's
@@ -37,7 +44,7 @@ const contract: IssueContract = {
   redLines: [],
 };
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('production-wiring pin convention (ISSUE-0021)', () => {
+describe('production-wiring pin convention (ISSUE-0021)', () => {
   it('ISSUE-0021/AC-PIN-001 the generator role prompt mandates exported-constant wiring with pin tests for operational constants', () => {
     const input: GeneratorSessionInput = {
       issue: Issue.parse({
@@ -50,13 +57,13 @@ describe.skipIf(!process.env.ACCEPT_HARNESS)('production-wiring pin convention (
     const prompt = buildGeneratorPrompt(input, target);
     expect(prompt).toMatch(/inline (literal|constant)/i); // the forbidden shape is named
     expect(prompt).toMatch(/export/i); // the required shape: an exported constant…
-    expect(prompt).toMatch(/pin/i); // …with a test pinning its value/property
+    expect(prompt).toMatch(/test that pins its value/i); // …with a pin test (anchored: bare /pin/i matched 'skipping')
   });
 
   it('ISSUE-0021/AC-PIN-002 the testQuality rubric inspects for inline-constant wiring whose mutation survives the suite', () => {
     const prompt = perspectivePrompt('testQuality', contract, '.agentops/eval/testQuality');
     expect(prompt).toMatch(/inline (literal|constant)/i);
-    expect(prompt).toMatch(/mutation|mutant|survive/i);
+    expect(prompt).toMatch(/would survive the whole suite/i); // anchored to the inspection bullet, not rubric boilerplate
   });
 
   it('ISSUE-0021/AC-PIN-003 the inventoried constants are single-source exported pins with today\'s values (behavior unchanged)', () => {

@@ -6,9 +6,18 @@
  * the first dependency-chained decomposition, so DRIVING it is itself the grounded
  * observation of FEAT-007.
  *
- * Red at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). After
- * each build is human-approved and released, the skipIf is dropped and this file stays in
- * protectedPaths as the permanent regression guard.
+ * This began as the env-gated acceptance grader for the drives — red at baseline BY
+ * DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). Both builds were
+ * human-approved and released (2026-07-09, ⑫⑬): 0019 in turn 1 (0020 visibly
+ * dep-blocked — FEAT-007's grounded run), 0020 in turn 2 CONCURRENTLY with ISSUE-0021
+ * under cap 2 — the A3/M2-exit observation, recorded by the very instruments 0020 built.
+ * skipIf dropped: permanent guard, protectedPaths.
+ *
+ * Gate-condition pins (⑬, both mutation-verified by the release panel):
+ *   - issuesDriven counts the DRIVEN queue, not the store population (`issuesDriven:
+ *     store.db.issues.length` survived 402 tests — every fixture had queue == store);
+ *   - turnRecords history is append-only (`this.db.turnRecords = [r]` survived — nothing
+ *     read past the latest record).
  *
  * Seams this file pins (harness-owned WHAT confirmation):
  *   - runLoopLive accepts an ADDITIVE injectable issue-driver (LiveOptions.driveIssue) so
@@ -95,7 +104,7 @@ type LiveWithDriver = (
 const cfgWithCap = (cap: number): HarnessConfig =>
   ({ ...DEFAULT_CONFIG, generator: 'claude', maxConcurrentIssues: cap }) as HarnessConfig;
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('parallel dispatch under a finite cap (ISSUE-0019 / ISSUE-0020)', () => {
+describe('parallel dispatch under a finite cap (ISSUE-0019 / ISSUE-0020)', () => {
   it('ISSUE-0019/AC-PAR-001 gate pin: the workspace/session identity is injective over distinct (issue, sample) pairs — concurrent issues cannot collide', () => {
     // The release panel's major: uniqueness was asserted nowhere — the injected seam
     // replaces the real driver, so the REAL identifier derivation had no test.
@@ -163,19 +172,30 @@ describe.skipIf(!process.env.ACCEPT_HARNESS)('parallel dispatch under a finite c
     const store = freshStore();
     mkIssue(store, 'ISSUE-A');
     mkIssue(store, 'ISSUE-B');
+    // Gate pin (⑬): the store population ⊋ the driven queue — a dep-blocked issue exists,
+    // so `issuesDriven: store.db.issues.length` (survived 402 tests) reads 3, not 2.
+    mkIssue(store, 'ISSUE-D', { deps: ['ISSUE-A'] });
 
     // Unobserved first: no parallel turn recorded yet → null, never 0 or 1.
     const before = computeMetrics(store) as unknown as Record<string, unknown>;
     expect(before.lastTurnPeakConcurrency).toBeNull();
 
-    const { worker } = recordingWorker([]);
+    const events: { id: string; type: 'start' | 'end' }[] = [];
+    const { worker } = recordingWorker(events);
     await (runLoopLive as unknown as LiveWithDriver)(store, cfgWithCap(2), store.root, { driveIssue: worker }, () => {});
+    expect(events.map((e) => e.id)).not.toContain('ISSUE-D'); // blocked, not driven
 
     // The facts persist in the STORE (ADR-0001) — a re-opened store still knows them.
     const reopened = new Store(store.root);
     const m = computeMetrics(reopened) as unknown as Record<string, unknown>;
     expect(m.lastTurnPeakConcurrency).toBe(2);
-    expect(m.lastTurnIssuesDriven).toBe(2);
+    expect(m.lastTurnIssuesDriven).toBe(2); // the DRIVEN queue, never the store population
     expect(m.lastTurnCap).toBe(2);
+
+    // Gate pin (⑬): history is append-only — a second turn ADDS a record; the first survives.
+    const { worker: worker2 } = recordingWorker([]);
+    await (runLoopLive as unknown as LiveWithDriver)(store, cfgWithCap(1), store.root, { driveIssue: worker2 }, () => {});
+    const twice = new Store(store.root) as unknown as { db: { turnRecords: unknown[] } };
+    expect(twice.db.turnRecords.length).toBe(2); // `turnRecords = [r]` (mutant) would read 1
   });
 });

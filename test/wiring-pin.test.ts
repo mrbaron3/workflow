@@ -48,7 +48,9 @@ describe('production-wiring pin convention (AC-PIN-001..003)', () => {
   it('ISSUE-0021/AC-PIN-002 the testQuality rubric hunts inline-constant wiring whose mutation would survive the suite', () => {
     const prompt = perspectivePrompt('testQuality', contract, '.agentops/eval/testQuality');
     expect(prompt).toMatch(/inline (literal|constant)/i);
-    expect(prompt).toMatch(/mutation|mutant|survive/i);
+    // Anchored to the inspection bullet itself — /mutation|mutant|survive/i was satisfied
+    // by rubric boilerplate, so deleting the criterion stayed green (⑬ finding).
+    expect(prompt).toMatch(/would survive the whole suite/i);
   });
 
   it('ISSUE-0021/AC-PIN-003 the inventoried constants are single-source exported pins with today\'s values (behavior unchanged)', () => {

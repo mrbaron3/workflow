@@ -36,6 +36,14 @@ Work RED → GREEN → REFACTOR, per acceptance criterion:
    skipping a case) to get green — an independent test-quality reviewer reads your tests and
    a weakened test is treated as a failure, not a fix.
 
+## Wiring convention — operational constants (mandatory)
+
+Never wire an operational constant (a timeout, retry count, concurrency cap, threshold)
+as an inline literal at its callsite: an inline constant lets a value-breaking mutation
+survive the whole suite. Export it as a named constant from the module that owns it, wire
+every callsite to that single source, and add a test that pins its value (or the property
+it must satisfy, e.g. finite and positive).
+
 ## Output (contract)
 
 Edit files directly in the working tree — do NOT self-report a result. The harness grades your
