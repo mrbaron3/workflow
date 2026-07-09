@@ -1,0 +1,30 @@
+# 本番配線ピン規約 — 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - ARCH-evaluation-006
+  - LANG-evaluation-008
+
+verifications:
+  AC-PIN-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "generator 役割プロンプトの組み立て結果に、運用定数の inline literal 配線禁止と exported 定数＋ピンテストの義務が含まれる"
+
+  AC-PIN-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "testQuality レビュアプロンプトの組み立て結果に、inline 定数配線の変異生存を検査する rubric 項目が含まれる"
+
+  AC-PIN-003:
+    severity: major
+    method: unit_test
+    expected:
+      - "panel 並行上限の既定が単一ソース化され（callsite fallback の二重符号化解消）、その値を pin するテストが在る"
+      - "tmux submit の retry 回数・settle 間隔が exported 定数になり、有限性/値を pin するテストが在る"
+      - "既定値は従来と同一（挙動不変）"

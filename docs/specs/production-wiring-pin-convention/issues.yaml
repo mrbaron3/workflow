@@ -1,0 +1,17 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO・skill 実走で著述）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+issues:
+  - key: ISSUE-PIN-001
+    title: Establish the production-wiring pin convention and pin the inventoried constants
+    area: harness
+    type: harness
+    coversAcIds: [AC-PIN-001, AC-PIN-002, AC-PIN-003]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnIssues: []
+    dependsOnSystem: [ARCH-evaluation-006, LANG-evaluation-008]
+    implementationNotes:
+      - "プロンプト規約: generator 役割プロンプト（src/agents/prompts.ts）へ TDD プロトコルと同格の節を追加。testQuality rubric（perspective 側プロンプト）へ検査項目を追加。どちらも既存のプロンプト内容テスト（tdd-enforcement 型）と同じ形で pin。"
+      - "棚卸しピン: (a) perspective-session.ts の `config.panel?.maxConcurrent ?? 4` — fallback 4 を config 既定（config.ts の DEFAULT）と単一ソース化（例: DEFAULT_PANEL_MAX_CONCURRENT を config.ts が export し双方が参照）。(b) tmux.ts submitToPane の `attempts ?? 4` / `settleMs ?? 1500` — exported 定数化（例: SUBMIT_RETRY）＋有限性/値の pin テスト。既定値は不変。"
+      - "cols/rows（tmux ウィンドウ寸法）は表示専用で挙動を決めないため対象外（棚卸しの except として記録）。"

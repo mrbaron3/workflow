@@ -1,0 +1,33 @@
+# 複数 spec 並行実行（grounded skill 著述つき）— 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - ARCH-execution-014
+  - ARCH-execution-015
+  - DOM-execution-006
+  - DOM-execution-007
+
+verifications:
+  AC-PAR-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "上限 2 以上・複数 pollable の live turn で、注入 worker の記録に少なくとも 2 issue の実行区間の重なりが残る"
+      - "同時実行数は常に上限以下で、超過分は待機して順に実行され、queue の全 issue が最終的に drive される"
+      - "上限 1 では従来の逐次と同一の順序・結果（後方互換）"
+
+  AC-PAR-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "未 released 依存を持つ issue は turn の同時 in-flight 集合に一度も入らず、ブロック報告は従来どおり現れる"
+
+  AC-PAR-003:
+    severity: major
+    method: unit_test
+    expected:
+      - "並行 turn 後の status 機械可読出力に、その turn の同時実行実測最大値・駆動 issue 数・上限設定値が数値で並ぶ"
+      - "並行 turn が無い store では未観測として null（0 や 1 と混同しない）"

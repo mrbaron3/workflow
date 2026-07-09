@@ -1,0 +1,32 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO・skill 実走で著述）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+# 依存チェーン（2 issues）: 後続の drive 自体が FEAT-007（依存順 drive）の grounded 観測を兼ねる。
+issues:
+  - key: ISSUE-PAR-001
+    title: Dispatch multiple pollable issues concurrently under a finite cap
+    area: harness
+    type: harness
+    coversAcIds: [AC-PAR-001, AC-PAR-002]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnIssues: []
+    dependsOnSystem: [ARCH-execution-014, ARCH-execution-015, DOM-execution-006]
+    implementationNotes:
+      - "seam: runLoopLive の issue 駆動を注入可能に（LiveOptions へ additive・例: driveIssue?(issue) => Promise<DriveResult>）— 実 tmux なしで並行スケジューリングの全分岐（重なり・上限・待機・依存除外）を決定論検証するため。既定は現行 driveIssueLive。"
+      - "スケジューラは純関数/ユーティリティとして切り出し可（例: 上限付き並行 map・依存を満たした issue だけを都度 pollable から補充）。上限は config へ additive（有限既定・例 2）。上限 1 は現行の逐次 for-await と同一順序・同一結果。"
+      - "worktree（issue-<id>-s<n>）と tmux window 名（ao-issue-…）は既に issue+sample 単位で一意 — 変えない（衝突ゼロの下地）。ブロック報告（blockedByDependencies / formatBlockedLine）は従来どおり turn 冒頭で。"
+  - key: ISSUE-PAR-002
+    title: Record per-turn concurrency facts and expose resource instruments
+    area: harness
+    type: harness
+    coversAcIds: [AC-PAR-003]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnIssues: [ISSUE-PAR-001]
+    dependsOnSystem: [ARCH-evaluation-006, ARCH-evaluation-008]
+    implementationNotes:
+      - "並行 turn の実測（同時実行の最大値・駆動 issue 数・上限設定値）を store の事実として残す（additive schema・例: turnRuns 配列 or 既存レコードへの追記）。ログにだけある状態を作らない（ADR-0001）。"
+      - "metrics/status へ additive: 並行資源計器（直近 turn の実測最大同時数・上限）。並行 turn 未観測の store では null（0/1 と混同しない）。dashboard 併記は任意。"
+      - "ISSUE-PAR-001 の scheduler が実測を返す/記録する seam を前提にする（依存の理由）。"
