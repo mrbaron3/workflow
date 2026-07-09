@@ -12,9 +12,17 @@
  * itself. criterionId is NOT finding identity — ISSUE-0009 established that for lineage;
  * this closes the same defect class in the repair merge.
  *
- * Red at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). After the
- * build is human-approved and released, the skipIf is dropped and this file stays in
- * protectedPaths as the permanent regression guard.
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN,
+ * collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). The build was human-approved and
+ * released (2026-07-09, one repair round). Self-referential coda: attempt 1's two
+ * testQuality findings shared a criterion, and the OLD merge — the very defect under
+ * repair — dropped the minor from the brief (\"repair (1 fix)\"), making it the bug's last
+ * victim; the stale-title minor was carried in as the release condition (INTV-0005).
+ * skipIf dropped: permanent regression guard, protectedPaths.
+ *
+ * Gate pin (⑪, from attempt 1's mutation-verified major): the identity key must be the
+ * CONJUNCTION of criterionId and requiredFix — a key of requiredFix alone merges
+ * different criteria that happen to share a fix list. Pinned below.
  *
  * Semantics this file pins:
  *   - Every distinct panel finding is forwarded with its FULL requiredFix (severity-ordered);
@@ -42,7 +50,16 @@ function finding(criterionId: string, severity: Finding['severity'], requiredFix
   return Finding.parse({ criterionId, severity, expected: 'e', observed, requiredFix });
 }
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('panel repair brief carries every finding (ISSUE-0016)', () => {
+describe('panel repair brief carries every finding (ISSUE-0016)', () => {
+  it('ISSUE-0016/AC-BRIEF-003 gate pin: different criteria sharing a requiredFix list never merge (identity is the conjunction)', () => {
+    const panel = buildPanelRepairBrief([
+      run('EVAL-1', 'codeQuality', [finding('AC-P', 'major', ['run the formatter'])]),
+      run('EVAL-2', 'testQuality', [finding('AC-Q', 'major', ['run the formatter'])]),
+    ]);
+    // A requiredFix-only key would collapse these into one group; both criteria must survive.
+    expect(panel.instructions.map((i) => i.criterionId).sort()).toEqual(['AC-P', 'AC-Q']);
+  });
+
   it('ISSUE-0016/AC-BRIEF-001 same-criterion sibling findings from ONE lens all reach the brief — the ⑩ shape (3 distinct AC-LIFE-002 findings) loses nothing', () => {
     // The grounded ⑩ failure shape: codeQuality raised three DIFFERENT problems on one AC.
     const siblings = [

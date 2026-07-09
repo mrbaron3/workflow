@@ -142,7 +142,7 @@ describe('AC-PANEL-003 / 004: aggregation is blocker-first and never averages', 
 });
 
 describe('AC-PANEL-005: cross-perspective repair brief', () => {
-  it('blocker-first, one instruction per criterion, tagged with source perspectives', () => {
+  it('blocker-first, one instruction group per distinct finding, tagged with source perspectives', () => {
     const store = tmpStore('panel-005');
     const { issueId, prId } = seed(store);
     // codeQuality + type-design both flag the same criterion (major); security flags a blocker
@@ -161,7 +161,7 @@ describe('AC-PANEL-005: cross-perspective repair brief', () => {
     expect(brief.instructions.every((i) => i.severity === 'blocker')).toBe(true);
   });
 
-  it('merges a criterion flagged by several perspectives into one instruction (no blocker present)', () => {
+  it('merges content-identical findings from several perspectives into one instruction (no blocker present)', () => {
     const store = tmpStore('panel-005b');
     const { issueId, prId } = seed(store);
     const grader: PerspectiveGrader = (p) =>
