@@ -3,8 +3,11 @@
  * Point the harness at ITSELF (ADR-0007 I3): configure config.target so the execution
  * layer drives adopted type:harness / type:eval issues as git worktrees of THIS repo,
  * graded by the repo's own tsc + vitest — the existing all-green suite is the regression
- * net — plus the env-gated acceptance suite (test/acceptance-harness/**, collected only
- * under ACCEPT_HARNESS=1: red at baseline until the adopted fix lands).
+ * net — plus the driven issue's OWN pre-placed acceptance guards (test/acceptance-harness/**,
+ * red at baseline until the adopted fix lands). Activation is issue-scoped (ISSUE-0022):
+ * grading injects scopedAcceptEnv(<driven issue>) into the grader child env, so other
+ * in-flight issues' guards stay dormant; `ACCEPT_HARNESS=1 vitest run` remains the manual
+ * full-activation spelling (baseline-RED checks, whole-registry runs).
  *
  * Unlike real-run-sandbox.ts this NEVER wipes the store: the failure history, curated
  * eval tasks and the adopted issue are exactly what this run exists to drive.
@@ -44,9 +47,11 @@ const config: HarnessConfig = {
     baseRef: 'HEAD',
     graders: {
       typecheck: `${path.join(BIN, 'tsc')} --noEmit -p tsconfig.json`,
-      // env-gate (ADR-0007 I3): the grader — and only the grader — collects the
-      // harness-owned acceptance suite. grade.ts peels the leading KEY=VAL itself.
-      unit_tests: `ACCEPT_HARNESS=1 ${path.join(BIN, 'vitest')} run`,
+      // No ACCEPT_HARNESS=1 prefix here (ISSUE-0022): the grader injects the DRIVEN
+      // issue's scoped activation itself (grade.ts × accept.ts), so each build is gated
+      // on its own guard delta — a suite-wide prefix would re-open the omnibus gate
+      // (the first driven issue gated on other issues' baseline-red payloads).
+      unit_tests: `${path.join(BIN, 'vitest')} run`,
     },
     protectedPaths: ['test/acceptance-harness/'],
     systemDir: 'docs/specs/_system',
@@ -57,7 +62,7 @@ else delete config.models;
 saveConfig(ROOT, config);
 
 const queue = pollable(store, config);
-console.log(`✓ config.target → this repo (graders: own tsc/vitest + ACCEPT_HARNESS gate, maxRepairs=${config.maxRepairs})`);
+console.log(`✓ config.target → this repo (graders: own tsc/vitest, issue-scoped acceptance activation, maxRepairs=${config.maxRepairs})`);
 console.log(models ? `  models: generator=${genModel ?? 'default'}, reviewer=${reviewModel ?? 'default'}` : '  models: default (any sandbox override dropped)');
 console.log(`\npollable queue (${queue.length}):`);
 for (const i of queue) console.log(`  ${i.id} [${i.type}] ${i.title}`);

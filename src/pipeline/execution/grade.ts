@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { BuildArtifact } from '../../domain/artifact.js';
 import type { IssueContract } from '../../domain/schema.js';
 import type { TargetRepoConfig } from '../../config.js';
+import { scopedAcceptEnv } from './accept.js';
 
 let reportSeq = 0;
 
@@ -25,12 +26,13 @@ interface CmdResult {
   output: string;
 }
 
-function run(command: string, cwd: string): CmdResult {
+function run(command: string, cwd: string, extraEnv: Record<string, string> = {}): CmdResult {
   const tokens = tokenize(command);
   // sh-style leading KEY=VAL assignments (ADR-0007 I3): spawnSync uses no shell, so peel
   // them into the child env explicitly — grader commands in config can then gate
-  // env-conditional suites, e.g. `ACCEPT_HARNESS=1 vitest run`.
-  const env: Record<string, string> = {};
+  // env-conditional suites, e.g. `ACCEPT_HARNESS=1 vitest run`. The command's own prefix
+  // wins over injected extraEnv: an explicit captured spelling outranks harness injection.
+  const env: Record<string, string> = { ...extraEnv };
   while (tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0]!)) {
     const [key, ...rest] = tokens.shift()!.split('=');
     env[key!] = rest.join('=');
@@ -51,13 +53,14 @@ export interface VitestReport {
   total: number;
   passed: number;
   failedNames: string[];
-  assertions: { name: string; passed: boolean }[];
+  /** `skipped` marks never-run assertions (SKIP_STATUSES) — dormant, not failed. */
+  assertions: { name: string; passed: boolean; skipped?: boolean }[];
 }
 
 /** Run a vitest command and parse its JSON report. Exported for the regression executor. */
-export function runVitest(command: string, cwd: string): VitestReport {
+export function runVitest(command: string, cwd: string, extraEnv?: Record<string, string>): VitestReport {
   const out = path.join(os.tmpdir(), `agentops-vitest-${process.pid}-${reportSeq++}.json`);
-  run(`${command} --reporter=json --outputFile=${out}`, cwd);
+  run(`${command} --reporter=json --outputFile=${out}`, cwd, extraEnv);
   let json: unknown = null;
   try {
     if (fs.existsSync(out)) json = JSON.parse(fs.readFileSync(out, 'utf8'));
@@ -69,6 +72,9 @@ export function runVitest(command: string, cwd: string): VitestReport {
   return parseVitest(json);
 }
 
+/** The vitest json-reporter statuses meaning "never ran" (vs pass/fail verdicts). */
+const SKIP_STATUSES = new Set(['skipped', 'pending', 'todo', 'disabled']);
+
 function parseVitest(json: unknown): VitestReport {
   const empty: VitestReport = { success: false, total: 0, passed: 0, failedNames: ['no vitest report'], assertions: [] };
   if (!json || typeof json !== 'object') return empty;
@@ -76,11 +82,11 @@ function parseVitest(json: unknown): VitestReport {
     success?: boolean;
     testResults?: { assertionResults?: { title?: string; fullName?: string; ancestorTitles?: string[]; status?: string }[] }[];
   };
-  const assertions: { name: string; passed: boolean }[] = [];
+  const assertions: VitestReport['assertions'] = [];
   for (const file of j.testResults ?? []) {
     for (const a of file.assertionResults ?? []) {
       const name = a.fullName ?? [...(a.ancestorTitles ?? []), a.title ?? ''].join(' ').trim();
-      assertions.push({ name, passed: a.status === 'passed' });
+      assertions.push({ name, passed: a.status === 'passed', skipped: SKIP_STATUSES.has(a.status ?? '') });
     }
   }
   const passed = assertions.filter((a) => a.passed).length;
@@ -99,7 +105,10 @@ export interface GroundOpts {
   worktree: string;
   branch: string;
   changed: string[];
-  /** Scopes AC-id matching to this issue's assertions (assertionsForCriterion). */
+  /**
+   * The driven issue: scopes AC-id matching to its assertions (assertionsForCriterion)
+   * and activates only ITS pre-placed acceptance guards (scopedAcceptEnv → grader child env).
+   */
   issueId?: string;
 }
 
@@ -109,8 +118,8 @@ export interface SatisfiedResult {
   untaggedUnitTestAcs: string[];
 }
 
-/** An assertion title explicitly scoped to SOME issue (`ISSUE-XXXX/AC-N …`). */
-const SCOPED_TAG = /ISSUE-[^/\s]+\//;
+/** An assertion title explicitly scoped to SOME issue (`ISSUE-XXXX/AC-N …`); captures the issue id. */
+const SCOPED_TAG = /(ISSUE-[^/\s]+)\//;
 
 /**
  * The assertions that verify one criterion — the ONE matching rule grading and the
@@ -165,6 +174,26 @@ export function satisfiedFromReport(contract: IssueContract, report: VitestRepor
   return { satisfied, untaggedUnitTestAcs };
 }
 
+/**
+ * Notes for pre-placed guards another issue owns that stayed dormant under this grading
+ * (AC-SCOPED-003, never-silent — ARCH-execution-015): one line per owning issue, naming
+ * it and the reason. Derived from the report facts — assertions that never ran and carry
+ * some OTHER issue's scope tag — and used for REPORTING only; activation itself is
+ * decided by each guard's declared `acceptsIssue(...)` call, never by name matching.
+ */
+export function dormantGuardNotes(assertions: VitestReport['assertions'], drivenIssueId: string): string[] {
+  const byOwner = new Map<string, number>();
+  for (const a of assertions) {
+    const owner = a.skipped ? SCOPED_TAG.exec(a.name)?.[1] : undefined;
+    if (owner && owner !== drivenIssueId) byOwner.set(owner, (byOwner.get(owner) ?? 0) + 1);
+  }
+  return [...byOwner].map(
+    ([owner, n]) =>
+      `pre-placed guards not activated: ${owner} (${n} skipped assertion${n === 1 ? '' : 's'}) — ` +
+      `owned by an issue other than the driven ${drivenIssueId}; issue-scoped activation left them dormant.`,
+  );
+}
+
 /** Run the real graders against the checkout and produce a grounded BuildArtifact. */
 export function groundArtifact(opts: GroundOpts): BuildArtifact {
   const g = opts.target.graders ?? {};
@@ -172,7 +201,13 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
   const tc = g.typecheck ? run(g.typecheck, opts.worktree) : null;
   const typecheckPasses = tc ? tc.ok : true;
 
-  const report = g.unit_tests ? runVitest(g.unit_tests, opts.worktree) : null;
+  // Issue-scoped activation (AC-SCOPED-001): a driven issue's grading activates only ITS
+  // pre-placed guards — the scoped env is injected here so other in-flight issues'
+  // baseline-red guards stay dormant. Without issueId nothing is injected (additive), and
+  // a command's own full-activation prefix still wins inside `run` (spelling unchanged).
+  const report = g.unit_tests
+    ? runVitest(g.unit_tests, opts.worktree, opts.issueId ? scopedAcceptEnv(opts.issueId) : undefined)
+    : null;
   const unitTestsPass = report ? report.success : true;
 
   const inScope = (f: string) =>
@@ -196,6 +231,9 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
     'quality.* are NOT grounded (no rubric grader) — only functional gates are real.',
   ];
   if (report && !report.success) notes.push(`vitest failures: ${report.failedNames.join('; ')}`);
+  // Dormant guards surface with owner + reason (AC-SCOPED-003) — only under scoped grading;
+  // an unscoped run (no issueId) never attributes skips, and no dormant guards → no listing.
+  if (report && opts.issueId) notes.push(...dormantGuardNotes(report.assertions, opts.issueId));
   if (untaggedUnitTestAcs.length) {
     notes.push(`TDD gate: no assertion carries the AC id(s) ${untaggedUnitTestAcs.join(', ')} — write tests whose titles include them (untagged = unsatisfied).`);
   }
