@@ -60,6 +60,13 @@ export interface HarnessConfig {
   baseBranch: string;
   /** Independent best-of-N samples per issue. Drives pass@k / pass^k. */
   samples: number;
+  /**
+   * Max ai-managed issues driven concurrently in one live turn (FEAT-008). Finite by
+   * contract — unbounded parallelism is a red line, so use `resolveConcurrentIssueCap`
+   * to read it (non-finite values fall back to the finite default). 1 = today's
+   * sequential drive, exactly.
+   */
+  maxConcurrentIssues: number;
   /** Max repair iterations per sample before giving up / escalating. */
   maxRepairs: number;
   /** When no blocker fails, an EvalRun passes if overall >= this. */
@@ -85,10 +92,18 @@ export interface HarnessConfig {
   };
 }
 
+/**
+ * Panel review-session fan-out default (ADR-0006 E4) — the single source (AC-PIN-003).
+ * Callsites must wire to this export, never re-encode the value as an inline literal:
+ * the double encoding let a value-breaking mutation of one copy survive the suite.
+ */
+export const DEFAULT_PANEL_MAX_CONCURRENT = 4;
+
 export const DEFAULT_CONFIG: HarnessConfig = {
   generator: 'mock',
   baseBranch: 'main',
   samples: 3,
+  maxConcurrentIssues: 2,
   maxRepairs: 2,
   passThreshold: 0.7,
   scoreWeights: {
@@ -98,8 +113,20 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     ux: 0.15,
     accessibility: 0.1,
   },
-  panel: { maxConcurrent: 4 },
+  panel: { maxConcurrent: DEFAULT_PANEL_MAX_CONCURRENT },
 };
+
+/**
+ * The effective concurrent-issue cap for a live turn (ISSUE-0019). Finite BY CONTRACT
+ * (red line: no config may introduce unbounded concurrency): a non-numeric or non-finite
+ * configured value falls back to the finite default; fractions floor; anything below 1
+ * clamps to 1 — a cap can slow the queue to sequential, never silently starve it.
+ */
+export function resolveConcurrentIssueCap(config: HarnessConfig): number {
+  const raw = config.maxConcurrentIssues;
+  const finite = typeof raw === 'number' && Number.isFinite(raw) ? Math.floor(raw) : DEFAULT_CONFIG.maxConcurrentIssues;
+  return Math.max(1, finite);
+}
 
 export function configPath(root: string): string {
   return path.join(root, '.harness', 'config.json');

@@ -115,10 +115,18 @@ const tmuxPaneDriver: PaneDriver = {
   },
 };
 
+/**
+ * Submit-retry wiring (AC-PIN-003): the single exported source of sendPrompt's bounds —
+ * how many Enter attempts before giving up, and how long the TUI gets to react to each
+ * before the Enter is judged dropped. Pinned by test so a value-breaking mutation cannot
+ * survive the suite the way the old inline literals could.
+ */
+export const SUBMIT_RETRY = { attempts: 4, settleMs: 1500 } as const;
+
 export interface SendPromptOpts {
-  /** How many Enter attempts before giving up (default 4). */
+  /** How many Enter attempts before giving up (default SUBMIT_RETRY.attempts). */
   attempts?: number;
-  /** How long to wait for the TUI to react to an Enter before judging it dropped (default 1500ms). */
+  /** How long to wait for the TUI to react to an Enter before judging it dropped (default SUBMIT_RETRY.settleMs). */
   settleMs?: number;
   driver?: PaneDriver; // injectable for tests
   sleep?: (ms: number) => Promise<void>; // injectable for tests
@@ -137,8 +145,8 @@ export interface SendPromptOpts {
 export async function sendPrompt(session: string, prompt: string, opts: SendPromptOpts = {}): Promise<boolean> {
   const driver = opts.driver ?? tmuxPaneDriver;
   const wait = opts.sleep ?? sleep;
-  const attempts = opts.attempts ?? 4;
-  const settleMs = opts.settleMs ?? 1500;
+  const attempts = opts.attempts ?? SUBMIT_RETRY.attempts;
+  const settleMs = opts.settleMs ?? SUBMIT_RETRY.settleMs;
 
   driver.type(session, prompt);
   await wait(400); // let the typed text render before we compare panes

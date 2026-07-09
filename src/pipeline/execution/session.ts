@@ -146,6 +146,12 @@ export function buildGeneratorPrompt(input: GeneratorSessionInput, target: Targe
     `Implement the Issue Contract below by EDITING FILES directly in this working directory.`,
     `Stay within scope.include. Do NOT edit these harness-owned paths (they are the grader):`,
     protectedList,
+    `\n## Wiring convention — operational constants (AC-PIN-001)`,
+    `Never wire an operational constant (a timeout, retry count, concurrency cap, threshold)`,
+    `as an inline literal at its callsite: an inline constant lets a value-breaking mutation`,
+    `survive the whole suite. Export it as a named constant from the module that owns it, wire`,
+    `every callsite to that single source, and add a test that pins its value (or the property`,
+    `it must satisfy, e.g. finite and positive).`,
     `\n## Issue\n${input.issue.id} — ${input.issue.title} (area: ${input.issue.area})`,
     `\n## Issue Contract\n\`\`\`yaml\n${contractYaml}\`\`\``,
   ];

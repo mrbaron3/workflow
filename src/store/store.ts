@@ -24,6 +24,7 @@ import type {
   RegressionRun,
   Roadmap,
   SpecState,
+  TurnRecord,
 } from '../domain/schema.js';
 import { assertTransition, TERMINAL_STATUSES, type IssueStatus } from '../domain/states.js';
 
@@ -231,6 +232,18 @@ export class Store {
   /** All attested interventions on one issue, in record order (per-issue audit). */
   interventionsForIssue(issueId: string): Intervention[] {
     return this.db.interventions.filter((r) => r.issueId === issueId);
+  }
+
+  // --- turn records (per-live-turn concurrency facts, AC-PAR-003) ----------
+
+  addTurnRecord(r: TurnRecord): TurnRecord {
+    this.db.turnRecords.push(r);
+    return r;
+  }
+
+  /** The latest recorded live turn — the one the metrics instruments read. */
+  lastTurnRecord(): TurnRecord | undefined {
+    return this.db.turnRecords.at(-1);
   }
 
   // --- prompt records (audit trail of issued prompts) ----------------------

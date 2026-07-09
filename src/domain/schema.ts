@@ -364,6 +364,22 @@ export const PromptRecord = z.object({
 });
 export type PromptRecord = z.infer<typeof PromptRecord>;
 
+/**
+ * The concurrency FACTS of one live turn (ISSUE-0020, AC-PAR-003): how many issues the
+ * turn drove, the effective cap it ran under, and the peak simultaneous in-flight count
+ * OBSERVED at the dispatch seam (not reconstructed from logs — never log-only, ADR-0001).
+ * Appended once per completed live turn; metrics surface the LATEST record as the turn
+ * instruments, and null-when-absent keeps "unobserved" distinct from "observed 0".
+ */
+export const TurnRecord = z.object({
+  id: z.string(), // TURN-0001
+  cap: z.number().int().positive(), // effective cap (resolveConcurrentIssueCap) for the turn
+  issuesDriven: z.number().int().nonnegative(), // queued issues the turn dispatched
+  peakConcurrency: z.number().int().nonnegative(), // max simultaneous in-flight observed
+  createdAt: z.string(),
+});
+export type TurnRecord = z.infer<typeof TurnRecord>;
+
 // --- human HOW-interventions (autonomy axis, ISSUE-0011) --------------------
 
 /**
@@ -451,6 +467,7 @@ export const DB = z.object({
   regressionRuns: z.array(RegressionRun).default([]), // ③ regression executions (additive)
   promptRecords: z.array(PromptRecord).default([]), // audit trail of issued prompts (additive)
   interventions: z.array(Intervention).default([]), // attested human HOW-interventions (additive)
+  turnRecords: z.array(TurnRecord).default([]), // per-live-turn concurrency facts (additive)
   specStates: z.array(SpecState).default([]),
 });
 export type DB = z.infer<typeof DB>;

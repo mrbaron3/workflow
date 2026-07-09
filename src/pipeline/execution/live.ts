@@ -15,10 +15,11 @@
 
 import path from 'node:path';
 import type { Issue } from '../../domain/schema.js';
-import type { HarnessConfig } from '../../config.js';
+import { resolveConcurrentIssueCap, type HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
-import { PR, PromptRecord } from '../../domain/schema.js';
+import { PR, PromptRecord, TurnRecord } from '../../domain/schema.js';
 import { pollable, blockedByDependencies, formatBlockedLine } from './guard.js';
+import { mapPool } from './pool.js';
 import { runGeneratorSession } from './session.js';
 import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader, type PriorFinding } from './perspective-session.js';
@@ -36,6 +37,13 @@ export interface LiveOptions {
   samples?: number;
   /** Measurement run: drive ALL samples to completion for pass@k / pass^k, not first-approve-stop (E5). */
   measure?: boolean;
+  /**
+   * Injectable issue-driver for one queued issue (default: the real `driveIssueLive`).
+   * ADDITIVE seam (ISSUE-0019): it makes the turn's concurrency scheduling decidable
+   * without tmux — an injected worker records start/finish so overlap, cap adherence and
+   * dependency exclusion are observable — while the real path stays byte-for-byte the same.
+   */
+  driveIssue?: (issue: Issue) => Promise<DriveResult>;
 }
 
 /**
@@ -191,14 +199,40 @@ export async function runLoopLive(
   opts: LiveOptions = {}, log: (m: string) => void = () => {},
 ): Promise<DriveResult[]> {
   const queue = pollable(store, config);
-  log(`queue: ${queue.length} ai-managed issue(s) [generator=${config.generator}]`);
+  const cap = resolveConcurrentIssueCap(config);
+  log(`queue: ${queue.length} ai-managed issue(s) [generator=${config.generator}, cap=${cap}]`);
   // Dependency blocks are surfaced every turn (AC-DAG-001): an issue held back by the
   // guard names what it waits on in the log — it never just vanishes from the queue.
+  // Under parallelism this stays an invariant (AC-PAR-002): the in-flight set is drawn
+  // from `pollable` alone, so a dependency-blocked issue can never enter it.
   for (const b of blockedByDependencies(store, config)) {
     log(formatBlockedLine(b.issueId, b.waitingOn));
   }
-  const results: DriveResult[] = [];
-  for (const issue of queue) results.push(await driveIssueLive(store, config, issue, harnessRoot, opts, log));
+  // Bounded fan-out (AC-PAR-001): at most `cap` issues in flight; excess waits and takes
+  // slots in stable queue (id) order, so every queued issue is driven — no starvation.
+  // Results keep queue order, and cap 1 reproduces today's sequential drive exactly.
+  const drive = opts.driveIssue ?? ((issue: Issue) => driveIssueLive(store, config, issue, harnessRoot, opts, log));
+  // The peak is OBSERVED here, at the dispatch seam — the one place every in-flight
+  // interval passes through, whatever worker drives the issue — so the recorded fact
+  // holds for the real driver and the injected one alike (AC-PAR-003).
+  let inFlight = 0;
+  let peak = 0;
+  const results = await mapPool(queue, cap, async (issue) => {
+    inFlight += 1;
+    peak = Math.max(peak, inFlight);
+    try {
+      return await drive(issue);
+    } finally {
+      inFlight -= 1;
+    }
+  });
+  // The turn's concurrency facts persist in the store (never log-only): metrics read
+  // the latest record as the turn instruments, null when no turn was ever recorded.
+  store.addTurnRecord(
+    TurnRecord.parse({
+      id: store.nextId('TURN'), cap, issuesDriven: queue.length, peakConcurrency: peak, createdAt: nowISO(),
+    }),
+  );
   // ③ every live turn ends by capturing failures into the regression registry,
   // re-verifying the bound registry against the target's real graders, and reporting
   // (never enacting) improvement suggestions — ADR-0007 I2.

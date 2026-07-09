@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { FindingLineage, Severity, Verdict, type Finding, type IssueContract } from '../../domain/schema.js';
-import type { HarnessConfig } from '../../config.js';
+import { DEFAULT_PANEL_MAX_CONCURRENT, type HarnessConfig } from '../../config.js';
 import { PerspectiveResult, deterministicPerspectiveGrade, type PerspectiveGrader, type PerspectiveSpec } from '../panel.js';
 import { changedFiles, createDetachedWorktree, removeWorktree } from './worktree.js';
 import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
@@ -47,6 +47,10 @@ export const PERSPECTIVE_RUBRIC: Record<string, string[]> = {
     `  missing criteria.`,
     `- Flag tests that mirror the implementation's internals instead of the contract's`,
     `  observable behaviour, and assertions weakened to pass (loose tolerances, skipped cases).`,
+    `- Inspect the change for operational constants (timeouts, retry counts, caps, thresholds)`,
+    `  wired as inline literals at a callsite: if a value-breaking mutation of the constant`,
+    `  would survive the whole suite, that is a finding — require a single-source exported`,
+    `  constant with a test pinning its value or required property.`,
     `- You may run the test suite (and targeted mutations of your own reasoning) to check;`,
     `  running code is encouraged, editing it is forbidden.`,
   ],
@@ -291,7 +295,7 @@ export async function runPerspectiveSessions(
   const evalRoot = path.join(input.worktree, '.agentops', 'eval'); // central collection point
   const reviewRoot = path.resolve(input.worktree, '..', '..', 'review-worktrees');
   const lenses = input.perspectives.filter((p) => !p.deterministic); // functionality is graded by code
-  const maxConcurrent = config.panel?.maxConcurrent ?? 4;
+  const maxConcurrent = config.panel?.maxConcurrent ?? DEFAULT_PANEL_MAX_CONCURRENT;
   log(`  panel: ${lenses.length} live lenses, maxConcurrent=${maxConcurrent}`);
 
   // phase 1 (sequential): one isolated detached checkout of the build per review + its prompt
