@@ -1,0 +1,17 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+issues:
+  - key: ISSUE-DAG-001
+    title: Respect issue dependencies in the execution guard and drive chains in order
+    area: harness
+    type: harness
+    coversAcIds: [AC-DAG-001, AC-DAG-002, AC-DAG-003, AC-DAG-004]
+    scope:
+      include: ['src/**', 'test/**']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnSystem: [DOM-execution-006, ARCH-execution-002, ARCH-execution-015]
+    implementationNotes:
+      - "guard（src/pipeline/execution/guard.ts）: pollable は dependsOnIssues の全依存が released の issue のみ返す（空は従来同一）。ブロック報告用に additive な同居関数（例: blockedByDependencies(store, config) → { issue, waitingOn: {id, status}[] }[]）を export し、runLoopLive が queue ログの直後に理由付きで log する。status は変えない。"
+      - "mock 経路（coordinator.runAll）: 冒頭スナップショットでなく『適格な issue が無くなるまで poll→drive を繰り返す』形へ（依存解除で新たに適格になった issue を同一呼び出し内で拾う）。live 経路（runLoopLive）は turn 跨ぎ解除のままで良い（人間ゲートを跨がない）。"
+      - "spawn 衛生（src/planning/planning-tree.ts spawnIssues）: keyToId.get(k) ?? k の素通しを廃し、k が manifest key でも store の既存 issue id でもなければ loud 拒否。manifest 内循環（key グラフ）も spawn 前に検出して拒否。どちらも issue を 1 件も作らない（全 gate 後に persist する既存パターンを踏襲）。"
+      - "決定論テストの seam: runner 注入（既存 AgentRunner）で dispatch 順を記録すれば AC-DAG-003 は実 tmux なしで検証できる。"

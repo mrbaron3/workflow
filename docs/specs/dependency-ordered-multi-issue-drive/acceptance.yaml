@@ -1,0 +1,40 @@
+# 依存順複数 issue drive — 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - DOM-execution-006
+  - ARCH-execution-002
+  - ARCH-execution-015
+
+verifications:
+  AC-DAG-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "未 released 依存（planned / 実行中 / needs-human-review / closed）を持つ ai-managed issue は pollable に現れない"
+      - "ブロックは『どの issue がどの依存のどの状態を待つか』を含む機械可読の報告として得られ、live turn のログに現れる"
+      - "dependsOnIssues が空の issue の pollable 挙動は従来と同一（後方互換）"
+
+  AC-DAG-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "依存が released へ遷移した後の poll では、追加の人手なしに同じ issue が pollable へ現れる"
+
+  AC-DAG-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "mock 経路のループ 1 回で依存チェーン A←B←C が A→B→C の順に drive され 3 件とも released になる"
+      - "どの issue も自分の依存が released になる前に runner へ渡らない（dispatch 順の記録で検証）"
+
+  AC-DAG-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "manifest 内にも store にも存在しない dependsOnIssues key を含む spawn は理由付きで拒否され、issue が 1 件も作られない"
+      - "manifest 内の循環依存は理由付きで拒否され、issue が 1 件も作られない"
+      - "既知 key の id 再写像と既存 issue id の直接参照は従来どおり成功する"
