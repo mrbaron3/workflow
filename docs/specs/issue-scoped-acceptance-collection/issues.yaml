@@ -1,0 +1,22 @@
+# Issue spawn manifest — to-detail-design output（DOC_TAXONOMY §NANO・skill 実走で著述）。
+# 1 エントリ = PR サイズの Issue 1 件。spawn-issues が ISSUE-NNNN を採番して store へ ingest する。
+# 単一 issue の理由: AC-SCOPED-001..004 は収集層（活性化・可視化・後方互換）に凝集しており
+# 1 PR で着地可能。2 issue に割って両グレーダを先置きすると、修正未実装のまま
+# まさに D3 の omnibus を踏む（自己言及リスク）— 分解自体が本 spec の反例になるため割らない。
+issues:
+  - key: ISSUE-SCOPED-001
+    title: Issue-scoped activation of pre-placed acceptance guards
+    area: harness
+    type: harness
+    coversAcIds: [AC-SCOPED-001, AC-SCOPED-002, AC-SCOPED-003, AC-SCOPED-004]
+    scope:
+      include: ['src/**', 'test/**', 'scripts/real-run-self.ts']
+      exclude: ['test/acceptance-harness/**']
+    dependsOnIssues: []
+    dependsOnSystem: [ARCH-evaluation-003, ARCH-evaluation-011, ARCH-execution-015, ARCH-execution-016]
+    implementationNotes:
+      - "活性化述語は単一の家に置く: 全活性（従来 ACCEPT_HARNESS）と駆動 issue 単位の活性化の判定・env 綴りを 1 モジュールに集約し、guard の skipIf と採点側の env 注入の両方がそれを import する（src/domain/eval-task.ts の『重複綴りを再導入しない』前例と同型）。env 変数名は裁量（例: ACCEPT_ISSUES=<issue-id 列>）。"
+      - "採点側 seam: GroundOpts は既に issueId を持つ（grade.ts）。groundArtifact が駆動 issue の scoped 活性化を grader コマンドの env として注入する — run() は先頭 KEY=VAL を child env へ剥がす既存機構があり、ここに合流できる。live 経路（driveIssueLive→grade）は既定で scoped 活性化・issueId 不在（regress の捕捉コマンド実行・全活性明示）は従来挙動（AC-SCOPED-004）。"
+      - "非活性の可視化（AC-SCOPED-003）: 活性化の判定は宣言（述語）のみで行い（レッドライン: 名前からの推測禁止）、報告はレポートの事実から導出してよい — vitest JSON は skipped assertion も列挙するので、scoped タグ（ISSUE-XXXX/AC-N）から非活性ガードの帰属 issue を集計し BuildArtifact.notes（store に残る採点事実）へ理由付きで列挙する案。"
+      - "self-drive 設定: scripts/real-run-self.ts の unit_tests は現在 ACCEPT_HARNESS=1 固定＝全活性で omnibus の入口。scoped 既定へ移行する（例: コマンドから全活性 prefix を外し採点時注入に委ねる）。既存の regress 捕捉済みコマンド（ACCEPT_HARNESS=1 込み）は全活性のまま動き続ける（後方互換）。"
+      - "satisfiedFromReport / assertionsForCriterion（per-criterion 突合）は変えない — 本 issue は収集（どのガードが走るか）と可視化の層のみ。恒久昇格済みガード（skipIf 除去済み）は活性化条件を持たないため構造的に scoping の対象外（AC-SCOPED-004b はそれをピンで確認する）。"
