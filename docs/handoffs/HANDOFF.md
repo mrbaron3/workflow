@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑩セッションで更新・最終更新は **ISSUE-0012 提案ライフサイクルの締結＝M1「操舵の完備」出口到達＋⑧処遇判断の store 適用** 後）。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑪セッションで更新・最終更新は **ISSUE-0016 panel brief 完全化の締結＝B2（repair 不収束の主因）閉鎖** 後）。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -55,6 +55,41 @@
 ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
 
 ## 3. 現在地 — 各セッションの成果（全て `origin/main`）
+
+### ⑪セッション（2026-07-09・B2 閉鎖 = repair 不収束の主因は brief の finding 落としだった）
+
+「M2 と B2 の先にやるべき方」の判断で B2 を先行（既知の repair 欠陥を放置して drive 本数を
+増やすと人間ゲート負担が比例増するため）。**着手前の証拠検証で⑩の自己診断を反証**する
+展開になった:
+
+- **誤診の未然捕捉（二度目・⑦の規律の勝利)**: ⑩に書いた「persisted は全て brief 掲載済み・
+  generator 軽視」を adopt 前に PromptRecord（発行プロンプトの監査正本）へ当てたら**反証**。
+  attempt-2 brief には 5 行しか無く、**persisted 7 件中 5 件は generator が見たことのない指摘**
+  だった。真因: `buildPanelRepairBrief` が criterion ごとに最重症 1 finding のみ forward し
+  兄弟 findings の requiredFix を黙って破棄（criterionId ≠ finding 同一性 — ISSUE-0009 と同じ
+  欠陥クラスの repair マージ残存）。**repairSuccess の低迷は相当部分が冤罪**・⑥以降の条件付き
+  承認ピンの多くは brief が完全ならループ自身が着地させられた可能性が高い。
+- **経路**: `analyze --create`（4 issue 起票）→ ISSUE-0016 を R1 の stale draft を**差し替えた**
+  contract（`scripts/seeds/panel-brief-completeness.contract.yaml`・AC-BRIEF-001..003: 全 findings
+  forward・blocker-first は finding フィルタ・集約は内容同一性のみ）で adopt →
+  グレーダ先置き（⑨⑩の実失敗形をそのまま再現・gated 5 RED）→ drive（`fdd338f`→build）。
+- **drive**: attempt 1 = functionality/codeQuality approve・testQuality 2 findings（**同一
+  criterion の兄弟** — 旧マージがまさに minor を捨てて「repair (1 fix)」＝ **bug の最後の犠牲を
+  closing run 自身が実演**）→ repair で major（合流キーの criterionId 側未検証・変異実証付き）
+  解消 → 残存 minor 1 件（panel.test.ts の旧契約文言 title・persisted attested）。
+- **ゲート（条件付き承認 5 例目・`f0557c3`）**: 挙動健全（gated 360 green・typecheck・scope/
+  protected clean）。title 是正を release 条件として実施＋criterionId 側の恒久 killer を昇格
+  ガードへ（変異 kill 確認）。INTV-0005 記録 → 自律軸 0.50 介入/issue・50.0% intervention-free。
+- **⑩で敷いた器官の grounded 実運用**: 閾値ルール 3 つは値が動いても**複製ゼロ**（open へ集約・
+  C2 実証）。R1 は ISSUE-0016 が terminal になったので **ISSUE-0017 を正しく再起票**
+  （AC-LIFE-003 の設計どおり）— ただし survivors 8 件は全て fix 前の歴史データなので
+  **standing queue として open 保持**（open の間は再発火が集約される・fix 後の repair round
+  データが貯まったら decline か再 adopt を判断）。
+- metrics（正直）: released 8→**9**・passAt1 0.30・repairSuccess 0.14（この巡も minor 残存で
+  非収束扱い — **fix の効果は次の repair round から**）・executedRate 100%・unverified 0・
+  **361 green skip ゼロ**。
+- **次の観測**: post-fix repair round ≥2 で persisted 減（B2 効果測定）。generator 部分実装側
+  （⑨ adopt/assign の 1 件）は fix 後データで再評価。
 
 ### ⑩セッション（2026-07-08・M1 出口到達 = 提案ライフサイクルの締結＋⑧処遇判断の適用）
 
@@ -328,14 +363,14 @@ sandbox 束縛の2 task は skip 報告）。
   確定・to-spec skill 初実走。
 - ~~M1 後半 = FEAT-005 提案ライフサイクル~~ **✅ 完了（⑩・ISSUE-0012 released）＝ M1 出口到達** —
   C2/C3 締結・⑧処遇判断の store 適用済み（R3 沈黙・unverified 0 実測）・B2 判別データ 2/2 完了。
+- ~~B2 の WHAT 確定~~ **✅ 完了（⑪・ISSUE-0016 released）** — panel brief の finding 落としを
+  内容同一性マージで閉鎖。効果測定（persisted 減）は次の repair round から。
 - **次の一手（候補・優先順は人間判断）**:
-  1. **B2 の WHAT 確定**（M3 の芯・⑪で主因確定）: `buildPanelRepairBrief` の**同一 criterion 内
-     finding 落とし**（最重症 1 件のみ forward・兄弟 findings の requiredFix を黙って破棄）を閉鎖。
-     決定論コード修正＝ unit_test で pin 可能。R1 の添付 draft（requiredFix[0] truncation）は
-     ISSUE-0004 で解決済みの別欠陥なので**差し替えて** adopt。
+  1. **M2 自律の横幅**（EPIC-03・FEAT-007 依存順 DAG／FEAT-008 複数 spec 並行＋skill 実走）—
+     B2 閉鎖により repair 品質の土台が整い、drive 本数を増やす横幅拡大の前提が立った。
+     M2 の複数 drive は B2 効果測定（post-fix repair rounds）のデータ供給源にもなる。
   2. **FEAT-006 配線ピン規約**（EPIC-02 残・B3）: spec stub spawn 済み
      `docs/specs/production-wiring-pin-convention`（未著述・非追跡）。
-  3. **M2 自律の横幅**（EPIC-03・FEAT-007 依存順 DAG／FEAT-008 複数 spec 並行＋skill 実走）。
 - **M4（実プロダクト）は後回し確定（⑩・2026-07-09 人間判断）**: ハーネス「一通り完成」
   （≒ M2＋M3 landed）まで着手しない・テーマは着手時に決める。ただし**M4 はハーネスを凍結せず**、
   実プロダクト drive が暴くハーネスの欠けは同じ ③ loop で直す（双方向）。正本は NORTH_STAR_PLAN §3 M4・§5。
@@ -343,7 +378,7 @@ sandbox 束縛の2 task は skip 報告）。
 ## 5. 動かし方（コマンド）
 
 ```bash
-# 決定論の確認（345 green・skip ゼロ）
+# 決定論の確認（361 green・skip ゼロ）
 npm test && npm run typecheck
 npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
 
@@ -425,6 +460,6 @@ npm run harness -- retire EVAL-TASK-... --reason <text>
 - `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）・`ADR-0007`（③配線 I1-I4・未吸収＝ビュー吸収が残タスク）。
 - `docs/specs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
 - 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,adopt,assign,improve,regression,repair,contract-draft}.ts`・`src/planning/planning-tree.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
-- テスト: `test/{improvement-loop,adopt,assign,metrics,intervention,proposal-lifecycle,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 345・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の8ファイルは昇格済み（active-liveness / finding-lineage / intervention-accounting / proposal-lifecycle には⑥⑦⑨⑩のゲート条件ピンも同居）。
+- テスト: `test/{improvement-loop,adopt,assign,metrics,intervention,proposal-lifecycle,grade-env,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 361・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ `describe.skipIf(!ACCEPT_HARNESS)` で baseline-red を隔離し、released 後に skipIf を外して昇格する規約（ADR-0007 I3）。現在の9ファイルは昇格済み（active-liveness / finding-lineage / intervention-accounting / proposal-lifecycle / panel-brief-completeness には⑥⑦⑨⑩⑪のゲート条件ピンも同居）。
 - 共有語彙: `src/domain/eval-task.ts`（⑩新設）— active/retired 述語（`isRetired`/`activeEvalTasks`）と EVAL-TASK id 規約（`buildTaskId`/`parseTaskId`）の単一の家。registry を読む/書くコードはここを通す（重複綴りを再導入しない）。
 - [execution-layer.md](execution-layer.md) — execution 層の grounded 実験の詳細ログ（発火/収束の生データ・過去の不発記録）。**継続に必須ではない**深掘りアーカイブ。

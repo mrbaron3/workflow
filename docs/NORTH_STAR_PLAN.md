@@ -20,8 +20,13 @@
 - **在庫が循環可能になった（⑩・C2/C3 締結・M1 出口到達）**: decline/retire 器官＋ルール同一性
   dedup が released。**⑧の処遇判断は store 適用済み**（roman task 2 件 retire → ISSUE-0010/0002/
   0008 close・R3 沈黙と unverified 0 を実測確認）。
-- 計器（2026-07-08 ⑩実測）: passAt1 0.33 / pass^1 0.44 / repairSuccess 0.17 / falsePass 0% /
-  captureRate 100% / executedRate 100%（unverified 0） / 345 green skip ゼロ。
+- **repair 不収束の主因を閉鎖（⑪・B2 締結）**: panel brief の finding 落としを内容同一性マージへ
+  修正（ISSUE-0016 released）。repairSuccess 0.14 の相当部分は冤罪だったことが確定 —
+  fix 後の repair round で数値の回復を観測する（残る観測は B2 行）。
+- 計器（2026-07-09 ⑪実測）: passAt1 0.30 / pass^1 0.40 / repairSuccess 0.14 / falsePass 0% /
+  captureRate 100% / executedRate 100%（unverified 0・retired 2 理由付き報告） /
+  自律軸 0.50 介入/issue・50.0% intervention-free（条件付き承認 5 件目まで attested）/
+  361 green skip ゼロ。
 
 残りを一言で: **(a) 測れていない軸を測る、(b) 横幅（規模・並行・多様性）、
 (c) 縦深（診断→改善の精度）、(d) 自分以外を開発する実証。**
@@ -47,7 +52,7 @@
 | ID | 欠け | 星との接続 | 経路 | 完了条件 |
 |---|---|---|---|---|
 | B1 | **grader 較正セット不足**（humanVerdict 5 issue 分・testQuality の揺れが定量化できない） | falsePass 0% が「分母が小さいだけ」の可能性を排除できない | 運用（drive 毎に decide/label で蓄積） | labeled runs ≥20・falsePassTrend が統計的に意味を持つ |
-| B2 | **判別完了（⑪・PromptRecord で確定・⑩の暫定診断を自己訂正）**。⑩時点の「全 persisted は brief 掲載済み・generator 軽視」は**誤診だった** — attempt-2 の発行プロンプト（PromptRecord＝正本）を検分した結果、persisted 7 件中 **5 件は brief に一度も載っていない**: `buildPanelRepairBrief` が criterion ごとに最重症 1 finding だけ残すマージで**同一 criterion の別 findings の requiredFix を黙って捨てていた**（⑨ optional-type・⑩ Store 直接変異/述語重複/regex/naming）。残り 2 件のみ forwarded-だが-部分実装。**主因は brief の finding 落とし＝決定論コードの欠陥**（criterionId ≠ finding 同一性 — ⑦の lineage の教訓と同じ欠陥クラスが repair マージに残存）。prompt 系改善（C4）ではない | 「同じ失敗を二度繰り返さない」の repair 版 → 主因が unit_test で pin 可能な形で特定された | 上流チェーン（③ adopt 経路・draft 差し替え） | 全 panel findings の requiredFix が brief に到達する回帰ガード＋次の repair round で persisted 減の grounded 観測 |
+| B2 | ~~repair 収束率低迷の原因未判別~~ **✅ 主因を閉鎖（⑪・ISSUE-0016 released）**。判別の経緯: ⑩の暫定診断「generator 軽視」を PromptRecord 検分で自己訂正 — persisted 7 件中 5 件は brief 不達（`buildPanelRepairBrief` の同一 criterion 内 finding 落とし・criterionId ≠ finding 同一性）。修正: 合流キーを内容同一性（criterionId＋requiredFix 連言）へ・blocker-first は finding フィルタ化・恒久ガード＋変異 killer 2 本。**closing の run 自身が旧マージの最後の犠牲を実演**（attempt 1 の兄弟 minor が brief から落ち persisted）。**残る観測**: fix 後の repair round で persisted が実際に減るか（R1 の標準在庫 ISSUE-0017 が歴史 8 件を保持 — fix 後データが貯まった時点で decline か再 adopt を判断）。generator 部分実装の側（⑨ adopt/assign の 1 件）は fix 後データで再評価 | 「同じ失敗を二度繰り返さない」の repair 版 → 主因閉鎖・効果測定待ち | 完了（③ adopt 経路） | ~~ガード~~ 済み。次: post-fix repair rounds ≥2 で persisted 減の grounded 観測 |
 | B3 | **「本番配線」盲点の一般化未着手**（⑥ major: inline literal の定数は変異が全テスト生存。pollMs / maxConcurrent / panel 閾値等に同類があり得る） | false-pass の構造的な穴（テストが本番配線を見ていない） | 上流チェーン（FEAT-006: 規約＋rubric＋棚卸し） | 棚卸しで見つけた該当箇所がピン化・testQuality rubric に項目・変異テストで再発検出 |
 
 ### ③ 改善（操舵: pass@k/pass^k 時間推移 ↑・eval レジストリ成長・修正回数 ↓）
