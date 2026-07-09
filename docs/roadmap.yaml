@@ -55,3 +55,13 @@ epics:
       - id: FEAT-008
         title: "Parallel spec execution with grounded skill authoring"
         outcome: "2 spec の issue 群が同時 in-flight でも tmux/worktree/コストが衝突せず完走する。その spec 著述自体を to-spec / to-detail-design skill の実走で行い、skill 本体の grounded 未検証（④⑤の operator 直接著述代替）を同時に解消する。"
+
+  # D3「omnibus ゲート」（docs/NORTH_STAR_PLAN.md §2 横断 — ⑬ grounded 発見）
+  - id: EPIC-04
+    title: "Multi-issue acceptance integrity"
+    theme: "platform"
+    outcome: "複数 issue のグレーダ同時先置きの下でも受け入れゲートが issue 帰属を保ち、PR サイズ分解・帰属・並行の意義が omnibus 実装強制で崩れない。"
+    features:
+      - id: FEAT-009
+        title: "Issue-scoped acceptance collection"
+        outcome: "受け入れゲートの収集が駆動中 issue に scoped される: 複数 issue のグレーダを同時に先置きしても、各 build は自 issue の先置きガード（＋既存 baseline suite）だけを green にすれば通り、他 in-flight issue の先置きガードは活性化されない（⑬の grounded 失敗＝ISSUE-0019 が 0020/0021 の payload を背負った omnibus 実装強制の封じ込め）。活性化しなかったガードは理由付きで可視（never-silent）。released 済みガードの恒久昇格と全活性の baseline 検証は不変。"

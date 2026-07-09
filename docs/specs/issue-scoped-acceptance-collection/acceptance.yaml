@@ -1,0 +1,40 @@
+# Issue-scoped acceptance collection — 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を spec.md から分離した SoT。spec.md の各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - ARCH-evaluation-003
+  - ARCH-evaluation-011
+  - ARCH-execution-015
+  - ARCH-execution-016
+
+verifications:
+  AC-SCOPED-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "2+ issue 分の帰属宣言付き先置きガードが在る suite で、issue X を scoped 指定して採点すると、X 帰属のガードと既存 suite が green なら unit_tests hard gate は pass する"
+      - "他 in-flight issue 帰属の先置きガードは実行されず、その RED（baseline red）が X の採点レポートに failing として現れない"
+
+  AC-SCOPED-002:
+    severity: major
+    method: unit_test
+    expected:
+      - "issue X と issue Y のガードが同一ファイルに同居する fixture で、X を scoped 指定すると X 帰属のガードだけが実行され、Y 帰属のガードは非活性（ファイル単位の全活性/全非活性にならない）"
+
+  AC-SCOPED-003:
+    severity: major
+    method: unit_test
+    expected:
+      - "他 issue 帰属の先置きガードが非活性のまま残った採点で、store に残る build の事実（採点結果）に帰属 issue と理由（駆動外 issue のため非活性）が列挙される"
+      - "非活性ガードが存在しない採点では列挙が現れない"
+
+  AC-SCOPED-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "全活性指定（従来の ACCEPT_HARNESS=1 相当）では、帰属宣言付き先置きガードが従来どおり全て活性化する（baseline RED 検査・回帰実行の捕捉コマンドの挙動不変）"
+      - "scoped 指定の採点でも、恒久昇格済み（活性化条件なし）のガードは駆動 issue に関わらず実行される"
+      - "先置きガードが存在しない suite・単一 issue の drive では従来と同一の採点結果になる（additive）"
