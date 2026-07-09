@@ -7,11 +7,12 @@
 > ブロックを隠さず・人手の再登録なしに drive される」という観測可能な性質。guard/loop の
 > 関数分割・ブロック報告のデータ形は実装の裁量。
 >
-> **前提（現状の欠け・A2 ギャップ）**: `Issue.dependsOnIssues` は schema と spawn の
-> key→id 再写像だけが存在し、(a) 実行ガード（pollable）は依存を一切見ない、
-> (b) 未知の依存 key は spawn が素通しする（存在しない issue id が残る沈黙欠陥）、
-> (c) 循環依存は検出されず全員が永久ブロックし得る。「roadmap→epic→issue」の下流トレースが
-> 1 issue 規模で止まっている（NORTH_STAR_PLAN A2）。
+> **前提（現状の欠け・A2 ギャップ）**: `Issue.dependsOnIssues` は schema・spawn の key→id
+> 再写像・spawn 時の design lint（未知 key と循環の拒否 — 検証済みの既存挙動）まで存在するが、
+> **実行ガード（pollable）と drive ループは依存を一切見ない** — 宣言はできるのに尊重されない。
+> 「roadmap→epic→issue」の下流トレースが 1 issue 規模で止まっている（NORTH_STAR_PLAN A2）。
+> AC-DAG-004 は既存 lint の**後方互換 AC**（④ AC-REGMT-004 と同じ型・実装前 green が正しい形）
+> — guard/loop を依存対応にする本変更が spawn 衛生を退行させないことを pin する。
 >
 > **人間ゲートとの関係（重要）**: live 経路の issue は panel 承認でも自動 released に
 > ならない（DOM-execution-007・審査は人間の判断点）。したがって live の依存チェーンは
@@ -83,14 +84,15 @@
     released になる前に generator へ渡らない（適格性はチェーン進行に伴い再評価される —
     呼び出し冒頭のスナップショットで B/C を取り逃さない）
 
-## DAG-C spawn 衛生
+## DAG-C spawn 衛生（後方互換）
 
 **ユーザーストーリー**
 
 - 誰が: 人間（issue 分解の著者）・進行管理役
-- 何を: manifest の依存宣言の誤り（typo・循環）を、drive で永久ブロックする前に spawn 時点で止める
-- なぜ: 未知 key の素通しは「存在しない issue を待つ」沈黙の死、循環は「全員が互いを待つ」
-  沈黙の死になる — どちらも never-silent の反対側
+- 何を: manifest の依存宣言の誤り（typo・循環）が spawn 時点で止まる**現行の保証を、guard/loop
+  が依存を尊重するようになった後も保つ**
+- なぜ: 依存が「尊重される」ようになった瞬間、未知 key は「存在しない issue を待つ」沈黙の死、
+  循環は「全員が互いを待つ」沈黙の死へ**昇格**する — 既存 lint がこの機能の安全前提になる
 
 **受け入れ基準**
 
@@ -109,8 +111,8 @@
 
 **完了条件**
 
-- 自動テスト: ブロック＋可視化／自動解除／チェーン完走（mock）／spawn 拒否（未知 key・循環）
-  各 1 以上。
+- 自動テスト: ブロック＋可視化／自動解除／チェーン完走（mock）／spawn 拒否（未知 key・循環 —
+  後方互換につき実装前から green が正しい）各 1 以上。
 - 運用観測（released 後・grader 対象外）: FEAT-008 の spec を依存を持つ 2+ issues に分解して
   drive し、live 経路の turn 跨ぎ解除（A released → 次 turn で B 自動 pickup）を grounded で
   観測する（M2 出口・A2 の完了条件）。
