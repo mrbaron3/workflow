@@ -157,7 +157,13 @@ export function buildGeneratorPrompt(input: GeneratorSessionInput, target: Targe
     `Implement the Issue Contract below by EDITING FILES directly in this working directory.`,
     `Stay within scope.include. Do NOT edit these harness-owned paths (they are the grader):`,
     protectedList,
-    `\n## Wiring convention — operational constants (AC-PIN-001)`,
+    // The wiring-pin convention (AC-PIN-001) — mandatory like the role file's TDD protocol.
+    // The heading carries '(mandatory)', not the harness AC id: the generator works in a
+    // target repo against its own contract's AC ids, and an unrelated id would invite
+    // mis-tagged test titles. Static norm prose belongs in agents/generator.md next to the
+    // TDD protocol; it is assembled here for now because this issue's build scope confines
+    // edits to src/** + test/** — fold it into the role file in a change that may touch agents/.
+    `\n## Wiring convention — operational constants (mandatory)`,
     `Never wire an operational constant (a timeout, retry count, concurrency cap, threshold)`,
     `as an inline literal at its callsite: an inline constant lets a value-breaking mutation`,
     `survive the whole suite. Export it as a named constant from the module that owns it, wire`,

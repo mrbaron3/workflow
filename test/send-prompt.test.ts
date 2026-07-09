@@ -5,7 +5,7 @@
  * starts changing (submission took) or the attempts run out.
  */
 import { describe, it, expect } from 'vitest';
-import { sendPrompt, type PaneDriver } from '../src/pipeline/execution/tmux.js';
+import { sendPrompt, SUBMIT_RETRY, type PaneDriver } from '../src/pipeline/execution/tmux.js';
 
 const noSleep = async (): Promise<void> => {};
 
@@ -40,9 +40,24 @@ describe('sendPrompt: verifies the prompt actually submitted', () => {
 
   it('returns false after exhausting attempts when the Enter never registers (never silent)', async () => {
     const { driver, calls } = fakeDriver(null); // pane never changes
-    const ok = await sendPrompt('s', 'do the thing', { driver, sleep: noSleep, attempts: 4 });
+    const ok = await sendPrompt('s', 'do the thing', { driver, sleep: noSleep, attempts: SUBMIT_RETRY.attempts });
     expect(ok).toBe(false);
-    expect(calls.enter).toBe(4); // tried the full budget
+    expect(calls.enter).toBe(SUBMIT_RETRY.attempts); // tried the full budget — the single source, not a restated 4
     expect(calls.type).toBe(1);
+  });
+
+  // The defaults ARE the production wiring: both live callers pass no opts, so a re-inlined
+  // literal at the `opts.x ?? SUBMIT_RETRY.x` fallback would silently shrink the retry budget
+  // while every explicit-opts test above stayed green. This case pins the no-opts path to the
+  // exported constant itself.
+  it('ISSUE-0021/AC-PIN-003 the no-opts production path consumes SUBMIT_RETRY: its attempts of Enter, its renderMs once, its settleMs per attempt', async () => {
+    const { driver, calls } = fakeDriver(null); // pane never changes → the full default budget runs
+    const slept: number[] = [];
+    const sleep = async (ms: number): Promise<void> => { slept.push(ms); };
+    const ok = await sendPrompt('s', 'do the thing', { driver, sleep });
+    expect(ok).toBe(false);
+    expect(calls.enter).toBe(SUBMIT_RETRY.attempts); // default budget comes from the single source
+    expect(slept[0]).toBe(SUBMIT_RETRY.renderMs); // typed-text render wait, no longer an inline 400
+    expect(slept.slice(1)).toEqual(Array(SUBMIT_RETRY.attempts).fill(SUBMIT_RETRY.settleMs)); // per-attempt settle
   });
 });

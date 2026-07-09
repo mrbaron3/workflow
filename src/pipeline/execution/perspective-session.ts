@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { FindingLineage, Severity, Verdict, type Finding, type IssueContract } from '../../domain/schema.js';
-import { DEFAULT_PANEL_MAX_CONCURRENT, type HarnessConfig } from '../../config.js';
+import { resolvePanelMaxConcurrent, type HarnessConfig } from '../../config.js';
 import { PerspectiveResult, deterministicPerspectiveGrade, type PerspectiveGrader, type PerspectiveSpec } from '../panel.js';
 import { changedFiles, createDetachedWorktree, removeWorktree } from './worktree.js';
 import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
@@ -295,7 +295,7 @@ export async function runPerspectiveSessions(
   const evalRoot = path.join(input.worktree, '.agentops', 'eval'); // central collection point
   const reviewRoot = path.resolve(input.worktree, '..', '..', 'review-worktrees');
   const lenses = input.perspectives.filter((p) => !p.deterministic); // functionality is graded by code
-  const maxConcurrent = config.panel?.maxConcurrent ?? DEFAULT_PANEL_MAX_CONCURRENT;
+  const maxConcurrent = resolvePanelMaxConcurrent(config);
   log(`  panel: ${lenses.length} live lenses, maxConcurrent=${maxConcurrent}`);
 
   // phase 1 (sequential): one isolated detached checkout of the build per review + its prompt

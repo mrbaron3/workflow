@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { buildGeneratorPrompt, type GeneratorSessionInput } from '../src/pipeline/execution/session.js';
 import { perspectivePrompt } from '../src/pipeline/execution/perspective-session.js';
 import { Issue, type IssueContract } from '../src/domain/schema.js';
-import { DEFAULT_CONFIG, type TargetRepoConfig } from '../src/config.js';
+import { DEFAULT_CONFIG, resolvePanelMaxConcurrent, type TargetRepoConfig } from '../src/config.js';
 
 // Missing-export erasure (⑥ precedent): both modules exist; the new exports are the red.
 const configModule = (await import('../src/config.js')) as unknown as Record<string, unknown>;
@@ -39,7 +39,10 @@ describe('production-wiring pin convention (AC-PIN-001..003)', () => {
     const prompt = buildGeneratorPrompt(input, target);
     expect(prompt).toMatch(/inline (literal|constant)/i); // the forbidden shape is named
     expect(prompt).toMatch(/export/i); // the required shape: an exported constant…
-    expect(prompt).toMatch(/pin/i); // …with a test pinning its value/property
+    // …with a pin test. The matcher must be satisfiable ONLY by the pin-test mandate itself:
+    // a bare /pin/i was tautological (it matched 'skipping' in the role prompt), so deleting
+    // the mandate from the wiring section stayed green.
+    expect(prompt).toMatch(/test that pins its value/i);
   });
 
   it('ISSUE-0021/AC-PIN-002 the testQuality rubric hunts inline-constant wiring whose mutation would survive the suite', () => {
@@ -54,11 +57,24 @@ describe('production-wiring pin convention (AC-PIN-001..003)', () => {
     expect(panelDefault).toBe(4);
     expect(DEFAULT_CONFIG.panel?.maxConcurrent).toBe(panelDefault);
 
-    // (b) tmux submit retry wiring: exported, finite, today's values.
-    const submit = tmuxModule.SUBMIT_RETRY as { attempts: number; settleMs: number };
+    // (b) tmux submit retry wiring: exported, finite, today's values — including the
+    // typed-text render wait, folded in from sendPrompt's last inline literal (400).
+    const submit = tmuxModule.SUBMIT_RETRY as { attempts: number; settleMs: number; renderMs: number };
     expect(submit.attempts).toBe(4);
     expect(submit.settleMs).toBe(1500);
+    expect(submit.renderMs).toBe(400);
     expect(Number.isFinite(submit.attempts)).toBe(true);
     expect(Number.isFinite(submit.settleMs)).toBe(true);
+    expect(Number.isFinite(submit.renderMs)).toBe(true);
+  });
+
+  it('ISSUE-0021/AC-PIN-003 resolvePanelMaxConcurrent is the pinnable seam for the panel-cap fallback (no callsite re-encoding)', () => {
+    // The fallback used to sit inline in runPerspectiveSessions, which is deliberately not
+    // unit-tested (live tmux) — a re-inlined `?? 10` there survived the suite. The pure
+    // resolver makes the wiring itself the thing under test, like resolveConcurrentIssueCap.
+    const { panel: _panel, ...noPanel } = DEFAULT_CONFIG;
+    expect(resolvePanelMaxConcurrent(noPanel)).toBe(configModule.DEFAULT_PANEL_MAX_CONCURRENT as number);
+    expect(resolvePanelMaxConcurrent({ ...DEFAULT_CONFIG, panel: { maxConcurrent: 2 } })).toBe(2);
+    expect(resolvePanelMaxConcurrent({ ...DEFAULT_CONFIG, panel: {} })).toBe(configModule.DEFAULT_PANEL_MAX_CONCURRENT as number);
   });
 });

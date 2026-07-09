@@ -128,6 +128,18 @@ export function resolveConcurrentIssueCap(config: HarnessConfig): number {
   return Math.max(1, finite);
 }
 
+/**
+ * The panel's effective review-session fan-out cap (AC-PIN-003). The `??` fallback used to
+ * sit inline in runPerspectiveSessions — deliberately not unit-tested (live tmux) — so a
+ * re-inlined literal there survived the suite. Extracted as a pure resolver, mirroring
+ * resolveConcurrentIssueCap's seam shape, so the fallback wiring itself is pin-testable.
+ * Semantics are exactly the old callsite fallback (behavior-preserving REFACTOR): a
+ * configured value passes through untouched; only an absent one falls back to the default.
+ */
+export function resolvePanelMaxConcurrent(config: HarnessConfig): number {
+  return config.panel?.maxConcurrent ?? DEFAULT_PANEL_MAX_CONCURRENT;
+}
+
 export function configPath(root: string): string {
   return path.join(root, '.harness', 'config.json');
 }
