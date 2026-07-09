@@ -28,7 +28,20 @@ import { Store, nowISO } from '../../src/store/store.js';
 import { Issue } from '../../src/domain/schema.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../../src/config.js';
 import { runLoopLive } from '../../src/pipeline/execution/live.js';
-import { computeMetrics } from '../../src/metrics/metrics.js';
+import { sampleKey } from '../../src/pipeline/execution/session.js';
+import { computeMetrics, type Metrics } from '../../src/metrics/metrics.js';
+
+// Gate pin (⑬, ⑨'s convention): the three concurrency instruments are REQUIRED
+// `number | null` — `undefined extends T` holds only for optional/undefined-bearing
+// fields, so re-adding the `?` breaks the typecheck gate.
+const concurrencyInstrumentsAreRequired: undefined extends Metrics['lastTurnPeakConcurrency']
+  ? never
+  : undefined extends Metrics['lastTurnIssuesDriven']
+    ? never
+    : undefined extends Metrics['lastTurnCap']
+      ? never
+      : true = true;
+void concurrencyInstrumentsAreRequired;
 
 const dirs: string[] = [];
 function freshStore(): Store {
@@ -83,6 +96,18 @@ const cfgWithCap = (cap: number): HarnessConfig =>
   ({ ...DEFAULT_CONFIG, generator: 'claude', maxConcurrentIssues: cap }) as HarnessConfig;
 
 describe.skipIf(!process.env.ACCEPT_HARNESS)('parallel dispatch under a finite cap (ISSUE-0019 / ISSUE-0020)', () => {
+  it('ISSUE-0019/AC-PAR-001 gate pin: the workspace/session identity is injective over distinct (issue, sample) pairs — concurrent issues cannot collide', () => {
+    // The release panel's major: uniqueness was asserted nowhere — the injected seam
+    // replaces the real driver, so the REAL identifier derivation had no test.
+    const keys = new Set<string>();
+    for (const id of ['ISSUE-0019', 'ISSUE-0020', 'ISSUE-0021', 'ISSUE-A', 'issue-a']) {
+      for (const sample of [0, 1, 2]) keys.add(sampleKey(id, sample));
+    }
+    expect(keys.size).toBe(4 * 3); // 'ISSUE-A' and 'issue-a' collapse by design (case-insensitive id space); the other 4 ids × 3 samples stay distinct
+    expect(sampleKey('ISSUE-X', 0)).not.toBe(sampleKey('ISSUE-X', 1)); // samples of one issue never collide
+    expect(sampleKey('ISSUE-X', 0)).not.toBe(sampleKey('ISSUE-Y', 0)); // distinct issues never collide
+  });
+
   it('ISSUE-0019/AC-PAR-001 two pollable issues overlap in flight under cap 2, the cap is never exceeded, and every queued issue completes', async () => {
     const store = freshStore();
     mkIssue(store, 'ISSUE-A');
@@ -151,6 +176,6 @@ describe.skipIf(!process.env.ACCEPT_HARNESS)('parallel dispatch under a finite c
     const m = computeMetrics(reopened) as unknown as Record<string, unknown>;
     expect(m.lastTurnPeakConcurrency).toBe(2);
     expect(m.lastTurnIssuesDriven).toBe(2);
-    expect(m.concurrencyCap).toBe(2);
+    expect(m.lastTurnCap).toBe(2);
   });
 });

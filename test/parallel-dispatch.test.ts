@@ -34,15 +34,15 @@ const contract = {
   redLines: [],
 };
 
-function mkIssue(store: Store, id: string, o: { status?: string; agent?: string | null; deps?: string[] } = {}): void {
+function mkIssue(store: Store, id: string, o: { deps?: string[] } = {}): void {
   store.addIssue(
     Issue.parse({
       id,
       type: 'harness',
       title: `t-${id}`,
       area: 'harness',
-      status: o.status ?? 'contract-drafted',
-      assignedAgent: o.agent === undefined ? 'claude' : o.agent,
+      status: 'contract-drafted',
+      assignedAgent: 'claude',
       dependsOnIssues: o.deps ?? [],
       contract,
       createdAt: nowISO(),
@@ -219,7 +219,7 @@ describe('per-turn concurrency instruments (AC-PAR-003)', () => {
     const m = computeMetrics(store);
     expect(m.lastTurnPeakConcurrency).toBeNull();
     expect(m.lastTurnIssuesDriven).toBeNull();
-    expect(m.concurrencyCap).toBeNull();
+    expect(m.lastTurnCap).toBeNull();
   });
 
   it('ISSUE-0020/AC-PAR-003 a live turn persists its concurrency facts in the store — a re-opened store still surfaces them in metrics', async () => {
@@ -235,7 +235,7 @@ describe('per-turn concurrency instruments (AC-PAR-003)', () => {
     const m = computeMetrics(reopened);
     expect(m.lastTurnPeakConcurrency).toBe(2);
     expect(m.lastTurnIssuesDriven).toBe(2);
-    expect(m.concurrencyCap).toBe(2);
+    expect(m.lastTurnCap).toBe(2);
   });
 
   it('ISSUE-0020/AC-PAR-003 the recorded peak is measured at the dispatch seam: cap 1 records peak 1 even with a longer queue', async () => {
@@ -250,7 +250,7 @@ describe('per-turn concurrency instruments (AC-PAR-003)', () => {
     const m = computeMetrics(new Store(store.root));
     expect(m.lastTurnPeakConcurrency).toBe(1); // sequential turn observed as sequential
     expect(m.lastTurnIssuesDriven).toBe(3); // every queued issue still counted
-    expect(m.concurrencyCap).toBe(1);
+    expect(m.lastTurnCap).toBe(1);
   });
 
   it('ISSUE-0020/AC-PAR-003 the LAST turn wins: a later turn overwrites the surfaced instruments, not the history', async () => {
@@ -267,6 +267,6 @@ describe('per-turn concurrency instruments (AC-PAR-003)', () => {
 
     const m = computeMetrics(new Store(store.root));
     expect(m.lastTurnPeakConcurrency).toBe(1); // the latest turn's facts
-    expect(m.concurrencyCap).toBe(1);
+    expect(m.lastTurnCap).toBe(1);
   });
 });

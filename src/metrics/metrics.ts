@@ -99,13 +99,13 @@ export interface Metrics {
    * Per-turn concurrency instruments (ISSUE-0020, AC-PAR-003), read from the LATEST
    * recorded live turn: peak simultaneous in-flight issues observed at the dispatch
    * seam, issues the turn drove, and the effective cap it ran under. All three are
-   * null until a turn has been recorded — unobserved is never conflated with 0.
-   * Optional in the TYPE only (hand-built fixtures predate the instruments);
-   * computeMetrics always populates them.
+   * null until a turn has been recorded — unobserved is never conflated with 0, and
+   * the fields are REQUIRED `number | null` like every sibling never-silent
+   * instrument (the ⑨ convention pinned in the intervention-accounting guard).
    */
-  lastTurnPeakConcurrency?: number | null;
-  lastTurnIssuesDriven?: number | null;
-  concurrencyCap?: number | null;
+  lastTurnPeakConcurrency: number | null;
+  lastTurnIssuesDriven: number | null;
+  lastTurnCap: number | null;
   /** false-pass rate over a sliding window of the human-labelled runs, oldest → newest. */
   falsePassTrend: { upTo: string; rate: number }[];
   passCurve: { k: number; passAtK: number; passHatK: number }[];
@@ -386,7 +386,7 @@ export function computeMetrics(store: Store): Metrics {
     howNonInterventionRate,
     lastTurnPeakConcurrency: lastTurn?.peakConcurrency ?? null,
     lastTurnIssuesDriven: lastTurn?.issuesDriven ?? null,
-    concurrencyCap: lastTurn?.cap ?? null,
+    lastTurnCap: lastTurn?.cap ?? null,
     falsePassTrend,
     passCurve,
     byAgent: [...agentAcc.entries()]

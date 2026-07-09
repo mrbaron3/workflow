@@ -59,6 +59,17 @@ async function waitForReady(session: string, timeoutMs: number): Promise<void> {
  */
 export const GENERATOR_LIVENESS = { idleMs: 90_000, activeCapMs: 1000 * 60 * 60 * 4, pollMs: 3000 } as const;
 
+/**
+ * The per-(issue, sample) identity every physical resource derives from — branch
+ * `agent/<key>`, tmux session `ao-<key>`, worktree `.harness/worktrees/<key>`. Exported so
+ * the guard can pin its injectivity over distinct (issueId, sampleIndex) pairs (gate pin
+ * ISSUE-0019): issues driven CONCURRENTLY (FEAT-008) must never collide on a workspace or
+ * session name — uniqueness here is what makes the parallel substrate collision-free.
+ */
+export function sampleKey(issueId: string, sampleIndex: number): string {
+  return `${issueId.toLowerCase()}-s${sampleIndex}`;
+}
+
 export async function runGeneratorSession(
   config: HarnessConfig,
   input: GeneratorSessionInput,
@@ -70,7 +81,7 @@ export async function runGeneratorSession(
 
   const repoAbs = path.resolve(harnessRoot, target.repo);
   const baseRef = target.baseRef ?? 'HEAD';
-  const key = `${input.issue.id.toLowerCase()}-s${input.sampleIndex}`;
+  const key = sampleKey(input.issue.id, input.sampleIndex);
   const branch = `agent/${key}`;
   const session = `ao-${key}`;
   const wt = path.join(harnessRoot, '.harness', 'worktrees', key);

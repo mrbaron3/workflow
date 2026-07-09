@@ -20,7 +20,7 @@ import { Store, nowISO } from '../../store/store.js';
 import { PR, PromptRecord, TurnRecord } from '../../domain/schema.js';
 import { pollable, blockedByDependencies, formatBlockedLine } from './guard.js';
 import { mapPool } from './pool.js';
-import { runGeneratorSession } from './session.js';
+import { runGeneratorSession, sampleKey } from './session.js';
 import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader, type PriorFinding } from './perspective-session.js';
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
@@ -74,7 +74,7 @@ async function runLiveSample(
   const contract = issue.contract!;
   const target = config.target!;
   const perspectives = opts.perspectives ?? PERSPECTIVES;
-  const issueKey = `${issue.id.toLowerCase()}-s${sampleIndex}`;
+  const issueKey = sampleKey(issue.id, sampleIndex);
   const maxAttempts = config.maxRepairs + 1;
   const manageIssueStatus = opts.manageIssueStatus;
 
