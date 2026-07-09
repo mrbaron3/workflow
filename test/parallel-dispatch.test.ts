@@ -253,6 +253,38 @@ describe('per-turn concurrency instruments (AC-PAR-003)', () => {
     expect(m.lastTurnCap).toBe(1);
   });
 
+  it('ISSUE-0020/AC-PAR-003 the peak is an observation, not the cap echoed back: cap 4 over 2 overlapping issues records peak 2', async () => {
+    const store = freshStore();
+    mkIssue(store, 'ISSUE-A');
+    mkIssue(store, 'ISSUE-B');
+
+    // Cap 4 but only 2 issues can ever be in flight: the achievable concurrency is
+    // strictly below the cap, so a recorder that echoes the cap (or min(cap, queue))
+    // instead of measuring is caught here.
+    const { worker, peaks } = recordingWorker([]);
+    await runLoopLive(store, cfgWithCap(4), store.root, { driveIssue: worker }, () => {});
+
+    expect(Math.max(...peaks)).toBe(2); // the two issues really did overlap
+    const m = computeMetrics(new Store(store.root));
+    expect(m.lastTurnPeakConcurrency).toBe(2); // measured maximum, NOT the configured 4
+    expect(m.lastTurnCap).toBe(4); // the cap is surfaced separately, distinguishable
+    expect(m.lastTurnIssuesDriven).toBe(2);
+  });
+
+  it('ISSUE-0020/AC-PAR-003 observed zero stays distinct from unobserved: an empty-queue turn surfaces 0/0 with its cap, never null', async () => {
+    const store = freshStore(); // no issues at all — the pollable queue is empty
+
+    const events: DispatchEvent[] = [];
+    const { worker } = recordingWorker(events);
+    await runLoopLive(store, cfgWithCap(3), store.root, { driveIssue: worker }, () => {});
+
+    expect(events).toHaveLength(0); // nothing was dispatched — the zeros are observations
+    const m = computeMetrics(new Store(store.root));
+    expect(m.lastTurnPeakConcurrency).toBe(0); // a turn ran and saw 0 in flight — not null
+    expect(m.lastTurnIssuesDriven).toBe(0); // 0 driven is a fact, not "never observed"
+    expect(m.lastTurnCap).toBe(3); // the turn's resolved cap is still recorded
+  });
+
   it('ISSUE-0020/AC-PAR-003 the LAST turn wins: a later turn overwrites the surfaced instruments, not the history', async () => {
     const store = freshStore();
     mkIssue(store, 'ISSUE-A');
