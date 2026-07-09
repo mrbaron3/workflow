@@ -3,9 +3,18 @@
  * guard and drive chains in order" — spec docs/specs/dependency-ordered-multi-issue-drive
  * (AC-DAG-001..004, FEAT-007 / M2 前半).
  *
- * Red at baseline BY DESIGN, collected only under ACCEPT_HARNESS=1 (ADR-0007 I3). After the
- * build is human-approved and released, the skipIf is dropped and this file stays in
- * protectedPaths as the permanent regression guard.
+ * This began as the env-gated acceptance grader for the drive — red at baseline BY DESIGN
+ * (4 RED + 1 backward-compat GREEN), collected only under ACCEPT_HARNESS=1 (ADR-0007 I3).
+ * The build was human-approved and released (2026-07-09, one repair round — the FIRST
+ * repair under ⑪'s completeness-fixed brief: all 3 sibling findings forwarded, 2 landed
+ * fully, 1 partially persisted). skipIf dropped: permanent guard, protectedPaths.
+ *
+ * Gate-condition pins (⑫, both mutation-verified by the release panel):
+ *   - multi-dependency waits: reporting only the FIRST unreleased dependency
+ *     (`.slice(0,1)` on unreleasedDependencies) survived all 377 tests — every fixture
+ *     gave a blocked issue exactly one unreleased dep. Pinned below with a two-wait issue.
+ *   - opt-in scope: dropping the isAiManaged filter from blockedByDependencies (reporting
+ *     other agents' / unassigned issues as blocked) also survived. Pinned below.
  *
  * Seams this file pins (harness-owned WHAT confirmation):
  *   - guard.ts exports `blockedByDependencies(store, config)` — the never-silent half:
@@ -95,7 +104,32 @@ function greenRunner(store: Store, dispatched: string[], violations: string[]): 
   };
 }
 
-describe.skipIf(!process.env.ACCEPT_HARNESS)('dependency-ordered multi-issue drive (ISSUE-0018)', () => {
+describe('dependency-ordered multi-issue drive (ISSUE-0018)', () => {
+  it('ISSUE-0018/AC-DAG-001 gate pin: an issue waiting on TWO dependencies reports BOTH waits, and only ai-managed issues are reported', async () => {
+    const store = freshStore();
+    mkIssue(store, 'ISSUE-A', { status: 'planned', agent: null });
+    mkIssue(store, 'ISSUE-F', { status: 'closed', agent: null });
+    mkIssue(store, 'ISSUE-M', { deps: ['ISSUE-A', 'ISSUE-F'] }); // waits on two at once
+    mkIssue(store, 'ISSUE-X', { agent: 'mock', deps: ['ISSUE-A'] }); // someone else's issue
+    mkIssue(store, 'ISSUE-Y', { status: 'planned', deps: ['ISSUE-A'] }); // not opted in
+
+    const report = (guard.blockedByDependencies as (s: Store, c: HarnessConfig) => { issueId: string; waitingOn: unknown[] }[])(store, CLAUDE);
+    const m = report.find((b) => b.issueId === 'ISSUE-M')!;
+    expect(m.waitingOn).toHaveLength(2); // kills the slice(0,1)/first-only mutant
+    expect(JSON.stringify(m.waitingOn)).toContain('ISSUE-A');
+    expect(JSON.stringify(m.waitingOn)).toContain('ISSUE-F');
+    // opt-in scope (DOM-execution-006): the report covers ai-managed issues only.
+    expect(report.map((b) => b.issueId)).not.toContain('ISSUE-X');
+    expect(report.map((b) => b.issueId)).not.toContain('ISSUE-Y');
+
+    // The live turn log names BOTH waits with their statuses (kills the first-only mutant there too).
+    const lines: string[] = [];
+    await runLoopLive(store, CLAUDE, store.root, {}, (l) => lines.push(l));
+    const log = lines.join('\n');
+    expect(log).toContain('ISSUE-A (planned)');
+    expect(log).toContain('ISSUE-F (closed)');
+  });
+
   it('ISSUE-0018/AC-DAG-001 an ai-managed issue with an unreleased dependency is not pollable, and the block is reported with the dependency and its status', () => {
     const store = freshStore();
     mkIssue(store, 'ISSUE-A', { status: 'planned', agent: null }); // the unreleased dependency
