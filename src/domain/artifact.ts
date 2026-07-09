@@ -52,11 +52,15 @@ export interface PanelInstruction {
   severity: Finding['severity'];
   /** Every requiredFix line of the forwarded finding, order preserved (ISSUE-0004). */
   instructions: string[];
-  /** Perspectives that flagged this criterion (a criterion flagged by several is merged once). */
+  /**
+   * Perspectives that raised this finding. One entry per DISTINCT finding (ISSUE-0016):
+   * only content-identical findings (same criterionId + requiredFix list) merge, unioning
+   * their perspectives — same-criterion findings with different content stay separate.
+   */
   perspectives: string[];
 }
 
-/** Cross-perspective repair brief: findings from every perspective run, blocker-first, deduped. */
+/** Cross-perspective repair brief: every distinct finding from every perspective run, blocker-first. */
 export interface PanelRepairBrief {
   fromEvalRunIds: string[];
   instructions: PanelInstruction[];

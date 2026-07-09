@@ -59,21 +59,20 @@ describe('panel repair brief forwards the full fix list (ISSUE-0004)', () => {
     // blocker-first: the minor AC-8 is suppressed while a blocker exists
     expect(panel.instructions.every((i) => i.criterionId === 'AC-9')).toBe(true);
     expect(panel.findings.every((f) => f.severity === 'blocker')).toBe(true);
-    // one instruction per criterion, tagged with every lens that raised it
+    // one instruction group per distinct finding (identical content merges), every lens named
     expect(panel.instructions).toHaveLength(1);
     expect(panel.instructions[0]!.perspectives).toEqual(['codeQuality', 'testQuality']);
   });
 
-  it('AC-2 upgrades a criterion to its most severe instance and forwards that instance’s full fix list', () => {
+  it('AC-2 upgrades a content-identical finding to its most severe instance (ISSUE-0016: identity is content, not criterionId)', () => {
     // The major instance arrives FIRST, so only the merge's severity upgrade can promote the
-    // criterion when the blocker instance arrives later. The fix lists are distinguishable to
-    // pin WHICH instance's requiredFix reaches the generator.
+    // group when the blocker instance arrives later. Same requiredFix list = same finding.
     const panel = buildPanelRepairBrief([
-      run('EVAL-1', 'codeQuality', [finding('AC-9', 'major', ['m1', 'm2'])]),
+      run('EVAL-1', 'codeQuality', [finding('AC-9', 'major', ['b1', 'b2'])]),
       run('EVAL-2', 'security', [finding('AC-9', 'blocker', ['b1', 'b2'])]),
       run('EVAL-3', 'testQuality', [finding('AC-8', 'minor', ['cosmetic'])]),
     ]);
-    // the merged instruction carries the blocker severity and the blocker instance's fixes
+    // the merged instruction carries the blocker severity and the shared fix list
     expect(panel.instructions).toHaveLength(1);
     expect(panel.instructions[0]!.criterionId).toBe('AC-9');
     expect(panel.instructions[0]!.severity).toBe('blocker');
@@ -82,8 +81,20 @@ describe('panel repair brief forwards the full fix list (ISSUE-0004)', () => {
     expect(panel.findings).toHaveLength(1);
     expect(panel.findings[0]!.severity).toBe('blocker');
     expect(panel.findings[0]!.requiredFix).toEqual(['b1', 'b2']);
-    // attribution still names every lens that raised the criterion
+    // attribution names every lens that raised this finding
     expect(panel.instructions[0]!.perspectives).toEqual(['codeQuality', 'security']);
+  });
+
+  it('AC-2 a same-criterion sibling with DIFFERENT content is a different finding: blocker-first suppresses it, never merges it (ISSUE-0016)', () => {
+    const panel = buildPanelRepairBrief([
+      run('EVAL-1', 'codeQuality', [finding('AC-9', 'major', ['m1', 'm2'])]),
+      run('EVAL-2', 'security', [finding('AC-9', 'blocker', ['b1', 'b2'])]),
+    ]);
+    // only the blocker finding forwards this round, with ITS fixes and ITS lens
+    expect(panel.instructions).toHaveLength(1);
+    expect(panel.instructions[0]!.severity).toBe('blocker');
+    expect(panel.instructions[0]!.instructions).toEqual(['b1', 'b2']);
+    expect(panel.instructions[0]!.perspectives).toEqual(['security']);
   });
 
   it('AC-2 a finding with no requiredFix still yields the Resolve fallback', () => {
