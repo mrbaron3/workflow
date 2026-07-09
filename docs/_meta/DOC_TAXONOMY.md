@@ -47,7 +47,7 @@
 
 | 要求の例 | 扱い |
 |---|---|
-| 「タスクに有効期限を追加」 | 上限内 → **1 spec**（`specs/task-due-date/`） |
+| 「タスクに有効期限を追加」 | 上限内 → **1 spec**（`requirements/task-due-date/`） |
 | 「Todo アプリを作りたい」 | capability の portfolio で上限超過 → **計画の木（roadmap）が feature 群に分解** → feature ごとに to-spec → `specs/task-crud/`・`specs/task-due-date/` …。**1つの巨大 spec にしない** |
 
 製品スケールの要求は「1つの spec」ではなく「**複数の署名 spec ＋ それを畳んだ feature-catalog**」になる
@@ -81,7 +81,11 @@ system 横断のものは外に出す。各ビューは additive な ID 空間�
 - **list が落としがちな3つ（契約・NFR・ADR）こそ AI 自律開発で効く。** 契約は seam を機械検証可能にし、
   NFR は grader の母体、ADR は「なぜ」を蒸発させない。
 
-## MICRO — 機能ごとの仕様書
+## MICRO — 機能ごとの要求契約（署名 spec）
+
+> 命名（2026-07-09 決定）: 著述ファイルは `requirements.md`・住処は `requirements/<feature>/`。
+> 「spec」は概念名としては残るが、**確定仕様（state）と誤読される名を文書に与えない**
+> （[DOC_LIFECYCLE](DOC_LIFECYCLE.md) の delta/state 区別を命名にも貫徹）。
 
 macro を**参照**し、自分は behavior（AC）だけを足す。状態・スキーマを spec に書かない（書いた瞬間に SSOT が
 二重化して drift する。[DOC_LIFECYCLE](DOC_LIFECYCLE.md) §著述 SSOT は2つだけ と一貫）。
@@ -130,8 +134,8 @@ docs/
     data-model.md                    # DATA-<CTX>-NNN（概念→論理→物理）
     contracts/                       # CONTRACT-<CTX>-NNN（公開言語）
       api.openapi.yaml  events.asyncapi.yaml
-  specs/<feature>/                   # micro・機能単位（= 計画の木の葉）
-    spec.md                          # AC-<SPEC>-NNN（GWT・WHAT）
+  requirements/<feature>/            # micro・機能単位（= 計画の木の葉・署名される要求 delta）
+    requirements.md                  # AC-<SPEC>-NNN（GWT・WHAT）
     acceptance.yaml                  # AC → verification
                                      # nano（slice）は文書でなく store の Issue（下記 NANO 参照）
   _derived/                          # 生成物（著述しない）
@@ -150,7 +154,7 @@ docs/
 | `NFR-NNN` | 品質要件 | `cross-cutting/` | additive |
 | `ADR-NNNN` | 決定 | `decisions/` | append-only・supersede |
 | `EPIC-NN` | 計画 grouping | `roadmap.yaml` | additive |
-| `AC-<SPEC>-NNN` | 受け入れ基準 | `specs/<feature>/spec.md` | additive・supersede |
+| `AC-<SPEC>-NNN` | 受け入れ基準 | `requirements/<feature>/requirements.md` | additive・supersede |
 | Issue Contract | 実行単位（旧 slice） | **store**（Issues/PR/db） | 実行状態・著述でない |
 
 micro の AC が macro の ID を `dependsOn` で指すことで、「この機能はどのドメイン規則・どのテーブル・どの契約に

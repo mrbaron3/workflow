@@ -14,7 +14,7 @@
 要求の粒度はフェーズで変わる（システム規模／機能／バグ）。素朴に「to-spec の成果物＝アプリの仕様書」と
 扱うと破綻する。理由は2つ：
 
-1. **時間モードが違う。** `spec.md` は *as-designed*（変更意図・署名された WHAT 契約）であり、変更にスコープ
+1. **時間モードが違う。** `requirements.md`（旧名 spec.md）は *as-designed*（変更意図・署名された WHAT 契約）であり、変更にスコープ
    された **delta**。アプリの「現在仕様」は *as-built*（実際に成り立っている挙動）という **状態** の概念で、
    両者は別物。
 2. **後勝ちで上書きされる。** 後の spec が前の spec の AC 挙動を置換しうる。署名 spec を時系列に並べても
@@ -33,7 +33,7 @@
 | | **delta（流れ）** | **state（SSOT／蓄積）** |
 |---|---|---|
 | **macro（system）** | `design-delta.md`（reads/extends + 影響 AC-ID） | ✅ **system 層**: `_system/<ctx>/domain-map.md`・`architecture.md`・`data-model.md`（additive・生きている） |
-| **micro（機能）** | ✅ **`spec.md` + `acceptance.yaml`**（署名・版固定された WHAT 契約） | 🟡 **現在成り立つ AC 集合**（=「アプリの現在仕様」。**派生ビュー**。§派生ビュー参照） |
+| **micro（機能）** | ✅ **`requirements.md` + `acceptance.yaml`**（署名・版固定された WHAT 契約。旧名 spec.md — 2026-07-09 改名・凍結置台は旧名のまま） | 🟡 **現在成り立つ AC 集合**（=「アプリの現在仕様」。**派生ビュー**。§派生ビュー参照） |
 | **nano（PR/タスク）** | **Issue Contract**（store）・PR・repair brief・eval run（実行レコード・著述文書でない） | ✅ **コード + green な evidence / scorecard**（as-built の真実） |
 
 macro 状態（system 層）も nano 状態（コード+evidence）も既にある。**唯一 派生で埋めるのが micro 状態**。
@@ -61,7 +61,7 @@ micro 状態は**ファイルとして手書きしない**。図・シーケン�
    └─►  「現在成り立つ AC 集合」              = micro の materialized view ＝「アプリの現在仕様」（派生）
 ```
 
-- **source（spec）と projection（catalog）を取り違えない。** 署名 spec（`specs/<f>/`）は**永続・git 管理**
+- **source（spec）と projection（catalog）を取り違えない。** 署名 spec（`requirements/<f>/`・旧 `specs/<f>/`）は**永続・git 管理**
   （署名で gitSha 固定・drift 検知の基準）＝**ログ（source）**。feature-catalog は `_derived/` の**派生（projection）**。
   *commit を消して CHANGELOG だけ残す*ことをしないのと同様、spec を消して catalog だけ残さない。
 - 人間可読の「機能カタログ」が欲しければ、この AC 集合から**生成して焼く**（手書きの第4層を作らない）。

@@ -54,7 +54,7 @@ const config: HarnessConfig = {
       unit_tests: `${path.join(BIN, 'vitest')} run`,
     },
     protectedPaths: ['test/acceptance-harness/'],
-    systemDir: 'docs/specs/_system',
+    systemDir: 'docs/_system',
   },
 };
 if (models) config.models = models;

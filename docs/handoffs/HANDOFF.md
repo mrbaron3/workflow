@@ -14,8 +14,8 @@
 
 住処（正本の地図）:
 
-- **roadmap（ハーネス自身の WHAT の頂点）** `docs/roadmap.yaml`・**署名対象 spec** `docs/specs/<slug>/`（spec.md＋acceptance.yaml＋issues.yaml・`to-spec`/`to-detail-design` の著述形式）。
-- **設計正本** `docs/specs/_system/`（境界コンテキスト別 4ビュー）＋ `docs/decisions/`（ADR）。
+- **roadmap（ハーネス自身の WHAT の頂点）** `docs/roadmap.yaml`・**署名対象の要求契約** `docs/requirements/<slug>/`（requirements.md＋acceptance.yaml＋issues.yaml・`to-spec`/`to-detail-design` の著述形式。**⑭改名**: 著述物は要求の delta であり現在仕様でない — 旧 9 features は `docs/specs/<slug>/spec.md` に凍結置台・署名の版固定のため移設しない・検査は両対応）。
+- **設計正本** `docs/_system/`（境界コンテキスト別 4ビュー・⑭で docs/specs/ 下から理想ツリー位置へ移設）＋ `docs/decisions/`（ADR）。
 - **共有 deterministic ライブラリ** `src/`（fingerprint / lint / resolve / pipeline 等）。
 - **Agent Skill** `.claude/skills/`（`to-spec`・`to-system-design`・`to-detail-design`）。
 - **状態＝ SoT** は `.harness/db.json`（Zod schema `src/domain/schema.ts` が単一正本・ADR-0001/0002）。`.harness/` は gitignore・ローカル揮発。
@@ -44,9 +44,9 @@
 上流（人間が WHAT を著す）から下流（自律実行・評価・改善）へ:
 
 - **planning / authoring / design（上流・著述）** — 署名 spec を著し、system 層（ドメイン/アーキ/データ/言語）と Issue へ分解。
-  実装: `src/pipeline/contract-draft.ts`、skills `to-spec`/`to-system-design`/`to-detail-design`、設計正本 `docs/specs/_system/{authoring,design,planning}`。**④で grounded 一気通貫済み**: `docs/roadmap.yaml`（ハーネス自身の roadmap）→ `plan-roadmap` → `spawn-specs` → 著述・`sign` → `spawn-issues`（issues.yaml に **file-glob `scope`** — `f8b4efa` で AC-id 混入バグを閉鎖）→ `contract-draft` → **`assign`（④新設・`4724bf9`）＝署名済み WHAT の HOW を AI へ委任する明示 opt-in**（adopt が提案用、assign が spec 経由用の対の判断点）。
+  実装: `src/pipeline/contract-draft.ts`、skills `to-spec`/`to-system-design`/`to-detail-design`、設計正本 `docs/_system/{authoring,design,planning}`。**④で grounded 一気通貫済み**: `docs/roadmap.yaml`（ハーネス自身の roadmap）→ `plan-roadmap` → `spawn-specs` → 著述・`sign` → `spawn-issues`（issues.yaml に **file-glob `scope`** — `f8b4efa` で AC-id 混入バグを閉鎖）→ `contract-draft` → **`assign`（④新設・`4724bf9`）＝署名済み WHAT の HOW を AI へ委任する明示 opt-in**（adopt が提案用、assign が spec 経由用の対の判断点）。
 - **① execution（自律実行）** — ai-managed issue を実 Claude セッション（対話 tmux・`claude -n`、**headless 非目標**）で実装。
-  実装: `src/pipeline/execution/`（`loop.ts` 制御・`live.ts` live 配線・`session.ts` generator・`perspective-session.ts` reviewer・`tmux.ts` 基質・`worktree.ts`・`grade.ts` 実採点・`gate.ts` ゲート・`scoped-context.ts` 設計注入）。正本: **ADR-0005** ＋ `docs/specs/_system/execution` 4ビュー。
+  実装: `src/pipeline/execution/`（`loop.ts` 制御・`live.ts` live 配線・`session.ts` generator・`perspective-session.ts` reviewer・`tmux.ts` 基質・`worktree.ts`・`grade.ts` 実採点・`gate.ts` ゲート・`scoped-context.ts` 設計注入）。正本: **ADR-0005** ＋ `docs/_system/execution` 4ビュー。
 - **② evaluation（評価）** — 実 tsc/vitest の hard-gate（ADR-0003）＋7観点パネル（functionality は決定論、他6観点は read-only Claude レビュー）。集約 Verdict→ human ゲート。
   実装: `src/pipeline/panel.ts`・`evaluate.ts`・`src/graders/`・`src/metrics/metrics.ts`。正本: **ADR-0006** ＋ `_system/evaluation`。
 - **③ improvement（自己改善）** — `curator.ts`（失敗→回帰 EvalTask 昇格）＋`analyst.ts`（metrics→`type:harness`/`type:eval` 改善 issue 起票）＋`adopt.ts`（提案→人間 WHAT 確定→drive 可能化）＋`improve.ts`（live turn 末尾の常設 tail）。**改善は同じ roadmap の issue として同じ drive loop で回す**（＝ハーネスが自分を直す）。正本: **ADR-0007**。self-hosting は `config.target.repo='.'`＋env-gate 受け入れテスト（`test/acceptance-harness/`・protectedPaths 保護）。
@@ -95,6 +95,14 @@ ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-b
 - **次の判断点は変わらず M4 テーマ確定**。D3 完了条件（2+ issue 同時先置きで各 build が自 issue
   差分のみで released）は実装済み構造の grounded 実測だけが残り、M4 の複数 issue 開発が自然な
   観測機会。
+- **追記（同日・文書層の改名）**: 「spec という命名は確定仕様（state）との誤解を生む — 実体は
+  署名される要求の delta」という人間指摘（DOC_LIFECYCLE の警告そのもの）を受け、**今後の spawn 分
+  から `docs/requirements/<slug>/requirements.md`** へ改名（旧 9 features は署名の版固定のため
+  `docs/specs/` に凍結置台・全検査は単一の家 `src/authoring/spec-doc.ts` 経由で両対応）。同時に
+  **`_system` を `docs/_system/` へ移設**（DOC_TAXONOMY 理想ツリーの位置・生きている state 文書
+  なので版固定問題なし）。「アプリの現在仕様」は著述せず署名 AC を supersedes で畳んだ派生
+  （feature-catalog・DOC_LIFECYCLE 案A）— fold の実装は最初の supersedes 出現時（M4 序盤想定）に
+  WHAT 化する観測駆動とした。
 
 ### ⑫⑬セッション（2026-07-09・M2 出口到達 = 依存順 DAG→並行 drive→roadmap 完全 drain）
 
@@ -460,7 +468,7 @@ sandbox 束縛の2 task は skip 報告）。
 ```bash
 # 決定論の確認（441 green・skip ゼロ）
 npm test && npm run typecheck
-npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/specs/_system
+npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/_system
 
 # grounded execution（cost・claude 認証が要る）
 npx tsx scripts/real-run-sandbox.ts                    # 使い捨て sandbox＋ai-managed ISSUE-0001（roman）
@@ -471,11 +479,11 @@ tmux attach -t agentops                                # ライブ観察（各�
 
 # 上流一気通貫（roadmap → released まで・④で grounded 済みの実列）
 npm run harness -- plan-roadmap --seed docs/roadmap.yaml   # roadmap → planning tree
-npm run harness -- spawn-specs               # in-plan feature → 署名可能な spec stub（docs/specs/<slug>）
-#   （spec.md / acceptance.yaml / issues.yaml を著述して commit — issues.yaml には file-glob scope を宣言）
-npm run harness -- sign docs/specs/<slug>    # AUTH-B lint → ApprovedSpecRef（committed blob を版固定）
-npm run harness -- spawn-issues docs/specs/<slug>   # issues.yaml → ISSUE-NNNN（design lint 強制）
-npm run harness -- contract-draft docs/specs/<slug> # 署名 AC を源に契約（scope は manifest の glob）
+npm run harness -- spawn-specs               # in-plan feature → 署名可能な要求 stub（docs/requirements/<slug>）
+#   （requirements.md / acceptance.yaml / issues.yaml を著述して commit — issues.yaml には file-glob scope を宣言）
+npm run harness -- sign docs/requirements/<slug>    # AUTH-B lint → ApprovedSpecRef（committed blob を版固定）
+npm run harness -- spawn-issues docs/requirements/<slug>   # issues.yaml → ISSUE-NNNN（design lint 強制）
+npm run harness -- contract-draft docs/requirements/<slug> # 署名 AC を源に契約（scope は manifest の glob）
 npm run harness -- assign ISSUE-NNNN         # ★人間の委任 opt-in（これで pollable 入り。adopt は提案専用）
 #   （env-gated RED 受け入れテストを test/acceptance-harness/ に先置き・commit してから↓）
 npx tsx scripts/real-run-self.ts && LENSES=codeQuality,testQuality npx tsx scripts/real-panel-run.ts
@@ -546,7 +554,7 @@ npm run harness -- retire EVAL-TASK-... --reason <text>
 
 - `docs/NORTH_STAR.md` — 三能力・操舵指標・反証サイン（最上位要求）。
 - `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）・`ADR-0007`（③配線 I1-I4・未吸収＝ビュー吸収が残タスク）。
-- `docs/specs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
+- `docs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
 - 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,adopt,assign,improve,regression,repair,contract-draft}.ts`・`src/planning/planning-tree.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
 - テスト: `test/{improvement-loop,adopt,assign,metrics,intervention,proposal-lifecycle,grade-env,grade-scoped,scoped-collection-integration,accept,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 441・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ帰属宣言付き gating（⑭以降 `describe.skipIf(!acceptsIssue('ISSUE-XXXX'))`・§6）で baseline-red を隔離し、released 後に gating を外して昇格する規約（ADR-0007 I3）。現在の13ファイル全て昇格済み（ゲート条件ピンは各ガードに同居・⑥⑦⑨〜⑭）。~~D3 注意（⑬）~~ **⑭で閉鎖**: 採点は駆動 issue の scoped 活性化を注入するため、複数 issue の同時先置きでも omnibus 強制は起きない（`src/pipeline/execution/accept.ts` が単一の家）。
 - 共有語彙: `src/domain/eval-task.ts`（⑩新設）— active/retired 述語（`isRetired`/`activeEvalTasks`）と EVAL-TASK id 規約（`buildTaskId`/`parseTaskId`）の単一の家。registry を読む/書くコードはここを通す（重複綴りを再導入しない）。

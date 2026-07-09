@@ -115,7 +115,7 @@ ${ac3Strict}
 // here, so the generator prompt gets these design elements resolved (id refs, never copied). Two
 // conventions on purpose: DOM/ARCH as bullets, LANG as a table row (mirrors the harness's own views).
 write(
-  'docs/specs/_system/roman/domain-model.md',
+  'docs/_system/roman/domain-model.md',
   `# Roman numerals — domain
 
 - **DOM-roman-001 Value range** — a roman numeral represents an integer in the closed range 1..3999; there is no zero and nothing outside this range is representable. Out-of-range input is rejected.
@@ -123,7 +123,7 @@ write(
 `,
 );
 write(
-  'docs/specs/_system/roman/ubiquitous-language.md',
+  'docs/_system/roman/ubiquitous-language.md',
   `# Roman numerals — ubiquitous language
 
 | id | term | meaning |
@@ -132,7 +132,7 @@ write(
 `,
 );
 write(
-  'docs/specs/_system/roman/architecture.md',
+  'docs/_system/roman/architecture.md',
   `# Roman numerals — architecture
 
 - **ARCH-roman-001 Pure total functions** — \`toRoman\`/\`fromRoman\` are pure (no I/O, no globals) and total over their domain: valid input returns a value, invalid input throws — never returns null/NaN/empty or silently coerces.
@@ -209,7 +209,7 @@ const config: HarnessConfig = {
     },
     protectedPaths: ['test/acceptance/'],
     // scoped-context source (ARCH-execution-007): the issue's dependsOnSystem resolve from here.
-    systemDir: '.harness/sandbox/docs/specs/_system',
+    systemDir: '.harness/sandbox/docs/_system',
   },
 };
 saveConfig(ROOT, config);
