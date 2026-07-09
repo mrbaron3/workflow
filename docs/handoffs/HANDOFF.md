@@ -454,8 +454,8 @@ sandbox 束縛の2 task は skip 報告）。
   0. **D4（target-rooted authoring）の WHAT 化 = M4 準備の最初のハーネス作業** — ⑭で M4 の
      repo 関係モデルが人間確定（workflow=開発組織／テーマ repo=開発対象で**自分の WHAT を所有**・
      接点は config.target と GitHub PR gate — 正本 NORTH_STAR_PLAN §5）。著述半分（spawn root
-     未露出・sign の git が harness cwd 固定）を外部 repo 対応に。テーマの仮候補（YouTube 分析
-     ツール）も §5 に記録済み — **本決定は着手時**。
+     未露出・sign の git が harness cwd 固定）を外部 repo 対応に。**テーマも⑭で人間確定**:
+     YouTube チャンネル方向性分析ツール・EPIC-01 は fixture 上の決定論分析コア限定（§5）。
   1. **M4 のテーマ確定（人間の WHAT・最大の判断点）** — 着手条件「ハーネス一通り完成」が
      ほぼ成立（M2✅・drain✅=EPIC-01..04 全 9 features・M3 は B2 効果測定の観測のみ残）。
      NORTH_STAR_PLAN §5 の選定基準参照。確定後: テーマ repo を scaffold（Development 配下・

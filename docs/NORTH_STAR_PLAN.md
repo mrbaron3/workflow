@@ -140,10 +140,15 @@ R3 沈黙・executedRate 100%・unverified 0。dedup がルール同一性化さ
   選定基準の提案（着手時の参考・拘束ではない）: (i) AC が unit_test 中心で書ける規模から
   始める（A6 を最初から要求しない）、(ii) 失敗しても実害の無い自前プロダクト、
   (iii) 複数 issue に自然に割れる規模（M2 の成果を使う）。
-  **仮候補（⑭・2026-07-09・未確定）**: 「YouTube の動画内容・コメント投稿時間・いいね数等を
-  分析し、作るべきチャンネルの方向性を決めるツール」— 選定基準への適合は高い（コアを純関数化＋
-  YouTube Data API を fixture seam 化すれば unit_test 中心・実害なし・API/取込/分析/提案/出力に
-  自然分解）。**本決定は着手時**。
+  **✅ テーマ確定（⑭・2026-07-09 人間確定）**: 「YouTube の動画内容・コメント投稿時間・
+  いいね数等を分析し、作るべきチャンネルの方向性を決めるツール」。**round 1 のサイズ調整は
+  テーマでなく最初の EPIC で行う**（計画の木の設計どおり）: テーマ repo の EPIC-01 は
+  **fixture データ上の決定論分析コアに限定** — fixture JSON 取込境界（FEAT-Y01）→ 時間帯×
+  エンゲージメント分析（FEAT-Y02）→ spec が pin するスコア式のランキング＋レポート出力
+  （FEAT-Y03・Y02/Y03 は Y01 依存 = D3 完了条件の観測を兼ねる）。**YouTube Data API・認証・
+  LLM 内容分析は EPIC-02+ へ**（grader の決定論制約: live API と secret を採点に持ち込まない）。
+  着手順: D4（target-rooted authoring）→ テーマ repo scaffold → EPIC-01 一気通貫
+  （GitHub gate 初実走を兼ねる）。
 - **M4 の repo 関係モデル ✅ 確定（⑭・2026-07-09 人間確定）**: workflow repo＝**開発組織**
   （機構・store・組織自身の WHAT）／テーマ repo＝**開発対象**（コード・テスト・受け入れガード・
   **自分の WHAT**: NORTH_STAR/roadmap/requirements/_system — DOC_TAXONOMY の理想ツリーを
