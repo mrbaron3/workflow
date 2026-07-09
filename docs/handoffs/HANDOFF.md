@@ -79,10 +79,9 @@ FEAT-005 を上流チェーン五周目で released。**adopt の対（decline/r
   ISSUE-0010/0002/0008 decline（理由は §4 の表から転記）→ 実測: **analyze で R3 沈黙・
   executedRate 100%・unverified 2→0**。INTV-0004（この条件付き承認自体）も記録 —
   自律軸: 0.444 介入/issue・55.6% intervention-free（9 drive 済み中 4 件が条件付き承認）。
-- **B2 の判別データが 2/2 rounds 揃った**: ⑨ 2/4 persisted・⑩ 5/5 persisted — 全て「brief に
-  載っていた指摘の実装取りこぼし」かつ「refactor/テスト厳密性クラス」＝ brief 不着でも
-  レビュア深掘りでもない**第三の型（generator が品質系 findings を軽視）**。R1 添付 draft
-  （brief 忠実性）は証拠と不整合 — **adopt 時は draft 差し替え必須**（NORTH_STAR_PLAN B2）。
+- **B2 の判別データが 2/2 rounds 揃った**（→ ただしこの時点の暫定診断「generator が品質系
+  findings を軽視する第三の型」は**⑪で PromptRecord 検分により誤診と判明** — 主因は
+  buildPanelRepairBrief の同一 criterion 内 finding 落とし。正本は NORTH_STAR_PLAN B2）。
 - metrics（正直）: passAt1 0.38→0.33・repairSuccess 0.20→0.17・released 7→**8**・
   regress 17 executed 全 pass（retired 2 は理由付き skip 報告）。
 
@@ -330,9 +329,10 @@ sandbox 束縛の2 task は skip 報告）。
 - ~~M1 後半 = FEAT-005 提案ライフサイクル~~ **✅ 完了（⑩・ISSUE-0012 released）＝ M1 出口到達** —
   C2/C3 締結・⑧処遇判断の store 適用済み（R3 沈黙・unverified 0 実測）・B2 判別データ 2/2 完了。
 - **次の一手（候補・優先順は人間判断）**:
-  1. **B2 の WHAT 確定**（M3 の芯・データ揃った）: 「generator が品質系 findings を軽視する」型への
-     一手。R1 の添付 draft（brief 忠実性）は証拠と不整合なので**差し替えて** adopt — 経路候補は
-     generator 役割プロンプトの repair 規約強化（＝C4 の prompt 系改善の初例にもなる）。
+  1. **B2 の WHAT 確定**（M3 の芯・⑪で主因確定）: `buildPanelRepairBrief` の**同一 criterion 内
+     finding 落とし**（最重症 1 件のみ forward・兄弟 findings の requiredFix を黙って破棄）を閉鎖。
+     決定論コード修正＝ unit_test で pin 可能。R1 の添付 draft（requiredFix[0] truncation）は
+     ISSUE-0004 で解決済みの別欠陥なので**差し替えて** adopt。
   2. **FEAT-006 配線ピン規約**（EPIC-02 残・B3）: spec stub spawn 済み
      `docs/specs/production-wiring-pin-convention`（未著述・非追跡）。
   3. **M2 自律の横幅**（EPIC-03・FEAT-007 依存順 DAG／FEAT-008 複数 spec 並行＋skill 実走）。

@@ -1,0 +1,65 @@
+# ISSUE-0016 の人間 WHAT 確定（adopt --contract）。Analyst 添付 draft（requiredFix[0] truncation）は
+# 使わない: truncation は ISSUE-0004 で released 済みの別欠陥。⑨⑩の attested persisted 7 件を
+# PromptRecord（発行プロンプトの監査正本）で検分した grounded 証拠が示す真の失敗クラスは
+# 「brief の finding 落とし」— buildPanelRepairBrief が criterion ごとに最重症 1 finding のみ
+# forward し、同一 criterion の兄弟 findings（別内容・別 requiredFix）を黙って破棄する。
+# persisted 7 件中 5 件は brief に一度も載っていなかった（generator は見たことがない指摘を
+# 「取りこぼした」ことにされていた）。criterionId ≠ finding 同一性 — ISSUE-0009 が lineage に
+# ついて確立した教訓と同じ欠陥クラスの repair マージ残存。
+productGoal: >-
+  panel repair brief が全ての panel findings を運ぶ: 同一 criterion に複数の異なる findings が
+  あっても、各 finding の requiredFix 全行が generator に到達する（沈黙破棄ゼロ）。
+userStory: >-
+  as the operator I want 再レビューの全修正指示が repair brief に載るようにして、generator が
+  「見たことのない指摘」を persisted させる構造（誤った非収束・誤った自律低評価）を閉じたい。
+scope:
+  include: ['src/**', 'test/**']
+  exclude: ['test/acceptance-harness/**']
+acceptanceCriteria:
+  - id: AC-BRIEF-001
+    severity: blocker
+    behavior: >-
+      buildPanelRepairBrief は criterion ごとに 1 finding へ潰さない: 同じ criterionId を持つ
+      複数の findings（同一観点からでも複数観点からでも）それぞれの requiredFix 全行が brief に
+      含まれ、severity 順（blocker→major→minor）で並ぶ。toGenerateBrief の instructions 総数は
+      forward された全 findings の requiredFix 行数の総和に一致する（requiredFix 空の finding は
+      Resolve fallback 1 行）。
+    verification:
+      method: unit_test
+      expected:
+        - "1 観点が同一 criterionId に 3 つの異なる findings（各 requiredFix 2 行）を出すと、toGenerateBrief の instructions は 6 行全てを含む"
+        - "2 観点が同一 criterionId に別内容の findings（severity 違い）を出すと、両方の requiredFix が brief に届く（最重症 1 件への集約で他方が消えない）"
+  - id: AC-BRIEF-002
+    severity: blocker
+    behavior: >-
+      blocker-first 方針と帰属は保存される: いずれかの finding が blocker のときは blocker
+      findings のみ forward する — ただし blocker の「全」findings であり criterion 代表 1 件では
+      ない。forward された各 finding は criterionId・severity・それを挙げた perspectives を
+      監査可能に保つ。ISSUE-0004 の忠実性（finding 内 requiredFix の全行・順序保存）を
+      退行させない。
+    verification:
+      method: unit_test
+      expected:
+        - "blocker 1 件＋major 2 件の panel では blocker の requiredFix のみが forward される（従来方針維持）"
+        - "同一 criterion に blocker が 2 件あれば 2 件とも forward される"
+        - "forward された各 finding の criterionId / severity / perspectives が brief から監査できる"
+  - id: AC-BRIEF-003
+    severity: major
+    behavior: >-
+      集約が許されるのは finding の内容同一性（criterionId と requiredFix 列が完全一致）が
+      成り立つときだけ（複数観点が同じ指摘を挙げた場合 — perspectives は合算する）。
+      内容が異なる限り、criterionId が同じでも決して 1 つへ潰さない。
+    verification:
+      method: unit_test
+      expected:
+        - "同一 criterionId・同一 requiredFix 列の 2 観点 findings は 1 グループに集約され perspectives が両方を含む"
+        - "同一 criterionId でも requiredFix 列が異なれば別グループとして両方届く"
+redLines:
+  - "test/acceptance-harness/** に触れない（ハーネス所有の独立採点者・protectedPaths）"
+  - "blocker-first 方針を変えない（blocker があれば blocker のみを forward する）"
+  - "ISSUE-0004 の恒久ガード（repair-brief-fidelity）と finding 内 requiredFix の順序保存を弱体化しない"
+  - "RepairBrief / PanelRepairBrief の既存 consumer（repair prompt 生成・improvement loop の帰属）を壊さない"
+  - "合格基準（既存テスト）を弱体化しない"
+dependsOnSystem:
+  - ARCH-evaluation-004
+  - ARCH-evaluation-009
