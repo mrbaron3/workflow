@@ -229,7 +229,7 @@ describe('spawn hygiene (AC-DAG-004, backward compat)', () => {
     const f = store.getFeature('FEAT-001')!;
     const specAbs = path.resolve(store.root, f.specPath!);
     fs.writeFileSync(
-      path.join(specAbs, 'spec.md'),
+      path.join(specAbs, 'requirements.md'),
       '# Spec\n\n## 受け入れ基準\n- **[AC-X-001]** behavior one\n- **[AC-X-002]** behavior two\n',
       'utf8',
     );

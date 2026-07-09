@@ -9,15 +9,15 @@ arguments: spec_dir
 
 # To detail design（日本語訳 — 正本は SKILL.md）
 
-署名済みの `spec.md` を、system 層を参照する **PR サイズの Issue 集合**へ分解する。あなたは補助で、
-不変条件は `scripts/check-detail-design.ts` が強制する。WHAT の所有者は人間 — `spec.md` /
+署名済みの `requirements.md`（旧名 `spec.md`）を、system 層を参照する **PR サイズの Issue 集合**へ分解する。あなたは補助で、
+不変条件は `scripts/check-detail-design.ts` が強制する。WHAT の所有者は人間 — `requirements.md`（旧 `spec.md`）/
 `acceptance.yaml` は編集しない。
 
 ## 入出力
 
 | | |
 | --- | --- |
-| **入力** | 署名済み `spec.md` + `acceptance.yaml`、触れる system 層（参照のみ・複製しない） |
+| **入力** | 署名済み `requirements.md`（旧: `spec.md`）+ `acceptance.yaml`、触れる system 層（参照のみ・複製しない） |
 | **出力** | `issues.yaml` — spawn マニフェスト：1 エントリ = 1 つの PR サイズ Issue |
 
 `issues.yaml` は**著述文書ではなく spawn マニフェスト**。決定論的な取込が各 `ISSUE-NNNN` を採番し、

@@ -1,6 +1,6 @@
 ---
 name: to-spec
-description: 機能の受け入れ要件（spec.md / acceptance.yaml）を著すのを助ける。新機能の定義、受け入れ基準の作成・編集、設計・署名前の機能整備のときに使う。
+description: 機能の受け入れ要件（requirements.md / acceptance.yaml — 旧名 spec.md）を著すのを助ける。新機能の定義、受け入れ基準の作成・編集、設計・署名前の機能整備のときに使う。
 when_to_use: 「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える / 機能を定義する / 設計・署名の前に詰める」といった依頼のとき。設計層（system 層＝ドメイン/アーキ/データは to-system-design、spec の Issue 分解は to-detail-design）には使わない。
 argument-hint: [spec-dir]
 allowed-tools: Read, Write, Edit, Bash
@@ -13,7 +13,12 @@ contract for the design layer. You assist; code enforces integrity (check-spec.t
 The human owns the WHAT and signs — never sign, and never relax a criterion, yourself.
 
 This is a collaborative loop, not a one-shot generation: propose, surface what you cannot grade, let
-the human confirm. Keep `spec.md` human-readable; push grader detail into `acceptance.yaml`.
+the human confirm. Keep `requirements.md` human-readable; push grader detail into `acceptance.yaml`.
+
+> Naming (2026-07-09): the authored doc is `requirements.md` — a signed requirements DELTA,
+> not a current-state specification (DOC_LIFECYCLE). New dirs live under `docs/requirements/`;
+> already-signed legacy dirs keep `docs/specs/<slug>/spec.md` (signatures pin path + blob) and
+> every check resolves both.
 
 ## 1. Intake — consume the decision, don't re-elicit it
 
@@ -40,10 +45,10 @@ Read the existing **system layer** (`_system/<context>/ubiquitous-language.md`, 
 `data-model.md`, `architecture.md`) and treat it as fixed constraints: **reference** the ubiquitous
 language, business statuses, and shared domain/data — never copy them into the spec. Record the ids you
 reference (`dependsOn`) and any past AC this spec replaces (`supersedes`) in `acceptance.yaml`, not in
-`spec.md` — keeping `[AC-…]` brackets out of the prose the coverage/signing parsers scan. Duplication
+`requirements.md` — keeping `[AC-…]` brackets out of the prose the coverage/signing parsers scan. Duplication
 drifts, and HOW (schema, API, algorithm) belongs to the design layer, not here.
 
-## 2. Write `spec.md` from the template
+## 2. Write `requirements.md` from the template
 
 Template: [assets/feature-spec.md](assets/feature-spec.md). Write it into the spec's directory
 (`<spec-dir>`), beside the `acceptance.yaml` of step 3 — that directory is this spec's authored

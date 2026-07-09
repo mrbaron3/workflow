@@ -145,7 +145,7 @@ describe('spawnSpecs — materialize (PLAN-B)', () => {
       const st = store.getSpecState(f.specPath!)!;
       expect(st.featureId).toBe(f.id); // bidirectional link
       expect(st.approved).toBeNull(); // unsigned
-      const specMd = fs.readFileSync(path.resolve(store.root, f.specPath!, 'spec.md'), 'utf8');
+      const specMd = fs.readFileSync(path.resolve(store.root, f.specPath!, 'requirements.md'), 'utf8');
       expect(specMd).not.toMatch(/\[AC-/); // a stub carries no acceptance criteria
       expect(fs.existsSync(path.resolve(store.root, f.specPath!, 'acceptance.yaml'))).toBe(true);
     }
@@ -188,7 +188,7 @@ describe('spawnSpecs — materialize (PLAN-B)', () => {
     spawnSpecs(store);
 
     const feature = store.db.features[0]!;
-    const specFile = path.resolve(store.root, feature.specPath!, 'spec.md');
+    const specFile = path.resolve(store.root, feature.specPath!, 'requirements.md');
     const authored = fs.readFileSync(specFile, 'utf8') + '\n\n## Authored by to-spec\n- **[AC-FOO-001] x**\n';
     fs.writeFileSync(specFile, authored, 'utf8');
 
@@ -259,7 +259,7 @@ describe('planRoadmap — re-plan & traceability (PLAN-D)', () => {
     expect(after).toBeDefined(); // not physically deleted
     expect(after.inPlan).toBe(false); // just flagged
     expect(after.specPath).toBe(f.specPath); // spec link preserved
-    expect(fs.existsSync(path.join(specDir, 'spec.md'))).toBe(true); // dir survives
+    expect(fs.existsSync(path.join(specDir, 'requirements.md'))).toBe(true); // dir survives
     expect(store.getSpecState(f.specPath!)!.approved).not.toBeNull(); // signature survives
   });
 });
@@ -280,7 +280,7 @@ function authorSignedSpec(
   const f = store.getFeature(featureId)!;
   const specAbs = path.resolve(store.root, f.specPath!);
   const acLines = acIds.map((id) => `- **[${id}]** the behavior for ${id}`).join('\n');
-  fs.writeFileSync(path.join(specAbs, 'spec.md'), `# Spec\n\n## 受け入れ基準\n${acLines}\n`, 'utf8');
+  fs.writeFileSync(path.join(specAbs, 'requirements.md'), `# Requirements\n\n## 受け入れ基準\n${acLines}\n`, 'utf8');
   if (opts.sign !== false) fakeSign(store, f.specPath!, acIds);
   if (opts.systemElementId) {
     const sysDir = path.resolve(specAbs, '..', '_system', 'todo');

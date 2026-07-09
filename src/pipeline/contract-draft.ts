@@ -15,6 +15,7 @@ import path from 'node:path';
 import { IssueContract, type AcceptanceCriterion } from '../domain/schema.js';
 import { parseSpecScenarios, parseAcceptance, type SpecVerification } from '../authoring/source.js';
 import { Store } from '../store/store.js';
+import { requirementsDocPath } from '../authoring/spec-doc.js';
 
 export interface DraftContractsResult {
   drafted: number;
@@ -80,7 +81,7 @@ export function draftContracts(store: Store, specDir: string): DraftContractsRes
     throw new Error(`spec is not signed: ${specPath} — contracts draft from a signed WHAT (sign it first)`);
   }
 
-  const specText = fs.readFileSync(path.join(specAbs, 'spec.md'), 'utf8');
+  const specText = fs.readFileSync(requirementsDocPath(specAbs), 'utf8');
   const verifications = parseAcceptance(fs.readFileSync(path.join(specAbs, 'acceptance.yaml'), 'utf8'));
   const behaviorById = new Map(parseSpecScenarios(specText).map((s) => [s.id, s.behavior]));
   const approvedSet = new Set(approved.approvedAcIds);

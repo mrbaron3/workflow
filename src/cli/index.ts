@@ -21,6 +21,7 @@ import { Store, nowISO } from '../store/store.js';
 import { parseSpecScenarios, parseAcceptance, parseDependsOn } from '../authoring/source.js';
 import { buildApprovedSpecRef } from '../authoring/sign.js';
 import { lintAuthoring } from '../authoring/lint.js';
+import { requirementsDocPath } from '../authoring/spec-doc.js';
 import { deriveStatus } from '../authoring/drift.js';
 import { recheckSpec } from '../authoring/recheck.js';
 import {
@@ -151,13 +152,13 @@ function cmdSign(pos: string[]): void {
   const store = requireInit();
   const dir = pos[0];
   if (!dir) {
-    log(c.red('usage: agentops sign <spec-dir>') + c.dim('   (dir with spec.md + acceptance.yaml)'));
+    log(c.red('usage: agentops sign <spec-dir>') + c.dim('   (dir with requirements.md — legacy spec.md — + acceptance.yaml)'));
     process.exit(1);
   }
-  const specAbs = path.resolve(ROOT, dir, 'spec.md');
+  const specAbs = requirementsDocPath(path.resolve(ROOT, dir));
   const accAbs = path.resolve(ROOT, dir, 'acceptance.yaml');
   if (!fs.existsSync(specAbs) || !fs.existsSync(accAbs)) {
-    log(c.red(`✗ ${dir} must contain both spec.md and acceptance.yaml`));
+    log(c.red(`✗ ${dir} must contain both requirements.md (legacy: spec.md) and acceptance.yaml`));
     process.exit(1);
   }
   const accText = fs.readFileSync(accAbs, 'utf8');
@@ -180,7 +181,7 @@ function cmdSign(pos: string[]): void {
   // 2. Signature pins committed HEAD blobs (AC-AUTH-007): the files must be clean.
   const dirty = git(['status', '--porcelain', '--', gitRel(specAbs), gitRel(accAbs)]).trim();
   if (dirty) {
-    log(c.red('✗ commit spec.md / acceptance.yaml before signing (the signature pins committed blobs):'));
+    log(c.red('✗ commit the requirement doc / acceptance.yaml before signing (the signature pins committed blobs):'));
     log(c.dim(dirty));
     process.exit(1);
   }
@@ -222,10 +223,10 @@ function cmdSpecs(pos: string[]): void {
       log(`${c.b(st.path)}  ${c.yellow('co-authoring')} ${c.dim('(never signed)')}`);
       continue;
     }
-    const specAbs = path.resolve(ROOT, st.path, 'spec.md');
+    const specAbs = requirementsDocPath(path.resolve(ROOT, st.path));
     const accAbs = path.resolve(ROOT, st.path, 'acceptance.yaml');
     if (!fs.existsSync(specAbs) || !fs.existsSync(accAbs)) {
-      log(`${c.b(st.path)}  ${c.red('broken')} ${c.dim('(spec.md / acceptance.yaml missing)')}`);
+      log(`${c.b(st.path)}  ${c.red('broken')} ${c.dim('(requirements.md / spec.md / acceptance.yaml missing)')}`);
       continue;
     }
     const r = recheckSpec({

@@ -33,6 +33,7 @@ import path from 'node:path';
 import * as YAML from 'yaml';
 import { z } from 'zod';
 import { Epic, Feature, Issue } from '../domain/schema.js';
+import { REQUIREMENTS_DOC, requirementsDocPath } from '../authoring/spec-doc.js';
 import { lintDesign, type IssueCore } from '../design/lint.js';
 import { Store, nowISO } from '../store/store.js';
 
@@ -246,7 +247,11 @@ export function planRoadmap(
 // --- spawn (PLAN-B / PLAN-D) -------------------------------------------------
 
 export interface SpawnSpecsOptions {
-  /** Where spec dirs are created. Defaults to <root>/docs/specs. */
+  /**
+   * Where requirement dirs are created. Defaults to <root>/docs/requirements
+   * (2026-07-09 rename: the authored doc is a requirements DELTA, not a current-state
+   * spec — legacy dirs stay under docs/specs, their signatures pin path + blob).
+   */
   specsRoot?: string;
   now?: () => string;
 }
@@ -265,7 +270,7 @@ export interface SpawnSpecsResult {
  */
 export function spawnSpecs(store: Store, opts: SpawnSpecsOptions = {}): SpawnSpecsResult {
   const now = opts.now ?? nowISO;
-  const specsRootAbs = opts.specsRoot ?? path.join(store.root, 'docs', 'specs');
+  const specsRootAbs = opts.specsRoot ?? path.join(store.root, 'docs', 'requirements');
 
   // Names already claimed: existing spec states + already-spawned features.
   const used = new Set<string>();
@@ -283,7 +288,7 @@ export function spawnSpecs(store: Store, opts: SpawnSpecsOptions = {}): SpawnSpe
     const abs = path.resolve(store.root, rel);
     fs.mkdirSync(abs, { recursive: true });
 
-    const specFile = path.join(abs, 'spec.md');
+    const specFile = path.join(abs, REQUIREMENTS_DOC);
     const accFile = path.join(abs, 'acceptance.yaml');
     if (!fs.existsSync(specFile)) fs.writeFileSync(specFile, stubSpec(f), 'utf8');
     if (!fs.existsSync(accFile)) fs.writeFileSync(accFile, stubAcceptance(f), 'utf8');
@@ -483,8 +488,16 @@ export function spawnIssues(store: Store, specDir: string, opts: SpawnIssuesOpti
   const specPath = path.relative(store.root, specAbs).split(path.sep).join('/');
 
   const manifest = readManifest(specAbs);
-  const specAcIds = uniqStrs(fs.readFileSync(path.join(specAbs, 'spec.md'), 'utf8').match(AC_RE) ?? []);
-  const systemDir = opts.systemDir ? path.resolve(opts.systemDir) : path.resolve(specAbs, '..', '_system');
+  const specAcIds = uniqStrs(fs.readFileSync(requirementsDocPath(specAbs), 'utf8').match(AC_RE) ?? []);
+  // Default system layer: the requirement dir's sibling `_system` (legacy docs/specs
+  // layout), else the grandparent's (docs/_system beside docs/requirements — the
+  // DOC_TAXONOMY ideal-tree layout both eras resolve to after the 2026-07-09 move).
+  const sibling = path.resolve(specAbs, '..', '_system');
+  const systemDir = opts.systemDir
+    ? path.resolve(opts.systemDir)
+    : fs.existsSync(sibling)
+      ? sibling
+      : path.resolve(specAbs, '..', '..', '_system');
   const systemElementIds = readSystemElementIds(systemDir);
 
   // A dependsOnIssues entry names a manifest key (remapped to its allocated id below) OR an

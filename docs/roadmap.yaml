@@ -1,7 +1,8 @@
 # ハーネス自身の roadmap（planning-tree 入力・roadmap-planner v2 出力契約）。
 #
 # `agentops plan-roadmap --seed docs/roadmap.yaml` → `agentops spawn-specs` で
-# feature ごとの署名可能な spec dir が docs/specs/ に生える。AC はここに書かない
+# feature ごとの署名可能な要求契約 dir が docs/requirements/ に生える（旧 spec は
+# docs/specs/ に凍結置台・2026-07-09 改名）。AC はここに書かない
 # （to-spec で著述し人間が署名する — AC-PLAN-006）。
 # 北極星: docs/NORTH_STAR.md（改善はプロダクトと同じ roadmap・同じ loop で回す）。
 

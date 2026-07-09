@@ -38,6 +38,13 @@ const JOBS: Job[] = [
     source: 'src/authoring/lint.ts',
     targets: ['.claude/skills/to-spec/scripts/lib/authoring-lint.ts'],
   },
+  {
+    source: 'src/authoring/spec-doc.ts',
+    targets: [
+      '.claude/skills/to-spec/scripts/lib/spec-doc.ts',
+      '.claude/skills/to-detail-design/scripts/lib/spec-doc.ts',
+    ],
+  },
 ];
 
 const check = process.argv.includes('--check');

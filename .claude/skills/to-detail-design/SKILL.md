@@ -9,15 +9,15 @@ arguments: spec_dir
 
 # To detail design
 
-Decompose a signed `spec.md` into a set of PR-size **Issues** that reference the system layer. You
+Decompose a signed `requirements.md` (legacy: `spec.md`) into a set of PR-size **Issues** that reference the system layer. You
 assist; the check in `scripts/check-detail-design.ts` enforces the invariants. The human owns the
-WHAT — never edit `spec.md` / `acceptance.yaml`.
+WHAT — never edit `requirements.md` (legacy `spec.md`) / `acceptance.yaml`.
 
 ## Input / output
 
 | | |
 | --- | --- |
-| **In** | signed `spec.md` + `acceptance.yaml`; the system layer it touches (referenced, not copied) |
+| **In** | signed `requirements.md` (legacy: `spec.md`) + `acceptance.yaml`; the system layer it touches (referenced, not copied) |
 | **Out** | `issues.yaml` — the spawn manifest: one PR-size Issue per entry |
 
 `issues.yaml` is a *spawn manifest*, not an authored document: a deterministic ingest allocates each

@@ -207,7 +207,7 @@ describe('dependency-ordered multi-issue drive (ISSUE-0018)', () => {
       spawnSpecs(store);
       const f = store.getFeature('FEAT-001')!;
       const specAbs = path.resolve(store.root, f.specPath!);
-      fs.writeFileSync(path.join(specAbs, 'spec.md'), '# Spec\n\n## 受け入れ基準\n- **[AC-X-001]** behavior one\n- **[AC-X-002]** behavior two\n', 'utf8');
+      fs.writeFileSync(path.join(specAbs, 'requirements.md'), '# Requirements\n\n## 受け入れ基準\n- **[AC-X-001]** behavior one\n- **[AC-X-002]** behavior two\n', 'utf8');
       const st = store.getSpecState(f.specPath!)!;
       st.approved = {
         signedCommitSha: 'deadbeef', specBlobGitSha: 'a', acceptanceBlobGitSha: 'b',

@@ -1,7 +1,7 @@
 ---
 name: to-spec
 description:
-   機能の受け入れ要件（spec.md / acceptance.yaml）を著すのを助ける。
+   機能の受け入れ要件（requirements.md / acceptance.yaml — 旧名 spec.md）を著すのを助ける。
    新機能の定義、受け入れ基準の作成・編集、設計・署名前の機能整備のときに使う。
 when_to_use:
    「spec を書きたい / 受け入れ基準（Given/When/Then）を作る / acceptance.yaml を整える /
@@ -18,7 +18,11 @@ allowed-tools: Read, Write, Edit, Bash
 人間。**あなたは署名せず、合格基準を緩めない。**
 
 これは一発生成でなく協業ループ：提案する → 自動採点できないものはチャットで指摘する → 人間が確定する。
-`spec.md` は人間可読に保ち、grader 向けの詳細は `acceptance.yaml` へ逃がす。
+`requirements.md` は人間可読に保ち、grader 向けの詳細は `acceptance.yaml` へ逃がす。
+
+> 命名（2026-07-09）: 著述物は `requirements.md` — 署名される**要求の delta** であり、現在仕様
+> （state）ではない（DOC_LIFECYCLE）。新規 dir は `docs/requirements/` 配下。署名済みの旧 dir は
+> `docs/specs/<slug>/spec.md` のまま凍結（署名が path＋blob を版固定）で、検査は両方を解決する。
 
 ## 1. Intake — 決定を再ヒアリングせず取り込む
 
@@ -43,10 +47,10 @@ allowed-tools: Read, Write, Edit, Bash
 既存の **system 層**（`_system/<context>/ubiquitous-language.md`・`domain-model.md`・`data-model.md`・
 `architecture.md`）を読み、固定制約として扱う：ユビキタス言語・業務ステータス・共有のドメイン/データは
 **参照**し、spec に複製しない。参照する id（dependsOn）と、この spec が置換する過去 AC（supersedes）は
-`spec.md` でなく `acceptance.yaml` に置く——被覆/署名パーサが走査する散文に `[AC-…]` の括弧を混ぜないため。
+`requirements.md` でなく `acceptance.yaml` に置く——被覆/署名パーサが走査する散文に `[AC-…]` の括弧を混ぜないため。
 複製は drift し、HOW（スキーマ・API・アルゴリズム）は設計層の担当でここには書かない。
 
-## 2. テンプレートから `spec.md` を書く
+## 2. テンプレートから `requirements.md` を書く
 
 テンプレートは [assets/feature-spec.md](assets/feature-spec.md)。書き出し先は **この spec のディレクトリ
 （`<spec-dir>`）**で、step 3 の `acceptance.yaml` と同居させる（このディレクトリがこの spec の著述契約の住処。

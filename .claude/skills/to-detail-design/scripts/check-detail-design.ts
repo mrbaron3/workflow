@@ -8,8 +8,9 @@
  * Run from anywhere:
  *   npx tsx <skill>/scripts/check-detail-design.ts <spec-dir> [--system <dir>]
  *
- * <spec-dir> holds spec.md and issues.yaml (the spawn manifest). The system layer is
- * found at <spec-dir>/../_system by default (override with --system <dir>); element ids
+ * <spec-dir> holds requirements.md (legacy: spec.md) and issues.yaml (the spawn
+ * manifest). The system layer defaults to <spec-dir>/../_system, else
+ * <spec-dir>/../../_system (override with --system <dir>); element ids
  * are read recursively from every *.md beneath it (context dirs included).
  * Exit: 0 = passed, 1 = lint failed, 2 = usage / read error.
  */
@@ -18,6 +19,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { lintDesign, type IssueCore } from './lib/design-lint.js';
+import { requirementsDocPath } from './lib/spec-doc.js';
 
 const AC_RE = /\bAC-[A-Z0-9]+-\d+\b/g;
 // Context-segmented system element ids: <KIND>-<ctx>-NNN (DOC_TAXONOMY §ID 体系).
@@ -43,7 +45,7 @@ if (!dir) {
   process.exit(2);
 }
 
-const specAcIds = uniq(readOrExit(join(dir, 'spec.md'), 'spec.md').match(AC_RE) ?? []);
+const specAcIds = uniq(readOrExit(requirementsDocPath(resolve(dir)), 'requirements.md (legacy: spec.md)').match(AC_RE) ?? []);
 
 // The issue set is the spawn manifest (DOC_TAXONOMY §NANO: no markdown slice docs).
 const manifestPath = join(dir, 'issues.yaml');
@@ -73,7 +75,10 @@ rawIssues.forEach((it, i) => {
   });
 });
 
-const systemDir = systemDirArg ? resolve(systemDirArg) : resolve(dir, '..', '_system');
+// Default system layer: the dir's sibling `_system` (legacy docs/specs layout), else the
+// grandparent's (docs/_system beside docs/requirements — the ideal-tree layout).
+const siblingSystem = resolve(dir, '..', '_system');
+const systemDir = systemDirArg ? resolve(systemDirArg) : existsSync(siblingSystem) ? siblingSystem : resolve(dir, '..', '..', '_system');
 let systemElementIds: string[] = [];
 const systemChecked = existsSync(systemDir);
 if (systemChecked) {

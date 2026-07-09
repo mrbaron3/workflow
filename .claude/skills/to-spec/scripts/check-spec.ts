@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
- * Signing-gate integrity check for a spec's authored contract: a thin wrapper that parses
- * spec.md + acceptance.yaml and delegates to the vendored deterministic lint in
+ * Signing-gate integrity check for a feature's authored contract: a thin wrapper that parses
+ * requirements.md (legacy: spec.md) + acceptance.yaml and delegates to the vendored deterministic lint in
  * ./lib/authoring-lint.ts. The skill's prose never re-implements the rules.
  *
  * Run from anywhere:
@@ -10,27 +10,28 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { lintAuthoring } from './lib/authoring-lint.js';
+import { requirementsDocPath } from './lib/spec-doc.js';
 
 const dir = process.argv[2];
 if (!dir) {
-  console.error('usage: check-spec <spec-dir>   (dir containing spec.md and acceptance.yaml)');
+  console.error('usage: check-spec <spec-dir>   (dir containing requirements.md — legacy spec.md — and acceptance.yaml)');
   process.exit(2);
 }
 
 let specText: string;
 let acceptanceText: string;
 try {
-  specText = readFileSync(join(dir, 'spec.md'), 'utf8');
+  specText = readFileSync(requirementsDocPath(resolve(dir)), 'utf8');
   acceptanceText = readFileSync(join(dir, 'acceptance.yaml'), 'utf8');
 } catch (err) {
-  console.error(`✗ cannot read spec.md / acceptance.yaml in ${dir}: ${(err as Error).message}`);
+  console.error(`✗ cannot read requirements.md (legacy: spec.md) / acceptance.yaml in ${dir}: ${(err as Error).message}`);
   process.exit(2);
 }
 
-// AC-IDs from spec.md scenario anchors: `- **[AC-FOO-001] ...**` (keep order + duplicates for the lint).
+// AC-IDs from the requirement doc's scenario anchors: `- **[AC-FOO-001] ...**` (keep order + duplicates for the lint).
 const specAcIds = [...specText.matchAll(/\[(AC-[A-Z0-9]+-\d+)\]/g)].map((m) => m[1]!);
 
 const acc = (parseYaml(acceptanceText) ?? {}) as {

@@ -423,7 +423,7 @@ export type Intervention = z.infer<typeof Intervention>;
 export const ApprovedSpecRef = z.object({
   /** Commit the signature was taken against (`git rev-parse HEAD`). */
   signedCommitSha: z.string(),
-  /** Blob gitSha of spec.md at the signed commit (`HEAD:<dir>/spec.md`). */
+  /** Blob gitSha of the requirement doc (requirements.md; legacy spec.md) at the signed commit. */
   specBlobGitSha: z.string(),
   /** Blob gitSha of acceptance.yaml at the signed commit. */
   acceptanceBlobGitSha: z.string(),
