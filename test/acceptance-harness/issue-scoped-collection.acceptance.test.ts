@@ -284,7 +284,10 @@ describe('issue-scoped acceptance collection (ISSUE-0022)', () => {
   });
 
   it("ISSUE-0022/AC-SCOPED-004 gate pin: a command's own scoped prefix outranks the injected driven issue (captured spelling wins)", () => {
-    const fx = makeFixture(REPORT_ALL_ACTIVE, `${SCOPED_ACCEPT_ENV}=ISSUE-P `);
+    // keep the ambient-neutralizing ACCEPT_HARNESS= — this pin runs under full-activation
+    // regress commands too, and an inherited flag would mask the precedence being pinned
+    // (the flip-side is pinned by the explicit-full-activation test below).
+    const fx = makeFixture(REPORT_ALL_ACTIVE, `ACCEPT_HARNESS= ${SCOPED_ACCEPT_ENV}=ISSUE-P `);
     ground(fx, 'ISSUE-Q');
     const childEnv = fx.readEnv();
     expect(acceptsIssue('ISSUE-P', childEnv)).toBe(true);
