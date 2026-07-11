@@ -466,24 +466,15 @@ sandbox 束縛の2 task は skip 報告）。
      → spawn-specs（D4 後はテーマ repo に生える）→ to-spec で FEAT-Y01 を著述 → 署名（テーマ git に
      pin）→ 分解 → drive。**GitHub gate 初実走**（config.gate.backend='github'・未 grounded）と
      **D3 完了条件の観測**（複数 issue 先置き）をここで兼ねる。
-- **★ M4 テーマ repo = channel-compass（⑭で scaffold・design 完了・別 repo）**:
-  住処 `/Users/yu/Company/Development/channel-compass`（**ローカル repo・remote 無し**・
-  最新 commit `fc293ce`・DOC_TAXONOMY 理想ツリー: NORTH_STAR.md＋roadmap.yaml＋README.md）。
-  「YouTube の参照・競合チャンネル群を横断分析し新規チャンネルの方向性を決めるツール」。
-  **EPIC-01 の WHAT は roadmap レベルで確定済み**（人間と対話して固めた・詳細は roadmap.yaml）:
-  - 対象＝参照/競合**チャンネル群**（URL/ID リスト・単一動画 URL は主入力にしない）。
-  - データ範囲＝メタデータ＋コメント＋統計が主・**transcript は任意**（第三者字幕は supported API 外・
-    大量取得は高コスト/脆弱/ToS グレー — 調査済み。NotebookLM も無料・大量の transcript 源には
-    ならない＝Enterprise API 限定・非公式 MCP は session 自動操作でグレー・source/query 上限あり）。
-  - 分業＝機械が大量に絞り込み代表動画を出す → **人が数本を手動で NotebookLM 深掘り**。
-  - feature 依存チェーン: **Y01 取込（channel 群・fixture・seam）→ Y02 横断エンゲージ×時間帯分析
-    → Y03 方向スコアリング＋証拠レポート → Y04 escalation shortlist 選別**（機械が測れる量のみ・
-    決定価値で・理由付き＝この product の needs-human-review。4 ドライバ: 代表動画/異常値/多様性/
-    reception 強度。感情・中身は EPIC-03 送り＝人が deep-dive で判定）。EPIC-02（実データ取込・
-    Data API）／EPIC-03（内容意味解析）は outline のみ（未降ろし）。
-  - **to-spec 時に pin する残り WHAT**: Y03 スコア式の重み・Y04 outlier 判定法・fixture 正確スキーマ・
-    「フォーマット」定義（roadmap には焼き込まない）。round 1 の最初の取込は手書きの小 fixture
-    （2〜3 チャンネル分）でよい。
+- **★ M4 テーマ repo = channel-compass（別 repo で進める・⑭で scaffold・EPIC-01 設計完了）**:
+  住処 `/Users/yu/Company/Development/channel-compass`（**別 git・ローカル・remote 無し**・
+  最新 commit `fc293ce`）。「YouTube の参照・競合チャンネル群を横断分析し新規チャンネルの
+  方向性を決めるツール」。**テーマの WHAT はテーマ repo に一元化**（reference don't copy）—
+  設計の正本は **channel-compass の `NORTH_STAR.md` と `roadmap.yaml`**（EPIC-01 の feature チェーン
+  Y01→Y02→Y03→Y04・データ範囲・二段の手動 NotebookLM 深掘り・escalation 選別などの判断は
+  そこに著述済み）。workflow 側はこのポインタと組織側の事実（テーマを決めた・D4 がゲート・
+  次の一手）だけ持つ。次セッションは channel-compass を開いて roadmap.yaml/NORTH_STAR.md を
+  読めばテーマ詳細が揃う。
 - **並走観測（急がない）**: B2 効果測定（post-fix repair rounds で persisted 減か・⑭ persisted 4 は
   「guard 不可侵で owner にしか実装できないピン」クラスで brief 不達と別型）。
 - **M4（実プロダクト）は後回し確定（⑩・2026-07-09 人間判断）**: ハーネス「一通り完成」
