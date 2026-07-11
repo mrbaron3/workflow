@@ -8,7 +8,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadConfig, DEFAULT_CONFIG, saveConfig, type HarnessConfig } from '../src/config.js';
+import { loadConfig, DEFAULT_CONFIG, saveConfig, resolveTargetRoot, type HarnessConfig } from '../src/config.js';
 
 const dirs: string[] = [];
 function tmpRoot(cfg: Partial<HarnessConfig>): string {
@@ -40,5 +40,25 @@ describe('loadConfig', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-config-'));
     dirs.push(root);
     expect(loadConfig(root)).toEqual(DEFAULT_CONFIG);
+  });
+});
+
+describe('resolveTargetRoot (D4)', () => {
+  it('defaults to harnessRoot when config.target is absent', () => {
+    expect(resolveTargetRoot(DEFAULT_CONFIG, '/harness')).toBe('/harness');
+  });
+
+  it('defaults to harnessRoot when target.repo is the explicit self-hosting spelling "."', () => {
+    expect(resolveTargetRoot({ ...DEFAULT_CONFIG, target: { repo: '.' } }, '/harness')).toBe('/harness');
+  });
+
+  it('resolves a relative target.repo against harnessRoot', () => {
+    expect(resolveTargetRoot({ ...DEFAULT_CONFIG, target: { repo: '../channel-compass' } }, '/work/harness')).toBe(
+      '/work/channel-compass',
+    );
+  });
+
+  it('passes an absolute target.repo through unchanged', () => {
+    expect(resolveTargetRoot({ ...DEFAULT_CONFIG, target: { repo: '/abs/target' } }, '/harness')).toBe('/abs/target');
   });
 });

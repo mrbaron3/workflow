@@ -17,17 +17,15 @@ import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Verdict, emptyDB } from '../domain/schema.js';
-import { Store, nowISO } from '../store/store.js';
-import { parseSpecScenarios, parseAcceptance, parseDependsOn } from '../authoring/source.js';
-import { buildApprovedSpecRef } from '../authoring/sign.js';
-import { lintAuthoring } from '../authoring/lint.js';
+import { Store } from '../store/store.js';
+import { signRequirementDir } from '../authoring/sign-dir.js';
 import { requirementsDocPath } from '../authoring/spec-doc.js';
-import { deriveStatus } from '../authoring/drift.js';
 import { recheckSpec } from '../authoring/recheck.js';
 import {
   DEFAULT_CONFIG,
   loadConfig,
   saveConfig,
+  resolveTargetRoot,
   type HarnessConfig,
 } from '../config.js';
 import { pkgPath } from '../agents/prompts.js';
@@ -122,11 +120,6 @@ function git(args: string[]): string {
   return execFileSync('git', args, { cwd: ROOT, encoding: 'utf8' });
 }
 
-/** Repo-root-relative, forward-slash path — git's pathspec form. */
-function gitRel(abs: string): string {
-  return path.relative(ROOT, abs).split(path.sep).join('/');
-}
-
 /** Blob SHA of a file's current on-disk content (working tree) — the coarse drift signal. */
 function gitHashObject(abs: string): string {
   return git(['hash-object', abs]).trim();
@@ -150,65 +143,37 @@ function cmdInit(flags: Args['flags']): void {
 
 function cmdSign(pos: string[]): void {
   const store = requireInit();
+  const config = loadConfig(ROOT);
   const dir = pos[0];
   if (!dir) {
     log(c.red('usage: agentops sign <spec-dir>') + c.dim('   (dir with requirements.md — legacy spec.md — + acceptance.yaml)'));
     process.exit(1);
   }
-  const specAbs = requirementsDocPath(path.resolve(ROOT, dir));
-  const accAbs = path.resolve(ROOT, dir, 'acceptance.yaml');
-  if (!fs.existsSync(specAbs) || !fs.existsSync(accAbs)) {
-    log(c.red(`✗ ${dir} must contain both requirements.md (legacy: spec.md) and acceptance.yaml`));
-    process.exit(1);
-  }
-  const accText = fs.readFileSync(accAbs, 'utf8');
-  const scenarios = parseSpecScenarios(fs.readFileSync(specAbs, 'utf8'));
-  const verifications = parseAcceptance(accText);
-  const systemRefs = parseDependsOn(accText); // pin dependsOn into ApprovedSpecRef.systemRefs
 
-  // 1. AUTH-B gate must pass before a signature can be taken (AUTH-C precondition).
-  const lint = lintAuthoring({
-    specAcIds: scenarios.map((s) => s.id),
-    acceptanceAcIds: Object.keys(verifications),
-    methodsById: Object.fromEntries(Object.entries(verifications).map(([id, v]) => [id, v.method])),
-  });
-  if (!lint.ok) {
-    log(c.red('✗ cannot sign — authoring lint failed:'));
-    for (const e of lint.errors) log(`  - ${e}`);
+  // D4: git facts are pinned against whichever repo the authoring chain currently targets
+  // (config.target.repo) — the harness's own repo when absent/'.' (AC-TROOT-005 unchanged).
+  const gitRoot = resolveTargetRoot(config, ROOT);
+  const result = signRequirementDir(store, dir, { gitRoot });
+
+  if (!result.ok) {
+    if (result.reason === 'missing-files') {
+      log(c.red(`✗ ${dir} must contain both requirements.md (legacy: spec.md) and acceptance.yaml`));
+    } else if (result.reason === 'lint-failed') {
+      log(c.red('✗ cannot sign — authoring lint failed:'));
+      for (const e of result.errors) log(`  - ${e}`);
+    } else {
+      log(c.red('✗ commit the requirement doc / acceptance.yaml before signing (the signature pins committed blobs):'));
+      log(c.dim(result.porcelain));
+    }
     process.exit(1);
   }
 
-  // 2. Signature pins committed HEAD blobs (AC-AUTH-007): the files must be clean.
-  const dirty = git(['status', '--porcelain', '--', gitRel(specAbs), gitRel(accAbs)]).trim();
-  if (dirty) {
-    log(c.red('✗ commit the requirement doc / acceptance.yaml before signing (the signature pins committed blobs):'));
-    log(c.dim(dirty));
-    process.exit(1);
-  }
-  const facts = {
-    signedCommitSha: git(['rev-parse', 'HEAD']).trim(),
-    specBlobGitSha: git(['rev-parse', `HEAD:${gitRel(specAbs)}`]).trim(),
-    acceptanceBlobGitSha: git(['rev-parse', `HEAD:${gitRel(accAbs)}`]).trim(),
-  };
-
-  // 3. Build + persist the ApprovedSpecRef. status derives, it is never written.
-  const approved = buildApprovedSpecRef({ scenarios, verifications, git: facts, systemRefs });
-  const now = nowISO();
-  const existing = store.getSpecState(dir);
-  store.upsertSpecState({
-    path: dir,
-    featureId: existing?.featureId ?? null, // preserve the planning-tree link across signing (AC-PLAN-008)
-    approved,
-    signedAt: now,
-    createdAt: existing?.createdAt ?? now,
-    updatedAt: now,
-  });
   store.save();
 
-  const status = deriveStatus(approved.approvedAcIds, scenarios.map((s) => s.id));
+  const approved = result.specState.approved!;
   const refs = approved.systemRefs.length;
-  log(c.green('✓ signed') + ` ${c.b(dir)} @ ${c.dim(facts.signedCommitSha.slice(0, 8))}`);
-  log(`  ${approved.approvedAcIds.length} AC approved · ${refs} systemRef${refs === 1 ? '' : 's'} pinned · status=${c.b(status)}`);
+  log(c.green('✓ signed') + ` ${c.b(dir)} @ ${c.dim(approved.signedCommitSha.slice(0, 8))}`);
+  log(`  ${approved.approvedAcIds.length} AC approved · ${refs} systemRef${refs === 1 ? '' : 's'} pinned · status=${c.b('approved')}`);
 }
 
 function cmdSpecs(pos: string[]): void {
@@ -298,7 +263,12 @@ function cmdPlanRoadmap(flags: Args['flags']): void {
 
 function cmdSpawnSpecs(): void {
   const store = requireInit();
-  const res = spawnSpecs(store);
+  const config = loadConfig(ROOT);
+  // D4: requirement stubs materialize into whichever repo the authoring chain currently
+  // targets (config.target.repo) — the harness's own docs/requirements when absent/'.'
+  // (AC-TROOT-005 unchanged).
+  const targetRoot = resolveTargetRoot(config, ROOT);
+  const res = spawnSpecs(store, { specsRoot: path.join(targetRoot, 'docs', 'requirements') });
   store.save();
   if (res.spawned === 0) {
     log(c.dim('Nothing to spawn — every in-plan feature already has a spec. Run `agentops plan-roadmap` first.'));

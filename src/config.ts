@@ -140,6 +140,19 @@ export function resolvePanelMaxConcurrent(config: HarnessConfig): number {
   return config.panel?.maxConcurrent ?? DEFAULT_PANEL_MAX_CONCURRENT;
 }
 
+/**
+ * The absolute root of whichever repo the authoring chain is currently rooted in (D4 /
+ * AC-TROOT-001,005): `config.target.repo` resolved against `harnessRoot` when configured, else
+ * `harnessRoot` itself — today's self-authoring behavior (also reached when `target.repo` is the
+ * explicit self-hosting spelling `'.'`, since resolving `.` against harnessRoot yields harnessRoot
+ * unchanged). spawnSpecs / sign both resolve "which repo is WHAT rooted in" through this single
+ * seam so they can never disagree about it.
+ */
+export function resolveTargetRoot(config: HarnessConfig, harnessRoot: string): string {
+  if (!config.target?.repo) return harnessRoot;
+  return path.resolve(harnessRoot, config.target.repo);
+}
+
 export function configPath(root: string): string {
   return path.join(root, '.harness', 'config.json');
 }
