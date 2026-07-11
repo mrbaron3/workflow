@@ -1,0 +1,46 @@
+# Target-rooted authoring — 受け入れ検証 (acceptance.yaml)
+#
+# grader 向けの verification + severity を requirements.md から分離した SoT。各 AC-ID をキーに join する。
+# method は自動採点メソッドのみ。被覆（全 AC-ID の双方向一致）はコードが強制する。
+
+# dependsOn: 本 spec が参照する system 層の要素 id（複製禁止・参照のみ）。署名時に systemRefs として版固定。
+dependsOn:
+  - LANG-authoring-005
+  - LANG-authoring-006
+  - DOM-planning-004
+  - DOM-planning-005
+  - DOM-planning-009
+
+verifications:
+  AC-TROOT-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "一時 git repo（docs ツリー持ち）を config.target に据えて spawn-specs すると、要求 stub（requirements.md＋acceptance.yaml）がその repo の docs/requirements/ 配下に生え、SpecState が dir を追跡し feature と双方向リンクする"
+      - "再実行は冪等: spawn 数 0・SpecState 重複なし・著述済み内容（外部 dir に書いた本文）が上書きされない"
+
+  AC-TROOT-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "外部 repo で commit 済みの要求 dir を署名すると、ApprovedSpecRef の commit/blob gitSha が外部 repo の git の committed 内容と一致する"
+      - "署名後の照合: 外部 dir が clean なら approved・外部 repo 側でファイルを変更すると drift が報告される"
+
+  AC-TROOT-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "外部 repo の要求 doc に未 commit 変更がある状態での署名は拒否され、SpecState は署名前の状態から変異しない（approved が付かない）"
+
+  AC-TROOT-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "外部 repo の署名済み dir（issues.yaml が外部 repo の docs/_system の要素 id を dependsOnSystem 参照）への spawn-issues が design lint を外部 system 層で解決して通り、ISSUE が store に採番される"
+      - "contract-draft が署名 AC を源に契約を起こし、scope は manifest の file-glob（外部 repo 相対）で store に着地する"
+
+  AC-TROOT-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "config.target が repo='.' の従来構成で、spawn-specs の生成場所（docs/requirements/）・署名の版固定先（自 repo git）・system 層解決（sibling→grandparent）・legacy docs/specs の読み取りが従来と同一（既存 suite が green のまま）"

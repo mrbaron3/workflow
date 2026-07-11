@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑭セッションで更新・最終更新は **D3（omnibus ゲート）締結＝FEAT-009/ISSUE-0022 released・EPIC-01..04 全 9 features drain** 後）。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑭セッションで更新・最終更新は **D3 締結＋文書層改名（requirements/・_system 移設）＋M4 テーマ確定（channel-compass scaffold・EPIC-01 設計完了）** 後）。**次セッションの開始点は §4 冒頭「★ 次セッションの開始点」= D4 のドライブ**。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -450,21 +450,42 @@ sandbox 束縛の2 task は skip 報告）。
 - ~~D3（omnibus ゲート）の WHAT 化~~ **✅ 実装締結（⑭・FEAT-009/ISSUE-0022 released）** —
   issue-scoped acceptance 収集（accept.ts 単一の家・scoped env 注入・非活性の理由付き列挙・
   全活性/恒久昇格不変）。残るは完了条件の grounded 実測（2+ issue 同時先置き — M4 で自然に観測）。
-- **次の一手（候補・優先順は人間判断）**:
-  0. **D4（target-rooted authoring）の WHAT 化 = M4 準備の最初のハーネス作業** — ⑭で M4 の
-     repo 関係モデルが人間確定（workflow=開発組織／テーマ repo=開発対象で**自分の WHAT を所有**・
-     接点は config.target と GitHub PR gate — 正本 NORTH_STAR_PLAN §5）。著述半分（spawn root
-     未露出・sign の git が harness cwd 固定）を外部 repo 対応に。**テーマも⑭で人間確定**:
-     YouTube チャンネル方向性分析ツール・EPIC-01 は fixture 上の決定論分析コア限定（§5）。
-  1. **M4 のテーマ確定（人間の WHAT・最大の判断点）** — 着手条件「ハーネス一通り完成」が
-     ほぼ成立（M2✅・drain✅=EPIC-01..04 全 9 features・M3 は B2 効果測定の観測のみ残）。
-     NORTH_STAR_PLAN §5 の選定基準参照。確定後: テーマ repo を scaffold（Development 配下・
-     DOC_TAXONOMY 理想ツリー）し、外部 target 用の roadmap を**テーマ repo に**降ろし、
-     GitHub ゲート（config.gate.backend='github'・未 grounded）の初実走もここで。
-     複数 issue の先置きが D3 完了条件の観測を兼ねる。
-  2. **B2 効果測定の継続観測**（⑫⑬の repair round では persisted 減の初期傾向: ⑫ 1/3・
-     ⑬ 0020 で lineage:new 中心。⑭の persisted 4 件は「guard 不可侵ゆえ owner にしか実装
-     できないピン」クラスで brief 不達と別型 — R1 在庫の処遇判断では区別して数える）。
+- **★ 次セッションの開始点（⑭末で確定・path B）= D4 のドライブ**:
+  1. **D4（target-rooted authoring）を harness の通常運転で作る** — 下書き済み spec
+     `docs/requirements/target-rooted-authoring`（**未署名**・FEAT-010/EPIC-05・AC-TROOT-001..005・
+     check-spec 通過済み）を、次の学びと突き合わせて確定→署名: **planning tree は当面 org store
+     共有でよい**（round 1 は authoring を config.target.repo へ向けるだけ・store の target 分離は
+     観測されて初めて別ギャップとして起票／spec のレッドラインで既に「target に第二 store を
+     作らない」と固定済み）。→ to-detail-design で分解（spawn/署名 root 解決 と 分解・契約の
+     target 解決は凝集度高く単一〜少数 PR 想定）→ グレーダ先置き→ drive→ ゲート→ released。
+     D4 の壁は grounded: `spawnSpecs` は `store.root/docs/requirements` に書き（config.target を
+     見ない・`src/planning/planning-tree.ts:266` 付近）、`sign` は harness cwd の git を版固定する
+     （`src/cli/index.ts` cmdSign）。この 2 点を config.target.repo 起点にするのが D4 の芯。
+  2. **released した D4 を使って channel-compass に EPIC-01 を著述・drive** — `config.target` を
+     channel-compass へ向け、`plan-roadmap --seed <channel-compass>/roadmap.yaml`（path 非依存で通る）
+     → spawn-specs（D4 後はテーマ repo に生える）→ to-spec で FEAT-Y01 を著述 → 署名（テーマ git に
+     pin）→ 分解 → drive。**GitHub gate 初実走**（config.gate.backend='github'・未 grounded）と
+     **D3 完了条件の観測**（複数 issue 先置き）をここで兼ねる。
+- **★ M4 テーマ repo = channel-compass（⑭で scaffold・design 完了・別 repo）**:
+  住処 `/Users/yu/Company/Development/channel-compass`（**ローカル repo・remote 無し**・
+  最新 commit `fc293ce`・DOC_TAXONOMY 理想ツリー: NORTH_STAR.md＋roadmap.yaml＋README.md）。
+  「YouTube の参照・競合チャンネル群を横断分析し新規チャンネルの方向性を決めるツール」。
+  **EPIC-01 の WHAT は roadmap レベルで確定済み**（人間と対話して固めた・詳細は roadmap.yaml）:
+  - 対象＝参照/競合**チャンネル群**（URL/ID リスト・単一動画 URL は主入力にしない）。
+  - データ範囲＝メタデータ＋コメント＋統計が主・**transcript は任意**（第三者字幕は supported API 外・
+    大量取得は高コスト/脆弱/ToS グレー — 調査済み。NotebookLM も無料・大量の transcript 源には
+    ならない＝Enterprise API 限定・非公式 MCP は session 自動操作でグレー・source/query 上限あり）。
+  - 分業＝機械が大量に絞り込み代表動画を出す → **人が数本を手動で NotebookLM 深掘り**。
+  - feature 依存チェーン: **Y01 取込（channel 群・fixture・seam）→ Y02 横断エンゲージ×時間帯分析
+    → Y03 方向スコアリング＋証拠レポート → Y04 escalation shortlist 選別**（機械が測れる量のみ・
+    決定価値で・理由付き＝この product の needs-human-review。4 ドライバ: 代表動画/異常値/多様性/
+    reception 強度。感情・中身は EPIC-03 送り＝人が deep-dive で判定）。EPIC-02（実データ取込・
+    Data API）／EPIC-03（内容意味解析）は outline のみ（未降ろし）。
+  - **to-spec 時に pin する残り WHAT**: Y03 スコア式の重み・Y04 outlier 判定法・fixture 正確スキーマ・
+    「フォーマット」定義（roadmap には焼き込まない）。round 1 の最初の取込は手書きの小 fixture
+    （2〜3 チャンネル分）でよい。
+- **並走観測（急がない）**: B2 効果測定（post-fix repair rounds で persisted 減か・⑭ persisted 4 は
+  「guard 不可侵で owner にしか実装できないピン」クラスで brief 不達と別型）。
 - **M4（実プロダクト）は後回し確定（⑩・2026-07-09 人間判断）**: ハーネス「一通り完成」
   （≒ M2＋M3 landed）まで着手しない・テーマは着手時に決める。ただし**M4 はハーネスを凍結せず**、
   実プロダクト drive が暴くハーネスの欠けは同じ ③ loop で直す（双方向）。正本は NORTH_STAR_PLAN §3 M4・§5。

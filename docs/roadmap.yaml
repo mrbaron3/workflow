@@ -66,3 +66,13 @@ epics:
       - id: FEAT-009
         title: "Issue-scoped acceptance collection"
         outcome: "受け入れゲートの収集が駆動中 issue に scoped される: 複数 issue のグレーダを同時に先置きしても、各 build は自 issue の先置きガード（＋既存 baseline suite）だけを green にすれば通り、他 in-flight issue の先置きガードは活性化されない（⑬の grounded 失敗＝ISSUE-0019 が 0020/0021 の payload を背負った omnibus 実装強制の封じ込め）。活性化しなかったガードは理由付きで可視（never-silent）。released 済みガードの恒久昇格と全活性の baseline 検証は不変。"
+
+  # M4 準備「外部 target 開発の成立」（docs/NORTH_STAR_PLAN.md §2 横断 D4 — ⑭人間確定の repo 分離モデル）
+  - id: EPIC-05
+    title: "External-target development enablement"
+    theme: "platform"
+    outcome: "テーマ repo（外部 target）が自分の WHAT（roadmap/requirements/_system）を所有したまま、上流チェーンが target の git と docs ツリーに対して成立する — 開発組織（この repo）と開発対象（テーマ repo）の接点が config.target に閉じる。"
+    features:
+      - id: FEAT-010
+        title: "Target-rooted authoring"
+        outcome: "spawn-specs / sign / spawn-issues / contract-draft の著述チェーンが、外部 target repo の docs/requirements・docs/_system・git に対して働く: spawn した要求 stub は target repo に生え、署名は target の git の committed blob を版固定し、design lint は target の system 層を解決する。harness 自身（repo='.'）への従来動作は不変（additive）。"

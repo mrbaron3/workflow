@@ -140,15 +140,24 @@ R3 沈黙・executedRate 100%・unverified 0。dedup がルール同一性化さ
   選定基準の提案（着手時の参考・拘束ではない）: (i) AC が unit_test 中心で書ける規模から
   始める（A6 を最初から要求しない）、(ii) 失敗しても実害の無い自前プロダクト、
   (iii) 複数 issue に自然に割れる規模（M2 の成果を使う）。
-  **✅ テーマ確定（⑭・2026-07-09 人間確定）**: 「YouTube の動画内容・コメント投稿時間・
-  いいね数等を分析し、作るべきチャンネルの方向性を決めるツール」。**round 1 のサイズ調整は
-  テーマでなく最初の EPIC で行う**（計画の木の設計どおり）: テーマ repo の EPIC-01 は
-  **fixture データ上の決定論分析コアに限定** — fixture JSON 取込境界（FEAT-Y01）→ 時間帯×
-  エンゲージメント分析（FEAT-Y02）→ spec が pin するスコア式のランキング＋レポート出力
-  （FEAT-Y03・Y02/Y03 は Y01 依存 = D3 完了条件の観測を兼ねる）。**YouTube Data API・認証・
-  LLM 内容分析は EPIC-02+ へ**（grader の決定論制約: live API と secret を採点に持ち込まない）。
-  着手順: D4（target-rooted authoring）→ テーマ repo scaffold → EPIC-01 一気通貫
-  （GitHub gate 初実走を兼ねる）。
+  **✅ テーマ確定＋scaffold＋EPIC-01 設計完了（⑭・2026-07-09/11 人間と対話して確定）**:
+  **repo = `/Users/yu/Company/Development/channel-compass`**（ローカル・remote 無し・commit `fc293ce`・
+  NORTH_STAR＋roadmap＋README を DOC_TAXONOMY 理想ツリーで著述済み）。「参照・競合チャンネル群を
+  横断分析し新規チャンネルの方向性を決めるツール」。**round 1 のサイズ調整はテーマでなく最初の
+  EPIC で行う**（計画の木の設計どおり）: EPIC-01 は fixture 上の決定論分析中核に限定。
+  EPIC-01 の設計判断（roadmap.yaml が正本・要約）:
+  - 対象＝参照/競合**チャンネル群**（URL/ID リスト）・単一動画 URL は主入力にしない。
+  - データ＝メタデータ＋コメント＋統計が主・**transcript は任意**（第三者字幕は supported API 外・
+    大量取得は高コスト/脆弱/ToS グレー・NotebookLM も無料大量源にならない — 調査済み）。
+  - 分業＝機械が大量に絞り込み代表動画 → 人が数本を手動 NotebookLM 深掘り。
+  - feature 依存チェーン Y01 取込 → Y02 横断エンゲージ×時間帯 → Y03 スコア＋証拠レポート →
+    Y04 escalation shortlist 選別（機械が測れる量のみ・決定価値で・理由付き＝product の
+    needs-human-review。4 ドライバ: 代表動画/異常値/多様性/reception 強度。感情・内容は EPIC-03）。
+  - **YouTube Data API・認証・LLM 内容分析は EPIC-02+ へ**（grader の決定論制約: live API と
+    secret を採点に持ち込まない・record/replay fixture 越しに検証）。to-spec 時に pin する残り:
+    Y03 スコア式重み・Y04 outlier 法・fixture スキーマ・「フォーマット」定義。
+  着手順: **D4（target-rooted authoring）を作る → channel-compass に EPIC-01 を著述・drive**
+  （GitHub gate 初実走・D3 完了条件観測を兼ねる）。詳細な開始点は HANDOFF §4「★ 次セッションの開始点」。
 - **M4 の repo 関係モデル ✅ 確定（⑭・2026-07-09 人間確定）**: workflow repo＝**開発組織**
   （機構・store・組織自身の WHAT）／テーマ repo＝**開発対象**（コード・テスト・受け入れガード・
   **自分の WHAT**: NORTH_STAR/roadmap/requirements/_system — DOC_TAXONOMY の理想ツリーを
