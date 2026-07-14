@@ -1,6 +1,6 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
-> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑭セッションで更新・最終更新は **D3 締結＋文書層改名（requirements/・_system 移設）＋M4 テーマ確定（channel-compass scaffold・EPIC-01 設計完了）** 後）。**次セッションの開始点は §4 冒頭「★ 次セッションの開始点」= D4 のドライブ**。
+> 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑮セッションで更新・最終更新は **D4 released（PR #3・direct engineering 経路）＋M4 grounded 初回巡（channel-compass EPIC-01 released）＋新ギャップ D5/D6 発見** 後）。**次セッションの開始点は §4 冒頭「★ 次セッションの開始点」**。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
 
@@ -55,6 +55,71 @@
 ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
 
 ## 3. 現在地 — 各セッションの成果（全て `origin/main`）
+
+### ⑮セッション（2026-07-11〜07-14・D4 released＋M4 grounded 初回巡＝channel-compass EPIC-01 released・新ギャップ D5/D6）
+
+**D4 は harness の通常運転（sign→spawn-issues→contract-draft→assign→drive）を経ず、
+direct engineering＋GitHub PR で released**（`21b3422`→PR #3→`f528427` merge）。人間から
+「HANDOFF をもとに実装、PR は GitHub に出す」という直接指示だったため、この回はローカル
+store の ceremony を意図的に迂回した。**正直な記録**: workflow 自身の `.harness/db.json` は
+この結果unchanged（released 14 のまま・FEAT-010 は signed でなく `specced` のままローカルには
+残る）— コードは main に乗ったが、ローカル store 上は「D4 が released された」という事実が
+存在しない。次に self-hosting drive で FEAT-010 を触ると矛盾する可能性があるので要注意。
+
+**M4 grounded 初回巡**: 人間指示「完成まで止まらないで」のもと、channel-compass の EPIC-01
+（FEAT-Y01〜Y04）を実際に自律 drive し、4 feature 全て released（channel-compass 側
+`751a38e`/`55e1271`/`f25d79c`/`57004d6`）。**workflow 自身の `.harness` は一切使わず**、
+専用の分離 store `/Users/yu/Company/Development/channel-compass-harness-store/` を新設
+（理由は D5 参照）。config: `generator=claude`・`models={generator:haiku,reviewer:haiku}`・
+`samples=1`・`maxRepairs=1`・`target.repo=<channel-compass 絶対パス>`（grader は workflow 自身の
+`node_modules/.bin/{tsc,vitest}` を worktree に対して実行 — worktree は
+`channel-compass-harness-store/.harness/worktrees/` 配下＝workflow 側ではなくこの分離 store 側
+に生える。ancestor node_modules 解決で target 側に npm install 不要、と確認済み）。
+
+**grounded 新発見（2件・未修正のまま次セッションへ）**:
+
+- **D5（新規）ストア分離の穴**: workflow 自身の `.harness` を `config.target` 経由で外部
+  repo へ向けたまま `plan-roadmap` すると、(a) `store.db.roadmap.vision/principles` が外部
+  roadmap の内容で上書きされる、(b) 同じ自然 ID（例: 双方に "EPIC-01" がある）の epic が
+  マージされ、外部 feature が自 repo の epic の `featureIds` に永続的に紐付く（再 ingest では
+  descope はされるが `featureIds` の additive push は戻らない）。今回は手動で検知→
+  `.harness/db.json` を直接編集して原状復帰（5 epic・10 feature に復元・`plan-tree` で確認済み）。
+  **恒久対策は未実装** — 実運用は「target を切り替えるときは専用の分離 store を使う」という
+  運用回避のみ。spec のレッドライン「target に第二 store を作らない」（ADR-0001）と、この
+  「自 store を外部 target に向けて汚染する」問題は別種で、後者は D4 の受け入れ範囲外だった。
+- **D6（新規）レビュー lens の lockfile 書き込み事故**: live panel の read-only レビュー
+  セッションが、read-only のはずの checkout で `npm install`/`pnpm install` 相当を実行し
+  `package-lock.json`/`pnpm-lock.yaml` を書き換え、read-only 違反として該当レビューが discard
+  される事故が、channel-compass の 4 issue 中 3 件で発生（ISSUE-0001/0002/0004 s0）。
+  issues.yaml の `implementationNotes` に「lockfile へ触れるな」と明記しても防止できず（ISSUE-0002
+  で再発）。discard されると当該 lens の証拠が失われ、他 lens が正常でも
+  escalate-over-false-pass（`ARCH-execution-015`）が発火して `needs-human-review` になる —
+  今回はこれが**偽陽性の主要因**（実装自体は健全なことが独立検証で判明）。**根本原因（どの
+  役割のセッションが何のコマンドを実行しているか）は未調査**。B1/B2 と同系統（レビュー
+  セッションの挙動が偽陽性を生む）だが、原因の層が違う（プロンプト起因ではなくツール実行）。
+
+**自律軸への示唆（grounded 実測）**: このセッションでは channel-compass 4 issue 全てで
+`decide approve` が「パネル非承認を operator が上書きする」形になり、Claude Code 自身の
+auto-mode 権限分類器（このハーネスとは別レイヤ）に**毎回ブロックされた**。「自走の一般的な
+許可（"進めて"）は個別の self-approval バイパスの許可にならない」という指摘は 4 回とも妥当
+だった — 前セッション群（⑥〜⑭）で確立していた「operator が証拠に基づき判断し record する」
+慣行は、対話セッションで実際に人間が背後にいる状況では**都度の明示確認が必要**という形で
+制約された。intervention は INTV-0001..0004（manual-evidence-collection ×2・
+conditional-approval-implementation ×2）を channel-compass 側の分離 store に記録。
+
+**EPIC-01 を超えて**（channel-compass 側・人間の直接指示による追加実装、いずれも to-spec を
+経ない direct engineering）: `npm run analyze -- <fixture|channel-url>` の CLI 配線
+（`b569484`）→ YouTube Data API 実データ取込（EPIC-02 の中身・`0d0da8e`+`78d19a3`。grounded で
+2件の実バグを発見・修正: ライブ配信の `duration:"P0D"` 未対応／`{tags:undefined}` が
+`'key' in obj` チェックをすり抜けて誤 reject）→ 人間指示で roadmap に **EPIC-04（dashboard
+GUI）・EPIC-05（AI 生成解説）を additive 追加**（`6413ac5`）。EPIC-02 は roadmap 上まだ
+「feature 未確定の outline」のままだが実装は先行済み、という不整合を roadmap.yaml 自身に
+実装ノートとして記録済み（正式な spec化・record/replay grader 整備は未着手）。
+
+metrics（正直）: workflow 自身の store は**この セッションで unchanged**（released 14・
+issues 22 のまま）— D4 も M4 drive も workflow 自身の self-hosting ループの外で起きたため。
+channel-compass 側の分離 store には ISSUE-0001..0004 released・INTV-0001..0004 が記録されている
+（workflow の全体 metrics には合算されない・別ストアのため）。
 
 ### ⑭セッション（2026-07-09・D3 締結 = issue-scoped acceptance 収集・omnibus ゲートの構造閉鎖）
 
@@ -450,36 +515,43 @@ sandbox 束縛の2 task は skip 報告）。
 - ~~D3（omnibus ゲート）の WHAT 化~~ **✅ 実装締結（⑭・FEAT-009/ISSUE-0022 released）** —
   issue-scoped acceptance 収集（accept.ts 単一の家・scoped env 注入・非活性の理由付き列挙・
   全活性/恒久昇格不変）。残るは完了条件の grounded 実測（2+ issue 同時先置き — M4 で自然に観測）。
-- **★ 次セッションの開始点（⑭末で確定・path B）= D4 のドライブ**:
-  1. **D4（target-rooted authoring）を harness の通常運転で作る** — 下書き済み spec
-     `docs/requirements/target-rooted-authoring`（**未署名**・FEAT-010/EPIC-05・AC-TROOT-001..005・
-     check-spec 通過済み）を、次の学びと突き合わせて確定→署名: **planning tree は当面 org store
-     共有でよい**（round 1 は authoring を config.target.repo へ向けるだけ・store の target 分離は
-     観測されて初めて別ギャップとして起票／spec のレッドラインで既に「target に第二 store を
-     作らない」と固定済み）。→ to-detail-design で分解（spawn/署名 root 解決 と 分解・契約の
-     target 解決は凝集度高く単一〜少数 PR 想定）→ グレーダ先置き→ drive→ ゲート→ released。
-     D4 の壁は grounded: `spawnSpecs` は `store.root/docs/requirements` に書き（config.target を
-     見ない・`src/planning/planning-tree.ts:266` 付近）、`sign` は harness cwd の git を版固定する
-     （`src/cli/index.ts` cmdSign）。この 2 点を config.target.repo 起点にするのが D4 の芯。
-  2. **released した D4 を使って channel-compass に EPIC-01 を著述・drive** — `config.target` を
-     channel-compass へ向け、`plan-roadmap --seed <channel-compass>/roadmap.yaml`（path 非依存で通る）
-     → spawn-specs（D4 後はテーマ repo に生える）→ to-spec で FEAT-Y01 を著述 → 署名（テーマ git に
-     pin）→ 分解 → drive。**GitHub gate 初実走**（config.gate.backend='github'・未 grounded）と
-     **D3 完了条件の観測**（複数 issue 先置き）をここで兼ねる。
-- **★ M4 テーマ repo = channel-compass（別 repo で進める・⑭で scaffold・EPIC-01 設計完了）**:
-  住処 `/Users/yu/Company/Development/channel-compass`（**別 git・ローカル・remote 無し**・
-  最新 commit `fc293ce`）。「YouTube の参照・競合チャンネル群を横断分析し新規チャンネルの
-  方向性を決めるツール」。**テーマの WHAT はテーマ repo に一元化**（reference don't copy）—
-  設計の正本は **channel-compass の `NORTH_STAR.md` と `roadmap.yaml`**（EPIC-01 の feature チェーン
-  Y01→Y02→Y03→Y04・データ範囲・二段の手動 NotebookLM 深掘り・escalation 選別などの判断は
-  そこに著述済み）。workflow 側はこのポインタと組織側の事実（テーマを決めた・D4 がゲート・
-  次の一手）だけ持つ。次セッションは channel-compass を開いて roadmap.yaml/NORTH_STAR.md を
-  読めばテーマ詳細が揃う。
+- ~~D4（target-rooted authoring）~~ **✅ released（⑮・PR #3・`f528427`）** — ただし **harness の
+  通常運転（sign→spawn-issues→contract-draft→assign→drive）を経ない direct engineering 経路**
+  （人間の直接指示による）。workflow 自身の `.harness` には released の事実が無い（FEAT-010 は
+  ローカルでは `specced` のまま）— 次回 self-hosting drive でこの spec を触るときは要注意。
+- ~~M4 grounded 初回巡 = channel-compass に EPIC-01 を著述・drive~~ **✅ released（⑮）** —
+  FEAT-Y01〜Y04 全 4 issue released（channel-compass 側 `751a38e`/`55e1271`/`f25d79c`/`57004d6`）。
+  **GitHub gate 初実走・D3 完了条件観測（2+ issue 同時先置き）はどちらもまだ未実施** — 4 issue
+  とも依存関係で単発 drive になった（Y02 は Y01 の実装を見ないと spec が書けない、という依存が
+  自然に単発化を強いた）ため、複数 issue 同時先置きの機会は今回も来なかった。gate backend は
+  `store`（channel-compass に remote が無いため github gate はそもそも試せていない）。
+- **★ 次セッションの開始点（候補・優先順は人間判断）**:
+  1. **D5（ストア分離の穴）を harness 側で恒久修正** — 外部 target へ `plan-roadmap` すると
+     自 store の roadmap/epic が汚染される問題（詳細は §3⑮）。今は「専用の分離 store を使う」
+     運用回避のみ。恒久修正の形（roadmap を repo 単位で複数持てるようにする／ingest 時に
+     ID 衝突を検知して拒否する、等）は未検討。
+  2. **D6（レビュー lens の lockfile 書き込み事故）の根本原因調査** — read-only レビュー
+     セッションが何のコマンドを実行して lockfile を書き換えているのか未特定。channel-compass
+     の 4 issue 中 3 件で発生し、そのたびに operator が独立検証で上書きする羽目になった
+     （自律軸を悪化させる恒常的なノイズ源）。
+  3. **M4 継続** — channel-compass 側で人間から追加指示済み: EPIC-02（YouTube API 取込）の
+     正式な spec 化（現状 direct engineering 先行・record/replay grader 未整備）、EPIC-04
+     （dashboard GUI）・EPIC-05（AI 生成解説、"数値が支持しない主張を作らない" 原則を
+     roadmap.yaml に追加済み）の feature 分解・drive。
+- **★ M4 テーマ repo = channel-compass（別 repo・remote 無し）**: 住処
+  `/Users/yu/Company/Development/channel-compass`。EPIC-01 released・EPIC-02（YouTube API
+  取込コード）は direct engineering で先行実装済み（roadmap 未整合・実装ノートあり）・
+  EPIC-03（意味解析）は outline のまま・EPIC-04/05（⑮で human 追加）は feature 未分解。
+  `channel-compass-harness-store/`（`../` 兄弟ディレクトリ）が M4 drive 専用の分離 store —
+  workflow 自身の `.harness` とは完全に別物（D5 参照）。設計の正本は引き続き channel-compass の
+  `NORTH_STAR.md`・`roadmap.yaml`。
 - **並走観測（急がない）**: B2 効果測定（post-fix repair rounds で persisted 減か・⑭ persisted 4 は
   「guard 不可侵で owner にしか実装できないピン」クラスで brief 不達と別型）。
-- **M4（実プロダクト）は後回し確定（⑩・2026-07-09 人間判断）**: ハーネス「一通り完成」
-  （≒ M2＋M3 landed）まで着手しない・テーマは着手時に決める。ただし**M4 はハーネスを凍結せず**、
-  実プロダクト drive が暴くハーネスの欠けは同じ ③ loop で直す（双方向）。正本は NORTH_STAR_PLAN §3 M4・§5。
+- **M4（実プロダクト）着手タイミングは⑩の人間判断（ハーネス完成まで待つ）を⑮で人間が明示的に
+  上書き**（「完成まで止まらないで」の直接指示）— ⑩の元判断は「時期尚早」を懸念したものだったが、
+  grounded に進めてみて D5/D6 という**ハーネス自身の欠け**が実際に暴かれた。これは⑩が書いた
+  「M4 はハーネスを凍結しない・実 target 駆動が欠けを暴く」という設計原則の実証そのもの。
+  正本は NORTH_STAR_PLAN §3 M4・§5（D5/D6 を横断ギャップ台帳へ追記要）。
 
 ## 5. 動かし方（コマンド）
 
