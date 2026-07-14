@@ -83,7 +83,9 @@
 | D1 | **実プロダクト未経験**（ハーネスは自分自身と roman bait しか開発していない） | 究極目標「人間は WHAT のみ→動くソフトウェア」の実証が自己言及の外に無い | 上流チェーン（M4）。**何を作るかは人間の WHAT — 未確定（§5）** | ハーネス外の実 target で WHAT→released 一気通貫・A1 計器が HOW 介入ゼロを示す |
 | D2 | ~~並行時の資源運用~~ **✅ 初期分締結（⑬・ISSUE-0020）** — 並行 turn の実測（peak/driven/cap）が store の事実＋status 計器に。コスト天井・多 turn 集計は未着手（必要になった分だけ） | 横幅の安全前提 → 最低限の可視化あり | 直接TDD | 資源計器が status に出る ✅（コスト系は将来） |
 | D3 | ~~受け入れゲートが suite 全体収集＝issue 横断の payload 漏出~~ **✅ 実装を締結（⑭・FEAT-009/ISSUE-0022 released）** — issue-scoped acceptance 収集: 活性化の単一の家 `accept.ts`（`acceptsIssue`/`scopedAcceptEnv`・帰属は guard の明示宣言・describe 粒度）＋grade の駆動 issue env 注入＋非活性の理由付き列挙（never-silent）＋全活性/恒久昇格の不変。self-drive 設定から suite 全体活性 prefix を撤去（omnibus の入口を閉鎖）。条件付き承認 10 例目（休眠≠失敗の報告整合・own-all-dormant の LOUD 化・衝突優先順位ピン — 全変異 kill）。**残る観測**: 台帳の完了条件そのもの＝2+ issue の同時先置きで各 build が自 issue の AC 差分だけで released になる grounded 実測（次の複数 issue 開発、自然には M4 で起きる） | 複数 issue 分解の意味（PR サイズ・帰属・並行の意義）が omnibus 化で崩れる → 構造は閉鎖・実測待ち | 完了（上流チェーン・EPIC-04） | 実装✅。次: 2+ issue 同時先置きの grounded 観測で本行を完全に畳む |
-| D4 | **外部 target の WHAT 著述が harness repo 固定**（⑭で M4 の repo 関係整理中に特定: spawn-specs の root が CLI 未露出・sign の git 操作が harness cwd 固定。実行半分（worktree/grader/panel/回帰の跨 target）は grounded 済みだが、著述半分（roadmap→spawn→署名）は自分の repo にしか効かない） | M4 の repo 分離モデル（⑭人間確定: テーマ repo が自分の WHAT — roadmap/requirements/_system — を所有し自己記述的であること）が上流チェーンの入口で成立しない | 上流チェーン（target-rooted authoring: spawn root の CLI 露出・sign/lint/pre-commit の target git 対応。ライブラリ層 specsRoot は既在） | 外部 repo の docs/requirements/<slug> を spawn→著述→署名→spawn-issues→contract→drive まで一気通貫し、署名 blob がテーマ repo の git に pin される |
+| D4 | ~~外部 target の WHAT 著述が harness repo 固定~~ **✅ released（⑮・PR #3）** — `resolveTargetRoot`（config.ts）が spawn-specs/sign の起点を統一。**ただし direct engineering 経路**（harness の通常運転＝sign→spawn-issues→contract-draft→assign→drive を経ていない）。channel-compass への EPIC-01 実 drive で実地検証済み（4 issue released） | M4 の repo 分離モデルが上流チェーンの入口で成立することを grounded 実証 | 完了 | 外部 repo への spawn→署名→spawn-issues→contract→drive 一気通貫 ✅（gate backend は `store` のみ実証・`github` は channel-compass に remote が無く未実証） |
+| D5 | **（⑮新規）target 切替が自 store を汚染する** — `config.target` を外部 repo へ向けたまま `plan-roadmap` すると、roadmap（vision/principles）が外部内容で上書きされ、同名 epic ID（例: 双方の "EPIC-01"）がマージされて外部 feature が自 epic の featureIds に永続混入する（再 ingest の descope では戻らない） | ADR-0001「組織状態は複製しない」の対偶（1 store 内で複数の独立した WHAT ツリーを持つと epic/roadmap の自然キー突合が破綻する）が未検証のまま D4 を released していた | 未着手。運用回避のみ（target ごとに専用の分離 store を使う — 今回 `channel-compass-harness-store/` として実施） | self-hosting 用 store と外部 target 用 store を同一プロセスで安全に往復できる（または「往復しない」を構造的に強制する）ことが grounded 実証される |
+| D6 | **（⑮新規）レビュー lens が read-only checkout で lockfile を書き換える** — live panel の一部レビューセッションが `npm install`/`pnpm install` 相当を実行し、read-only 違反として自分自身の review が discard される。escalate-over-false-pass（ARCH-execution-015）と組み合わさり「実装は健全なのに needs-human-review になる」偽陽性を生む（channel-compass 4 issue 中 3 件で発生・`implementationNotes` での明記も防止効果なし） | ②評価軸の信頼性（false-pass だけでなく "false-escalation" も操舵指標が捉えるべき）・自律軸（operator の独立検証による上書きが常態化すると自律の実質低下） | 未着手。根本原因（どのロールが何のコマンドを実行しているか）調査から | レビューセッションが read-only 契約を破らずに動作する、または破った際の discard が false-escalation を発生させない（例: 該当 lens だけ再試行する等）ことが grounded 実証される |
 
 ## 3. マイルストーン（依存順・「測る→広げる→深める→実証する」）
 
@@ -104,18 +106,19 @@
   **roadmap へはまだ降ろさない**（判別データを見てから WHAT 化 — ⑦の教訓）。
   M1/M2 の drive が repair round を供給するので、M3 は並走する観測として進む。
   出口: repairSuccess の改善、または「brief 系/レビュア系」の証拠付き判別と対応 issue。
-- **M4 究極目標の実証** = D1（＋A5/A6 従属）。
-  **着手条件（⑩・2026-07-09 人間確定）: ハーネスが「一通り完成」してから着手する** —
-  自然な読みは M2（自律の横幅）＋M3（縦深）が landed し、ハーネス自身の roadmap
-  （EPIC-01/02/03）が概ね drain した状態。測る土台（M1✅）の上に、広げる（M2）・深める（M3）
-  まで揃えてから、外部の実 target へ向ける。
-  **テーマ（何を作るか）は着手時に決める（§5）** — 今は未確定のままにする（未成熟な WHAT を
-  先に焼き込まない）。
-  **進め方の原則: M4 はハーネスを凍結しない。** 実プロダクトを作りながらのハーネス改修は
-  当然織り込む — 実 target こそが最も厳しい grounded 試験であり、ハーネスの欠けを暴く。
-  暴かれた欠けは**同じ roadmap・同じ loop**（③改善）で直す（北極星の「改善はプロダクトと
-  同じ loop」の原則そのもの）。M4 の drive が新しいハーネス改善 issue を供給する双方向。
-  出口: 自分以外のソフトウェアが WHAT だけから released になり、A1 計器がそれを証明する。
+- **M4 究極目標の実証** = D1（＋A5/A6 従属）。**着手済み（⑮・人間が明示的に前倒し）** —
+  ⑩の元判断（「ハーネスが一通り完成してから着手」）は ⑮ で人間の直接指示（「完成まで止まらないで」）
+  により上書きされた。M4 の drive で channel-compass の EPIC-01 が実際に released し（§3⑮）、
+  **設計原則どおり実 target 駆動がハーネス自身の欠け D5/D6 を grounded で暴いた**（「改善は
+  プロダクトと同じ loop」の実証）。
+  **進め方の原則（変わらず）: M4 はハーネスを凍結しない。** 暴かれた欠けは同じ roadmap・
+  同じ loop（③改善）で直す。
+  出口: 自分以外のソフトウェアが WHAT だけから released になり、A1 計器がそれを証明する
+  — **一部到達**（EPIC-01・4 issue released）。ただし D4 が direct engineering 経路だった
+  ことと、D5/D6 が operator の都度介入を要求したことから、**「HOW に人間が触れず」の条件は
+  まだ厳密には満たしていない**（INTV-0001..0004・decide のたび Claude Code 権限分類器が
+  self-approval を検出＝§3⑮）。A1 計器を M4 の channel-compass 分離 store 側でも計測するか
+  どうかは未確定（現状 workflow 本体の自律軸には合算されない）。
 
 ## 4. planned 在庫の処遇（⑧・2026-07-08 人間確定）
 
