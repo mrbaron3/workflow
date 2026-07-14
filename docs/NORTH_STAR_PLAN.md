@@ -39,6 +39,15 @@
   （EPIC-01..04 全 9 features released）。M3 は主因閉鎖✅＋効果測定（post-fix repair rounds の
   persisted 減）が観測中 — 揃い次第、**M4 のテーマ確定（人間の WHAT・§5）が次の判断点**。
   D3 の完了条件（2+ issue 同時先置き）は M4 の複数 issue 開発が自然な観測機会。
+- **（⑯ 設計統合・grounded release 無し）ビジョン言語化で目標像を再確認し、入口 altitude を確定**:
+  人間が「GitHub に issue を立てたら AI が拾って PR→release」を再言語化。棚卸しの結果、
+  パイプラインの大半（planning=`to-system-design`・Issue Contract=parse で ready・7観点パネル・
+  専用コンテキスト=tmux セッション＋`scoped-context`・決定論オーケストレータ・pass@k/pass^k）は
+  **既に実装済み**で、言語化が炙り出したのは (i) 人間の**入口**が未成立（GitHub は出口＝PR ゲートのみ・
+  `guard` は store を見て GitHub Issues を見ない）、(ii) パネルの**モデル非依存 routing**（A5）が seam
+  止まり、(iii) **UI/UX 著述ペルソナ**不在、の 3 点。入口の altitude を人間が確定（theme repo の
+  GitHub Issue＝入口 → planning-agent が contract-ready へ昇格 → 決定論 intake が store へ）＝**ADR-0008**。
+  新ギャップ **D7（intake）/A7（UI/UX 著述）** を台帳へ・**A5 を最優先の構造ギャップへ昇格**（本節 §2）。
 
 残りを一言で: **(a) 測れていない軸を測る、(b) 横幅（規模・並行・多様性）、
 (c) 縦深（診断→改善の精度）、(d) 自分以外を開発する実証。**
@@ -56,8 +65,9 @@
 | A2 | ~~複数 issue の DAG 駆動未実証~~ **✅ 締結（⑫⑬・ISSUE-0018 released → 実戦）** — guard が依存を尊重し `⧗ ISSUE-0020 blocked: waiting on ISSUE-0019 (contract-drafted)` が live ログに実出現・released 後の turn で自動 pickup を実観測（turn 1→2 で両側） | 下流トレースが 1 issue 規模 → 依存チェーンが秩序立って流れる | 上流チェーン（FEAT-007） | ~~完了条件~~ 達成 |
 | A3 | ~~複数 spec 並行未実証~~ **✅ 締結（⑬・ISSUE-0019/0020/0021 released）** — cap=2 の turn で 2 spec の issue（0020/0021）が同時 in-flight・2-attempt サイクルを並行完走・実測は 0020 自身が建てた計器が store に記録（peak 2 / cap 2 / driven 2） | 規模の欠け → 並行が実測付きで回る | 上流チェーン（FEAT-008） | ~~完了条件~~ 達成 |
 | A4 | ~~skill 本体の grounded 未実走~~ **✅ 締結（⑨〜⑬）** — to-spec は⑨以降の全 spec 著述で実走・to-detail-design は⑬（FEAT-008 の 2 issue 依存分解・check-detail-design 通過）で初実走 | 上流の著述が再現可能な部品に | 運用 | ~~完了条件~~ 達成 |
-| A5 | **generator が claude のみ**（codex/gemini は enum・pluggable 設計のみ。「誰の・何のため」は複数エージェント前提） | 北極星の「誰の・何のため」に対する欠け | 上流チェーン（M4 で必要になってから） | claude 以外で 1 released・`byAgent` が 2 行になる |
+| A5 | **generator が claude のみ**（codex/gemini は enum・pluggable 設計のみ）。**（⑯ 昇格）** ビジョン言語化で「観点ごとに tool を選ぶ（security=Codex / arch=Claude）」が明示要求され、panel の **per-perspective routing 不在**（`PerspectiveGrader` は panel 全体で単一・`ModelConfig` は Claude `--model` エイリアス限定・`reviewer` も単一）が最優先の構造ギャップと再確認。seam（`AgentRunner`／`PerspectiveGrader`）は既に空いており新機能でなく穴埋め（ADR-0008 の入口経路の前提） | 北極星の「誰の・何のため」（複数エージェント前提）に対する欠け | 上流チェーン（~~M4 で必要になってから~~ ⑯ で最優先の構造ギャップへ昇格） | claude 以外で 1 released・`byAgent` が 2 行になる／観点別に (tool, model) を割り当てる routing 表＋tool 非依存 runner が動く（例: 1 観点が非 Claude で採点） |
 | A6 | **unit_test 以外の grader 未対応**（playwright 等） | 実プロダクト（D1）の AC が unit_test だけでは書けない | 上流チェーン（M4 従属） | unit_test 以外の method で AC 1 件が証拠採点される |
+| A7 | **（⑯新規）UI/UX 著述ペルソナ不在** — design token / design system / component を**設計する**著述観点が無い（`to-system-design` は language/domain/architecture/data の 4 ビューのみ・`src/design/lint.ts` は issue 分解の被覆チェックで視覚設計でない・`ux`/`accessibility` は panel の**レビュー**観点であって**著述**でない） | UI を要する theme で HOW 自律の被覆が UI 設計まで及ばない（planning-agent の昇格が design まで届かない） | 上流チェーン（design 層に著述観点を additive・M4 従属・ADR-0008 I2 の enrich が design まで） | UI を要する 1 feature で design token/system/component が著述され、panel の ux/a11y 観点がそれを根拠に採点する |
 
 ### ② 評価（操舵: 証拠裏付き判定率 ↑・false-pass 率 ↓）
 
@@ -86,6 +96,7 @@
 | D4 | ~~外部 target の WHAT 著述が harness repo 固定~~ **✅ released（⑮・PR #3）** — `resolveTargetRoot`（config.ts）が spawn-specs/sign の起点を統一。**ただし direct engineering 経路**（harness の通常運転＝sign→spawn-issues→contract-draft→assign→drive を経ていない）。channel-compass への EPIC-01 実 drive で実地検証済み（4 issue released） | M4 の repo 分離モデルが上流チェーンの入口で成立することを grounded 実証 | 完了 | 外部 repo への spawn→署名→spawn-issues→contract→drive 一気通貫 ✅（gate backend は `store` のみ実証・`github` は channel-compass に remote が無く未実証） |
 | D5 | **（⑮新規）target 切替が自 store を汚染する** — `config.target` を外部 repo へ向けたまま `plan-roadmap` すると、roadmap（vision/principles）が外部内容で上書きされ、同名 epic ID（例: 双方の "EPIC-01"）がマージされて外部 feature が自 epic の featureIds に永続混入する（再 ingest の descope では戻らない） | ADR-0001「組織状態は複製しない」の対偶（1 store 内で複数の独立した WHAT ツリーを持つと epic/roadmap の自然キー突合が破綻する）が未検証のまま D4 を released していた | 未着手。運用回避のみ（target ごとに専用の分離 store を使う — 今回 `channel-compass-harness-store/` として実施） | self-hosting 用 store と外部 target 用 store を同一プロセスで安全に往復できる（または「往復しない」を構造的に強制する）ことが grounded 実証される |
 | D6 | **（⑮新規）レビュー lens が read-only checkout で lockfile を書き換える** — live panel の一部レビューセッションが `npm install`/`pnpm install` 相当を実行し、read-only 違反として自分自身の review が discard される。escalate-over-false-pass（ARCH-execution-015）と組み合わさり「実装は健全なのに needs-human-review になる」偽陽性を生む（channel-compass 4 issue 中 3 件で発生・`implementationNotes` での明記も防止効果なし） | ②評価軸の信頼性（false-pass だけでなく "false-escalation" も操舵指標が捉えるべき）・自律軸（operator の独立検証による上書きが常態化すると自律の実質低下） | 未着手。根本原因（どのロールが何のコマンドを実行しているか）調査から | レビューセッションが read-only 契約を破らずに動作する、または破った際の discard が false-escalation を発生させない（例: 該当 lens だけ再試行する等）ことが grounded 実証される |
+| D7 | **（⑯新規）人間の入口が「GitHub Issue を立てる」に成立していない** — 現状 GitHub は**出口**（PR ゲート・ADR-0006）のみ。内部 poll（`guard.ts`）は store を見るが **GitHub Issues を見ない**。人間の粗い着手要求を取り込む **intake アダプタ＋watcher** と、それを Issue Contract-ready へ上げる **planning-agent 昇格ステップ**が無い（ADR-0008） | 究極目標「人間は WHAT のみ」の**入口**が spec 著述を要求している（「issue を立てるだけ」になっていない） | 上流チェーン（ADR-0008・M4）。intake アダプタ＋planning-agent 昇格の新設。drive loop（guard→drive→panel→gate）は不変 | 人間が theme repo に立てた ready issue が watcher→store→guard→drive→panel→PR まで HOW 人手介入なしで流れる grounded 実測（A1 計器が入口側でも介入 0 を示す・remote 前提は ADR-0006 github ゲートと同じ） |
 
 ## 3. マイルストーン（依存順・「測る→広げる→深める→実証する」）
 
@@ -160,6 +171,12 @@ R3 沈黙・executedRate 100%・unverified 0。dedup がルール同一性化さ
   **人間ゲート＝テーマ repo の GitHub PR**（backend='github'・M4 で初 grounded）。M4 は
   ハーネスを凍結しない（テーマ drive が暴く欠けは同じ loop でこの repo の issue に）。
   前提ギャップは D4（target-rooted authoring）— M4 準備の最初のハーネス作業。
+- **M4 の人間入口 ✅ 確定（⑯・2026-07-14 人間確定）**: theme repo の **GitHub Issue（粗い WHAT）＝入口**。
+  planning-agent が整合検証＋ドメインモデル浮き彫りで **Issue Contract-ready（parse）まで昇格**させ、
+  決定論の **intake アダプタ**が store へ写す（GitHub Issue は投影・PR ゲートと同型に `externalRef`＋poll）。
+  取り込み後は既存 drive loop が不変で流れる（**入口の配管だけが新規**）＝**ADR-0008**。上流チェーン（spec 入口）は
+  self-hosting 用に残す（I5）。前提ギャップは **D7（intake）**、依存は **A5（モデル非依存 routing）/A7（UI/UX 著述）**。
+  未決（spec 時）: GitHub 上の ready 表現・昇格の帰属記録・self の入口を issue へ寄せるか（ADR-0008 未決節）。
 - ~~**M1 の介入計器の意味論**~~ **✅ 確定（⑨）**: spec
   `docs/specs/autonomy-axis-instruments-human-how-intervention-accounting` が正本 —
   判断点（adopt/assign/sign/decide/label）は記録語彙に存在せず数えられない。数えるのは
