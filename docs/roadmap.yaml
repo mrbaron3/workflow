@@ -76,3 +76,71 @@ epics:
       - id: FEAT-010
         title: "Target-rooted authoring"
         outcome: "spawn-specs / sign / spawn-issues / contract-draft の著述チェーンが、外部 target repo の docs/requirements・docs/_system・git に対して働く: spawn した要求 stub は target repo に生え、署名は target の git の committed blob を版固定し、design lint は target の system 層を解決する。harness 自身（repo='.'）への従来動作は不変（additive）。"
+
+  # M4 安定化「外部 target を増やしても、状態と評価が嘘をつかない」
+  - id: EPIC-06
+    title: "Grounded runtime integrity"
+    theme: "platform"
+    outcome: "外部 target の自律開発を反復しても、組織 store の計画状態が別 target と混線せず、read-only reviewer の環境準備が偽の escalation を生まない。"
+    features:
+      - id: FEAT-011
+        title: "Store-target binding integrity"
+        outcome: "1つの組織 store は1つの target repo に耐久的に束縛され、異なる target を向いた状態変更操作は書込み前に理由付きで拒否される。self-hosting と外部 target の往復は別 store に構造分離され、D5 の roadmap/epic 混線が再発しない。"
+      - id: FEAT-012
+        title: "Read-only reviewer workspace integrity"
+        outcome: "reviewer が依存関係の確認やテストを行っても評価対象 checkout を変更せず、lockfile 等への書込み事故で健全な review evidence が失われて needs-human-review になる D6 の false-escalation が再発しない。"
+
+  # A5「tool/model を役割・観点ごとに選べるモデル非依存ランタイム」
+  - id: EPIC-07
+    title: "Model-neutral agent runtime"
+    theme: "platform"
+    outcome: "planning・generation・review の各呼出しが tool/model 非依存の契約を通り、役割・観点ごとに異なる provider を選んでも同じ決定論オーケストレーション、監査、評価が成立する。"
+    features:
+      - id: FEAT-013
+        title: "Agent invocation identity and provenance"
+        outcome: "全 role session が role・perspective・provider・model・prompt・outcome を共通の invocation identity で耐久記録し、どのエージェントが何を生成・採点したかを metrics と監査から正しく辿れる。"
+      - id: FEAT-014
+        title: "Provider-neutral interactive session backend"
+        outcome: "tmux の対話・sentinel・liveness 契約を保ったまま、Claude Code/Codex 等の起動差を provider adapter の内側へ閉じ、execution は特定 CLI のコマンド形に依存しない。"
+      - id: FEAT-015
+        title: "Role and perspective agent routing"
+        outcome: "generator/planning と各 review perspective に (provider, model) を決定論的に割り当て、未設定時の既定・無効 route の fail-closed・再実行時の同一 route が監査可能に成立する。"
+
+  # ADR-0008 / D7「theme repo の GitHub Issue を人間の入口にする」
+  - id: EPIC-08
+    title: "GitHub Issue development intake"
+    theme: "platform"
+    outcome: "人間が theme repo で ready にした GitHub Issue が、原文の WHAT と帰属を失わず planning を経て store queue へ入り、既存 drive/panel/GitHub PR gate まで HOW 介入なしで進む。"
+    features:
+      - id: FEAT-016
+        title: "Idempotent GitHub Issue polling and claim"
+        outcome: "明示的に ready な GitHub Issue を決定論 watcher が発見・一度だけ claim し、repository＋issue identity・原文 snapshot・状態を store に残す。重複 poll や再起動は二重取込を生まない。"
+      - id: FEAT-017
+        title: "Traceable planning enrichment gate"
+        outcome: "planning-agent が粗い WHAT を1..N個の Issue Contract 候補へ整え、全ACを原文またはsystem要素へtraceする。曖昧さや根拠のない scope 追加は推測せず needs-human-review へ止める。"
+      - id: FEAT-018
+        title: "GitHub Issue-to-PR grounded vertical slice"
+        outcome: "実remote上の ready Issue が watcher→planning→store→guard→drive→異種provider panel→GitHub PR まで進み、再起動を挟んでも重複せず、HOW介入0と証拠付き判定を計器で示す。"
+
+  # A6「unit_test以外のACも宣言methodそのものでgroundする」
+  - id: EPIC-09
+    title: "Grounded verification breadth"
+    theme: "quality"
+    outcome: "UI/API/DB/security等の受け入れ基準がunit testへの読み替えや暗黙passをせず、宣言したverification methodの実commandと証拠で評価・回帰できる。"
+    features:
+      - id: FEAT-019
+        title: "Verification-method grader command registry"
+        outcome: "targetごとのverification method→command registryを用い、各ACを独立した環境でgroundする。未設定methodはfail-closed、実行結果はartifact evidenceへ残り、Curator/Regressionも同じcaptured commandを再利用する。"
+
+  # A7「UI要求を専用設計コンテキストでHOW化し、generic実装へ契約として渡す」
+  - id: EPIC-10
+    title: "UI design authoring readiness"
+    theme: "product-design"
+    outcome: "UIを含むWHATが専用UI/UXコンテキストでtoken/component/a11y契約へ著述・検証され、その根拠を実装とレビューが共有する。設計不能時はgeneric generatorへ流れない。"
+    features:
+      - id: FEAT-020
+        title: "Conditional UI-design readiness gate"
+        outcome: "planning candidateがfrontend/fullstackなら検証済みUI design artifactを要求し、不在・曖昧・不正なら理由付きneeds-human-reviewで全件停止する。backend intakeと既存trace/idempotenceは不変。"
+      - id: FEAT-021
+        title: "Dedicated UI design authoring agent"
+        outcome: "frontend/fullstack candidateごとに独立route/contextのUI designerがdesign principles・tokens・components・states/interactions・accessibilityをACへtraceしたartifactとして著述する。provenance検証後だけIssueへ投影し、generatorとreviewerが同じ契約を参照する。"

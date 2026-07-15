@@ -76,6 +76,8 @@ export interface PanelInput {
   sampleIndex: number;
   attempt: number;
   agent: EvalRun['agent'];
+  /** Non-deterministic reviewer invocation identities, keyed by perspective. */
+  invocationKeys?: Record<string, string>;
   featureArea?: string;
 }
 
@@ -311,6 +313,7 @@ function persistRun(
     featureArea: area,
     humanVerdict: null,
     perspective,
+    invocationKey: perspective === null ? null : input.invocationKeys?.[perspective] ?? null,
     createdAt: nowISO(),
   });
   return store.addEvalRun(run);

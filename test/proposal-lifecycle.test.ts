@@ -86,7 +86,7 @@ function metricsWith(overrides: Partial<Metrics>): Metrics {
     regressionExecutedRate: 1, regressionFailingTasks: 0, regressionUnverifiedTasks: 0,
     interventionsPerIssue: 0, howNonInterventionRate: 1,
     lastTurnPeakConcurrency: null, lastTurnIssuesDriven: null, lastTurnCap: null,
-    falsePassTrend: [], passCurve: [], byAgent: [],
+    falsePassTrend: [], passCurve: [], byAgent: [], byInvocationProvider: [],
     heatmap: { areas: [], types: [], counts: {}, max: 0 }, issues: [],
     ...overrides,
   };

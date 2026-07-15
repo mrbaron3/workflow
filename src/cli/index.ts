@@ -52,6 +52,13 @@ import { recordHumanDecision, type HumanDecision } from '../pipeline/execution/l
 import * as YAML from 'yaml';
 import { analyzeHarness, createSuggestionIssues } from '../pipeline/analyst.js';
 import { computeMetrics, statusReport, writeDashboard } from '../dashboard/dashboard.js';
+import {
+  bindLegacyStore,
+  commandChangesStore,
+  prepareStoreMutation,
+} from '../workspace/target-binding.js';
+import { pollAndClaimGithubIssues, realGithubIssueRunner } from '../intake/github-issues.js';
+import { runGithubDevelopmentTurn, watchGithubDevelopment } from '../intake/development-turn.js';
 
 const useColor = !process.env.NO_COLOR;
 const c = {
@@ -139,6 +146,14 @@ function cmdInit(flags: Args['flags']): void {
   log(`  db:     ${c.dim(store.dbPath)}`);
   log(`  config: ${c.dim(path.join(store.dir, 'config.json'))} (generator=${DEFAULT_CONFIG.generator})`);
   log(`\nNext: ${c.b('agentops plan')} then ${c.b('agentops run')}.`);
+}
+
+function cmdBindTarget(): void {
+  const store = requireInit();
+  const result = bindLegacyStore(store, loadConfig(ROOT), ROOT);
+  store.save();
+  log(c.green('✓ target binding') + ` ${c.dim(store.db.targetBinding!.targetIdentity)}`);
+  log(c.dim(result === 'bound' ? '  legacy store migrated; binding is now immutable' : '  already bound; no change'));
 }
 
 function cmdSign(pos: string[]): void {
@@ -328,6 +343,38 @@ function cmdAssign(pos: string[]): void {
   log(c.green('✓ assigned') + ` ${c.b(issue.id)} ${issue.title} → ${c.b(String(issue.assignedAgent))}`);
   log(`  status=${c.b(issue.status)} · ${issue.contract!.acceptanceCriteria.length} AC ${c.dim('(now in the execution guard’s pollable queue)')}`);
   log(`\nNext: the execution loop polls it (e.g. ${c.b('npx tsx scripts/real-panel-run.ts')}).`);
+}
+
+function cmdPollIntake(): void {
+  const store = requireInit();
+  const config = loadConfig(ROOT);
+  if (!config.intake) {
+    log(c.dim('GitHub Issue intake is disabled — configure config.intake first.'));
+    return;
+  }
+  const results = pollAndClaimGithubIssues(store, config, realGithubIssueRunner(resolveTargetRoot(config, ROOT)));
+  const created = results.filter((result) => result.created).length;
+  log(c.green(`✓ intake poll`) + ` ${results.length} ready issue(s), ${created} newly claimed`);
+  for (const result of results) {
+    log(`  #${result.issueNumber} ${c.dim(result.intakeKey)} → ${result.status}${result.created ? ' (new)' : ''}`);
+  }
+}
+
+async function cmdGithubTurn(watch: boolean): Promise<void> {
+  const store = requireInit();
+  const config = loadConfig(ROOT);
+  if (!config.intake) throw new Error('GitHub Issue intake is disabled — configure config.intake first.');
+  if (!config.target) throw new Error('GitHub development requires config.target for planning/build worktrees.');
+  const issueRunner = realGithubIssueRunner(resolveTargetRoot(config, ROOT));
+  if (watch) {
+    log(c.green('✓ watching GitHub ready Issues') + c.dim(' (Ctrl-C to stop)'));
+    return watchGithubDevelopment(store, config, { issueRunner }, ROOT, log);
+  }
+  const result = await runGithubDevelopmentTurn(store, config, { issueRunner }, ROOT, log);
+  log(
+    c.green('✓ GitHub development turn') +
+      ` ${result.intake.length} intake result(s), ${result.enrichmentIds.length} enrichment(s), ${result.driveResults.length} drive result(s)`,
+  );
 }
 
 function cmdPlanTree(): void {
@@ -614,6 +661,7 @@ ${c.b('Usage')}  npm run harness -- <command> [flags]   (or: agentops <command>)
 
 ${c.b('Commands')}
   init                 scaffold .harness/ (db + config)
+  bind-target          bind a legacy unbound store to the configured target (one time; no rebind)
   sign <spec-dir>      sign a spec's contract: pin ApprovedSpecRef (AUTH-B gate first)
   specs [<spec-dir>]   show signed specs + drift / derived status since signing
   plan-roadmap [--seed F]  ingest a planner roadmap into the planning tree (epics + features)
@@ -621,6 +669,9 @@ ${c.b('Commands')}
   spawn-issues <spec-dir>  ingest a signed spec's issues.yaml into the store (ISSUE-NNNN)
   contract-draft <spec-dir>  draft Issue Contracts from a signed spec → contract-drafted
   assign <ISSUE-ID>    delegate a contract-drafted spec issue to the AI backend (opt-in)
+  poll-intake          poll configured GitHub ready Issues and claim them idempotently
+  github-turn          one ready Issue → planning → live drive → configured PR gate turn
+  watch-github         continuously run github-turn (durable restart/idempotent inventory)
   plan-tree            print the planning tree (roadmap → epic → feature → spec)
   plan [--seed F]      LEGACY: ingest a seed roadmap into epics + Issue Contracts (demo)
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
@@ -645,9 +696,19 @@ ${c.b('Quick start')}   ${c.green('npm run demo')}
 
 async function main(): Promise<void> {
   const { cmd, flags, pos } = parseArgs(process.argv);
+  // ARCH-workspace-004: one preflight for every state-changing CLI entry. It runs before
+  // dispatch, so a mismatch cannot partially mutate a roadmap, counter, issue, or target file.
+  // Read-only commands deliberately bypass it and remain available for diagnosis.
+  if (commandChangesStore(cmd, flags)) {
+    const store = requireInit();
+    const result = prepareStoreMutation(store, loadConfig(ROOT), ROOT);
+    if (result === 'bound-empty') store.save();
+  }
   switch (cmd) {
     case 'init':
       return cmdInit(flags);
+    case 'bind-target':
+      return cmdBindTarget();
     case 'sign':
       return cmdSign(pos);
     case 'specs':
@@ -664,6 +725,12 @@ async function main(): Promise<void> {
       return cmdContractDraft(pos);
     case 'assign':
       return cmdAssign(pos);
+    case 'poll-intake':
+      return cmdPollIntake();
+    case 'github-turn':
+      return cmdGithubTurn(false);
+    case 'watch-github':
+      return cmdGithubTurn(true);
     case 'plan-tree':
       return cmdPlanTree();
     case 'run':

@@ -14,6 +14,7 @@
 import type { Issue } from '../domain/schema.js';
 import type { HarnessConfig } from '../config.js';
 import type { Store } from '../store/store.js';
+import { resolvedGeneratorProvider } from '../agents/routing.js';
 
 export function assignIssue(store: Store, config: HarnessConfig, issueId: string): Issue {
   const issue = store.getIssue(issueId);
@@ -26,5 +27,5 @@ export function assignIssue(store: Store, config: HarnessConfig, issueId: string
   if (!issue.contract) {
     throw new Error(`${issueId} has no contract: contract-draft it from its signed spec first`);
   }
-  return store.updateIssue(issueId, { assignedAgent: config.generator });
+  return store.updateIssue(issueId, { assignedAgent: resolvedGeneratorProvider(config) });
 }

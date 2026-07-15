@@ -1,0 +1,46 @@
+# GitHub Issue-to-PR grounded vertical slice — 受け入れ検証
+
+dependsOn:
+  - ARCH-intake-002
+  - ARCH-intake-007
+  - ARCH-intake-008
+  - ARCH-intake-009
+  - ARCH-intake-010
+  - DATA-intake-008
+  - ARCH-agent-runtime-002
+  - ARCH-agent-runtime-004
+  - ARCH-execution-001
+  - ARCH-execution-006
+  - ARCH-execution-008
+
+verifications:
+  AC-GHSLICE-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "fake external/planner/driveを通すintegration turnがclaim→invocation→enrichment→pollable drive順を証明する"
+  AC-GHSLICE-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "planning runnerがresolved route、detached worktree、sidecar、common livenessを配線する"
+  AC-GHSLICE-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "rejected enrichment由来Issueは0でdrive queueにもPRにも入らない"
+  AC-GHSLICE-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "turn再実行でplanner call、claim call、enrichment、Issueが重複しない"
+  AC-GHSLICE-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "fake driveが作るPR/EvalRunからIssue/intakeとinvocation providerへ往復できる"
+  AC-GHSLICE-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "external/planner failureはerrorまたはneeds-human-reviewで顕在化しreleasedを作らない"

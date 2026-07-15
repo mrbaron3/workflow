@@ -6,7 +6,15 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { GeneratorAgent } from './domain/schema.js';
+import type { AgentProvider, GeneratorAgent, VerificationMethod } from './domain/schema.js';
+
+export interface TargetGraderConfig {
+  /** Legacy aliases retained for existing configs. */
+  typecheck?: string;
+  unit_tests?: string;
+  /** Canonical verification-method → grounded command registry (FEAT-019). */
+  commands?: Partial<Record<VerificationMethod, string>>;
+}
 
 /**
  * A real target repository the execution layer edits in isolated git worktrees
@@ -17,7 +25,7 @@ import type { GeneratorAgent } from './domain/schema.js';
 export interface TargetRepoConfig {
   repo: string;
   baseRef?: string;
-  graders?: { typecheck?: string; unit_tests?: string };
+  graders?: TargetGraderConfig;
   protectedPaths?: string[];
   /**
    * Where the target's `_system` design views live (for scoped-context resolution of an issue's
@@ -25,6 +33,19 @@ export interface TargetRepoConfig {
    * design context disabled (the generator gets the contract only).
    */
   systemDir?: string;
+}
+
+/** Resolve one configured grader without inventing a fallback for another verification method. */
+export function configuredGraderCommand(
+  target: TargetRepoConfig | undefined,
+  method: VerificationMethod,
+): string | undefined {
+  if (method === 'manual') return undefined;
+  const direct = target?.graders?.commands?.[method];
+  if (typeof direct === 'string' && direct.trim() !== '') return direct;
+  if (method === 'typecheck') return target?.graders?.typecheck;
+  if (method === 'unit_test') return target?.graders?.unit_tests;
+  return undefined;
 }
 
 /**
@@ -41,17 +62,37 @@ export interface GateConfig {
 }
 
 /**
- * Claude model per interactive session role (ADR-0005 / _system/execution, realising the tmux
- * substrate). Each field is a `--model` alias/id ('haiku', 'opus', or a full model name); absent
- * = inherit the user's default model (current behaviour). Set `generator` to a weaker model to
- * exercise the live repair loop — a weaker coder is likelier to need a second attempt, which the
- * strong-generator × easy-task case never triggers (see the execution-layer handoff). Set
- * `reviewer` to a cheaper model to trim the six-lens panel's cost. The two are independent so a
- * weak coder can be judged by strong reviewers.
+ * Legacy per-role model fallbacks. `routes` is the provider-neutral configuration; these fields
+ * remain for existing configs and are interpreted by the selected provider adapter. Absent means
+ * inherit that provider CLI's default model.
  */
 export interface ModelConfig {
   generator?: string;
   reviewer?: string;
+}
+
+/** Provider and optional provider-specific model selected for one role/perspective. */
+export interface AgentRouteConfig {
+  provider: AgentProvider;
+  model?: string;
+}
+
+/** Additive deterministic routing table (FEAT-015). */
+export interface AgentRoutingConfig {
+  generator?: AgentRouteConfig;
+  planning?: AgentRouteConfig;
+  /** Dedicated UI/UX authoring session; falls back to planning when absent. */
+  uiDesign?: AgentRouteConfig;
+  reviewer?: AgentRouteConfig;
+  perspectives?: Record<string, AgentRouteConfig>;
+}
+
+/** Optional external WHAT intake. Absent means no GitHub Issue polling. */
+export interface IntakeConfig {
+  backend: 'github';
+  repository: string; // owner/name
+  readyLabel?: string;
+  claimedLabel?: string;
 }
 
 export interface HarnessConfig {
@@ -85,6 +126,10 @@ export interface HarnessConfig {
   gate?: GateConfig;
   /** Per-role session model overrides. Absent = every role inherits the user's default model. */
   models?: ModelConfig;
+  /** Role/perspective provider routes. Absent preserves the legacy generator/models behavior. */
+  routes?: AgentRoutingConfig;
+  /** GitHub Issue intake projection (ADR-0008). */
+  intake?: IntakeConfig;
   /** Evaluator panel tuning (ADR-0006 E4). */
   panel?: {
     /** Max review sessions to fan out concurrently (saturation guard: machine / rate limits). */

@@ -1,0 +1,52 @@
+# Read-only reviewer workspace integrity — 受け入れ検証
+
+dependsOn:
+  - DOM-execution-010
+  - ARCH-execution-004
+  - ARCH-execution-006
+  - ARCH-execution-014
+  - ARCH-execution-017
+  - DATA-execution-008
+
+verifications:
+  AC-REVWS-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "reviewerはPerspective専用detached checkoutをcwdとして起動され、generator worktreeをsessionへ渡さない"
+      - "reviewer checkoutの副作用がbuild commitまたはgenerator worktreeの内容を変更しない"
+
+  AC-REVWS-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "ReviewJobのprompt/sentinelはreviewWt配下ではなくPerspective専用evidence directory配下にある"
+      - "sidecar findingsは中央evalRootへ収集されてもreview checkoutのdirty file集合に入らない"
+
+  AC-REVWS-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "package-lock.json等の既知lockfileだけがdirtyなjobはenvironmentChangesへfile付きで帰属する"
+      - "同jobのfindingsはcompletedに入り中央evalRootへコピーされる"
+
+  AC-REVWS-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "source/config fileを含むdirty jobはtouchedCodeへ帰属しfindingsをコピーしない"
+      - "同時に収集するclean jobのfindingsは影響を受けない"
+
+  AC-REVWS-005:
+    severity: major
+    method: unit_test
+    expected:
+      - "未知file単独またはlockfileとsource fileの混在はsourceChangesへ分類される"
+      - "dirty file入力順を変えても分類結果が同一になる"
+
+  AC-REVWS-006:
+    severity: major
+    method: unit_test
+    expected:
+      - "issue/Perspectiveが異なるReviewJobのevidence pathは衝突しない"
+      - "timeout/stuck statusでもcollection時に健全なsidecar sentinelがあればlate findingsとして採用される"

@@ -14,6 +14,7 @@
 import { IssueContract, type Issue } from '../domain/schema.js';
 import type { HarnessConfig } from '../config.js';
 import type { Store } from '../store/store.js';
+import { resolvedGeneratorProvider } from '../agents/routing.js';
 
 export interface AdoptInput {
   /**
@@ -42,7 +43,7 @@ export function adoptIssue(store: Store, config: HarnessConfig, issueId: string,
   store.setStatus(issueId, 'contract-drafted');
   return store.updateIssue(issueId, {
     contract,
-    assignedAgent: config.generator,
+    assignedAgent: resolvedGeneratorProvider(config),
     ...(input.dependsOnSystem ? { dependsOnSystem: input.dependsOnSystem } : {}),
   });
 }

@@ -1,0 +1,46 @@
+# Agent invocation identity and provenance — 受け入れ検証
+
+dependsOn:
+  - DOM-agent-runtime-001
+  - DOM-agent-runtime-002
+  - DOM-agent-runtime-005
+  - DOM-agent-runtime-006
+  - DOM-agent-runtime-007
+  - ARCH-agent-runtime-001
+  - ARCH-agent-runtime-005
+  - DATA-agent-runtime-001
+  - DATA-agent-runtime-002
+  - DATA-agent-runtime-003
+  - DATA-agent-runtime-004
+
+verifications:
+  AC-AGINV-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同一座標は常に同じinvocationKeyになり、sample/attempt/role/perspectiveの各差分は別keyになる"
+  AC-AGINV-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "generator結果のprovider/model/prompt/outcomeが欠落・推測なしでAgentInvocationへ保存される"
+  AC-AGINV-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同一attemptのreviewerはPerspectiveごとに独立recordとなりprompt/outcomeを保持する"
+  AC-AGINV-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同一provenanceの再記録はcollection/counterを増やさず、異なるprovider/model/promptは既存record不変で例外になる"
+  AC-AGINV-005:
+    severity: major
+    method: unit_test
+    expected:
+      - "legacy DBはpromptRecordsを保持しagentInvocations=[]で読み、新規recordをpromptRecordsへdual-writeしない"
+  AC-AGINV-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "Perspective EvalRunがreviewer invocationKeyを保持しprovider別件数がAgentInvocation.providerから集計される"

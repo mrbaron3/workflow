@@ -94,9 +94,10 @@ afterEach(() => {
 function mkJob(root: string, key: string, o: { sentinel?: boolean } = {}): ReviewJob {
   const reviewWt = path.join(root, `rw-${key}`);
   const sentinel = path.join(reviewWt, '.agentops', 'eval', key, 'findings.json');
+  const prompt = path.join(reviewWt, '.agentops', 'eval', key, 'PROMPT.md');
   fs.mkdirSync(path.dirname(sentinel), { recursive: true });
   if (o.sentinel !== false) fs.writeFileSync(sentinel, JSON.stringify({ verdict: 'approve', score: 1, findings: [] }), 'utf8');
-  return { key, reviewWt, sentinel };
+  return { key, reviewWt, prompt, sentinel };
 }
 
 describe('collectFindings — collection consults sentinel existence at collection time (ISSUE-0007)', () => {

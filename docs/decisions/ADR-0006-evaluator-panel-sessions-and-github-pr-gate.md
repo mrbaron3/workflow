@@ -90,13 +90,11 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
 - ＋ 決定論境界・liveness・sentinel・resume という既存不変条件を、そのまま観点粒度まで延長できる。
 - ＋ トークン消費は「hard gates を通過した attempt × 6 観点」に限定され、修正往復は 1 attempt 1 回で済む。
 - ＋ ゲートが GitHub PR になり、diff レビュー・コメント・履歴という既存 UX が判断点になる。ラベルが只で貯まる。
-- − schema に additive 変更（`PR.externalRef`）。状態機械に `build-approved` が未実装
-  （`DOM-execution-007` が参照するが `src/domain/states.ts` に無い）→ 遷移追加が要る。
-- − 既存 reader（metrics / curator / dashboard）は「1 attempt＝1 EvalRun」前提 → `perspective ≠ null` の
-  run を数え方から分離する改修が要る（詳細は handoff の詰まり所）。
+- ＋ schema の additive 変更（`PR.externalRef`）と状態機械の `build-approved` 遷移は実装済み。
+- ＋ reader（metrics / curator / dashboard）は `perspective ≠ null` を分離し、attemptを二重計上しない。
 - − GitHub PR ゲートは remote と `gh` 認証が前提 → ローカル使い捨て sandbox では fallback が要る。
-- − `agents/evaluator-<perspective>.md` 6 本の著述が要る。
-- 後続: `config.cli` の `claude -p` 既定の除去（ADR-0005 Q2 の残債）、ゲート部（G1-G3）の gate spec 化＋吸収。
+- ＋ 観点固有情報は共通evaluator role prompt＋`PERSPECTIVE_LENS`で構成し、6つの重複promptを持たない。
+- 後続: GitHub remote上のgrounded実走と、人間mergeで育つgrader較正データの蓄積。
 
 ## 実装先（吸収先 id・吸収規約 = decisions/README §吸収の強制）
 

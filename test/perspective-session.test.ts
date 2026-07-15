@@ -89,6 +89,26 @@ describe('perspectivePrompt', () => {
     expect(p).toContain('.agentops/eval/security/findings.json');
     expect(p.toLowerCase()).toContain('read-only');
   });
+
+  it('adds the accepted UI design contract without changing non-UI briefings', () => {
+    const without = perspectivePrompt('ux', contract, '.agentops/eval/ux');
+    expect(without).not.toContain('## UI Design Contract');
+    const withDesign = perspectivePrompt('ux', contract, '.agentops/eval/ux', [], {
+      candidateKey: 'ui', principles: ['Clear state feedback'],
+      tokens: [{
+        id: 'motion-progress', category: 'motion', value: '150ms', rationale: 'Visible feedback',
+        sourceCriterionIds: ['AC-1'],
+      }],
+      components: [{
+        id: 'primary-action', name: 'Primary action', purpose: 'Does X', states: ['idle', 'loading'],
+        interactions: ['activate'], accessibility: ['announces loading'], sourceCriterionIds: ['AC-1'],
+      }],
+      criterionTraces: [{ criterionId: 'AC-1', designElementIds: ['motion-progress', 'primary-action'] }],
+    });
+    expect(withDesign).toContain('## UI Design Contract');
+    expect(withDesign).toContain('motion-progress');
+    expect(withDesign).toContain('without inventing new UI scope');
+  });
 });
 
 // --- integration: the file-backed grader drives runPanel end to end ----------

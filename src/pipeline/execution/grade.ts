@@ -14,19 +14,19 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { BuildArtifact } from '../../domain/artifact.js';
-import type { IssueContract } from '../../domain/schema.js';
-import type { TargetRepoConfig } from '../../config.js';
+import type { BuildArtifact, VerificationEvidence } from '../../domain/artifact.js';
+import type { AcceptanceCriterion, IssueContract, VerificationMethod } from '../../domain/schema.js';
+import { configuredGraderCommand, type TargetRepoConfig } from '../../config.js';
 import { scopedAcceptEnv } from './accept.js';
 
 let reportSeq = 0;
 
-interface CmdResult {
+export interface CmdResult {
   ok: boolean;
   output: string;
 }
 
-function run(command: string, cwd: string, extraEnv: Record<string, string> = {}): CmdResult {
+export function runGraderCommand(command: string, cwd: string, extraEnv: Record<string, string> = {}): CmdResult {
   const tokens = tokenize(command);
   // sh-style leading KEY=VAL assignments (ADR-0007 I3): spawnSync uses no shell, so peel
   // them into the child env explicitly — grader commands in config can then gate
@@ -60,7 +60,7 @@ export interface VitestReport {
 /** Run a vitest command and parse its JSON report. Exported for the regression executor. */
 export function runVitest(command: string, cwd: string, extraEnv?: Record<string, string>): VitestReport {
   const out = path.join(os.tmpdir(), `agentops-vitest-${process.pid}-${reportSeq++}.json`);
-  run(`${command} --reporter=json --outputFile=${out}`, cwd, extraEnv);
+  runGraderCommand(`${command} --reporter=json --outputFile=${out}`, cwd, extraEnv);
   let json: unknown = null;
   try {
     if (fs.existsSync(out)) json = JSON.parse(fs.readFileSync(out, 'utf8'));
@@ -210,19 +210,24 @@ export function dormantGuardNotes(assertions: VitestReport['assertions'], driven
 
 /** Run the real graders against the checkout and produce a grounded BuildArtifact. */
 export function groundArtifact(opts: GroundOpts): BuildArtifact {
-  const g = opts.target.graders ?? {};
+  const acsByMethod = new Map<VerificationMethod, AcceptanceCriterion[]>();
+  for (const ac of opts.contract.acceptanceCriteria) {
+    const group = acsByMethod.get(ac.verification.method) ?? [];
+    group.push(ac);
+    acsByMethod.set(ac.verification.method, group);
+  }
 
-  const tc = g.typecheck ? run(g.typecheck, opts.worktree) : null;
-  const typecheckPasses = tc ? tc.ok : true;
+  const typecheckCommand = configuredGraderCommand(opts.target, 'typecheck');
+  const tc = typecheckCommand ? runGraderCommand(typecheckCommand, opts.worktree) : null;
 
   // Issue-scoped activation (AC-SCOPED-001): a driven issue's grading activates only ITS
   // pre-placed guards — the scoped env is injected here so other in-flight issues'
   // baseline-red guards stay dormant. Without issueId nothing is injected (additive), and
   // a command's own full-activation prefix still wins inside `run` (spelling unchanged).
-  const report = g.unit_tests
-    ? runVitest(g.unit_tests, opts.worktree, opts.issueId ? scopedAcceptEnv(opts.issueId) : undefined)
+  const unitTestCommand = configuredGraderCommand(opts.target, 'unit_test');
+  const report = unitTestCommand
+    ? runVitest(unitTestCommand, opts.worktree, opts.issueId ? scopedAcceptEnv(opts.issueId) : undefined)
     : null;
-  const unitTestsPass = report ? report.success : true;
 
   const inScope = (f: string) =>
     opts.contract.scope.include.length === 0 || opts.contract.scope.include.some((p) => globMatch(p, f));
@@ -237,13 +242,91 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
   ];
 
   const { satisfied, untaggedUnitTestAcs, dormantAcs } = satisfiedFromReport(opts.contract, report, opts.issueId);
+  const verificationEvidence: Record<string, VerificationEvidence> = {};
+  const missingGraderAcs: string[] = [];
+  const evidenceOutput = (output: string): string => output.trim().slice(-8000);
+
+  for (const ac of opts.contract.acceptanceCriteria) {
+    const method = ac.verification.method;
+    if (method === 'unit_test') {
+      if (!report) {
+        satisfied[ac.id] = false;
+        missingGraderAcs.push(ac.id);
+      }
+      verificationEvidence[ac.id] = {
+        method,
+        command: unitTestCommand ?? null,
+        passed: satisfied[ac.id] ?? false,
+        output: report
+          ? `${report.passed}/${report.total} assertions; failures=${report.failedNames.join('; ') || '(none)'}`
+          : 'no configured grader command for unit_test',
+      };
+      continue;
+    }
+    if (method === 'typecheck') {
+      satisfied[ac.id] = tc?.ok ?? false;
+      if (!tc) missingGraderAcs.push(ac.id);
+      verificationEvidence[ac.id] = {
+        method,
+        command: typecheckCommand ?? null,
+        passed: satisfied[ac.id]!,
+        output: tc ? evidenceOutput(tc.output) : 'no configured grader command for typecheck',
+      };
+      continue;
+    }
+    if (method === 'scope_check') {
+      satisfied[ac.id] = scopeViolations.length === 0;
+      verificationEvidence[ac.id] = {
+        method,
+        command: null,
+        passed: satisfied[ac.id]!,
+        output: scopeViolations.length ? `scope violations: ${scopeViolations.join(', ')}` : 'intrinsic scope check passed',
+      };
+      continue;
+    }
+
+    const command = configuredGraderCommand(opts.target, method);
+    if (!command) {
+      satisfied[ac.id] = false;
+      missingGraderAcs.push(ac.id);
+      verificationEvidence[ac.id] = {
+        method,
+        command: null,
+        passed: false,
+        output: `no configured grader command for ${method}`,
+      };
+      continue;
+    }
+    const result = runGraderCommand(command, opts.worktree, {
+      ...(opts.issueId ? scopedAcceptEnv(opts.issueId) : {}),
+      AGENTOPS_AC_ID: ac.id,
+      AGENTOPS_ISSUE_ID: opts.issueId ?? '',
+      AGENTOPS_VERIFICATION_METHOD: method,
+      AGENTOPS_EXPECTED_JSON: JSON.stringify(ac.verification.expected),
+    });
+    satisfied[ac.id] = result.ok;
+    verificationEvidence[ac.id] = {
+      method,
+      command,
+      passed: result.ok,
+      output: evidenceOutput(result.output),
+    };
+  }
+
+  const methodPasses = (method: VerificationMethod): boolean =>
+    (acsByMethod.get(method) ?? []).every((ac) => satisfied[ac.id] === true);
+  const typecheckPasses = tc ? tc.ok : !acsByMethod.has('typecheck');
+  const unitTestsPass = report ? report.success : !acsByMethod.has('unit_test');
+  const buildPasses = typecheckPasses && methodPasses('build');
+  const apiTestsPass = methodPasses('api_test');
+  const secretsLeaked = !methodPasses('secrets_scan');
 
   // Dormant assertions never ran — count them so the pass note reads honestly under
   // scoped grading (12/40 with 28 dormant is a healthy build, not a mostly-failing one).
   const dormantCount = report ? report.assertions.filter((a) => a.skipped).length : 0;
   const notes = [
     '[grounded] real graders ran against the worktree.',
-    g.typecheck ? `typecheck: ${typecheckPasses ? 'pass' : 'FAIL'}` : 'typecheck: (skipped)',
+    typecheckCommand ? `typecheck: ${typecheckPasses ? 'pass' : 'FAIL'}` : 'typecheck: (skipped)',
     report
       ? `unit_tests: ${unitTestsPass ? 'pass' : 'FAIL'} (${report.passed}/${report.total} assertions${dormantCount ? `, ${dormantCount} dormant` : ''})`
       : 'unit_tests: (skipped)',
@@ -261,18 +344,29 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
       `activation gap: AC ${dormantAcs.join(', ')} matched only dormant assertions — the driven issue's own pre-placed guard never activated (check its acceptsIssue declaration); unsatisfied, never silent.`,
     );
   }
+  if (missingGraderAcs.length) {
+    notes.push(
+      `verification gate: no configured command for AC(s) ${missingGraderAcs.join(', ')} — unsatisfied (fail-closed).`,
+    );
+  }
+  for (const [acId, evidence] of Object.entries(verificationEvidence)) {
+    if (!evidence.passed && evidence.output) notes.push(`${acId}/${evidence.method}: ${evidence.output}`);
+  }
 
   return {
     branch: opts.branch,
     summary: `grounded build (${opts.changed.length} files changed)`,
     filesChanged: opts.changed,
     satisfied,
-    buildPasses: typecheckPasses,
+    verificationEvidence,
+    buildPasses,
     typecheckPasses,
     unitTestsPass,
-    apiTestsPass: true,
-    hasTests: opts.changed.some((f) => /\.(test|spec)\./.test(f)) || (report?.total ?? 0) > 0,
-    secretsLeaked: false,
+    apiTestsPass,
+    hasTests: opts.changed.some((f) => /\.(test|spec)\./.test(f))
+      || (report?.total ?? 0) > 0
+      || ['api_test', 'playwright'].some((method) => acsByMethod.has(method as VerificationMethod)),
+    secretsLeaked,
     scopeViolations,
     quality: { codeQuality: 0.7, testQuality: 0.7, ux: 0.7, accessibility: 0.7 },
     notes,

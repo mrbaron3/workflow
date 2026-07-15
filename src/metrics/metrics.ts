@@ -39,6 +39,15 @@ export interface AgentStats {
   costUsd: number;
 }
 
+export interface InvocationProviderStats {
+  provider: string;
+  total: number;
+  completed: number;
+  stuck: number;
+  timeout: number;
+  failed: number;
+}
+
 export interface Heatmap {
   areas: string[];
   types: string[];
@@ -110,6 +119,8 @@ export interface Metrics {
   falsePassTrend: { upTo: string; rate: number }[];
   passCurve: { k: number; passAtK: number; passHatK: number }[];
   byAgent: AgentStats[];
+  /** Role-session volume by the provider that actually ran it (never inferred from PR.generator). */
+  byInvocationProvider: InvocationProviderStats[];
   heatmap: Heatmap;
   issues: IssueStats[];
 }
@@ -354,6 +365,16 @@ export function computeMetrics(store: Store): Metrics {
   // has ever been recorded (unobserved ≠ 0).
   const lastTurn = store.lastTurnRecord();
 
+  const invocationAcc = new Map<string, Omit<InvocationProviderStats, 'provider'>>();
+  for (const invocation of store.db.agentInvocations) {
+    const stats = invocationAcc.get(invocation.provider) ?? {
+      total: 0, completed: 0, stuck: 0, timeout: 0, failed: 0,
+    };
+    stats.total += 1;
+    stats[invocation.outcome] += 1;
+    invocationAcc.set(invocation.provider, stats);
+  }
+
   return {
     totals: {
       epics: epics.length,
@@ -399,6 +420,9 @@ export function computeMetrics(store: Store): Metrics {
         costUsd: Number(a.usd.toFixed(4)),
       }))
       .sort((x, y) => y.samples - x.samples),
+    byInvocationProvider: [...invocationAcc.entries()]
+      .map(([provider, stats]) => ({ provider, ...stats }))
+      .sort((a, b) => a.provider.localeCompare(b.provider)),
     heatmap: buildHeatmap(store, runIssues),
     issues: issueStats,
   };

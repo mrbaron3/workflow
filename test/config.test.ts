@@ -8,7 +8,14 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadConfig, DEFAULT_CONFIG, saveConfig, resolveTargetRoot, type HarnessConfig } from '../src/config.js';
+import {
+  loadConfig,
+  DEFAULT_CONFIG,
+  saveConfig,
+  resolveTargetRoot,
+  configuredGraderCommand,
+  type HarnessConfig,
+} from '../src/config.js';
 
 const dirs: string[] = [];
 function tmpRoot(cfg: Partial<HarnessConfig>): string {
@@ -60,5 +67,23 @@ describe('resolveTargetRoot (D4)', () => {
 
   it('passes an absolute target.repo through unchanged', () => {
     expect(resolveTargetRoot({ ...DEFAULT_CONFIG, target: { repo: '/abs/target' } }, '/harness')).toBe('/abs/target');
+  });
+});
+
+describe('configuredGraderCommand (FEAT-019)', () => {
+  it('prefers the canonical method registry and preserves legacy unit/typecheck aliases', () => {
+    const target = {
+      repo: '.',
+      graders: {
+        typecheck: 'legacy-tsc',
+        unit_tests: 'legacy-vitest',
+        commands: { typecheck: 'canonical-tsc', playwright: 'browser-check' },
+      },
+    };
+    expect(configuredGraderCommand(target, 'typecheck')).toBe('canonical-tsc');
+    expect(configuredGraderCommand(target, 'unit_test')).toBe('legacy-vitest');
+    expect(configuredGraderCommand(target, 'playwright')).toBe('browser-check');
+    expect(configuredGraderCommand(target, 'api_test')).toBeUndefined();
+    expect(configuredGraderCommand({ repo: '.', graders: { commands: { manual: 'never-run' } } }, 'manual')).toBeUndefined();
   });
 });

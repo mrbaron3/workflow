@@ -1,0 +1,44 @@
+# Provider-neutral interactive session backend — 受け入れ検証
+
+dependsOn:
+  - DOM-agent-runtime-004
+  - DOM-agent-runtime-008
+  - ARCH-agent-runtime-002
+  - ARCH-agent-runtime-003
+  - DATA-agent-runtime-005
+  - ARCH-execution-003
+  - ARCH-execution-005
+  - ARCH-execution-014
+
+verifications:
+  AC-AGBACK-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "Claude generator/reviewer requestがpurpose別tool集合、acceptEdits、model、add-dirを持つinteractive commandになる"
+  AC-AGBACK-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "Codex requestがinteractive codex command、workspace-write、approval never、model、add-dirへ変換される"
+      - "codex exec/review等のheadless subcommandを含まない"
+  AC-AGBACK-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "tmux launch command builderがprovider registryの出力を使用し、同じrequestでproviderだけ変えるとadapterが切り替わる"
+  AC-AGBACK-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "gemini/mock interactive解決はprovider名付きunsupported errorになりfallback commandを返さない"
+  AC-AGBACK-005:
+    severity: major
+    method: unit_test
+    expected:
+      - "各adapterがready patternを提供し、共通monitorLivenessのcompleted/stuck/timeout語彙を変更しない"
+  AC-AGBACK-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "quote/spaceを含むmodelとpathがshell-safeな単一argumentになり、separatorが実行可能な形で露出しない"

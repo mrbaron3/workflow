@@ -1,6 +1,6 @@
 # ADR-0008: 人間の開発着手要求の入口は theme repo の GitHub Issue とし、planning-agent が Issue Contract-ready まで昇格させ、決定論の intake アダプタが store へ取り込む
 
-- 状態: 採択（未吸収・未実装 — ⑯ 設計対話で人間確定。実装先ビュー未生成・spec/issues 未起票。台帳では D7 として追跡）
+- 状態: 採択・吸収済み（2026-07-14。`_system/intake`、EPIC-08、`src/intake/`へ実装。実remote grounded runは未実施）
 - コンテキスト: intake（新規 seam — 人間の着手要求 → store issue queue の源泉）。execution（drive loop）・planning/authoring（昇格ステップ）を**参照**し再定義しない。
 - 関連:
   - [ADR-0006](ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md)（GitHub PR ＝**出口**ゲート。本 ADR は同じ theme repo の GitHub を**入口**へ対称化する — issue で着手、PR で審査）
@@ -40,21 +40,22 @@
 - − 依存 A5（モデル非依存）: ビジョンの「観点ごとに Codex/Claude」は panel が per-perspective に tool+model を選べて初めて入口経路上で成立する。A5 を最優先の構造ギャップへ昇格（NORTH_STAR_PLAN §2 ①）。
 - − 依存 A7（UI/UX 著述ペルソナ）: UI を要する theme（channel-compass 等）では planning-agent の昇格が design token/system/component の著述まで及ぶ必要がある（NORTH_STAR_PLAN §2 ①）。
 
-### 未決（spec 時に詰める）
+### spec/実装で確定した点
 
-- **ready の semantics**: GitHub 上で「拾ってよい」をどう表現するか（label＝`ready` / issue 状態 / body の parseable セクション）。watcher の起動条件そのもの。
-- **昇格の帰属**: planning-agent の enrich を store にどう残すか（PromptRecord 相当・介入語彙との関係＝enrich は判断点か HOW か）。
-- **self-hosting 入口**: roadmap 経路を残すか、self も issue 入口へ寄せるか（I5）。
+- **ready の semantics**: configurable label、既定`ready`。claim後は既定`agent-claimed`へ移す。
+- **昇格の帰属**: `AgentInvocation(role=issue-planner)`＋`PlanningEnrichmentRecord`＋AC traceで耐久記録する。
+- **self-hosting 入口**: I5どおりroadmap/spec経路を残し、`config.intake`未設定ならGitHub入口は無効。
 
 ## 実装先（吸収先 id・吸収規約 = decisions/README §吸収の強制）
 
-**未吸収**。本 ADR の前提（I1-I5）は system-layer ビューへ未吸収・実装コード無し。吸収先は実装着手（M4・D7 の spec 化）時に生成する:
+I1-I5は次へ吸収済み。外部remote/providerを使うgrounded実走だけが残る:
 
-| premise | 吸収先（提案・未生成） | 実装（未） |
+| premise | 吸収先 | 実装 |
 | --- | --- | --- |
-| I1 入口＝GitHub Issue／I3 投影・poll・決定論取り込み | 新コンテキスト `intake`（`ARCH-intake-NNN`）または `execution` へ additive | 未（intake アダプタ＋watcher。`gate.ts` の `pollGate`/`externalRef` を入口側へ対称化） |
-| I2 planning-agent 昇格 | `planning`／`authoring` ビュー＋`_system` 参照 | 未（`contract-draft.ts`＋`to-system-design` を入口へ配線） |
+| I1 入口＝GitHub Issue／I3 投影・poll・決定論取り込み | `LANG/DOM/ARCH/DATA-intake-*` | `github-issues.ts`＋`poll-intake`/`watch-github`、store-first claim |
+| I2 planning-agent 昇格 | `ARCH-intake-006/007/010`＋agent-runtime | `planning-session.ts`＋`planning-enrichment.ts`、全AC trace gate |
 | I4 drive loop 不変 | 既存 `ARCH-execution-001/002`（変更なし・参照のみ） | 既存 `guard.ts`／`loop.ts`（不変） |
-| I5 入口の択一/併存 | `config`（`intake` フィールド追加？） | 未 |
+| I5 入口の択一/併存 | `DATA-intake-004` | optional `config.intake`（既存上流経路と併存） |
 
-spec: 未（台帳 **D7** として追跡・M4 で spec 化）。issues: 未。テスト: 未。
+requirements: EPIC-08 / FEAT-016..018（未署名）。実装: `src/intake/`。恒久test: fake external/provider/driveを使う
+縦断を含め全suite green。未完了: 実remote ready Issue→実provider panel→実GitHub PRのgrounded証拠。

@@ -1,0 +1,55 @@
+# Store-target binding integrity — 受け入れ検証
+
+dependsOn:
+  - DOM-workspace-004
+  - DOM-workspace-005
+  - DOM-workspace-007
+  - ARCH-workspace-001
+  - ARCH-workspace-002
+  - ARCH-workspace-003
+  - ARCH-workspace-004
+  - DATA-workspace-001
+  - DATA-workspace-002
+
+verifications:
+  AC-STBIND-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "空storeへの最初のstate-changing preflightがTarget Bindingを1件だけ保存し、同じtargetでの再実行はidentity/boundAtを変えない"
+      - "binding後に本来の操作が続行でき、保存・再読込後も同じtargetとして照合される"
+
+  AC-STBIND-002:
+    severity: major
+    method: unit_test
+    expected:
+      - "同一repositoryを指す相対path・絶対path・解決可能なaliasをTarget Identity resolverへ渡すと同じidentityになる"
+
+  AC-STBIND-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "target Aへ束縛済みstoreにtarget Bでmutation preflightすると、bound/requestedを含むBinding Mismatchで失敗する"
+      - "拒否前後のDB snapshotが同一で、plan-roadmap相当の下流mutation callbackも呼ばれない"
+
+  AC-STBIND-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "通常preflightとlegacy binding seamのどちらも、既存bindingを異なるidentityへ置換できない"
+      - "拒否後もtargetIdentityとboundAtが初回値のままである"
+
+  AC-STBIND-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "roadmap/issue等を持つ未束縛legacy storeは通常preflightで自動束縛されず、状態を保って明示移行を要求する"
+      - "明示移行で現在targetへ一度だけ束縛した後は同target preflightが通り、既存roadmap/issueが保持される"
+
+  AC-STBIND-006:
+    severity: major
+    method: unit_test
+    expected:
+      - "mutation preflightを通さないread-onlyなstatus/plan-tree相当の読取りはmismatch中も既存DBを観測できる"
+      - "target A/Bを別storeへ束縛した操作は互いのbinding・roadmap・issueを変更しない"
+

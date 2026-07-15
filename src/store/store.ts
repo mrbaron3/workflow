@@ -13,14 +13,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DB, emptyDB } from '../domain/schema.js';
 import type {
+  AgentInvocation,
   Epic,
   EvalRun,
   EvalTask,
   Feature,
   Intervention,
+  IntakeRecord,
   Issue,
   PR,
   PromptRecord,
+  PlanningEnrichmentRecord,
   RegressionRun,
   Roadmap,
   SpecState,
@@ -257,6 +260,41 @@ export class Store {
   /** All prompts issued for an issue, in insertion order (sample → attempt → role). */
   promptsForIssue(issueId: string): PromptRecord[] {
     return this.db.promptRecords.filter((r) => r.issueId === issueId);
+  }
+
+  // --- agent invocations (provider-neutral role-session provenance) -------
+
+  invocationByKey(invocationKey: string): AgentInvocation | undefined {
+    return this.db.agentInvocations.find((record) => record.invocationKey === invocationKey);
+  }
+
+  addAgentInvocation(record: AgentInvocation): AgentInvocation {
+    this.db.agentInvocations.push(record);
+    return record;
+  }
+
+  invocationsForIssue(issueId: string): AgentInvocation[] {
+    return this.db.agentInvocations.filter((record) => record.issueId === issueId);
+  }
+
+  // --- external issue intake ---------------------------------------------
+
+  intakeByKey(intakeKey: string): IntakeRecord | undefined {
+    return this.db.intakeRecords.find((record) => record.intakeKey === intakeKey);
+  }
+
+  addIntakeRecord(record: IntakeRecord): IntakeRecord {
+    this.db.intakeRecords.push(record);
+    return record;
+  }
+
+  planningEnrichmentFor(intakeKey: string): PlanningEnrichmentRecord | undefined {
+    return this.db.planningEnrichments.find((record) => record.intakeKey === intakeKey);
+  }
+
+  addPlanningEnrichment(record: PlanningEnrichmentRecord): PlanningEnrichmentRecord {
+    this.db.planningEnrichments.push(record);
+    return record;
   }
 
   /** Create (and return) the evidence directory for an eval run. */

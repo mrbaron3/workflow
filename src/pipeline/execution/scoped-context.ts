@@ -14,7 +14,7 @@ import path from 'node:path';
 import type { Issue } from '../../domain/schema.js';
 
 /** A system element id: LANG-execution-006, ARCH-evaluation-002, DATA-execution-005, … */
-const SYS_ID_RE = /\b((?:LANG|DOM|ARCH|DATA)-[a-z]+-\d{3})\b/;
+const SYS_ID_RE = /\b((?:LANG|DOM|ARCH|DATA)-[a-z0-9]+(?:-[a-z0-9]+)*-\d{3})\b/;
 
 export interface SystemContextEntry {
   id: string;
@@ -37,8 +37,8 @@ function indexSystemElements(systemDir: string): Map<string, string> {
     for (const line of lines) {
       // an element is DEFINED either on a bullet ("- **ARCH-x-001 …**") or as a table row
       // ("| LANG-x-001 | term | … |") — the two conventions the system views use (LANG in a table).
-      const bullet = line.match(/^\s*[-*]\s+\*{0,2}((?:LANG|DOM|ARCH|DATA)-[a-z]+-\d{3})\b/);
-      const row = line.match(/^\s*\|\s*\*{0,2}((?:LANG|DOM|ARCH|DATA)-[a-z]+-\d{3})\b/);
+      const bullet = line.match(/^\s*[-*]\s+\*{0,2}((?:LANG|DOM|ARCH|DATA)-[a-z0-9]+(?:-[a-z0-9]+)*-\d{3})\b/);
+      const row = line.match(/^\s*\|\s*\*{0,2}((?:LANG|DOM|ARCH|DATA)-[a-z0-9]+(?:-[a-z0-9]+)*-\d{3})\b/);
       const m = bullet ?? row;
       if (m && !index.has(m[1]!)) index.set(m[1]!, line.trim().replace(/^[-*]\s+/, ''));
     }

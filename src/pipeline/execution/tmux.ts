@@ -15,18 +15,12 @@
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import {
+  buildInteractiveLaunchCommand,
+  type InteractiveLaunchRequest,
+} from '../../agents/interactive-backend.js';
 
-export interface LaunchOpts {
-  session: string;
-  cwd: string;
-  /** Tools the interactive session may use without prompting. Kept tight so a detached
-   *  session never hangs on an unexpected approval (grading is the harness's job). */
-  allowedTools?: string[];
-  /** Permission mode; `acceptEdits` = semi-autonomous HOW (P1), no per-edit approval. */
-  permissionMode?: 'acceptEdits' | 'default' | 'plan';
-  /** Claude model alias/id for THIS session (`--model`). Absent = inherit the user's default
-   *  model. Set it per role to weaken the generator (bait the repair loop) or cheapen reviews. */
-  model?: string;
+export interface LaunchOpts extends InteractiveLaunchRequest {
   cols?: number;
   rows?: number;
 }
@@ -76,13 +70,7 @@ function ensureHolder(cols: number, rows: number): void {
  * codebase's never-silent stance), rather than a duplicated allow-list drifting from the CLI.
  */
 export function buildLaunchCommand(opts: LaunchOpts): string {
-  const allowed = (opts.allowedTools ?? ['Read', 'Edit', 'Write']).join(' ');
-  const model = opts.model ? ` --model ${opts.model}` : ''; // absent = inherit the user's default model
-  return (
-    `claude -n ${opts.session} ` +
-    `--permission-mode ${opts.permissionMode ?? 'acceptEdits'} ` +
-    `--allowedTools '${allowed}'${model}`
-  );
+  return buildInteractiveLaunchCommand(opts);
 }
 
 /** Launch an interactive Claude Code session as a WINDOW (tab) of the holder session. */

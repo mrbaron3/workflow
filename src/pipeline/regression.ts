@@ -6,30 +6,41 @@
  * Semantics (AC-REGMT-001..004): each task runs against its OWN bound target with the
  * grader command it captured at curation time — repointing config.target at another repo
  * does not orphan it. All tasks bound to one target share ONE grader run (they judge the
- * same tree; runs never exceed the number of targets), then each task's AC id is matched
- * against assertion names — the same convention groundArtifact's `satisfied` uses, so a
- * task passes exactly when the tests tagged with its AC id all pass. A command-less
- * legacy task falls back to config.target.graders when bound to the current target.
+ * same tree), then each unit-test task's AC id is matched against assertion names. Other
+ * verification methods execute their captured command per criterion with AGENTOPS_AC_ID /
+ * EXPECTED_JSON, matching groundArtifact's command contract. A command-less legacy task
+ * falls back to config.target.graders when bound to the current target.
  *
  * Discipline (never-silent, ARCH-execution-015 の精神):
  *   - a task missing an execution precondition (unbound legacy null, bound repo absent
  *     from disk, no runnable command) is skipped AND reported with the reason naming
  *     WHICH precondition is missing — never fabricated as pass/fail;
  *   - an AC id matching zero assertions is 'unverified' — recorded, never a pass.
- * The judgement itself is deterministic; the only real-world seam (running vitest) is
- * injectable for tests (ADR-0004's pluggable-backend pattern).
+ * The judgement itself is deterministic; real command/report execution is injectable for
+ * tests (ADR-0004's pluggable-backend pattern).
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { RegressionRun, type EvalTask } from '../domain/schema.js';
+import { RegressionRun, type EvalTask, type VerificationMethod } from '../domain/schema.js';
 import { isRetired, parseTaskId } from '../domain/eval-task.js';
-import type { HarnessConfig } from '../config.js';
+import { configuredGraderCommand, type HarnessConfig } from '../config.js';
 import { Store, nowISO } from '../store/store.js';
-import { assertionsForCriterion, runVitest, type VitestReport } from './execution/grade.js';
+import {
+  assertionsForCriterion,
+  runGraderCommand,
+  runVitest,
+  type CmdResult,
+  type VitestReport,
+} from './execution/grade.js';
 
-/** The one non-deterministic seam: produce a vitest report for the grader command. */
+/** Structured unit-test seam; other verification methods use RegressCommandRunner. */
 export type RegressReportRunner = (unitTestsCommand: string, cwd: string) => VitestReport;
+export type RegressCommandRunner = (
+  command: string,
+  cwd: string,
+  env: Record<string, string>,
+) => CmdResult;
 
 export interface RegressResult {
   results: RegressionRun[];
@@ -39,6 +50,8 @@ export interface RegressResult {
 export interface RegressOptions {
   /** Injectable report producer; defaults to really running the grader (runVitest). */
   report?: RegressReportRunner;
+  /** Injectable non-unit verification command runner. */
+  command?: RegressCommandRunner;
   /** Resolve each task's bound target repo against this root (defaults to the store's root). */
   harnessRoot?: string;
 }
@@ -57,13 +70,12 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
   const results: RegressionRun[] = [];
   const skipped: RegressResult['skipped'] = [];
   const targetRepo = config.target?.repo ?? null;
-  const configUnitTests = config.target?.graders?.unit_tests;
   const root = opts.harnessRoot ?? store.root;
 
   // Resolve each task's execution means: its captured command wins (config.target may have
   // been repointed since curation); a command-less legacy task falls back to config's
   // command only when bound to that same target. Missing preconditions skip WITH the reason.
-  const runnable: { task: EvalTask; command: string }[] = [];
+  const runnable: { task: EvalTask; method: VerificationMethod; command: string }[] = [];
   for (const task of store.db.evalTasks) {
     // Retired tasks (FEAT-005) come first: retirement is the definitive judgment, so it is
     // reported over any missing precondition. Never executed, never a RegressionRun — but
@@ -72,20 +84,26 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
       skipped.push({ taskId: task.id, reason: `retired (${task.retiredReason ?? 'no reason recorded'})` });
       continue;
     }
-    if (!task.graders.includes('unit_test')) {
-      skipped.push({ taskId: task.id, reason: `grader ${task.graders.join('/') || '(none)'} not executable (v0 runs unit_test only)` });
+    if (task.graders.length !== 1) {
+      skipped.push({ taskId: task.id, reason: `expected exactly one grader method, got ${task.graders.join('/') || '(none)'}` });
+      continue;
+    }
+    const method = task.graders[0]!;
+    if (method === 'scope_check') {
+      skipped.push({ taskId: task.id, reason: 'scope_check is intrinsic to a build diff and cannot be replayed without captured changed files' });
       continue;
     }
     if (task.target === null) {
       skipped.push({ taskId: task.id, reason: 'unbound (legacy task with no target — re-curate under a config to bind)' });
       continue;
     }
-    const command = task.graderCommands?.['unit_test'] ?? (task.target === targetRepo ? configUnitTests : undefined);
+    const command = task.graderCommands?.[method]
+      ?? (task.target === targetRepo ? configuredGraderCommand(config.target, method) : undefined);
     if (!command) {
       skipped.push({
         taskId: task.id,
         reason: task.target === targetRepo
-          ? 'no grader command: config.target.graders.unit_tests is not configured'
+          ? `no grader command: config.target has no command for ${method}`
           : `no grader command: none captured at curation, and bound target ${task.target} is not the current ${targetRepo ?? '(none)'} — re-curate to capture`,
       });
       continue;
@@ -94,21 +112,27 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
       skipped.push({ taskId: task.id, reason: `bound target repo ${task.target} does not exist on disk under ${root}` });
       continue;
     }
-    runnable.push({ task, command });
+    runnable.push({ task, method, command });
   }
 
-  // ONE grader run per bound target — all its tasks judge the same tree, so they share the
-  // report and runs never exceed the number of targets. The first task's resolved command
-  // speaks for the whole target (same-curation siblings captured the same command).
-  const byTarget = new Map<string, { command: string; tasks: EvalTask[] }>();
-  for (const { task, command } of runnable) {
-    const group = byTarget.get(task.target!) ?? { command, tasks: [] };
+  // Unit tests retain one shared structured report per target+command. Other verification
+  // methods run per criterion because the command receives AGENTOPS_AC_ID/EXPECTED_JSON.
+  const unitGroups = new Map<string, { target: string; command: string; tasks: EvalTask[] }>();
+  const commandTasks: typeof runnable = [];
+  for (const entry of runnable) {
+    const { task, method, command } = entry;
+    if (method !== 'unit_test') {
+      commandTasks.push(entry);
+      continue;
+    }
+    const key = JSON.stringify([task.target, command]);
+    const group = unitGroups.get(key) ?? { target: task.target!, command, tasks: [] };
     group.tasks.push(task);
-    byTarget.set(task.target!, group);
+    unitGroups.set(key, group);
   }
 
   const runReport = opts.report ?? runVitest;
-  for (const [target, { command, tasks }] of byTarget) {
+  for (const { target, command, tasks } of unitGroups.values()) {
     const report = runReport(command, path.resolve(root, target));
     for (const task of tasks) {
       const criterion = taskCriterion(task);
@@ -131,6 +155,43 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
         ),
       );
     }
+  }
+
+  const runCommand = opts.command ?? runGraderCommand;
+  for (const { task, method, command } of commandTasks) {
+    const target = task.target!;
+    const criterion = taskCriterion(task);
+    if (!criterion) {
+      results.push(
+        store.addRegressionRun(
+          RegressionRun.parse({
+            id: store.nextId('REGRUN'), taskId: task.id, target,
+            result: 'unverified', matchedAssertions: 0, failedNames: [], createdAt: nowISO(),
+          }),
+        ),
+      );
+      continue;
+    }
+    const result = runCommand(command, path.resolve(root, target), {
+      AGENTOPS_AC_ID: criterion.acId,
+      AGENTOPS_ISSUE_ID: criterion.issueId,
+      AGENTOPS_VERIFICATION_METHOD: method,
+      AGENTOPS_EXPECTED_JSON: JSON.stringify(task.expected),
+    });
+    const output = result.output.trim().slice(-1000);
+    results.push(
+      store.addRegressionRun(
+        RegressionRun.parse({
+          id: store.nextId('REGRUN'),
+          taskId: task.id,
+          target,
+          result: result.ok ? 'pass' : 'fail',
+          matchedAssertions: 1,
+          failedNames: result.ok ? [] : [output || `${method} command exited non-zero`],
+          createdAt: nowISO(),
+        }),
+      ),
+    );
   }
   return { results, skipped };
 }

@@ -65,9 +65,9 @@
 | A2 | ~~複数 issue の DAG 駆動未実証~~ **✅ 締結（⑫⑬・ISSUE-0018 released → 実戦）** — guard が依存を尊重し `⧗ ISSUE-0020 blocked: waiting on ISSUE-0019 (contract-drafted)` が live ログに実出現・released 後の turn で自動 pickup を実観測（turn 1→2 で両側） | 下流トレースが 1 issue 規模 → 依存チェーンが秩序立って流れる | 上流チェーン（FEAT-007） | ~~完了条件~~ 達成 |
 | A3 | ~~複数 spec 並行未実証~~ **✅ 締結（⑬・ISSUE-0019/0020/0021 released）** — cap=2 の turn で 2 spec の issue（0020/0021）が同時 in-flight・2-attempt サイクルを並行完走・実測は 0020 自身が建てた計器が store に記録（peak 2 / cap 2 / driven 2） | 規模の欠け → 並行が実測付きで回る | 上流チェーン（FEAT-008） | ~~完了条件~~ 達成 |
 | A4 | ~~skill 本体の grounded 未実走~~ **✅ 締結（⑨〜⑬）** — to-spec は⑨以降の全 spec 著述で実走・to-detail-design は⑬（FEAT-008 の 2 issue 依存分解・check-detail-design 通過）で初実走 | 上流の著述が再現可能な部品に | 運用 | ~~完了条件~~ 達成 |
-| A5 | **generator が claude のみ**（codex/gemini は enum・pluggable 設計のみ）。**（⑯ 昇格）** ビジョン言語化で「観点ごとに tool を選ぶ（security=Codex / arch=Claude）」が明示要求され、panel の **per-perspective routing 不在**（`PerspectiveGrader` は panel 全体で単一・`ModelConfig` は Claude `--model` エイリアス限定・`reviewer` も単一）が最優先の構造ギャップと再確認。seam（`AgentRunner`／`PerspectiveGrader`）は既に空いており新機能でなく穴埋め（ADR-0008 の入口経路の前提） | 北極星の「誰の・何のため」（複数エージェント前提）に対する欠け | 上流チェーン（~~M4 で必要になってから~~ ⑯ で最優先の構造ギャップへ昇格） | claude 以外で 1 released・`byAgent` が 2 行になる／観点別に (tool, model) を割り当てる routing 表＋tool 非依存 runner が動く（例: 1 観点が非 Claude で採点） |
-| A6 | **unit_test 以外の grader 未対応**（playwright 等） | 実プロダクト（D1）の AC が unit_test だけでは書けない | 上流チェーン（M4 従属） | unit_test 以外の method で AC 1 件が証拠採点される |
-| A7 | **（⑯新規）UI/UX 著述ペルソナ不在** — design token / design system / component を**設計する**著述観点が無い（`to-system-design` は language/domain/architecture/data の 4 ビューのみ・`src/design/lint.ts` は issue 分解の被覆チェックで視覚設計でない・`ux`/`accessibility` は panel の**レビュー**観点であって**著述**でない） | UI を要する theme で HOW 自律の被覆が UI 設計まで及ばない（planning-agent の昇格が design まで届かない） | 上流チェーン（design 層に著述観点を additive・M4 従属・ADR-0008 I2 の enrich が design まで） | UI を要する 1 feature で design token/system/component が著述され、panel の ux/a11y 観点がそれを根拠に採点する |
+| A5 | **✅ 構造実装済み（2026-07-14）／grounded release待ち** — `AgentInvocation`、Claude/Codex interactive adapter、role/Perspective routingを実装。security=Codex・他=Claude等を同一panelへ配線でき、EvalRun→invocation→実provider/modelを監査可能。旧PromptRecordはlegacy保持 | 北極星の「誰の・何のため」（複数エージェント前提）に対する欠け | **EPIC-07 FEAT-013..015 実装済み** | 残り: claude以外を含む実remote runで1 released・provider別計器のgrounded証拠 |
+| A6 | **✅ 構造実装済み（FEAT-019）／grounded実走待ち** — method-keyed command registry、AC単位env、未設定fail-closed、artifact evidence、Curator/Regression captureを実装。unit_test legacy aliasも維持 | 実プロダクト（D1）の AC を宣言methodそのもので証拠採点する | EPIC-09 / FEAT-019 | 残り: playwright等unit_test以外のmethodで実target AC 1件をgrounded採点・回帰する |
+| A7 | **✅ 構造実装済み（FEAT-020/021）／grounded UI実走待ち** — frontend/fullstack Candidateごとに専用route/fresh contextのUI designerがprinciples/token/component/state/interaction/a11yをACへtraceして著述。schema・trace・Invocation provenanceのall-or-nothing gate通過後だけIssueへ写り、generator/reviewerが同じ契約を参照。不在・曖昧・不正はneeds-human-review | UI を要する theme で HOW 自律の被覆が UI 設計まで及ぶこと | EPIC-10 FEAT-020/021実装済み | 残り: UIを要する実target 1 featureでartifact著述→playwright採点→ux/a11y review→releaseをgrounded実測する |
 
 ### ② 評価（操舵: 証拠裏付き判定率 ↑・false-pass 率 ↓）
 
@@ -90,13 +90,13 @@
 
 | ID | 欠け | 星との接続 | 経路 | 完了条件 |
 |---|---|---|---|---|
-| D1 | **実プロダクト未経験**（ハーネスは自分自身と roman bait しか開発していない） | 究極目標「人間は WHAT のみ→動くソフトウェア」の実証が自己言及の外に無い | 上流チェーン（M4）。**何を作るかは人間の WHAT — 未確定（§5）** | ハーネス外の実 target で WHAT→released 一気通貫・A1 計器が HOW 介入ゼロを示す |
+| D1 | **実target一巡済み／WHAT-only remote release未実証** — channel-compassで4 issueをreleased済み。ただしdirect engineering＋store gateであり、GitHub Issue入口からHOW介入0でreleaseした証拠ではない | 究極目標「人間は WHAT のみ→動くソフトウェア」の最終実証 | 上流チェーン（M4・target=channel-compass確定済み） | ハーネス外の実 target でGitHub WHAT→released一気通貫・A1計器がHOW介入ゼロを示す |
 | D2 | ~~並行時の資源運用~~ **✅ 初期分締結（⑬・ISSUE-0020）** — 並行 turn の実測（peak/driven/cap）が store の事実＋status 計器に。コスト天井・多 turn 集計は未着手（必要になった分だけ） | 横幅の安全前提 → 最低限の可視化あり | 直接TDD | 資源計器が status に出る ✅（コスト系は将来） |
 | D3 | ~~受け入れゲートが suite 全体収集＝issue 横断の payload 漏出~~ **✅ 実装を締結（⑭・FEAT-009/ISSUE-0022 released）** — issue-scoped acceptance 収集: 活性化の単一の家 `accept.ts`（`acceptsIssue`/`scopedAcceptEnv`・帰属は guard の明示宣言・describe 粒度）＋grade の駆動 issue env 注入＋非活性の理由付き列挙（never-silent）＋全活性/恒久昇格の不変。self-drive 設定から suite 全体活性 prefix を撤去（omnibus の入口を閉鎖）。条件付き承認 10 例目（休眠≠失敗の報告整合・own-all-dormant の LOUD 化・衝突優先順位ピン — 全変異 kill）。**残る観測**: 台帳の完了条件そのもの＝2+ issue の同時先置きで各 build が自 issue の AC 差分だけで released になる grounded 実測（次の複数 issue 開発、自然には M4 で起きる） | 複数 issue 分解の意味（PR サイズ・帰属・並行の意義）が omnibus 化で崩れる → 構造は閉鎖・実測待ち | 完了（上流チェーン・EPIC-04） | 実装✅。次: 2+ issue 同時先置きの grounded 観測で本行を完全に畳む |
 | D4 | ~~外部 target の WHAT 著述が harness repo 固定~~ **✅ released（⑮・PR #3）** — `resolveTargetRoot`（config.ts）が spawn-specs/sign の起点を統一。**ただし direct engineering 経路**（harness の通常運転＝sign→spawn-issues→contract-draft→assign→drive を経ていない）。channel-compass への EPIC-01 実 drive で実地検証済み（4 issue released） | M4 の repo 分離モデルが上流チェーンの入口で成立することを grounded 実証 | 完了 | 外部 repo への spawn→署名→spawn-issues→contract→drive 一気通貫 ✅（gate backend は `store` のみ実証・`github` は channel-compass に remote が無く未実証） |
-| D5 | **（⑮新規）target 切替が自 store を汚染する** — `config.target` を外部 repo へ向けたまま `plan-roadmap` すると、roadmap（vision/principles）が外部内容で上書きされ、同名 epic ID（例: 双方の "EPIC-01"）がマージされて外部 feature が自 epic の featureIds に永続混入する（再 ingest の descope では戻らない） | ADR-0001「組織状態は複製しない」の対偶（1 store 内で複数の独立した WHAT ツリーを持つと epic/roadmap の自然キー突合が破綻する）が未検証のまま D4 を released していた | 未着手。運用回避のみ（target ごとに専用の分離 store を使う — 今回 `channel-compass-harness-store/` として実施） | self-hosting 用 store と外部 target 用 store を同一プロセスで安全に往復できる（または「往復しない」を構造的に強制する）ことが grounded 実証される |
-| D6 | **（⑮新規）レビュー lens が read-only checkout で lockfile を書き換える** — live panel の一部レビューセッションが `npm install`/`pnpm install` 相当を実行し、read-only 違反として自分自身の review が discard される。escalate-over-false-pass（ARCH-execution-015）と組み合わさり「実装は健全なのに needs-human-review になる」偽陽性を生む（channel-compass 4 issue 中 3 件で発生・`implementationNotes` での明記も防止効果なし） | ②評価軸の信頼性（false-pass だけでなく "false-escalation" も操舵指標が捉えるべき）・自律軸（operator の独立検証による上書きが常態化すると自律の実質低下） | 未着手。根本原因（どのロールが何のコマンドを実行しているか）調査から | レビューセッションが read-only 契約を破らずに動作する、または破った際の discard が false-escalation を発生させない（例: 該当 lens だけ再試行する等）ことが grounded 実証される |
-| D7 | **（⑯新規）人間の入口が「GitHub Issue を立てる」に成立していない** — 現状 GitHub は**出口**（PR ゲート・ADR-0006）のみ。内部 poll（`guard.ts`）は store を見るが **GitHub Issues を見ない**。人間の粗い着手要求を取り込む **intake アダプタ＋watcher** と、それを Issue Contract-ready へ上げる **planning-agent 昇格ステップ**が無い（ADR-0008） | 究極目標「人間は WHAT のみ」の**入口**が spec 著述を要求している（「issue を立てるだけ」になっていない） | 上流チェーン（ADR-0008・M4）。intake アダプタ＋planning-agent 昇格の新設。drive loop（guard→drive→panel→gate）は不変 | 人間が theme repo に立てた ready issue が watcher→store→guard→drive→panel→PR まで HOW 人手介入なしで流れる grounded 実測（A1 計器が入口側でも介入 0 を示す・remote 前提は ADR-0006 github ゲートと同じ） |
+| D5 | **✅ 構造実装済み（FEAT-011）** — 1 store=1 canonical target binding、全mutation CLI preflight、legacy明示bind、mismatch fail-closed。現storeも明示移行済み | ADR-0001の組織境界 | EPIC-06 / FEAT-011 | 残り: 外部target往復時のgrounded mismatch証拠 |
+| D6 | **✅ 構造実装済み（FEAT-012）** — reviewer checkoutとevidence sidecarを分離。既知lockfile副作用は帰属してfindings保持、source/config変更は従来どおりdiscard | ②評価のfalse-escalation抑止 | EPIC-06 / FEAT-012 | 残り: 次の実live panelで3/4発生が消えるgrounded観測 |
+| D7 | **✅ 入口配線実装済み／実remote縦断待ち（FEAT-016..018）** — store-first GitHub claim、planning detached session、全AC source/system trace gate、`github-turn`/`watch-github`→既存runLoopLive/PR gateを実装。fake external/provider/drive縦断は恒久test済み | 究極目標「人間は WHAT のみ」の入口 | EPIC-08 | 残り: 実remote ready Issue→異種provider panel→GitHub PRのgrounded実測とHOW介入0計器 |
 
 ## 3. マイルストーン（依存順・「測る→広げる→深める→実証する」）
 
@@ -105,8 +105,7 @@
 
 - **M1 操舵の完備** = ~~A1✅＋C2✅＋C3✅~~ **✅ 出口到達（⑩）**: 星の全軸が計測可能✅・
   在庫が判断可能なキューとして循環✅・⑧の処遇判断が store に適用済み✅。
-  roadmap: **EPIC-02（FEAT-004✅/005✅/006 残）** — FEAT-006（配線ピン規約・B3）は M1 出口には
-  不要だった規約系の残在庫。B1 の蓄積は継続（labeled 13 runs / 5 issue 分。注: 条件付き承認の
+  roadmap: **EPIC-02（FEAT-004/005/006すべて✅）**。B1 の蓄積は継続（labeled 13 runs / 5 issue 分。注: 条件付き承認の
   巡は recordHumanDecision が label を収穫しない — approve 側 run が無いため。蓄積を進めるなら
   `agentops label` での個別付与が要る）。
 - **M2 自律の横幅** = ~~A2✅＋A3✅＋A4✅（D2 初期分✅）~~ **✅ 出口到達（⑫⑬）**:
@@ -124,6 +123,11 @@
   プロダクトと同じ loop」の実証）。
   **進め方の原則（変わらず）: M4 はハーネスを凍結しない。** 暴かれた欠けは同じ roadmap・
   同じ loop（③改善）で直す。
+  **⑯以降の実装順をroadmapへ確定**: **EPIC-06**（D5 store-target binding → D6 reviewer
+  workspace integrity）で状態と評価の足場を閉じ、**EPIC-07**（A5 invocation provenance →
+  provider backend → role/perspective routing）、**EPIC-08**（D7 GitHub poll/claim → traceable
+  planning enrichment →実remote縦断）の順で進む。A7/A6 は非UI intakeを塞ぐhard dependencyにせず、
+  UI要求を検出したときだけ理由付きで停止する条件付き能力として後続化する。
   出口: 自分以外のソフトウェアが WHAT だけから released になり、A1 計器がそれを証明する
   — **一部到達**（EPIC-01・4 issue released）。ただし D4 が direct engineering 経路だった
   ことと、D5/D6 が operator の都度介入を要求したことから、**「HOW に人間が触れず」の条件は

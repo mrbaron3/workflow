@@ -1,0 +1,46 @@
+# Dedicated UI design authoring agent — 受け入れ検証
+
+dependsOn:
+  - LANG-intake-012
+  - DOM-intake-014
+  - DOM-intake-015
+  - DOM-intake-016
+  - ARCH-intake-012
+  - ARCH-intake-013
+  - DATA-intake-009
+  - DOM-agent-runtime-006
+  - DOM-agent-runtime-008
+  - DOM-agent-runtime-009
+
+verifications:
+  AC-UIAUTHOR-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "UiDesignOutput schemaがprinciples/tokens/components/states/interactions/accessibility/criterionTracesを要求する"
+  AC-UIAUTHOR-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "frontend Candidateだけがui-design routeのfresh read-only sessionとsidecar promptを受ける"
+  AC-UIAUTHOR-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "全AC trace・design element参照・sourceCriterionIds・ui-designer Invocation provenanceを検証する"
+  AC-UIAUTHOR-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "曖昧/不正/失敗provenanceのUI outputがIssue 0件のneeds-human-reviewになる"
+  AC-UIAUTHOR-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "accepted IssueがUI artifact/invocationKeyを保持しgenerator/reviewer promptへ同じ契約を渡す"
+  AC-UIAUTHOR-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同じIntakeRecordの再turnがplanner/UI designer/Issue/Invocation/EnrichmentRecordを増やさない"
+

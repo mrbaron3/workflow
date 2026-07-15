@@ -17,7 +17,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { Store } from '../src/store/store.js';
 import { EvalTask } from '../src/domain/schema.js';
-import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
+import { DEFAULT_CONFIG, type HarnessConfig, type TargetGraderConfig } from '../src/config.js';
+import type { VerificationMethod } from '../src/domain/schema.js';
 import { curateEvalTasks } from '../src/pipeline/curator.js';
 
 const dirs: string[] = [];
@@ -28,7 +29,7 @@ function freshStore(): Store {
 }
 afterEach(() => { while (dirs.length) fs.rmSync(dirs.pop()!, { recursive: true, force: true }); });
 
-function cfg(repo: string, graders?: { typecheck?: string; unit_tests?: string }): HarnessConfig {
+function cfg(repo: string, graders?: TargetGraderConfig): HarnessConfig {
   return {
     ...DEFAULT_CONFIG,
     generator: 'claude',
@@ -41,7 +42,7 @@ function seedTask(
   store: Store,
   id: string,
   target: string | null,
-  opts: { commands?: Record<string, string>; method?: 'unit_test' | 'typecheck' } = {},
+  opts: { commands?: Record<string, string>; method?: VerificationMethod } = {},
 ): EvalTask {
   return store.addEvalTask(
     EvalTask.parse({
@@ -93,6 +94,15 @@ describe('curate backfills command-less legacy tasks bound to the current target
     curateEvalTasks(store, cfg('self', { typecheck: 'tsc --noEmit', unit_tests: 'CMD-NEW' }));
 
     expect(store.db.evalTasks[0]!.graderCommands).toEqual({ typecheck: 'tsc --noEmit' });
+  });
+
+  it('AC-GRDCMD-005 captures a canonical non-unit method command without a hard-coded config key', () => {
+    const store = freshStore();
+    seedTask(store, 'EVAL-TASK-ISSUE-A-AC-1', 'self', { method: 'playwright' });
+
+    curateEvalTasks(store, cfg('self', { commands: { playwright: 'npm run test:e2e' } }));
+
+    expect(store.db.evalTasks[0]!.graderCommands).toEqual({ playwright: 'npm run test:e2e' });
   });
 
   it('ISSUE-0006/AC-REGBF-001 a method with no configured command captures nothing (never fabricated — FEAT-001 red line)', () => {

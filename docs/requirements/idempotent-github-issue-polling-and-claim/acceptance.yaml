@@ -1,0 +1,49 @@
+# Idempotent GitHub Issue polling and claim — 受け入れ検証
+
+dependsOn:
+  - DOM-intake-001
+  - DOM-intake-004
+  - DOM-intake-005
+  - DOM-intake-006
+  - DOM-intake-007
+  - DOM-intake-008
+  - ARCH-intake-001
+  - ARCH-intake-002
+  - ARCH-intake-003
+  - ARCH-intake-004
+  - DATA-intake-001
+  - DATA-intake-002
+  - DATA-intake-003
+  - DATA-intake-004
+
+verifications:
+  AC-GHINTAKE-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "open+readyだけがnumber昇順で処理され、closed/unreadyはstore/externalとも不変"
+  AC-GHINTAKE-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "repository+number identity、全原文field、claimedAt/statusが保存・再読込できる"
+  AC-GHINTAKE-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "duplicate pollとstore reload後pollでrecord/counter/claim callが増えない"
+  AC-GHINTAKE-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "external failure前にclaim-pending snapshotがsaveされ、retryが同recordをclaimedへ更新する"
+  AC-GHINTAKE-005:
+    severity: major
+    method: unit_test
+    expected:
+      - "同numberの別repositoryは異なるintakeKeyになり、claim済みstoreへのrepository切替は拒否される"
+  AC-GHINTAKE-006:
+    severity: major
+    method: unit_test
+    expected:
+      - "claimed record再出現時も初回title/body/labels/sourceUpdatedAtを上書きしない"

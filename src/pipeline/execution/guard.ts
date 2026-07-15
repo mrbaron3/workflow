@@ -19,6 +19,7 @@
 import type { Store } from '../../store/store.js';
 import type { HarnessConfig } from '../../config.js';
 import type { Issue } from '../../domain/schema.js';
+import { resolvedGeneratorProvider } from '../../agents/routing.js';
 
 /** One unreleased predecessor an issue waits on: its id and CURRENT status. */
 export interface DependencyWait {
@@ -59,7 +60,7 @@ export function pollable(store: Store, config: HarnessConfig): Issue[] {
 
 /** True if this single issue is in scope for autonomous processing (the guard predicate). */
 export function isAiManaged(issue: Issue, config: HarnessConfig): boolean {
-  return issue.status === 'contract-drafted' && issue.assignedAgent === config.generator;
+  return issue.status === 'contract-drafted' && issue.assignedAgent === resolvedGeneratorProvider(config);
 }
 
 /** One human-readable line for a wait list: "ISSUE-A (planned), ISSUE-F (closed)". */

@@ -38,8 +38,12 @@ export type Area = z.infer<typeof Area>;
 
 export const IssueStatus = z.enum(ISSUE_STATUSES);
 
-/** Which coding agent backend produced an artifact. */
-export const GeneratorAgent = z.enum(['claude', 'codex', 'gemini', 'mock']);
+/** Tool/provider family that executes an agent invocation; model is a separate dimension. */
+export const AgentProvider = z.enum(['claude', 'codex', 'gemini', 'mock']);
+export type AgentProvider = z.infer<typeof AgentProvider>;
+
+/** Which coding agent backend produced an artifact (legacy generator-facing name). */
+export const GeneratorAgent = AgentProvider;
 export type GeneratorAgent = z.infer<typeof GeneratorAgent>;
 
 export const AgentRole = z.enum([
@@ -58,8 +62,16 @@ export const AgentRole = z.enum([
   'architecture-modeler',
   'data-modeler',
   'context-mapper',
+  'ui-designer',
 ]);
 export type AgentRole = z.infer<typeof AgentRole>;
+
+/** Roles that can own a runtime invocation. `reviewer` preserves the panel's current role name. */
+export const InvocationRole = z.union([AgentRole, z.literal('reviewer')]);
+export type InvocationRole = z.infer<typeof InvocationRole>;
+
+export const InvocationOutcome = z.enum(['completed', 'stuck', 'timeout', 'failed']);
+export type InvocationOutcome = z.infer<typeof InvocationOutcome>;
 
 export const Verdict = z.enum(['approve', 'request_changes', 'needs_human']);
 export type Verdict = z.infer<typeof Verdict>;
@@ -92,6 +104,45 @@ export const IssueContract = z.object({
 });
 export type IssueContract = z.infer<typeof IssueContract>;
 
+/** Dedicated UI-authoring artifact; HOW design is explicit and traceable to the accepted WHAT. */
+export const UiDesignToken = z.object({
+  id: z.string().min(1),
+  category: z.enum(['color', 'typography', 'spacing', 'radius', 'shadow', 'motion', 'other']),
+  value: z.string().min(1),
+  rationale: z.string().min(1),
+  sourceCriterionIds: z.array(z.string().min(1)).min(1),
+});
+export type UiDesignToken = z.infer<typeof UiDesignToken>;
+
+export const UiDesignComponent = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  purpose: z.string().min(1),
+  states: z.array(z.string().min(1)).min(1),
+  interactions: z.array(z.string().min(1)).default([]),
+  accessibility: z.array(z.string().min(1)).min(1),
+  sourceCriterionIds: z.array(z.string().min(1)).min(1),
+});
+export type UiDesignComponent = z.infer<typeof UiDesignComponent>;
+
+export const UiDesignArtifact = z.object({
+  candidateKey: z.string().min(1),
+  principles: z.array(z.string().min(1)).min(1),
+  tokens: z.array(UiDesignToken).min(1),
+  components: z.array(UiDesignComponent).min(1),
+  criterionTraces: z.array(z.object({
+    criterionId: z.string().min(1),
+    designElementIds: z.array(z.string().min(1)).min(1),
+  })).min(1),
+});
+export type UiDesignArtifact = z.infer<typeof UiDesignArtifact>;
+
+export const UiDesignOutput = z.object({
+  artifact: UiDesignArtifact.nullable(),
+  ambiguities: z.array(z.string().min(1)).default([]),
+});
+export type UiDesignOutput = z.infer<typeof UiDesignOutput>;
+
 export const Issue = z.object({
   id: z.string(), // ISSUE-0001
   type: IssueType,
@@ -122,6 +173,11 @@ export const Issue = z.object({
   dependsOnSystem: z.array(z.string()).default([]), // system element ids referenced (DOM/DATA/ARCH/…-<CTX>-NNN) — referenced, never copied
   dependsOnIssues: z.array(z.string()).default([]), // predecessor issues, forming the spec's issue DAG
   implementationNotes: z.array(z.string()).default([]), // seam-level HOW hints (optional; internal, not a contract)
+  /** GitHub intake origin (FEAT-017). null for spec/adopt/legacy issues. */
+  intakeKey: z.string().nullable().default(null),
+  planningCandidateKey: z.string().nullable().default(null),
+  uiDesign: UiDesignArtifact.nullable().default(null),
+  uiDesignInvocationKey: z.string().nullable().default(null),
   /**
    * Decline audit (FEAT-005): why/when a human closed this issue. Set ONLY by the decline
    * organ (pipeline/lifecycle.ts closeIssue — a judgment point, never automated); null on
@@ -194,6 +250,95 @@ export const PrExternalRef = z.object({
   url: z.string(),
 });
 export type PrExternalRef = z.infer<typeof PrExternalRef>;
+
+/** Immutable first-seen projection of one external GitHub Issue (FEAT-016). */
+export const GithubIssueSnapshot = z.object({
+  repository: z.string().min(1), // owner/name remote identity
+  number: z.number().int().positive(),
+  externalId: z.string().min(1),
+  title: z.string(),
+  body: z.string(),
+  url: z.string(),
+  labels: z.array(z.string()).default([]),
+  state: z.enum(['open', 'closed']),
+  sourceUpdatedAt: z.string(),
+  snapshotAt: z.string(),
+});
+export type GithubIssueSnapshot = z.infer<typeof GithubIssueSnapshot>;
+
+export const IntakeStatus = z.enum([
+  'claim-pending',
+  'claimed',
+  'planning',
+  'ready',
+  'needs-human-review',
+]);
+export type IntakeStatus = z.infer<typeof IntakeStatus>;
+
+/** Store-first claim record; the Source Snapshot is immutable after insertion. */
+export const IntakeRecord = z.object({
+  id: z.string(), // INTAKE-0001
+  intakeKey: z.string().min(1),
+  provider: z.literal('github'),
+  snapshot: GithubIssueSnapshot,
+  status: IntakeStatus.default('claim-pending'),
+  claimedAt: z.string().nullable().default(null),
+  storeIssueIds: z.array(z.string()).default([]),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type IntakeRecord = z.infer<typeof IntakeRecord>;
+
+export const AcceptanceTraceSource = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('source'), text: z.string().min(1) }),
+  z.object({
+    kind: z.literal('system'),
+    elementId: z.string().regex(/^(?:LANG|DOM|ARCH|DATA)-[a-z0-9]+(?:-[a-z0-9]+)*-\d{3}$/),
+  }),
+]);
+export type AcceptanceTraceSource = z.infer<typeof AcceptanceTraceSource>;
+
+export const AcceptanceTrace = z.object({
+  criterionId: z.string().min(1),
+  sources: z.array(AcceptanceTraceSource).min(1),
+});
+export type AcceptanceTrace = z.infer<typeof AcceptanceTrace>;
+
+export const EnrichmentCandidate = z.object({
+  candidateKey: z.string().min(1),
+  title: z.string().min(1),
+  type: IssueType,
+  area: Area,
+  contract: IssueContract,
+  traces: z.array(AcceptanceTrace),
+});
+export type EnrichmentCandidate = z.infer<typeof EnrichmentCandidate>;
+
+export const PlanningEnrichmentOutput = z.object({
+  candidates: z.array(EnrichmentCandidate).min(1),
+  ambiguities: z.array(z.string().min(1)).default([]),
+});
+export type PlanningEnrichmentOutput = z.infer<typeof PlanningEnrichmentOutput>;
+
+export const PlanningEnrichmentRecord = z.object({
+  id: z.string(), // ENRICH-0001
+  intakeKey: z.string().min(1),
+  invocationKey: z.string().nullable().default(null),
+  status: z.enum(['accepted', 'needs-human-review']),
+  reasons: z.array(z.string()).default([]),
+  traces: z.array(
+    z.object({
+      candidateKey: z.string(),
+      criterionId: z.string(),
+      sources: z.array(AcceptanceTraceSource),
+    }),
+  ).default([]),
+  issueIds: z.array(z.string()).default([]),
+  uiDesignCandidateKeys: z.array(z.string()).default([]),
+  uiDesignInvocationKeys: z.record(z.string()).default({}),
+  createdAt: z.string(),
+});
+export type PlanningEnrichmentRecord = z.infer<typeof PlanningEnrichmentRecord>;
 
 export const PR = z.object({
   id: z.string(), // PR-0001
@@ -275,6 +420,9 @@ export const EvalRun = z.object({
   // DATA-execution-001: which review perspective (lens) produced this run when graded by
   // the evaluator panel; null = legacy single composite grade. Additive/optional.
   perspective: z.string().nullable().default(null),
+  // DATA-agent-runtime-004: reviewer invocation that produced this perspective verdict.
+  // null = legacy, deterministic grader, or pre-provenance run.
+  invocationKey: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type EvalRun = z.infer<typeof EvalRun>;
@@ -363,6 +511,29 @@ export const PromptRecord = z.object({
   createdAt: z.string(),
 });
 export type PromptRecord = z.infer<typeof PromptRecord>;
+
+/**
+ * Provider-neutral audit record for one logical role session (FEAT-013). Unlike the legacy
+ * generator-only PromptRecord, this records generator, planning and each reviewer perspective
+ * through one identity and keeps provider separate from model.
+ */
+export const AgentInvocation = z.object({
+  id: z.string(), // INVOKE-0001
+  invocationKey: z.string().min(1),
+  subjectId: z.string().min(1),
+  issueId: z.string().nullable().default(null),
+  prId: z.string().nullable().default(null),
+  sampleIndex: z.number().int().nonnegative().nullable().default(null),
+  attempt: z.number().int().positive(),
+  role: InvocationRole,
+  perspective: z.string().nullable().default(null),
+  provider: AgentProvider,
+  model: z.string().nullable().default(null),
+  prompt: z.string(),
+  outcome: InvocationOutcome,
+  createdAt: z.string(),
+});
+export type AgentInvocation = z.infer<typeof AgentInvocation>;
 
 /**
  * The concurrency FACTS of one live turn (ISSUE-0020, AC-PAR-003): how many issues the
@@ -454,8 +625,20 @@ export type SpecState = z.infer<typeof SpecState>;
 
 // --- the whole database ----------------------------------------------------
 
+/**
+ * Durable one-store/one-target binding (DATA-workspace-001). The configured target is only
+ * a request; this record is the source of truth that prevents one organisation store from
+ * ingesting two unrelated planning trees after config.target changes.
+ */
+export const TargetBinding = z.object({
+  targetIdentity: z.string().min(1),
+  boundAt: z.string(),
+});
+export type TargetBinding = z.infer<typeof TargetBinding>;
+
 export const DB = z.object({
   version: z.literal(1).default(1),
+  targetBinding: TargetBinding.nullable().default(null),
   counters: z.record(z.number()).default({}),
   roadmap: Roadmap.nullable().default(null),
   epics: z.array(Epic).default([]),
@@ -466,6 +649,9 @@ export const DB = z.object({
   evalTasks: z.array(EvalTask).default([]),
   regressionRuns: z.array(RegressionRun).default([]), // ③ regression executions (additive)
   promptRecords: z.array(PromptRecord).default([]), // audit trail of issued prompts (additive)
+  agentInvocations: z.array(AgentInvocation).default([]), // provider-neutral invocation provenance (additive)
+  intakeRecords: z.array(IntakeRecord).default([]), // external Source Issue claims (additive)
+  planningEnrichments: z.array(PlanningEnrichmentRecord).default([]), // trace-gated planning decisions
   interventions: z.array(Intervention).default([]), // attested human HOW-interventions (additive)
   turnRecords: z.array(TurnRecord).default([]), // per-live-turn concurrency facts (additive)
   specStates: z.array(SpecState).default([]),

@@ -1,39 +1,68 @@
-/**
- * buildLaunchCommand — the pure `claude` command line for a role session. Extracted so the flag
- * wiring is testable without spawning tmux (the same seam discipline as buildGeneratorPrompt). The
- * key new behaviour: `--model` appears ONLY when a model override is set, so an unset role inherits
- * the user's default model (the pre-existing behaviour) rather than pinning one.
- */
-import { describe, it, expect } from 'vitest';
+/** FEAT-014 — provider-neutral interactive request mapped by CLI-specific adapters. */
+import { describe, expect, it } from 'vitest';
 import { buildLaunchCommand } from '../src/pipeline/execution/tmux.js';
+import {
+  UnsupportedInteractiveProviderError,
+  backendFor,
+  providerReadyPattern,
+} from '../src/agents/interactive-backend.js';
 
-describe('buildLaunchCommand', () => {
-  it('omits --model when no model is given (inherit the user default)', () => {
-    const cmd = buildLaunchCommand({ session: 'ao-x', cwd: '/wt' });
-    expect(cmd).not.toContain('--model');
-    expect(cmd).toContain('claude -n ao-x');
-    expect(cmd).toContain('--permission-mode acceptEdits'); // default mode
-    expect(cmd).toContain("--allowedTools 'Read Edit Write'"); // default tools
-  });
-
-  it('appends --model <alias> when a model is set', () => {
-    const cmd = buildLaunchCommand({ session: 'ao-x', cwd: '/wt', model: 'haiku' });
-    expect(cmd).toContain('--model haiku');
-    // the flag is additive — the rest of the command is unchanged
-    expect(cmd).toContain('--permission-mode acceptEdits');
-    expect(cmd).toContain("--allowedTools 'Read Edit Write'");
-  });
-
-  it('preserves explicit permissionMode and allowedTools alongside the model', () => {
+describe('interactive provider adapters', () => {
+  it('AC-AGBACK-001 builds a Claude generator command from the common request', () => {
     const cmd = buildLaunchCommand({
-      session: 'ao-eval-y',
-      cwd: '/rv',
-      allowedTools: ['Read', 'Write', 'Bash'],
-      permissionMode: 'default',
-      model: 'sonnet',
+      provider: 'claude', session: 'ao-x', cwd: '/wt', purpose: 'generator', model: 'sonnet',
+      additionalDirs: ['/harness/evidence'],
     });
-    expect(cmd).toContain('--permission-mode default');
+    expect(cmd).toContain("claude -n 'ao-x'");
+    expect(cmd).toContain('--permission-mode acceptEdits');
+    expect(cmd).toContain("--allowedTools 'Read Edit Write Bash'");
+    expect(cmd).toContain("--model 'sonnet'");
+    expect(cmd).toContain("--add-dir '/harness/evidence'");
+  });
+
+  it('AC-AGBACK-001 narrows Claude reviewer tools without changing the request vocabulary', () => {
+    const cmd = buildLaunchCommand({ provider: 'claude', session: 'ao-review', cwd: '/rv', purpose: 'reviewer' });
     expect(cmd).toContain("--allowedTools 'Read Write Bash'");
-    expect(cmd).toContain('--model sonnet');
+    expect(cmd).not.toContain('--model');
+  });
+
+  it('uses the same read/write-evidence capability shape for a planning session', () => {
+    const cmd = buildLaunchCommand({ provider: 'codex', session: 'ao-plan', cwd: '/plan', purpose: 'planner' });
+    expect(cmd).toContain('codex --no-alt-screen');
+    expect(cmd).toContain('--ask-for-approval never');
+  });
+
+  it('AC-AGBACK-002/003 builds an interactive Codex command from the same request', () => {
+    const cmd = buildLaunchCommand({
+      provider: 'codex', session: 'ao-x', cwd: '/wt', purpose: 'generator', model: 'gpt-5.1-codex',
+      additionalDirs: ['/harness/evidence'],
+    });
+    expect(cmd.startsWith('codex ')).toBe(true);
+    expect(cmd).toContain('--no-alt-screen');
+    expect(cmd).toContain('--ask-for-approval never');
+    expect(cmd).toContain('--sandbox workspace-write');
+    expect(cmd).toContain("--model 'gpt-5.1-codex'");
+    expect(cmd).toContain("--add-dir '/harness/evidence'");
+    expect(cmd).not.toMatch(/\bcodex\s+(exec|review)\b/);
+  });
+
+  it('AC-AGBACK-004 rejects providers without an interactive adapter instead of falling back', () => {
+    expect(() => backendFor('gemini')).toThrow(UnsupportedInteractiveProviderError);
+    expect(() => backendFor('mock')).toThrow(/mock/);
+  });
+
+  it('AC-AGBACK-005 exposes provider-specific readiness while liveness stays outside adapters', () => {
+    expect(providerReadyPattern('claude').test('❯')).toBe(true);
+    expect(providerReadyPattern('codex').test('›')).toBe(true);
+  });
+
+  it('AC-AGBACK-006 shell-quotes model, session, and writable roots as single arguments', () => {
+    const cmd = buildLaunchCommand({
+      provider: 'claude', session: "ao-review'; touch /tmp/x; '", cwd: '/rv', purpose: 'reviewer',
+      model: "model'; touch /tmp/y; '", additionalDirs: ["/review evidence/security's"],
+    });
+    expect(cmd).toContain("-n 'ao-review'\\''; touch /tmp/x; '\\'''");
+    expect(cmd).toContain("--model 'model'\\''; touch /tmp/y; '\\'''");
+    expect(cmd).toContain("--add-dir '/review evidence/security'\\''s'");
   });
 });

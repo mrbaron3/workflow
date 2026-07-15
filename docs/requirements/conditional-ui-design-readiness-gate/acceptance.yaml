@@ -1,0 +1,42 @@
+# Conditional UI-design readiness gate — 受け入れ検証
+
+dependsOn:
+  - LANG-intake-011
+  - DOM-intake-012
+  - DOM-intake-013
+  - DOM-intake-014
+  - ARCH-intake-007
+  - ARCH-intake-011
+
+verifications:
+  AC-UIDGATE-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "frontend CandidateがUI design artifact必須の理由付きneeds-human-reviewになりIssueを作らない"
+  AC-UIDGATE-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "fullstack Candidateもfrontendと同じreadiness gateで停止する"
+  AC-UIDGATE-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "backend CandidateはUI gate対象外で既存accepted pathを維持する"
+  AC-UIDGATE-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "UIを1件含むmixed batchがIssue 0件でatomicに停止する"
+  AC-UIDGATE-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "planning promptがUI workのfrontend/fullstack分類とbackend偽装禁止を明示する"
+  AC-UIDGATE-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同じUI rejectionの再適用がrecord/counter/Issueを増やさない"
+

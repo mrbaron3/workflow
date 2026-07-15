@@ -10,10 +10,10 @@ The bet (from the design brief): the leverage is **not more agents** — it's tu
 **machine-readable contracts and a measurable eval loop**, with state that lives in a
 durable store you can resume, analyse and improve from.
 
-> This is an **MVP**: the entire pipeline runs end-to-end **today, offline**, on a
-> deterministic **mock** agent backend. Swapping in a real agent CLI or a GitHub
-> backend are isolated, documented seams (see [Two backends](#two-backends-mock-deterministic-and-real-live-tmux)
-> and [docs/ROADMAP.md](docs/ROADMAP.md)).
+> This is an **MVP**: the entire pipeline runs end-to-end offline on a deterministic
+> **mock** backend. The grounded path adds GitHub Issue intake, provider-routed planning,
+> implementation, isolated review, and a GitHub PR gate. Its seams are permanently tested;
+> a real remote/provider run is still required before claiming environment-level validation.
 
 ---
 
@@ -38,8 +38,9 @@ npm run demo        # 全工程を一気に実行（init→plan→run→curate�
 npm run dashboard   # .harness/dashboard.html をブラウザで開く
 ```
 
-実エージェント(Claude Code / Codex / Gemini)や GitHub 連携への差し替えは
-[Two backends](#two-backends-mock-deterministic-and-real-live-tmux) と [docs/ROADMAP.md](docs/ROADMAP.md) を参照。
+実運用向けには、GitHub の `ready` Issue を取り込み、独立した planning session で契約化し、
+Claude Code / Codex を役割・レビュー観点ごとに振り分けて、既存の実装・評価・GitHub PR gateへ
+接続する経路もあります。設定例は [GitHub Issue watcher](#github-issue-watcher) を参照してください。
 
 ---
 
@@ -135,7 +136,7 @@ docs/              context-map.md · _system/<ctx>/ · decisions/ (ADR) · ROADM
 | Harness self-improvement | `src/pipeline/analyst.ts` | files `type:harness` / `type:eval` issues |
 
 See [docs/context-map.md](docs/context-map.md) for the bounded contexts and where each
-term lives (terminology is per-context under `docs/specs/_system/<ctx>/ubiquitous-language.md`).
+term lives (terminology is per-context under `docs/_system/<ctx>/ubiquitous-language.md`).
 
 ## Two backends: mock (deterministic) and real (live tmux)
 
@@ -159,15 +160,104 @@ npx tsx scripts/real-panel-run.ts                    # full 6-perspective panel
 bounds the review fan-out. The execution layer's design lives in
 [ADR-0005](docs/decisions/ADR-0005-execution-layer-tmux-orchestration.md) /
 [ADR-0006](docs/decisions/ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) and the
-[`_system/execution`](docs/specs/_system/execution/) views.
+[`_system/execution`](docs/_system/execution/) views.
+
+## GitHub Issue watcher
+
+The live entry path is:
+
+```text
+ready GitHub Issue → durable claim → isolated planning → conditional isolated UI design → trace gate → implementation
+→ isolated perspective reviews → configured human/GitHub PR gate
+```
+
+Initialize the harness, then configure `.harness/config.json`. This example routes planning
+and general review to Claude, UI design, generation, and the security lens to Codex; every omitted model
+inherits the corresponding CLI default.
+
+```json
+{
+  "generator": "codex",
+  "baseBranch": "main",
+  "samples": 1,
+  "maxConcurrentIssues": 1,
+  "maxRepairs": 2,
+  "passThreshold": 0.7,
+  "scoreWeights": {
+    "functionality": 0.4,
+    "codeQuality": 0.2,
+    "testQuality": 0.15,
+    "ux": 0.15,
+    "accessibility": 0.1
+  },
+  "target": {
+    "repo": "../target-app",
+    "baseRef": "main",
+    "systemDir": "../target-app/docs/_system",
+    "graders": {
+      "typecheck": "npm run typecheck",
+      "unit_tests": "npm test",
+      "commands": {
+        "playwright": "npm run test:e2e",
+        "api_test": "npm run test:api"
+      }
+    }
+  },
+  "gate": { "backend": "github", "baseBranch": "main" },
+  "routes": {
+    "planning": { "provider": "claude" },
+    "uiDesign": { "provider": "codex" },
+    "generator": { "provider": "codex" },
+    "reviewer": { "provider": "claude" },
+    "perspectives": {
+      "security": { "provider": "codex" }
+    }
+  },
+  "intake": {
+    "backend": "github",
+    "repository": "owner/target-app",
+    "readyLabel": "ready",
+    "claimedLabel": "agent-claimed"
+  },
+  "panel": { "maxConcurrent": 4 }
+}
+```
+
+The target must be a git repository, `gh` must already be authenticated, the configured labels
+must exist, and each routed provider CLI must be available. Interactive adapters currently exist
+for Claude Code and Codex; unsupported providers fail closed. Run one turn or keep watching:
+
+```bash
+npm run harness -- poll-intake    # optional: inspect/claim ready input only
+npm run harness -- github-turn    # one intake/planning/development turn
+npm run harness -- watch-github   # repeat turns; Ctrl-C stops the watcher
+```
+
+Claiming removes `ready` and adds `agent-claimed`. The first source snapshot and every planning /
+UI-design / generation / perspective invocation retain stable provenance in `.harness/db.json`; restarts reuse
+those records instead of re-planning the same source. For a pre-existing unbound legacy store, run
+`npm run harness -- bind-target` once after setting the intended target.
+
+`frontend`/`fullstack` planning candidates are each sent to a fresh, read-only `ui-designer`
+session before Issue creation. Its principles, tokens, components, states/interactions,
+accessibility rules, and AC traces must pass schema and invocation-provenance validation; missing,
+ambiguous, or invalid output stops the whole enrichment at `needs-human-review`. Backend-only
+candidates do not select or invoke the UI route. When `routes.uiDesign` is omitted, it inherits the
+planning route (then the legacy generator route) while keeping a separate session/context.
+
+`target.graders.commands` is keyed by the acceptance criterion's `verification.method`. Non-unit
+methods run once per criterion with `AGENTOPS_AC_ID`, `AGENTOPS_ISSUE_ID`,
+`AGENTOPS_VERIFICATION_METHOD`, and `AGENTOPS_EXPECTED_JSON`; a missing command fails closed.
 
 ## What is real vs mocked (so there are no surprises)
 
-- **Real:** the contracts & schema validation, the state machine, the store/Eval DB,
-  the grader gate logic & scoring, scorecards & evidence, the metrics (pass@k/pass^k,
-  heatmap, cost), curation, analysis, the dashboard, the CLI.
-- **Mocked:** the agent *execution* (deterministic simulation) and therefore the graders
-  inspect a described artifact rather than a live checkout. Cost/tokens are synthesised.
+- **Always real:** contracts and schema validation, state transitions, the durable store,
+  trace gates, scoring, evidence records, metrics, curation, dashboard, and CLI behavior.
+- **Offline demo:** `npm run demo` uses deterministic agent simulation; its described artifacts,
+  cost, and token values are synthetic.
+- **Grounded live path:** the watcher uses real git worktrees, provider CLIs, grader commands,
+  isolated reviewer checkouts, `gh`, and the existing PR gate. Repository tests fake external
+  systems at their boundaries; they are not reported as proof of a real remote run.
 
 ## Develop
 

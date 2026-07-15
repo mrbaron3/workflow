@@ -10,19 +10,13 @@
 import { EvalTask, type VerificationMethod } from '../domain/schema.js';
 import { buildTaskId } from '../domain/eval-task.js';
 import { Store, nowISO } from '../store/store.js';
-import type { HarnessConfig, TargetRepoConfig } from '../config.js';
+import { configuredGraderCommand, type HarnessConfig, type TargetRepoConfig } from '../config.js';
 
 export interface CurateResult {
   created: EvalTask[];
   /** Legacy tasks that gained grader commands via the backfill pass (AC-REGBF-001). */
   enriched: EvalTask[];
 }
-
-/** config.target.graders key per verification method (the config key for unit_test is plural). */
-const GRADER_KEY_BY_METHOD: Partial<Record<VerificationMethod, keyof NonNullable<TargetRepoConfig['graders']>>> = {
-  unit_test: 'unit_tests',
-  typecheck: 'typecheck',
-};
 
 /**
  * The grader command config provides for this AC's verification method, as the task's own
@@ -31,8 +25,7 @@ const GRADER_KEY_BY_METHOD: Partial<Record<VerificationMethod, keyof NonNullable
  * legacy shape): commands are recorded, never fabricated.
  */
 function captureGraderCommands(method: VerificationMethod, target?: TargetRepoConfig): Record<string, string> | null {
-  const key = GRADER_KEY_BY_METHOD[method];
-  const command = key ? target?.graders?.[key] : undefined;
+  const command = configuredGraderCommand(target, method);
   return command ? { [method]: command } : null;
 }
 

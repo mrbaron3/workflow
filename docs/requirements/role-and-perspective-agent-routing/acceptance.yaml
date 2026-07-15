@@ -1,0 +1,43 @@
+# Role and perspective agent routing — 受け入れ検証
+
+dependsOn:
+  - DOM-agent-runtime-003
+  - DOM-agent-runtime-006
+  - DOM-agent-runtime-009
+  - ARCH-agent-runtime-004
+  - DATA-agent-runtime-006
+  - ARCH-execution-002
+  - ARCH-execution-006
+
+verifications:
+  AC-AGROUTE-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "routes無しconfigがgenerator=config.generator/models.generator、reviewer=claude/models.reviewerになる"
+  AC-AGROUTE-002:
+    severity: major
+    method: unit_test
+    expected:
+      - "generator/reviewer/planning routeが独立に指定provider/modelへ解決される"
+  AC-AGROUTE-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "security等のPerspective routeだけがreviewer defaultを上書きし、未指定lensはdefaultを使う"
+  AC-AGROUTE-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "provider欠落・未知provider・非文字列modelはfallbackせずroute errorになる"
+  AC-AGROUTE-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "assign/adopt/isAiManagedが同じresolved generator providerを使用する"
+      - "live session resultとPR/EvalRun attributionがresolved providerを使用する"
+  AC-AGROUTE-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同じreview batchのjobsがPerspective別Claude/Codex routeとmodelを持つprovenanceへ射影される"

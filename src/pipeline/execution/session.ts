@@ -2,7 +2,7 @@
  * One generator role-session (ARCH-execution-003 + 004 + 005).
  *
  * Ties the pieces the smoke test validated into a single call: fresh worktree → launch an
- * interactive Claude session in tmux → drive it with a one-line kickoff that points at a
+ * provider-routed interactive session in tmux → drive it with a one-line kickoff that points at a
  * prompt FILE (send-keys can't carry multi-line text) → wait for the sentinel → capture
  * pane for evidence → tear the session down. Returns what the checkout looks like; grading
  * is a separate, deterministic step.
@@ -11,12 +11,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as YAML from 'yaml';
-import type { Issue, IssueContract } from '../../domain/schema.js';
+import type { AgentProvider, Issue, IssueContract } from '../../domain/schema.js';
 import type { HarnessConfig, TargetRepoConfig } from '../../config.js';
 import type { RepairBrief } from '../../domain/artifact.js';
 import { loadRolePrompt } from '../../agents/prompts.js';
 import { createWorktree, worktreeExists, changedFiles, commitBuild, buildChangedFiles } from './worktree.js';
 import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
+import { providerReadyPattern } from '../../agents/interactive-backend.js';
+import { resolveAgentRoute } from '../../agents/routing.js';
 import { contextFor, renderScopedContext } from './scoped-context.js';
 
 export interface GeneratorSessionInput {
@@ -29,6 +31,9 @@ export interface GeneratorSessionInput {
 }
 
 export interface SessionResult {
+  /** Provider that actually executed the session (not the configured routing intent). */
+  provider: AgentProvider;
+  model: string | null;
   worktree: string;
   branch: string;
   session: string;
@@ -43,10 +48,11 @@ export interface SessionResult {
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /** Poll the pane until the interactive session is ready to accept input (footer marker). */
-async function waitForReady(session: string, timeoutMs: number): Promise<void> {
+async function waitForReady(session: string, provider: AgentProvider, timeoutMs: number): Promise<void> {
+  const ready = providerReadyPattern(provider);
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (/accept edits on|❯/.test(capturePane(session))) return;
+    if (ready.test(capturePane(session))) return;
     await sleep(500);
   }
 }
@@ -84,6 +90,8 @@ export async function runGeneratorSession(
   const key = sampleKey(input.issue.id, input.sampleIndex);
   const branch = `agent/${key}`;
   const session = `ao-${key}`;
+  const route = resolveAgentRoute(config, 'generator');
+  const provider = route.provider;
   const wt = path.join(harnessRoot, '.harness', 'worktrees', key);
 
   // fresh worktree on the first attempt; reuse it for repair attempts so edits accumulate
@@ -109,8 +117,8 @@ export async function runGeneratorSession(
   // harness is still the authoritative grader — self-checks don't count as evidence.
   // model override (config.models.generator): weaken the coder to exercise the repair loop, or
   // leave undefined to inherit the user's default model.
-  launchSession({ session, cwd: wt, allowedTools: ['Read', 'Edit', 'Write', 'Bash'], permissionMode: 'acceptEdits', model: config.models?.generator });
-  await waitForReady(session, 20_000);
+  launchSession({ provider, purpose: 'generator', session, cwd: wt, model: route.model ?? undefined });
+  await waitForReady(session, provider, 20_000);
   const submitted = await sendPrompt(
     session,
     'Read .agentops/PROMPT.md and do exactly what it says, editing files directly. ' +
@@ -137,7 +145,7 @@ export async function runGeneratorSession(
   // The build's cumulative change set comes from the commit once there is one; fall back to the
   // working tree for a stuck/empty session (nothing committed).
   const changed = committed ? buildChangedFiles(wt) : changedFiles(wt);
-  return { worktree: wt, branch, session, outcome, changed, paneTail, prompt };
+  return { provider, model: route.model, worktree: wt, branch, session, outcome, changed, paneTail, prompt };
 }
 
 /**
@@ -163,6 +171,10 @@ export function buildGeneratorPrompt(input: GeneratorSessionInput, target: Targe
     `\n## Issue\n${input.issue.id} — ${input.issue.title} (area: ${input.issue.area})`,
     `\n## Issue Contract\n\`\`\`yaml\n${contractYaml}\`\`\``,
   ];
+
+  if (input.issue.uiDesign) {
+    sections.push(`\n## UI Design Contract\n\`\`\`yaml\n${YAML.stringify(input.issue.uiDesign)}\`\`\``);
+  }
 
   // scoped design context (ARCH-execution-007): the system elements this issue depends on, when resolved
   if (scopedContext) sections.push(`\n${scopedContext}`);

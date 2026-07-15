@@ -22,3 +22,8 @@
 | LANG-execution-012 | Scoping Guard / ai-managed | 実装層が触ってよい issue の **opt-in 指定**。`assignedAgent` が担当 AI に設定された issue のみ。未指定／他人が作った issue は決して触らない（デフォルト非処理）。 |
 | LANG-execution-013 | Execution Backend | セッションを実行する基盤の pluggable な差し替え（自前 tmux／将来 Hermes）。evaluation の AgentRunner seam（`ARCH-evaluation-002`）の裏に位置する。 |
 | LANG-execution-014 | Liveness / stuck | sentinel を出さないままセッションが進捗を止めた状態（入力待ち・質問・ハング）。正常完了（sentinel）に対する**異常停止**。auto-mode 起動でも起こり得るため、検知して顕在化する対象。 |
+| LANG-execution-015 | Reviewer Workspace | build commit を読むために Perspective ごとに作る、破棄可能な detached checkout。評価対象の generator worktree とは別の物理 directory であり、reviewer が test を実行しても build commit や generator worktree は変わらない。 |
+| LANG-execution-016 | Review Evidence Sidecar | Reviewer Workspace の外に置く Perspective 専用の prompt / findings directory。review evidence の書込みを評価対象 checkout の変更と混同せず、並行 Perspective 間でも共有しない。 |
+| LANG-execution-017 | Environment Artifact Mutation | reviewer の依存確認・test 実行が disposable checkout に残した lockfile 等の、source/config 変更ではない明示分類済み副作用。観測・帰属してから checkout と共に破棄し、健全な findings を無効化しない。 |
+| LANG-execution-018 | Verification Method Command | Acceptance Criterionの`verification.method`へtarget固有の実行commandを対応付ける設定。`typecheck`/`unit_tests`は互換aliasで、正規形はmethod-keyed registry。別methodへのfallbackをしない。 |
+| LANG-execution-019 | Criterion Verification Evidence | 1つのACについて、宣言method・実command・pass/fail・境界を切った出力を保持するgrounded証拠。command未設定も`command:null`の失敗証拠として残る。 |

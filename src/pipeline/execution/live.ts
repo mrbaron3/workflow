@@ -17,7 +17,9 @@ import path from 'node:path';
 import type { Issue } from '../../domain/schema.js';
 import { resolveConcurrentIssueCap, type HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
-import { PR, PromptRecord, TurnRecord } from '../../domain/schema.js';
+import { PR, TurnRecord } from '../../domain/schema.js';
+import { recordAgentInvocation } from '../../agents/invocation.js';
+import { resolveAgentRoute, resolvedGeneratorProvider } from '../../agents/routing.js';
 import { pollable, blockedByDependencies, formatBlockedLine } from './guard.js';
 import { mapPool } from './pool.js';
 import { runGeneratorSession, sampleKey } from './session.js';
@@ -77,11 +79,12 @@ async function runLiveSample(
   const issueKey = sampleKey(issue.id, sampleIndex);
   const maxAttempts = config.maxRepairs + 1;
   const manageIssueStatus = opts.manageIssueStatus;
+  const generatorRoute = resolveAgentRoute(config, 'generator');
 
   const pr = store.addPR(
     PR.parse({
       id: store.nextId('PR'), issueId: issue.id, branch: `agent/${issueKey}`,
-      baseBranch: config.baseBranch, generator: config.generator, attempts: 0, status: 'open',
+      baseBranch: config.baseBranch, generator: generatorRoute.provider, attempts: 0, status: 'open',
       createdAt: nowISO(), updatedAt: nowISO(),
     }),
   );
@@ -91,15 +94,13 @@ async function runLiveSample(
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
     log(`▶ ${issue.id} s${sampleIndex}: generator session (attempt ${attempt}/${maxAttempts})`);
     const sess = await runGeneratorSession(config, { issue, contract, sampleIndex, attempt, repairBrief }, harnessRoot, log);
-    // Persist the exact prompt for audit (DATA-execution-006) BEFORE the stuck check, so a stuck
-    // attempt — which produces no EvalRun — still leaves the issued text (incl. repair brief) durable.
-    store.addPromptRecord(
-      PromptRecord.parse({
-        id: store.nextId('PROMPT'), issueId: issue.id, prId: pr.id, sampleIndex, attempt,
-        role: 'generator', agent: config.generator, model: config.models?.generator ?? null,
-        outcome: sess.outcome, prompt: sess.prompt, createdAt: nowISO(),
-      }),
-    );
+    // Persist the actual runtime provider separately from its model/routing intent. This replaces
+    // new PromptRecord writes; legacy promptRecords remain readable but are never dual-written.
+    recordAgentInvocation(store, {
+      subjectId: issue.id, issueId: issue.id, prId: pr.id, sampleIndex, attempt,
+      role: 'generator', perspective: null, provider: sess.provider,
+      model: sess.model, outcome: sess.outcome, prompt: sess.prompt,
+    });
     if (sess.outcome !== 'completed') {
       log(`  ⚠ ${issue.id} s${sampleIndex}: generator ${sess.outcome} — escalating, session kept alive`);
       return { stuck: true };
@@ -120,14 +121,35 @@ async function runLiveSample(
     const priorFindings = priorFindingsByLens(store, pr.id, attempt);
     const panelSessions = await runPerspectiveSessions(
       config,
-      { worktree: sess.worktree, contract, perspectives, issueKey, repo: path.resolve(harnessRoot, target.repo), buildRef: sess.branch, priorFindings },
+      {
+        worktree: sess.worktree,
+        contract,
+        perspectives,
+        issueKey,
+        repo: path.resolve(harnessRoot, target.repo),
+        buildRef: sess.branch,
+        priorFindings,
+        uiDesign: issue.uiDesign,
+      },
       log,
+    );
+    const invocationKeys = Object.fromEntries(
+      panelSessions.invocations.map((invocation) => {
+        const record = recordAgentInvocation(store, {
+          subjectId: issue.id, issueId: issue.id, prId: pr.id, sampleIndex, attempt,
+          ...invocation,
+        });
+        return [invocation.perspective, record.invocationKey];
+      }),
     );
 
     // 4. panel grades from the findings.json files (missing/broken -> escalate); functionality is deterministic
     const panel = runPanel(
       store, config,
-      { issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex, attempt, agent: config.generator, featureArea: issue.area },
+      {
+        issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex, attempt,
+        agent: sess.provider, invocationKeys, featureArea: issue.area,
+      },
       { perspectives, grader: sessionBackedGrader(panelSessions.evalRoot) },
     );
     return { panel };
@@ -200,7 +222,7 @@ export async function runLoopLive(
 ): Promise<DriveResult[]> {
   const queue = pollable(store, config);
   const cap = resolveConcurrentIssueCap(config);
-  log(`queue: ${queue.length} ai-managed issue(s) [generator=${config.generator}, cap=${cap}]`);
+  log(`queue: ${queue.length} ai-managed issue(s) [generator=${resolvedGeneratorProvider(config)}, cap=${cap}]`);
   // Dependency blocks are surfaced every turn (AC-DAG-001): an issue held back by the
   // guard names what it waits on in the log — it never just vanishes from the queue.
   // Under parallelism this stays an invariant (AC-PAR-002): the in-flight set is drawn

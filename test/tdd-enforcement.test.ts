@@ -69,6 +69,31 @@ describe('generator prompt: TDD is mandated, not optional', () => {
   it('forbids deleting or weakening existing tests to get green', () => {
     expect(prompt).toMatch(/do not (delete|weaken)/i);
   });
+
+  it('includes an accepted UI design contract only when the Issue carries one', () => {
+    expect(prompt).not.toContain('## UI Design Contract');
+    const uiIssue = Issue.parse({
+      ...input.issue,
+      area: 'frontend',
+      uiDesign: {
+        candidateKey: 'ui', principles: ['Reuse existing actions'],
+        tokens: [{
+          id: 'space-action', category: 'spacing', value: 'var(--space-3)',
+          rationale: 'Consistent spacing', sourceCriterionIds: ['AC-2'],
+        }],
+        components: [{
+          id: 'export-action', name: 'Export action', purpose: 'Starts export',
+          states: ['idle', 'loading'], interactions: ['activate'], accessibility: ['announces loading'],
+          sourceCriterionIds: ['AC-2'],
+        }],
+        criterionTraces: [{ criterionId: 'AC-2', designElementIds: ['space-action', 'export-action'] }],
+      },
+    });
+    const uiPrompt = buildGeneratorPrompt({ ...input, issue: uiIssue }, target);
+    expect(uiPrompt).toContain('## UI Design Contract');
+    expect(uiPrompt).toContain('space-action');
+    expect(uiPrompt).toContain('export-action');
+  });
 });
 
 // --- 2. the independent testQuality lens carries a validity rubric ---------------------

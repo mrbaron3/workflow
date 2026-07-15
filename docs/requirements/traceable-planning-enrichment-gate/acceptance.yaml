@@ -1,0 +1,48 @@
+# Traceable planning enrichment gate — 受け入れ検証
+
+dependsOn:
+  - DOM-intake-009
+  - DOM-intake-011
+  - DOM-intake-012
+  - DOM-intake-013
+  - ARCH-intake-006
+  - ARCH-intake-007
+  - ARCH-intake-008
+  - DATA-intake-005
+  - DATA-intake-006
+  - DATA-intake-007
+  - ARCH-agent-runtime-001
+  - ARCH-execution-002
+  - ARCH-execution-007
+
+verifications:
+  AC-ENRICH-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "全Candidateがvalidな場合だけ1..N contract-drafted Issueを生成しintake.status=readyになる"
+  AC-ENRICH-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "source trace textはimmutable snapshot title/body包含で検証され、非実在textは拒否される"
+  AC-ENRICH-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "実在system idはIssue.dependsOnSystemへdedup投影され、missing idは拒否される"
+  AC-ENRICH-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "ambiguity・trace coverage不一致・dangling source/systemのいずれもIssue=0、needs-human-review、理由保存になる"
+  AC-ENRICH-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "enrichmentがissue-planner invocationKeyとintakeKeyを持ち、IssueがintakeKey/candidateKeyを持つ"
+  AC-ENRICH-006:
+    severity: major
+    method: unit_test
+    expected:
+      - "再適用でIssue/enrichment/counterが増えず初回結果を返す"

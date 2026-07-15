@@ -100,6 +100,13 @@ function renderHtml(store: Store, m: Metrics): string {
     )
     .join('\n');
 
+  const invocationProviderRows = m.byInvocationProvider
+    .map(
+      (provider) => `<tr><td>${provider.provider}</td><td>${provider.total}</td><td>${provider.completed}</td>
+      <td>${provider.stuck}</td><td>${provider.timeout}</td><td>${provider.failed}</td></tr>`,
+    )
+    .join('\n');
+
   const recent = [...store.db.evalRuns]
     .slice(-12)
     .reverse()
@@ -183,6 +190,9 @@ function renderHtml(store: Store, m: Metrics): string {
       <h2>By agent</h2>
       <table><thead><tr><th>Agent</th><th>Samples</th><th>pass@1</th><th>pass (eventual)</th><th>avg attempts</th><th>cost</th></tr></thead>
       <tbody>${agentRows || emptyRow(6)}</tbody></table>
+      <h2>Invocations by actual provider</h2>
+      <table><thead><tr><th>Provider</th><th>Total</th><th>Completed</th><th>Stuck</th><th>Timeout</th><th>Failed</th></tr></thead>
+      <tbody>${invocationProviderRows || emptyRow(6)}</tbody></table>
     </div>
     <div>
       <h2>Recent eval runs</h2>
@@ -302,6 +312,15 @@ export function statusReport(store: Store, m: Metrics): string {
     L.push('  by agent:');
     for (const a of m.byAgent) {
       L.push(`    ${a.agent.padEnd(8)} samples=${a.samples} pass@1=${pct1(a.passAt1)} eventual=${pct1(a.passEventual)} cost=$${a.costUsd.toFixed(2)}`);
+    }
+  }
+  if (m.byInvocationProvider.length) {
+    L.push('');
+    L.push('  invocations by actual provider:');
+    for (const provider of m.byInvocationProvider) {
+      L.push(
+        `    ${provider.provider.padEnd(8)} total=${provider.total} completed=${provider.completed} stuck=${provider.stuck} timeout=${provider.timeout} failed=${provider.failed}`,
+      );
     }
   }
   return L.join('\n');

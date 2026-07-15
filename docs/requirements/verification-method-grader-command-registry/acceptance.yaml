@@ -1,0 +1,43 @@
+# Verification-method grader command registry — 受け入れ検証
+
+dependsOn:
+  - LANG-execution-018
+  - LANG-execution-019
+  - DOM-execution-011
+  - DOM-execution-012
+  - ARCH-execution-018
+  - ARCH-execution-019
+  - DATA-execution-009
+
+verifications:
+  AC-GRDCMD-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "canonical commands[method]がlegacy aliasより優先され、異methodへのfallbackがない"
+  AC-GRDCMD-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同methodの複数ACがAGENTOPS_AC_ID/ISSUE_ID/method/expectedを個別に受け、異なる結果を持てる"
+  AC-GRDCMD-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "unit_testを含む自動methodのcommand未設定と非zero exitがunsatisfiedになり暗黙passしない"
+  AC-GRDCMD-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "BuildArtifact.verificationEvidenceがACごとのmethod/command/pass/outputを保持する"
+  AC-GRDCMD-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "Curator/backfillが非unit methodの設定commandをEvalTaskへcaptureする"
+  AC-GRDCMD-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "Regression executorがcaptured非unit commandをAC環境付きで実行しRegressionRunへ記録する"
+

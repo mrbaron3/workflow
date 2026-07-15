@@ -8,7 +8,16 @@
  * it stable even as backends change.
  */
 
-import type { Finding, IssueContract, Issue } from './schema.js';
+import type { Finding, IssueContract, Issue, VerificationMethod } from './schema.js';
+
+export interface VerificationEvidence {
+  method: VerificationMethod;
+  /** Exact configured command; null means no executor was configured and the AC failed closed. */
+  command: string | null;
+  passed: boolean;
+  /** Bounded command/report output retained with the build evidence. */
+  output: string;
+}
 
 export interface BuildArtifact {
   branch: string;
@@ -16,6 +25,8 @@ export interface BuildArtifact {
   filesChanged: string[];
   /** Acceptance-criterion id -> was it satisfied by this build? */
   satisfied: Record<string, boolean>;
+  /** Grounded per-criterion execution evidence. Optional for legacy/mock artifacts. */
+  verificationEvidence?: Record<string, VerificationEvidence>;
   // hard-gate facts
   buildPasses: boolean;
   typecheckPasses: boolean;
