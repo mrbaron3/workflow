@@ -1,5 +1,5 @@
 /** FEAT-018 — the compositional vertical slice, with external/provider/drive seams faked. */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,7 +7,11 @@ import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import { GithubIssueSnapshot, PR } from '../src/domain/schema.js';
 import { Store, nowISO } from '../src/store/store.js';
 import type { GithubIssueRunner } from '../src/intake/github-issues.js';
-import { runGithubDevelopmentTurn } from '../src/intake/development-turn.js';
+import {
+  DEFAULT_GITHUB_WATCH_INTERVAL_MS,
+  runGithubDevelopmentTurn,
+  watchGithubDevelopment,
+} from '../src/intake/development-turn.js';
 import { pollable } from '../src/pipeline/execution/guard.js';
 
 const roots: string[] = [];
@@ -80,6 +84,107 @@ const validUiOutput = {
 };
 
 describe('GitHub development turn', () => {
+  it('AC-GWATCH-001 uses the configured recurring poll interval', async () => {
+    const env = setup();
+    env.config.intake!.pollIntervalMs = 12_345;
+    const events: string[] = [];
+    let sleepCount = 0;
+    const stopped = new Error('stop watcher');
+
+    await expect(watchGithubDevelopment(env.store, env.config, {
+      issueRunner: { listReadyIssues: () => [], claimIssue: () => {} },
+      driveQueue: async () => { events.push('turn'); return []; },
+    }, process.cwd(), () => {}, {
+      sleep: async (ms) => {
+        events.push(`sleep:${ms}`);
+        sleepCount += 1;
+        if (sleepCount === 2) throw stopped;
+      },
+    })).rejects.toBe(stopped);
+
+    expect(events).toEqual(['turn', 'sleep:12345', 'turn', 'sleep:12345']);
+  });
+
+  it('AC-GWATCH-002 gives the explicit watcher interval precedence over config', async () => {
+    const env = setup();
+    env.config.intake!.pollIntervalMs = 12_345;
+    const sleeps: number[] = [];
+    const stopped = new Error('stop watcher');
+
+    await expect(watchGithubDevelopment(env.store, env.config, {
+      issueRunner: { listReadyIssues: () => [], claimIssue: () => {} },
+      driveQueue: async () => [],
+    }, process.cwd(), () => {}, {
+      intervalMs: 678,
+      sleep: async (ms) => { sleeps.push(ms); throw stopped; },
+    })).rejects.toBe(stopped);
+
+    expect(sleeps).toEqual([678]);
+  });
+
+  it('AC-GWATCH-003 falls back to the pinned 30000 ms interval for absent or invalid config', async () => {
+    expect(DEFAULT_GITHUB_WATCH_INTERVAL_MS).toBe(30_000);
+    const values = [undefined, Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 1.5];
+
+    for (const value of values) {
+      const env = setup();
+      env.config.intake!.pollIntervalMs = value;
+      const sleeps: number[] = [];
+      const stopped = new Error('stop watcher');
+      await expect(watchGithubDevelopment(env.store, env.config, {
+        issueRunner: { listReadyIssues: () => [], claimIssue: () => {} },
+        driveQueue: async () => [],
+      }, process.cwd(), () => {}, {
+        sleep: async (ms) => { sleeps.push(ms); throw stopped; },
+      })).rejects.toBe(stopped);
+      expect(sleeps, `configured value ${String(value)}`).toEqual([30_000]);
+    }
+  });
+
+  it('AC-GWATCH-004 runs one shot without invoking watcher sleep', async () => {
+    const env = setup();
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    try {
+      const result = await runGithubDevelopmentTurn(env.store, env.config, {
+        issueRunner: { listReadyIssues: () => [], claimIssue: () => {} },
+        driveQueue: async () => [],
+      });
+
+      expect(result).toEqual({ intake: [], enrichmentIds: [], driveResults: [] });
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
+
+  it('AC-GWATCH-005 exposes optional and numeric pollIntervalMs through default and configured intervals', async () => {
+    const observed: number[] = [];
+
+    for (const pollIntervalMs of [undefined, 2_468] as const) {
+      const env = setup();
+      if (pollIntervalMs === undefined) delete env.config.intake!.pollIntervalMs;
+      else env.config.intake!.pollIntervalMs = pollIntervalMs;
+      const stopped = new Error('stop watcher');
+
+      await expect(watchGithubDevelopment(env.store, env.config, {
+        issueRunner: { listReadyIssues: () => [], claimIssue: () => {} },
+        driveQueue: async () => [],
+      }, process.cwd(), () => {}, {
+        sleep: async (ms) => { observed.push(ms); throw stopped; },
+      })).rejects.toBe(stopped);
+    }
+
+    expect(observed).toEqual([DEFAULT_GITHUB_WATCH_INTERVAL_MS, 2_468]);
+  });
+
+  it('AC-GWATCH-006 documents pollIntervalMs and its named default fallback', () => {
+    const readme = fs.readFileSync(path.join(process.cwd(), 'README.md'), 'utf8');
+
+    expect(readme).toContain('`intake.pollIntervalMs`');
+    expect(readme).toContain('`DEFAULT_GITHUB_WATCH_INTERVAL_MS`');
+    expect(readme).toMatch(/omitted or invalid[\s\S]*`DEFAULT_GITHUB_WATCH_INTERVAL_MS`/);
+  });
+
   it('AC-GHSLICE-001/005 composes claim → planning provenance → queue → existing drive/PR projection', async () => {
     const env = setup();
     const events: string[] = [];

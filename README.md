@@ -217,7 +217,8 @@ inherits the corresponding CLI default.
     "backend": "github",
     "repository": "owner/target-app",
     "readyLabel": "ready",
-    "claimedLabel": "agent-claimed"
+    "claimedLabel": "agent-claimed",
+    "pollIntervalMs": 30000
   },
   "panel": { "maxConcurrent": 4 }
 }
@@ -232,6 +233,10 @@ npm run harness -- poll-intake    # optional: inspect/claim ready input only
 npm run harness -- github-turn    # one intake/planning/development turn
 npm run harness -- watch-github   # repeat turns; Ctrl-C stops the watcher
 ```
+
+`intake.pollIntervalMs` is optional and controls the delay between recurring `watch-github`
+turns in milliseconds. It does not affect the one-shot `github-turn` command; omitted or invalid
+values fall back to `DEFAULT_GITHUB_WATCH_INTERVAL_MS` (30000 ms).
 
 Claiming removes `ready` and adds `agent-claimed`. The first source snapshot and every planning /
 UI-design / generation / perspective invocation retain stable provenance in `.harness/db.json`; restarts reuse
