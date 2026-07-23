@@ -13,6 +13,7 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { z } from 'zod';
@@ -524,6 +525,7 @@ export async function runPerspectiveSessions(
 export const REVIEW_LIVENESS = { idleMs: 90_000, activeCapMs: 1000 * 60 * 60 * 2, pollMs: 3000 } as const;
 
 export const MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES = 1_500_000;
+const UNTRUSTED_REVIEW_MATERIAL_BUFFER_OVERHEAD_BYTES = 64 * 1024;
 
 /**
  * Freeze a repository-owned base...head diff before any model sees it. The
@@ -541,7 +543,9 @@ export function staticUntrustedReviewMaterial(
     {
       cwd: repo,
       encoding: 'utf8',
-      maxBuffer: MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES + 1,
+      maxBuffer:
+        MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES
+        + UNTRUSTED_REVIEW_MATERIAL_BUFFER_OVERHEAD_BYTES,
     },
   );
   if (result.error) throw result.error;
@@ -608,6 +612,114 @@ export interface RestrictedReviewLaunch {
   cwd: string;
   prompt: string;
   writesResult: boolean;
+}
+
+export interface RestrictedReviewExecution {
+  executable: string;
+  env: NodeJS.ProcessEnv;
+  home: string;
+  cleanup: () => void;
+}
+
+export interface RestrictedReviewExecutionOptions {
+  operatorHome?: string;
+  parentEnv?: NodeJS.ProcessEnv;
+}
+
+const RESTRICTED_REVIEW_CREDENTIALS: Partial<Record<AgentProvider, {
+  source: string[];
+  destination: string[];
+}>> = {
+  codex: {
+    source: ['.codex', 'auth.json'],
+    destination: ['.codex', 'auth.json'],
+  },
+  claude: {
+    source: ['.claude', '.credentials.json'],
+    destination: ['.claude', '.credentials.json'],
+  },
+};
+
+function resolveRestrictedExecutable(
+  executable: string,
+  parentEnv: NodeJS.ProcessEnv,
+): string {
+  if (path.isAbsolute(executable)) {
+    fs.accessSync(executable, fs.constants.X_OK);
+    return executable;
+  }
+  for (const entry of (parentEnv.PATH ?? '').split(path.delimiter)) {
+    if (!entry) continue;
+    const candidate = path.join(entry, executable);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // Continue through the operator's PATH only while resolving the trusted CLI.
+    }
+  }
+  throw new Error(`restricted reviewer executable not found: ${executable}`);
+}
+
+/**
+ * Give the trusted provider CLI only its own copied credential and a private HOME.
+ * Attacker-controlled review text therefore cannot activate operator hooks/config or
+ * inherit GitHub, SSH, webhook, cloud, or unrelated process credentials.
+ */
+export function prepareRestrictedReviewExecution(
+  provider: AgentProvider,
+  executable: string,
+  options: RestrictedReviewExecutionOptions = {},
+): RestrictedReviewExecution {
+  const parentEnv = options.parentEnv ?? process.env;
+  const operatorHome = options.operatorHome ?? os.homedir();
+  const home = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-restricted-review-home-')),
+  );
+  const cleanup = (): void => fs.rmSync(home, { recursive: true, force: true });
+  try {
+    fs.chmodSync(home, 0o700);
+    const tmp = path.join(home, 'tmp');
+    fs.mkdirSync(tmp, { mode: 0o700 });
+
+    const credential = RESTRICTED_REVIEW_CREDENTIALS[provider];
+    if (!credential) {
+      throw new Error(`unsupported restricted reviewer provider: ${provider}`);
+    }
+    const source = path.join(operatorHome, ...credential.source);
+    if (!fs.existsSync(source)) {
+      throw new Error(`restricted ${provider} reviewer credential is unavailable`);
+    }
+    const destination = path.join(home, ...credential.destination);
+    fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
+    fs.copyFileSync(source, destination, fs.constants.COPYFILE_EXCL);
+    fs.chmodSync(destination, 0o600);
+
+    const resolvedExecutable = resolveRestrictedExecutable(executable, parentEnv);
+    const safePath = [
+      path.dirname(process.execPath),
+      path.dirname(resolvedExecutable),
+      '/usr/bin',
+      '/bin',
+      '/usr/sbin',
+      '/sbin',
+    ].filter((entry, index, entries) => entries.indexOf(entry) === index)
+      .join(path.delimiter);
+    return {
+      executable: resolvedExecutable,
+      home,
+      env: {
+        HOME: home,
+        TMPDIR: tmp,
+        PATH: safePath,
+        LANG: parentEnv.LANG ?? 'C',
+      },
+      cleanup,
+    };
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }
 
 /** Replace the interactive findings-file instruction for a no-tool review process. */
@@ -702,10 +814,11 @@ async function runRestrictedReviewSession(
   const session = `ao-eval-${issueKey}-${job.key}`;
   log(`  ▸ ${session}: restricted no-tool review`);
   const launch = restrictedReviewLaunch(job, route);
+  const execution = prepareRestrictedReviewExecution(route.provider, launch.executable);
   return new Promise((resolve) => {
-    const child = spawn(launch.executable, launch.args, {
+    const child = spawn(execution.executable, launch.args, {
       cwd: launch.cwd,
-      env: process.env,
+      env: execution.env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const stdout: Buffer[] = [];
@@ -716,6 +829,7 @@ async function runRestrictedReviewSession(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      execution.cleanup();
       resolve(status);
     };
     const timer = setTimeout(() => {

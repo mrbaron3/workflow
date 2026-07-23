@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { Store } from '../src/store/store.js';
 import { Issue, PR, type IssueContract } from '../src/domain/schema.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
@@ -21,6 +21,8 @@ import {
   perspectivePrompt,
   restrictedPerspectivePrompt,
   findingsPath,
+  MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
+  prepareRestrictedReviewExecution,
   restrictedReviewLaunch,
   staticUntrustedReviewMaterial,
   type ReviewJob,
@@ -223,6 +225,60 @@ describe('restricted repository-PR reviewers', () => {
     expect(launch.writesResult).toBe(false);
   });
 
+  it.each(['codex', 'claude'] as const)(
+    'PR-INTENT gives the actual %s reviewer process only a private auth HOME and allowlisted env',
+    (provider) => {
+      const operatorHome = tmpDir(`restricted-${provider}-operator`);
+      const credential = provider === 'codex'
+        ? path.join(operatorHome, '.codex', 'auth.json')
+        : path.join(operatorHome, '.claude', '.credentials.json');
+      fs.mkdirSync(path.dirname(credential), { recursive: true });
+      fs.writeFileSync(credential, '{"credential":"provider-only"}\n', { mode: 0o600 });
+      const execution = prepareRestrictedReviewExecution(provider, process.execPath, {
+        operatorHome,
+        parentEnv: {
+          PATH: process.env.PATH,
+          LANG: 'C',
+          GITHUB_TOKEN: 'github-secret',
+          SSH_AUTH_SOCK: '/operator/agent.sock',
+          AGENTOPS_GITHUB_WEBHOOK_SECRET: 'webhook-secret',
+          AWS_SECRET_ACCESS_KEY: 'cloud-secret',
+        },
+      });
+      try {
+        const child = spawnSync(
+          execution.executable,
+          ['-e', 'process.stdout.write(JSON.stringify(process.env))'],
+          { encoding: 'utf8', env: execution.env },
+        );
+        expect(child.status, child.stderr).toBe(0);
+        const actual = JSON.parse(child.stdout) as Record<string, string>;
+        expect(Object.keys(execution.env).sort()).toEqual(['HOME', 'LANG', 'PATH', 'TMPDIR']);
+        expect(Object.keys(actual).sort()).toEqual([
+          'HOME',
+          'LANG',
+          'PATH',
+          'TMPDIR',
+          // macOS injects this locale/encoding hint after spawn even for env -i.
+          '__CF_USER_TEXT_ENCODING',
+        ]);
+        expect(actual.HOME).toBe(execution.home);
+        expect(actual.HOME).not.toContain(operatorHome);
+        expect(actual.PATH).not.toContain(operatorHome);
+        expect(JSON.stringify(actual)).not.toMatch(
+          /github-secret|agent\.sock|webhook-secret|cloud-secret/,
+        );
+        const projectedCredential = provider === 'codex'
+          ? path.join(execution.home, '.codex', 'auth.json')
+          : path.join(execution.home, '.claude', '.credentials.json');
+        expect(fs.readFileSync(projectedCredential, 'utf8')).toContain('provider-only');
+      } finally {
+        execution.cleanup();
+      }
+      expect(fs.existsSync(execution.home)).toBe(false);
+    },
+  );
+
   it('PR-INTENT materializes malicious source as inert review data without executing it', () => {
     const repo = tmpDir('restricted-malicious-diff');
     const marker = path.join(repo, 'side-effect');
@@ -250,6 +306,30 @@ describe('restricted repository-PR reviewers', () => {
     expect(material).toContain('--- BEGIN UNTRUSTED DIFF ---');
     expect(material).toContain(`write ${marker}`);
     expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it('PR-INTENT rejects an immutable diff above the pinned review-material cap', () => {
+    expect(MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES).toBe(1_500_000);
+    const repo = tmpDir('restricted-oversized-diff');
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo });
+    execFileSync('git', [
+      '-c', 'user.name=test',
+      '-c', 'user.email=test@example.com',
+      'commit', '--allow-empty', '-m', 'base',
+    ], { cwd: repo });
+    fs.writeFileSync(
+      path.join(repo, 'oversized.txt'),
+      'x'.repeat(MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES + 1),
+    );
+    execFileSync('git', ['add', 'oversized.txt'], { cwd: repo });
+    execFileSync('git', [
+      '-c', 'user.name=test',
+      '-c', 'user.email=test@example.com',
+      'commit', '-m', 'oversized diff',
+    ], { cwd: repo });
+
+    expect(() => staticUntrustedReviewMaterial(repo, 'HEAD^', 'HEAD'))
+      .toThrow(`untrusted review diff exceeds ${MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES} bytes`);
   });
 });
 
