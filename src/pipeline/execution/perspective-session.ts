@@ -79,7 +79,7 @@ const RawFinding = z.object({
   requiredFix: z.array(z.string()).default([]),
   // Re-review attestation (ISSUE-0009): strictly 'persisted' | 'new' or absent. An invalid
   // value fails the whole parse (→ escalate) — never coerced, never defaulted.
-  lineage: FindingLineage.optional(),
+  lineage: FindingLineage.nullable().optional(),
 });
 export const PerspectiveFindingsInput = z.object({
   verdict: Verdict,
@@ -537,7 +537,7 @@ export function staticUntrustedReviewMaterial(
 const RESTRICTED_FINDINGS_JSON_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['verdict', 'findings'],
+  required: ['verdict', 'score', 'findings'],
   properties: {
     verdict: { type: 'string', enum: ['approve', 'request_changes'] },
     score: { type: 'number', minimum: 0, maximum: 1 },
@@ -546,14 +546,26 @@ const RESTRICTED_FINDINGS_JSON_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['criterionId', 'severity', 'expected', 'observed', 'requiredFix'],
+        required: [
+          'criterionId',
+          'severity',
+          'expected',
+          'observed',
+          'requiredFix',
+          'lineage',
+        ],
         properties: {
           criterionId: { type: 'string', minLength: 1 },
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
           expected: { type: 'string' },
           observed: { type: 'string' },
           requiredFix: { type: 'array', items: { type: 'string' } },
-          lineage: { type: 'string', enum: ['persisted', 'new'] },
+          lineage: {
+            anyOf: [
+              { type: 'string', enum: ['persisted', 'new'] },
+              { type: 'null' },
+            ],
+          },
         },
       },
     },

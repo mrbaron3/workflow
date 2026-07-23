@@ -485,11 +485,20 @@ export function autoMergeCurrentRevision(
     requiredChecks: config.gate?.requiredChecks,
   }));
   if (snapshot.decision !== 'approved') {
-    revision = store.replacePrRevision(snapshot.decision === 'pending'
-      ? transitionPrRevision(revision, { status: 'reviewing' })
-      : transitionPrRevision(revision, {
-        status: 'changes-requested',
-      }));
+    // A failed/stale revision is immutable evidence about this exact head. Gate
+    // polling may still refresh checks, draft state, and external review threads,
+    // but it must not resurrect that terminal revision as "reviewing".
+    if (
+      revision.status !== 'failed'
+      && revision.status !== 'stale'
+      && revision.status !== 'merged'
+    ) {
+      revision = store.replacePrRevision(snapshot.decision === 'pending'
+        ? transitionPrRevision(revision, { status: 'reviewing' })
+        : transitionPrRevision(revision, {
+          status: 'changes-requested',
+        }));
+    }
     pr = store.replacePR(transitionPR(pr, {
       status: snapshot.decision === 'changes-requested' ? 'changes-requested' : 'open',
     }));

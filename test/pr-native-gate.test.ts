@@ -570,6 +570,36 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.db.revisionGateSnapshots).toHaveLength(1);
   });
 
+  it('keeps polling a terminal failed revision without resurrecting it as reviewing', () => {
+    const { store, pr } = setup();
+    const pending = observePrRevision(store, pr, SHA_A);
+    const reviewing = store.replacePrRevision(transitionPrRevision(pending, {
+      status: 'reviewing',
+    }));
+    store.replacePrRevision(transitionPrRevision(reviewing, {
+      status: 'failed',
+      completedAt: '2026-07-23T00:00:00.000Z',
+    }));
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => ({ ...greenGithub(), isDraft: true }),
+      resolveReviewThread: () => {},
+      merge: () => { throw new Error('failed revision must not merge'); },
+      closeIssue: () => {},
+    };
+
+    const result = autoMergeCurrentRevision(
+      store,
+      CONFIG,
+      pr,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+    );
+
+    expect(result).toMatchObject({ decision: 'pending', merged: false });
+    expect(store.revisionForHead(pr.id, SHA_A)?.status).toBe('failed');
+  });
+
   it('does not convert an externally merged head without an approved snapshot into released', () => {
     const { store, pr } = setup();
     const runner: PrNativeGithubRunner = {

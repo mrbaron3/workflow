@@ -61,6 +61,22 @@ describe('parsePerspectiveFindings', () => {
     expect(parsePerspectiveFindings({ verdict: 'request_changes' }).overall).toBe(0.3);
   });
 
+  it('accepts a structured-output null lineage without persisting a false attestation', () => {
+    const result = parsePerspectiveFindings({
+      verdict: 'request_changes',
+      score: 0.5,
+      findings: [{
+        criterionId: 'C1',
+        severity: 'major',
+        observed: 'o',
+        requiredFix: ['fix it'],
+        lineage: null,
+      }],
+    });
+
+    expect(result.findings[0]).not.toHaveProperty('lineage');
+  });
+
   it('throws on malformed output (missing verdict / bad severity)', () => {
     expect(() => parsePerspectiveFindings({ findings: [] })).toThrow();
     expect(() => parsePerspectiveFindings({ verdict: 'approve', findings: [{ criterionId: 'C', severity: 'nope' }] })).toThrow();
@@ -144,6 +160,22 @@ describe('restricted repository-PR reviewers', () => {
     expect(command).toContain('web_search="disabled"');
     expect(command).toContain('--ignore-user-config');
     expect(launch.cwd).toBe(path.dirname(job.sentinel));
+    const schemaPath = launch.args[launch.args.indexOf('--output-schema') + 1]!;
+    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8')) as {
+      required: string[];
+      properties: {
+        findings: {
+          items: {
+            required: string[];
+            properties: { lineage: { anyOf: Array<{ type: string }> } };
+          };
+        };
+      };
+    };
+    expect(schema.required).toEqual(['verdict', 'score', 'findings']);
+    expect(schema.properties.findings.items.required).toContain('lineage');
+    expect(schema.properties.findings.items.properties.lineage.anyOf)
+      .toContainEqual({ type: 'null' });
   });
 
   it('PR-INTENT gives Claude no tools, extensions, persistence, or MCP servers', () => {
