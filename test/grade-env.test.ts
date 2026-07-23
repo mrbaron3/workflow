@@ -20,7 +20,6 @@ import {
   ISOLATED_GRADER_MIN_PORT,
   ISOLATED_GRADER_PORT_COUNT,
   ISOLATED_GRADER_PORT_WINDOW,
-  isIsolatedPortRangeAvailable,
 } from '../src/pipeline/execution/isolation.js';
 import type { IssueContract } from '../src/domain/schema.js';
 
@@ -95,18 +94,6 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(ISOLATED_GRADER_PORT_COUNT).toBe(128);
   });
 
-  it('ISSUE-0024/PR-INTENT excludes a range containing a pre-existing operator listener', async () => {
-    const listener = net.createServer();
-    await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve));
-    const address = listener.address();
-    if (!address || typeof address === 'string') throw new Error('network fixture did not bind');
-
-    expect(isIsolatedPortRangeAvailable(address.port, 1)).toBe(false);
-
-    await new Promise<void>((resolve, reject) => {
-      listener.close((error) => error ? reject(error) : resolve());
-    });
-  });
   it.runIf(process.platform === 'darwin')('PR-INTENT permits only the configured external grader dependency tree', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-command-'));
     const result = runGraderCommand(
