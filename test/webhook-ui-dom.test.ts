@@ -382,6 +382,9 @@ describe('webhook control GUI runtime', () => {
     expect((repository.querySelector(
       'input[name="workspaceRoot"]',
     ) as HTMLInputElement).value).toBe('/work/acme-one');
+    const initialSave = form.querySelector('.edit-save') as HTMLButtonElement;
+    initialSave.focus();
+    expect(window.document.activeElement).toBe(initialSave);
     form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
     form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
     await flush();
@@ -395,6 +398,14 @@ describe('webhook control GUI runtime', () => {
     await flush();
     await flush();
     expect(repository.querySelector('.action-status')?.textContent).toContain('保存しました');
+    const liveEdit = window.document.querySelector(
+      '[data-key="WHREPO-1"] .edit',
+    ) as HTMLButtonElement;
+    expect(window.document.activeElement).toBe(liveEdit);
+    expect(liveEdit.getAttribute('aria-expanded')).toBe('false');
+    expect((window.document.querySelector(
+      '[data-key="WHREPO-1"] .edit-form',
+    ) as HTMLFormElement).hidden).toBe(true);
     const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
     expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
       events: ['pull_request'],

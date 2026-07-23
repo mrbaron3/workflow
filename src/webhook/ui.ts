@@ -193,7 +193,7 @@ function reconcile(root, rows, key, render, empty, colspan) {
     const id=key(row); const old=existing.get(id); const fresh=render(row); fresh.dataset.key=id;
     const focused=old?.contains(document.activeElement);
     const focusSelector=focused && document.activeElement instanceof HTMLElement
-      ? (document.activeElement.classList.contains('toggle')?'.toggle':document.activeElement.classList.contains('retry')?'.retry':document.activeElement.classList.contains('edit')?'.edit':null)
+      ? (document.activeElement.classList.contains('toggle')?'.toggle':document.activeElement.classList.contains('retry')?'.retry':document.activeElement.classList.contains('edit')?'.edit':document.activeElement.classList.contains('edit-save')?'.edit-save':null)
       : null;
     const previousStatus=old?.querySelector('.action-status');
     const freshStatus=fresh.querySelector('.action-status');
@@ -208,7 +208,11 @@ function reconcile(root, rows, key, render, empty, colspan) {
       old.replaceWith(fresh);
     } else current=old;
     root.append(current);
-    if (focusSelector) (current.querySelector(focusSelector)||current).focus();
+    if (focusSelector) {
+      const matched=current.querySelector(focusSelector);
+      const visible=matched?.closest('[hidden]')?current.querySelector('.edit'):matched;
+      (visible||current).focus();
+    }
     existing.delete(id);
   }
   for (const stale of existing.values()) {
@@ -327,9 +331,11 @@ document.addEventListener('submit', async event => {
       readyLabel:optional('readyLabel'),
       baseBranch:optional('baseBranch'),
     })});
+    const editButton=formElement.closest('.repo')?.querySelector('.edit');
     editingRepositories.delete(id);
     formElement.hidden=true;
-    formElement.closest('.repo')?.querySelector('.edit')?.setAttribute('aria-expanded','false');
+    editButton?.setAttribute('aria-expanded','false');
+    editButton?.focus();
     setActionState('repository',id,{pending:false,error:false,message:'設定を保存しました。'});
     try { await refresh(); }
     catch (error) {
