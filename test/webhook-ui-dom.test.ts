@@ -217,6 +217,58 @@ describe('webhook control GUI runtime', () => {
       .toContain('接続できません');
   });
 
+  it('PR-INTENT reports a failed retry error and never announces completion', async () => {
+    const window = new Window({
+      url: 'http://127.0.0.1:8377/',
+      settings: { disableJavaScriptEvaluation: false },
+    });
+    windows.push(window);
+    const failedState = {
+      ...state(0),
+      deliveries: [{
+        id: 'WHDEL-failed',
+        repository: 'acme/one',
+        event: 'pull_request',
+        action: 'synchronize',
+        status: 'failed',
+        attempts: 2,
+        lastError: 'consumer offline',
+        ignoredReason: null,
+        updatedAt: '2026-07-23T00:00:00.000Z',
+      }],
+    };
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('/api/deliveries/WHDEL-failed/retry')) {
+        return {
+          ok: false,
+          json: async () => ({ error: 'consumer offline again' }),
+        };
+      }
+      return { ok: true, json: async () => failedState };
+    });
+    Object.defineProperty(window, 'fetch', { configurable: true, value: fetchMock });
+    Object.defineProperty(window, 'setInterval', { configurable: true, value: () => 1 });
+    Object.defineProperty(window, 'clearInterval', { configurable: true, value: () => {} });
+    const html = webhookControlHtml();
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('generated GUI has no executable script');
+    window.document.write(html.replace(/<script>[\s\S]*<\/script>/, ''));
+    window.document.close();
+    window.eval(script);
+    await flush();
+
+    (window.document.querySelector(
+      '[data-key="WHDEL-failed"] .retry',
+    ) as HTMLButtonElement).click();
+    await flush();
+    await flush();
+
+    const status = window.document.querySelector('#delivery-action-WHDEL-failed');
+    expect(status?.textContent).toContain('retry に失敗しました: consumer offline again');
+    expect(status?.textContent).not.toContain('完了しました');
+  });
+
   it('PR-INTENT coalesces repeated repository submissions and exposes busy state', async () => {
     const window = new Window({
       url: 'http://127.0.0.1:8377/',

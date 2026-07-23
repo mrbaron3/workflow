@@ -166,20 +166,27 @@ export function realPrNativeGithubRunner(
     },
     fetchPullRequestHead(cwd, prNumber, expectedHeadSha, headRefName, baseRefName) {
       const localRef = `refs/agentops/pull/${prNumber}`;
+      const remoteBaseRef = `refs/remotes/origin/${baseRefName}`;
       run('git', [
         'fetch', '--no-tags', 'origin',
         `+refs/pull/${prNumber}/head:${localRef}`,
-        ...(headRefName ? [`+refs/heads/${headRefName}:refs/remotes/origin/${headRefName}`] : []),
-        ...(baseRefName && baseRefName !== headRefName
+        `+refs/heads/${headRefName}:refs/remotes/origin/${headRefName}`,
+        ...(baseRefName !== headRefName
           ? [`+refs/heads/${baseRefName}:refs/remotes/origin/${baseRefName}`]
           : []),
       ], cwd);
-      const fetched = run('git', ['rev-parse', localRef], cwd).trim();
-      if (fetched !== expectedHeadSha) {
+      const fetchedHeadSha = GithubSha.parse(
+        run('git', ['rev-parse', '--verify', `${localRef}^{commit}`], cwd).trim(),
+      );
+      const fetchedBaseSha = GithubSha.parse(
+        run('git', ['rev-parse', '--verify', `${remoteBaseRef}^{commit}`], cwd).trim(),
+      );
+      if (fetchedHeadSha !== expectedHeadSha) {
         throw new Error(
-          `PR #${prNumber} head changed while fetching: expected ${expectedHeadSha}, got ${fetched}`,
+          `PR #${prNumber} head changed while fetching: expected ${expectedHeadSha}, got ${fetchedHeadSha}`,
         );
       }
+      return { headSha: fetchedHeadSha, baseSha: fetchedBaseSha };
     },
     pullRequestChangedFiles: (cwd, prNumber) => run(
       'gh', ['pr', 'diff', String(prNumber), '--name-only'], cwd,

@@ -16,6 +16,8 @@ import type {
   GithubOpenPullRequest,
   PrNativeGithubRunner,
 } from '../src/pipeline/execution/pr-native.js';
+import { realPrNativeGithubRunner } from '../src/pipeline/execution/pr-native.js';
+import { staticUntrustedReviewMaterial } from '../src/pipeline/execution/perspective-session.js';
 import { Store, nowISO } from '../src/store/store.js';
 
 const roots: string[] = [];
@@ -73,6 +75,57 @@ afterEach(() => {
 });
 
 describe('repository-wide pull request discovery', () => {
+  it('PR-INTENT binds review material to the fetched remote base SHA when local main diverges', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-fetched-pr-'));
+    roots.push(root);
+    const origin = path.join(root, 'origin.git');
+    const seed = path.join(root, 'seed');
+    const review = path.join(root, 'review');
+    execFileSync('git', ['init', '--bare', origin]);
+    fs.mkdirSync(seed);
+    execFileSync('git', ['init', '-b', 'main'], { cwd: seed });
+    fs.writeFileSync(path.join(seed, 'review.txt'), 'base\n');
+    execFileSync('git', ['add', 'review.txt'], { cwd: seed });
+    execFileSync('git', [
+      '-c', 'user.name=test', '-c', 'user.email=test@example.com',
+      'commit', '-m', 'base',
+    ], { cwd: seed });
+    const baseSha = execFileSync(
+      'git', ['rev-parse', 'HEAD'], { cwd: seed, encoding: 'utf8' },
+    ).trim();
+    execFileSync('git', ['remote', 'add', 'origin', origin], { cwd: seed });
+    execFileSync('git', ['push', 'origin', 'main'], { cwd: seed });
+    execFileSync('git', ['switch', '-c', 'feature/review'], { cwd: seed });
+    fs.writeFileSync(path.join(seed, 'review.txt'), 'base\nfeature change\n');
+    execFileSync('git', ['add', 'review.txt'], { cwd: seed });
+    execFileSync('git', [
+      '-c', 'user.name=test', '-c', 'user.email=test@example.com',
+      'commit', '-m', 'feature',
+    ], { cwd: seed });
+    const headSha = execFileSync(
+      'git', ['rev-parse', 'HEAD'], { cwd: seed, encoding: 'utf8' },
+    ).trim();
+    execFileSync('git', [
+      'push', 'origin',
+      'HEAD:refs/heads/feature/review',
+      'HEAD:refs/pull/9/head',
+    ], { cwd: seed });
+    execFileSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/main'], { cwd: origin });
+    execFileSync('git', ['clone', origin, review]);
+    execFileSync('git', ['checkout', '--detach', headSha], { cwd: review });
+    execFileSync('git', ['branch', '-f', 'main', headSha], { cwd: review });
+
+    expect(staticUntrustedReviewMaterial(review, 'main', headSha))
+      .not.toContain('+feature change');
+    const fetched = realPrNativeGithubRunner().fetchPullRequestHead!(
+      review, 9, headSha, 'feature/review', 'main',
+    );
+
+    expect(fetched).toEqual({ headSha, baseSha });
+    expect(staticUntrustedReviewMaterial(review, fetched.baseSha, fetched.headSha))
+      .toContain('+feature change');
+  });
+
   it('PR-INTENT schedules every same-repository head without per-PR approval', () => {
     const env = setup();
     const discovery = discoverRepositoryPullRequests(
@@ -234,7 +287,10 @@ describe('repository-wide pull request discovery', () => {
       )[0]!;
       const runner: PrNativeGithubRunner = {
         ...env.runner,
-        fetchPullRequestHead: () => {},
+        fetchPullRequestHead: (_cwd, _prNumber, expectedHeadSha) => ({
+          headSha: expectedHeadSha,
+          baseSha: expectedHeadSha,
+        }),
         pullRequestChangedFiles: () => [...changed],
       };
 

@@ -272,6 +272,19 @@ describe('local webhook control server', () => {
       return (state.deliveries as Array<{ status: string }>)[0]?.status === 'failed';
     });
 
+    const failedRetry = await request(`${url}/api/deliveries/${receipt.deliveryId}/retry`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{}',
+    });
+    expect(failedRetry.status).toBe(409);
+    expect(await json(failedRetry)).toMatchObject({
+      status: 'failed',
+      attempts: 2,
+      lastError: 'consumer offline',
+      error: 'consumer offline',
+    });
+
     fail = false;
     const retried = await request(`${url}/api/deliveries/${receipt.deliveryId}/retry`, {
       method: 'POST',
@@ -279,7 +292,7 @@ describe('local webhook control server', () => {
       body: '{}',
     });
     expect(retried.status).toBe(200);
-    expect(await json(retried)).toMatchObject({ status: 'processed', attempts: 2 });
+    expect(await json(retried)).toMatchObject({ status: 'processed', attempts: 3 });
   });
 
   it('AC-WHUI-005 defaults to loopback and validates mutation origin and content type', async () => {

@@ -519,14 +519,22 @@ export type MergeRevisionBinding = RevisionBinding & {
   readonly prId: string;
   readonly [mergeRevisionBrand]: true;
 };
+export type ApprovalEligiblePrRevision = Extract<
+  PrRevision,
+  { status: 'reviewing' | 'approved' }
+>;
 /**
  * Approval authority is minted only for the exact current, review-eligible revision.
  */
 export function bindApprovalRevisionToPR(
   pr: PR,
+  revision: ApprovalEligiblePrRevision,
+): ApprovalRevisionBinding;
+export function bindApprovalRevisionToPR(
+  pr: PR,
   revision: PrRevision,
 ): ApprovalRevisionBinding {
-  if (!['reviewing', 'changes-requested', 'approved'].includes(revision.status)) {
+  if (revision.status !== 'reviewing' && revision.status !== 'approved') {
     throw new Error(`revision ${revision.id} (${revision.status}) is not eligible for approval`);
   }
   if (revision.prId !== pr.id) {

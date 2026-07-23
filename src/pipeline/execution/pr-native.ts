@@ -49,6 +49,11 @@ export interface GithubOpenPullRequest {
   isCrossRepository: boolean;
 }
 
+export interface FetchedPullRequestRevision {
+  headSha: string;
+  baseSha: string;
+}
+
 export interface PrNativeGithubRunner {
   viewRevision(cwd: string, prNumber: number): GithubPrRevisionState;
   merge(cwd: string, prNumber: number, expectedHeadSha: string): void;
@@ -59,9 +64,9 @@ export interface PrNativeGithubRunner {
     cwd: string,
     prNumber: number,
     expectedHeadSha: string,
-    headRefName?: string,
-    baseRefName?: string,
-  ): void;
+    headRefName: string,
+    baseRefName: string,
+  ): FetchedPullRequestRevision;
   pullRequestChangedFiles?(cwd: string, prNumber: number): string[];
 }
 
@@ -457,6 +462,9 @@ export function autoMergeCurrentRevision(
     const approvedRevision = revision.status === 'approved'
       ? revision
       : store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
+    if (approvedRevision.status !== 'approved') {
+      throw new Error('approved lifecycle transition did not produce an approved revision');
+    }
     const approvedPr = pr.status === 'approved'
       ? pr
       : store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, approvedRevision)));
@@ -530,6 +538,9 @@ export function autoMergeCurrentRevision(
   }
 
   revision = store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
+  if (revision.status !== 'approved') {
+    throw new Error('approved gate did not produce an approved revision');
+  }
   pr = store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, revision)));
   if (revision.mergeRequestedAt) {
     store.save();
@@ -550,6 +561,9 @@ export function autoMergeCurrentRevision(
   revision = store.replacePrRevision(transitionPrRevision(revision, {
     status: 'approved', mergeRequestedAt: nowISO(),
   }));
+  if (revision.status !== 'approved') {
+    throw new Error('merge request did not preserve the approved revision');
+  }
   store.save();
   const afterMerge = runner.viewRevision(cwd, externalRef.number);
   if (afterMerge.headSha !== revision.headSha) {

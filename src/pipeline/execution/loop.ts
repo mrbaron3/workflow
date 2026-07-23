@@ -216,6 +216,7 @@ export async function runBoundedRepairLoop(
         ? store.revisionForHead(currentPr.id, currentPr.headSha)
         : undefined;
       currentPr = currentRevision
+        && (currentRevision.status === 'reviewing' || currentRevision.status === 'approved')
         ? store.replacePR(approvePR(
           currentPr,
           bindApprovalRevisionToPR(currentPr, currentRevision),

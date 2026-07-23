@@ -215,6 +215,13 @@ export function createWebhookControlServer(options: WebhookControlServerOptions)
         assertControlRequest(request, effectiveControlToken, browserSessions, true);
         await readJson(request);
         const row = await router.retry(decodeURIComponent(retryMatch[1]!));
+        if (row.status === 'failed') {
+          sendJson(response, 409, {
+            ...row,
+            error: row.lastError ?? 'delivery retry failed',
+          });
+          return;
+        }
         sendJson(response, 200, row);
         return;
       }

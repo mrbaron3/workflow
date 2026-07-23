@@ -49,6 +49,8 @@ describe('PR lifecycle values', () => {
       transitionPR(open, badPrTransition);
       // @ts-expect-error revision destinations contain state and evidence only
       transitionPrRevision(pending, badRevisionTransition);
+      // @ts-expect-error a pending revision cannot mint approval authority
+      bindApprovalRevisionToPR(open, pending);
     }
     expect(open.id).toBe('PR-1');
     expect(pending.id).toBe('PRREV-1');
@@ -168,17 +170,34 @@ describe('PR lifecycle values', () => {
       id: 'PRREV-old', prId: pr.id, headSha: 'b'.repeat(40), ordinal: 1,
       status: 'approved', createdAt: nowISO(),
     });
+    if (historical.status !== 'approved') throw new Error('fixture must be approved');
     expect(() => bindApprovalRevisionToPR(pr, historical)).toThrow('not the current revision');
     const pending = PrRevision.parse({
       id: currentId, prId: pr.id, headSha: sha, ordinal: 2,
       status: 'pending', createdAt: nowISO(),
     });
-    expect(() => bindApprovalRevisionToPR(pr, pending)).toThrow('not eligible for approval');
+    expect(() => bindApprovalRevisionToPR(
+      pr,
+      pending as Parameters<typeof bindApprovalRevisionToPR>[1],
+    )).toThrow('not eligible for approval');
+    const rejected = PrRevision.parse({
+      id: currentId, prId: pr.id, headSha: sha, ordinal: 2,
+      status: 'changes-requested', createdAt: nowISO(),
+    });
+    expect(() => bindApprovalRevisionToPR(
+      pr,
+      rejected as Parameters<typeof bindApprovalRevisionToPR>[1],
+    )).toThrow('not eligible for approval');
+    if (false) {
+      // @ts-expect-error a changes-requested revision cannot mint approval authority
+      bindApprovalRevisionToPR(pr, rejected);
+    }
 
     const current = PrRevision.parse({
       id: currentId, prId: pr.id, headSha: sha, ordinal: 2,
       status: 'approved', createdAt: nowISO(),
     });
+    if (current.status !== 'approved') throw new Error('fixture must be approved');
     const staleBinding = bindApprovalRevisionToPR(pr, current);
     const advanced = transitionPR(pr, {
       status: 'open',

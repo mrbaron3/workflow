@@ -311,13 +311,18 @@ export async function reviewRepositoryPullRequest(
 
   const { pullRequest, pr, issue, revision } = discovery;
   const repo = path.resolve(harnessRoot, config.target.repo);
-  runner.fetchPullRequestHead(
+  const fetchedRevision = runner.fetchPullRequestHead(
     repo,
     pullRequest.number,
     revision.headSha,
     pullRequest.headRefName,
     pullRequest.baseRefName,
   );
+  if (fetchedRevision.headSha !== revision.headSha) {
+    throw new Error(
+      `PR #${pullRequest.number} fetched head does not match revision ${revision.headSha}`,
+    );
+  }
   const issueKey = `repository-pr-${pullRequest.number}-r${revision.ordinal}`;
   const worktree = path.join(harnessRoot, '.harness', 'worktrees', issueKey);
   createDetachedWorktree(repo, revision.headSha, worktree);
@@ -355,8 +360,8 @@ export async function reviewRepositoryPullRequest(
           perspectives,
           issueKey,
           repo,
-          buildRef: revision.headSha,
-          baseRef: pullRequest.baseRefName,
+          buildRef: fetchedRevision.headSha,
+          baseRef: fetchedRevision.baseSha,
           uiDesign: issue.uiDesign,
           untrusted: true,
         },
@@ -413,13 +418,21 @@ export async function reviewRepositoryPullRequest(
             completedAt: nowISO(),
           }),
     );
-    store.replacePR(panel.verdict === 'approve'
-      ? approvePR(reviewingPR, bindApprovalRevisionToPR(reviewingPR, reviewedRevision))
-      : transitionPR(reviewingPR, {
+    if (panel.verdict === 'approve') {
+      if (reviewedRevision.status !== 'reviewing') {
+        throw new Error('approved panel did not produce a reviewing revision');
+      }
+      store.replacePR(approvePR(
+        reviewingPR,
+        bindApprovalRevisionToPR(reviewingPR, reviewedRevision),
+      ));
+    } else {
+      store.replacePR(transitionPR(reviewingPR, {
         status: 'changes-requested',
         currentRevisionId: revision.id,
         headSha: revision.headSha,
       }));
+    }
     store.save();
     log(
       `  ✓ ${pr.id}: repository PR #${pullRequest.number} `
