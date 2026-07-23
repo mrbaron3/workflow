@@ -5,7 +5,8 @@
  * individual PRs. Every open, same-repository PR targeting the configured base is
  * discovered on each GitHub turn, projected into the durable Store, and reviewed at
  * its current head. PRs created by the Issue pipeline are deduplicated by external
- * PR number and continue through their original work-unit flow.
+ * PR number, retain their original work unit, and enter the same current-head
+ * repository review loop.
  */
 
 import path from 'node:path';
@@ -236,8 +237,7 @@ export function discoverRepositoryPullRequests(
       issue: store.requireIssue(issue.id),
       revision,
       imported,
-      reviewRequired: pr.origin === 'repository-discovery'
-        && !currentRevisionAttempted(store, pr, revision),
+      reviewRequired: !currentRevisionAttempted(store, pr, revision),
     });
   }
 
@@ -287,9 +287,10 @@ export function attemptForRevision(
 }
 
 /**
- * Review one repository-discovered current head without regenerating it first.
- * A request_changes result places its synthetic work unit on the ordinary repair
- * queue; that queue then amends the same remote PR branch.
+ * Review one current head discovered through a repository registration without
+ * regenerating it first. A request_changes result places its existing or synthetic
+ * work unit on the ordinary repair queue; that queue then amends the same remote
+ * PR branch.
  */
 export async function reviewRepositoryPullRequest(
   store: Store,

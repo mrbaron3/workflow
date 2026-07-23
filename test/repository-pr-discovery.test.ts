@@ -366,7 +366,7 @@ describe('repository-wide pull request discovery', () => {
     expect(repeated.reviewRequired).toBe(false);
   });
 
-  it('AC-PRLOOP-005 deduplicates a PR already owned by the Issue pipeline without synthetic intake', () => {
+  it('AC-PRLOOP-005 deduplicates an Issue-owned PR and reviews its current head without synthetic intake', () => {
     const env = setup();
     const issue = env.store.addIssue(Issue.parse({
       id: 'ISSUE-9000',
@@ -413,7 +413,7 @@ describe('repository-wide pull request discovery', () => {
 
     expect(discovered[0]).toMatchObject({
       imported: false,
-      reviewRequired: false,
+      reviewRequired: true,
       pr: { id: 'PR-9000', origin: 'issue-pipeline' },
       issue: { id: 'ISSUE-9000' },
     });
