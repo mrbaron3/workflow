@@ -282,7 +282,15 @@ export function runVitest(
     options?.isolated ? cwd : os.tmpdir(),
     `.agentops-vitest-${process.pid}-${reportSeq++}.json`,
   );
-  runGraderCommand(`${command} --reporter=json --outputFile=${out}`, cwd, extraEnv, options);
+  const configLoader = options?.isolated && !command.includes('--configLoader')
+    ? ' --configLoader=runner'
+    : '';
+  runGraderCommand(
+    `${command}${configLoader} --reporter=json --outputFile=${out}`,
+    cwd,
+    extraEnv,
+    options,
+  );
   let json: unknown = null;
   try {
     if (fs.existsSync(out)) json = JSON.parse(fs.readFileSync(out, 'utf8'));
