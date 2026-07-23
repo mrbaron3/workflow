@@ -140,10 +140,10 @@ export function pollGate(
  * build the human is judging, plus its findings. Rendered from the winning attempt's EvalRuns so a
  * reviewer sees WHY the harness approved before deciding to merge (release) or close (send back).
  * Prose is Japanese (issue/PR authoring rule, CLAUDE.md); identifiers and enum values stay verbatim.
- * When the issue came in through GitHub intake, a `Closes owner/repo#N` reference ties the merge to
- * the Source Snapshot's issue — GitHub only closes on MERGE, so a gate rejection (close unmerged)
- * leaves the source issue open for the repair lane. The qualified form also survives a gate repo
- * that differs from the intake repo.
+ * When an intake produced one work unit, a `Closes owner/repo#N` reference ties its merge to the
+ * Source Snapshot's issue. Split intake work uses `Refs` instead: no child PR may close the source
+ * while sibling work remains. The qualified form also survives a gate repo that differs from the
+ * intake repo.
  */
 export function renderGatePrBody(store: Store, issueId: string): string {
   const runs = latestAttemptRuns(store.runsForIssue(issueId));
@@ -159,7 +159,10 @@ export function renderGatePrBody(store: Store, issueId: string): string {
     for (const f of r.findings) lines.push(`  - [${f.severity}] ${f.criterionId}: ${f.observed || f.expected || '—'}`);
   }
   const source = store.db.intakeRecords.find((rec) => rec.storeIssueIds.includes(issueId));
-  if (source) lines.push(``, `Closes ${source.snapshot.repository}#${source.snapshot.number}`);
+  if (source) {
+    const relation = source.storeIssueIds.length === 1 ? 'Closes' : 'Refs';
+    lines.push(``, `${relation} ${source.snapshot.repository}#${source.snapshot.number}`);
+  }
   return lines.join('\n');
 }
 

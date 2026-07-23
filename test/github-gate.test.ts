@@ -154,8 +154,8 @@ describe('pollGate: a merge/close becomes the human decision', () => {
   });
 });
 
-/** Seed the intake record that ties a store issue back to its source GitHub Issue. */
-function seedIntake(store: Store, issueId: string, number: number): void {
+/** Seed the intake record that ties one or more store issues back to a source GitHub Issue. */
+function seedIntake(store: Store, issueIds: string | string[], number: number): void {
   store.addIntakeRecord(IntakeRecord.parse({
     id: store.nextId('INTAKE'), intakeKey: `o/r#${number}`, provider: 'github',
     snapshot: {
@@ -163,7 +163,9 @@ function seedIntake(store: Store, issueId: string, number: number): void {
       url: `https://github.com/o/r/issues/${number}`, labels: [], state: 'open',
       sourceUpdatedAt: nowISO(), snapshotAt: nowISO(),
     },
-    status: 'claimed', claimedAt: nowISO(), storeIssueIds: [issueId], createdAt: nowISO(), updatedAt: nowISO(),
+    status: 'claimed', claimedAt: nowISO(),
+    storeIssueIds: Array.isArray(issueIds) ? issueIds : [issueIds],
+    createdAt: nowISO(), updatedAt: nowISO(),
   }));
 }
 
@@ -183,6 +185,19 @@ describe('renderGatePrBody: human-readable panel render', () => {
     seedGatedIssue(store, 'ISSUE-1', 1);
     seedIntake(store, 'ISSUE-1', 9);
     expect(renderGatePrBody(store, 'ISSUE-1')).toContain('Closes o/r#9');
+  });
+
+  it('does not close a source GitHub issue from any one child when intake split it', () => {
+    const store = tmpStore('body-split-refs');
+    seedGatedIssue(store, 'ISSUE-1', 1);
+    seedGatedIssue(store, 'ISSUE-2', 2);
+    seedIntake(store, ['ISSUE-1', 'ISSUE-2'], 9);
+
+    for (const issueId of ['ISSUE-1', 'ISSUE-2']) {
+      const body = renderGatePrBody(store, issueId);
+      expect(body).toContain('Refs o/r#9');
+      expect(body).not.toContain('Closes o/r#9');
+    }
   });
 
   it('omits the Closes line when the issue has no external source', () => {
