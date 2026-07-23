@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 export const ISOLATED_GRADER_PORT_COUNT = 128;
 export const ISOLATED_GRADER_MIN_PORT = 30_000;
 export const ISOLATED_GRADER_PORT_WINDOW = 20_000;
+const NESTED_ISOLATED_GRADER_PORT_COUNT = 16;
+const INHERITED_ISOLATED_GRADER_PORTS = 'AGENTOPS_ISOLATED_GRADER_PORTS';
 
 export interface IsolatedExecution {
   command: string;
@@ -91,13 +94,74 @@ function projectCommandDependencies(command: string, cwd: string): DependencyPro
   };
 }
 
+export function isIsolatedPortRangeAvailable(
+  base: number,
+  count: number,
+  nodeExecutable: string = process.execPath,
+): boolean {
+  if (!Number.isInteger(base) || !Number.isInteger(count) || base < 1 || count < 1) return false;
+  const probe = [
+    "const net=require('node:net');",
+    'const base=Number(process.argv[1]); const count=Number(process.argv[2]);',
+    'const servers=[]; let settled=false; let listening=0;',
+    'const finish=(code)=>{ if(settled)return; settled=true;',
+    '  for(const server of servers){try{server.close()}catch{}}',
+    '  setTimeout(()=>process.exit(code),0);',
+    '};',
+    'for(let offset=0;offset<count;offset+=1){',
+    '  const server=net.createServer(); servers.push(server);',
+    "  server.once('error',()=>finish(1));",
+    "  server.listen(base+offset,'127.0.0.1',()=>{listening+=1;if(listening===count)finish(0)});",
+    '}',
+    'setTimeout(()=>finish(1),1500);',
+  ].join('');
+  const result = spawnSync(nodeExecutable, ['-e', probe, String(base), String(count)], {
+    stdio: 'ignore',
+    timeout: 2_000,
+  });
+  return result.status === 0;
+}
+
+function inheritedPortPool(): number[] {
+  const raw = process.env[INHERITED_ISOLATED_GRADER_PORTS];
+  if (!raw) return [];
+  const ports = raw.split(',').map(Number);
+  if (
+    ports.length === 0
+    || ports.some((port) => !Number.isInteger(port) || port < 1 || port > 65_535)
+  ) {
+    throw new Error('invalid inherited isolated grader port policy');
+  }
+  return [...new Set(ports)].sort((left, right) => left - right);
+}
+
 function createPortPolicy(tmp: string): PortPolicy {
-  const base = ISOLATED_GRADER_MIN_PORT
-    + Math.floor(Math.random() * ISOLATED_GRADER_PORT_WINDOW);
-  return {
-    ports: Array.from({ length: ISOLATED_GRADER_PORT_COUNT }, (_, index) => base + index),
-    lockDirectory: path.join(tmp, 'ports'),
-  };
+  const inherited = inheritedPortPool();
+  if (inherited.length > 0) {
+    const count = Math.min(NESTED_ISOLATED_GRADER_PORT_COUNT, inherited.length);
+    for (let start = 0; start + count <= inherited.length; start += count) {
+      const ports = inherited.slice(start, start + count);
+      const base = ports[0]!;
+      if (
+        ports.every((port, index) => port === base + index)
+        && isIsolatedPortRangeAvailable(base, count)
+      ) {
+        return { ports, lockDirectory: path.join(tmp, 'ports') };
+      }
+    }
+    throw new Error('could not allocate a nested isolated grader port range');
+  }
+
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const base = ISOLATED_GRADER_MIN_PORT
+      + Math.floor(Math.random() * ISOLATED_GRADER_PORT_WINDOW);
+    if (!isIsolatedPortRangeAvailable(base, ISOLATED_GRADER_PORT_COUNT)) continue;
+    return {
+      ports: Array.from({ length: ISOLATED_GRADER_PORT_COUNT }, (_, index) => base + index),
+      lockDirectory: path.join(tmp, 'ports'),
+    };
+  }
+  throw new Error('could not reserve a collision-free isolated grader port range');
 }
 
 function writeLocalhostPreload(
@@ -244,6 +308,7 @@ function isolatedEnvironment(
   tmp: string,
   nodeExecutable: string,
   preload: string,
+  ports: readonly number[],
 ): NodeJS.ProcessEnv {
   return {
     HOME: home,
@@ -260,6 +325,7 @@ function isolatedEnvironment(
     TMPDIR: tmp,
     LANG: process.env.LANG ?? 'C',
     NODE_OPTIONS: `--require=${preload}`,
+    [INHERITED_ISOLATED_GRADER_PORTS]: ports.join(','),
   };
 }
 
@@ -310,6 +376,7 @@ export function prepareIsolatedExecutionResources(
         temporary.tmp,
         nodeExecutable,
         preload.filename,
+        ports.ports,
       ),
       cleanup: composeCleanup(resources),
     };
