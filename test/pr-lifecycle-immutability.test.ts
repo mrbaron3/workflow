@@ -174,6 +174,23 @@ describe('PR lifecycle values', () => {
       status: 'pending', createdAt: nowISO(),
     });
     expect(() => bindApprovalRevisionToPR(pr, pending)).toThrow('not eligible for approval');
+
+    const current = PrRevision.parse({
+      id: currentId, prId: pr.id, headSha: sha, ordinal: 2,
+      status: 'approved', createdAt: nowISO(),
+    });
+    const staleBinding = bindApprovalRevisionToPR(pr, current);
+    const advanced = transitionPR(pr, {
+      status: 'open',
+      currentRevisionId: 'PRREV-next',
+      headSha: PrHeadSha.parse('c'.repeat(40)),
+    });
+    expect(() => approvePR(advanced, staleBinding))
+      .toThrow('does not match current PR');
+    expect(advanced).toMatchObject({
+      currentRevisionId: 'PRREV-next',
+      headSha: 'c'.repeat(40),
+    });
   });
 
   it('PR-INTENT Store does not return mutable stored lifecycle references', () => {

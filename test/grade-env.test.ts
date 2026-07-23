@@ -21,6 +21,7 @@ import {
   ISOLATED_GRADER_PORT_COUNT,
   ISOLATED_GRADER_PORT_WINDOW,
   isIsolatedPortRangeAvailable,
+  prepareIsolatedExecutionResources,
 } from '../src/pipeline/execution/isolation.js';
 import type { IssueContract } from '../src/domain/schema.js';
 
@@ -124,6 +125,14 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
   });
   it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT denies untrusted files under otherwise system-readable roots', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-root-head-'));
+    const prepared = prepareIsolatedExecutionResources(process.execPath, ['--version'], checkout);
+    try {
+      const profile = prepared.args[1] ?? '';
+      expect(profile).not.toContain('(subpath "/Library")');
+      expect(profile).not.toContain('(subpath "/opt")');
+    } finally {
+      prepared.cleanup();
+    }
     const untrustedRoot = fs.mkdtempSync('/private/tmp/agentops-system-readable-');
     const sentinel = path.join(untrustedRoot, 'operator-secret');
     fs.writeFileSync(sentinel, 'secret');

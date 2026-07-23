@@ -542,11 +542,6 @@ export function bindApprovalRevisionToPR(
   }) as ApprovalRevisionBinding;
 }
 
-/** @deprecated Use the approval-specific name; this never grants merge authority. */
-export const bindRevisionToPR = bindApprovalRevisionToPR;
-/** @deprecated Approval and merge bindings are now intentionally distinct. */
-export type CorrelatedRevisionBinding = ApprovalRevisionBinding;
-
 /** Merge authority is deliberately distinct from review approval authority. */
 export function bindMergeRevisionToPR(
   pr: Extract<PR, { status: 'approved' }>,
@@ -573,7 +568,13 @@ export function approvePR(
   if (pr.status === 'closed' || pr.status === 'merged') {
     throw new Error(`cannot approve terminal PR ${pr.id} (${pr.status})`);
   }
-  if (binding.prId !== pr.id) throw new Error(`revision binding does not belong to PR ${pr.id}`);
+  if (
+    binding.prId !== pr.id
+    || binding.revisionId !== pr.currentRevisionId
+    || binding.headSha !== pr.headSha
+  ) {
+    throw new Error(`approval revision binding does not match current PR ${pr.id}`);
+  }
   return deepFreeze(ApprovedPR.parse({
     ...pr,
     status: 'approved',

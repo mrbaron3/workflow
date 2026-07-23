@@ -106,7 +106,7 @@ describe('local webhook control server', () => {
   });
 
   it('AC-WHUI-001 serves the self-contained GUI and public state', async () => {
-    const { url } = await start();
+    const { url } = await start({ agentops: async () => {} });
     expect((await addRepository(url)).status).toBe(201);
     const hook = await request(`${url}/hook`, {
       method: 'POST',
