@@ -10,11 +10,12 @@ export interface WebhookConsumerAdapterOptions {
   /** Trusted AgentOps launcher from the running installation, not the target workspace. */
   launcher?: string;
   orcaSyncScript?: string;
+  signal?: AbortSignal;
   log?: (message: string) => void;
   runProcess?: (
     executable: string,
     args: string[],
-    options: { cwd: string; env: NodeJS.ProcessEnv },
+    options: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal },
   ) => Promise<void>;
 }
 
@@ -36,13 +37,18 @@ export function sanitizedConsumerEnvironment(
 export function productionProcessRunner(
   executable: string,
   args: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
+  options: { cwd: string; env: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (options.signal?.aborted) {
+      reject(new Error('webhook consumer stopped'));
+      return;
+    }
     const child = spawn(executable, args, {
       cwd: options.cwd,
       env: options.env,
       stdio: 'inherit',
+      ...(options.signal ? { signal: options.signal } : {}),
     });
     child.once('error', reject);
     child.once('exit', (code, signal) => {
@@ -98,6 +104,7 @@ export function createWebhookConsumerAdapters(
 
   return {
     agentops: async (event) => {
+      if (options.signal?.aborted) throw new Error('webhook consumer stopped');
       const registration = store.snapshot().repositories.find((row) => row.id === event.registrationId);
       if (!registration) throw new Error(`repository registration disappeared: ${event.registrationId}`);
       const workspaceRoot = registration.workspaceRoot ?? options.harnessRoot;
@@ -113,6 +120,7 @@ export function createWebhookConsumerAdapters(
       const current = previous
         .catch(() => {})
         .then(async () => {
+          if (options.signal?.aborted) throw new Error('webhook consumer stopped');
           log(
             event.source === 'reconciliation'
               ? `agentops reconcile: ${event.repository}`
@@ -121,6 +129,7 @@ export function createWebhookConsumerAdapters(
           await runProcess(process.execPath, [launcher, 'github-turn'], {
             cwd: workspaceRoot,
             env: consumerEnv,
+            ...(options.signal ? { signal: options.signal } : {}),
           });
         });
       inFlightAgentOps.set(registration.id, current);
@@ -133,6 +142,7 @@ export function createWebhookConsumerAdapters(
       }
     },
     'orca-worktree-sync': async (event) => {
+      if (options.signal?.aborted) throw new Error('webhook consumer stopped');
       const args = orcaSyncArgs(event);
       if (!args) return;
       if (!options.orcaSyncScript) {
@@ -144,6 +154,7 @@ export function createWebhookConsumerAdapters(
       await runProcess(options.orcaSyncScript, args, {
         cwd: options.harnessRoot,
         env: consumerEnv,
+        ...(options.signal ? { signal: options.signal } : {}),
       });
     },
   };

@@ -18,6 +18,7 @@ export interface WebhookDaemonOptions {
 export interface WebhookDaemonResources {
   reconciliation: { stop(): void };
   forwarders: { stop(): void };
+  consumers: { abort(): void };
   signingRelay: { close(): Promise<void> };
   control: { close(): Promise<void> };
 }
@@ -42,6 +43,7 @@ export function waitForWebhookDaemonShutdown(
       try {
         resources.reconciliation.stop();
         resources.forwarders.stop();
+        resources.consumers.abort();
         void resources.signingRelay.close()
           .then(() => resources.control.close())
           .then(resolve, reject);

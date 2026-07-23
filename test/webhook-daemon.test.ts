@@ -142,10 +142,11 @@ describe('webhook-daemon command boundary', () => {
       const signals = new EventEmitter();
       const reconciliation = { stop: vi.fn() };
       const forwarders = { stop: vi.fn() };
+      const consumers = { abort: vi.fn() };
       const signingRelay = { close: vi.fn(async () => {}) };
       const control = { close: vi.fn(async () => {}) };
       const stopped = waitForWebhookDaemonShutdown(
-        { reconciliation, forwarders, signingRelay, control },
+        { reconciliation, forwarders, consumers, signingRelay, control },
         signals,
       );
       signals.emit(signal);
@@ -153,6 +154,7 @@ describe('webhook-daemon command boundary', () => {
       await stopped;
       expect(reconciliation.stop).toHaveBeenCalledTimes(1);
       expect(forwarders.stop).toHaveBeenCalledTimes(1);
+      expect(consumers.abort).toHaveBeenCalledTimes(1);
       expect(signingRelay.close).toHaveBeenCalledTimes(1);
       expect(control.close).toHaveBeenCalledTimes(1);
       expect(signals.listenerCount('SIGINT')).toBe(0);

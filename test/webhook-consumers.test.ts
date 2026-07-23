@@ -94,6 +94,66 @@ describe('allow-listed webhook consumer adapters', () => {
     }]);
   });
 
+  it('PR-INTENT aborts the active consumer and does not start queued work during shutdown', async () => {
+    const root = tempRoot();
+    const workspace = path.join(root, 'repo-workspace');
+    fs.mkdirSync(workspace);
+    saveConfig(workspace, {
+      ...DEFAULT_CONFIG,
+      intake: { backend: 'github', repository: 'acme/theme' },
+    });
+    const store = new WebhookControlStore(root);
+    const registration = store.addRepository({
+      repository: 'acme/theme',
+      enabled: true,
+      events: ['issues'],
+      consumers: ['agentops'],
+      workspaceRoot: workspace,
+      readyLabel: 'ready',
+      baseBranch: 'main',
+    });
+    const controller = new AbortController();
+    const calls: AbortSignal[] = [];
+    const adapters = createWebhookConsumerAdapters(store, {
+      harnessRoot: root,
+      signal: controller.signal,
+      runProcess: async (_executable, _args, options) => {
+        calls.push(options.signal!);
+        await new Promise<void>((_resolve, reject) => {
+          options.signal!.addEventListener(
+            'abort',
+            () => reject(new Error('aborted by test')),
+            { once: true },
+          );
+        });
+      },
+    });
+    const event = NormalizedGithubEvent.parse({
+      deliveryId: 'WHDEL-0001',
+      deliveryKey: 'delivery-1',
+      registrationId: registration.id,
+      repository: 'acme/theme',
+      event: 'issues',
+      action: 'labeled',
+      payload: { repository: { full_name: 'acme/theme' } },
+      receivedAt: new Date().toISOString(),
+    });
+
+    const active = adapters.agentops!(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    const queued = adapters.agentops!({
+      ...event,
+      deliveryId: 'WHDEL-0002',
+      deliveryKey: 'delivery-2',
+    });
+    controller.abort();
+
+    await expect(active).rejects.toThrow('aborted by test');
+    await expect(queued).rejects.toThrow('webhook consumer stopped');
+    expect(calls).toEqual([controller.signal]);
+    expect(calls[0]!.aborted).toBe(true);
+  });
+
   it('AC-WHRT-004 maps merged PR and push payloads to the typed Orca sync adapter', async () => {
     const root = tempRoot();
     const store = new WebhookControlStore(root);

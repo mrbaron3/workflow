@@ -401,9 +401,11 @@ async function cmdWebhookDaemon(flags: Args['flags']): Promise<void> {
   const orcaSyncScript = options.orcaSyncScript
     ? path.resolve(ROOT, options.orcaSyncScript)
     : undefined;
+  const consumerAbort = new AbortController();
   const consumers = createWebhookConsumerAdapters(webhookStore, {
     harnessRoot: ROOT,
     launcher: path.join(INSTALL_ROOT, 'bin', 'agentops.mjs'),
+    signal: consumerAbort.signal,
     ...(orcaSyncScript ? { orcaSyncScript } : {}),
     log,
   });
@@ -453,6 +455,7 @@ async function cmdWebhookDaemon(flags: Args['flags']): Promise<void> {
   await waitForWebhookDaemonShutdown({
     reconciliation,
     forwarders,
+    consumers: consumerAbort,
     signingRelay,
     control,
   });
