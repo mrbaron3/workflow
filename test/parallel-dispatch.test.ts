@@ -178,6 +178,35 @@ describe('concurrent dispatch under a finite cap (AC-PAR-001)', () => {
       expect(Math.max(...peaks)).toBe(1); // clamped up to exactly 1, not more
     }
   });
+
+  it('dispatches an AI-managed changes-requested PR for a repair turn', async () => {
+    const store = freshStore();
+    mkIssue(store, 'ISSUE-REPAIR');
+    for (const status of [
+      'ready-for-generation',
+      'generation-in-progress',
+      'ready-for-evaluation',
+      'evaluation-in-progress',
+      'changes-requested',
+    ] as const) {
+      store.setStatus('ISSUE-REPAIR', status);
+    }
+    const events: DispatchEvent[] = [];
+    const { worker } = recordingWorker(events, 1);
+
+    const result = await runLoopLive(
+      store,
+      cfgWithCap(1),
+      store.root,
+      { driveIssue: worker },
+      () => {},
+    );
+
+    expect(result.map((row) => row.issueId)).toEqual(['ISSUE-REPAIR']);
+    expect(events.filter((event) => event.type === 'start')).toEqual([
+      { id: 'ISSUE-REPAIR', type: 'start' },
+    ]);
+  });
 });
 
 describe('dependency exclusion under parallelism (AC-PAR-002)', () => {

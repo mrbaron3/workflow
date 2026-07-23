@@ -10,7 +10,7 @@
 
 ## 境界コンテキスト一覧
 
-ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると8つ。技術レイヤー（Product/…）ではなく
+ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると9つ。技術レイヤー（Product/…）ではなく
 **言語の境界**で分ける。**execution は旧 ARCHITECTURE の技術層「Execution」ではない**——orchestration /
 session / panel / sentinel という固有のユビキタス言語を持つ境界として立てる（[ADR-0005](decisions/ADR-0005-execution-layer-tmux-orchestration.md)）。
 evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
@@ -25,6 +25,7 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
 | **execution** | issue queue を入力に、issue ごとの実装を role-scoped tmux セッションのオーケストレーションで自律に進める独立層 | `src/pipeline/execution/`・`src/agents/` | `_system/execution/` ✅ | 実装層・Issue Queue・Orchestrator・Watch・Session・Sentinel・Evaluator Panel・観点・審査ゲート・Scoping Guard |
 | **agent-runtime** | planning/UI-design/generation/reviewのAI呼出しを共通identityで監査し、provider/model固有差をadapterとrouteへ閉じる | `src/agents/`・`src/pipeline/execution/` | `_system/agent-runtime/` ✅ | Agent Invocation・Provider・Model・Role・Perspective Route・Provider Adapter |
 | **intake** | target GitHub Issueをclaimし、planningと条件付きUI著述をtrace/provenance gate経由でIssueへ投影する | `src/intake/` | `_system/intake/` ✅ | Source Issue・Acceptance Trace・UI Design Artifact・Claim・Enrichment |
+| **webhook** | GitHub deliveryをdurable inboxへ受け、複数repoをtransport非依存eventとしてconsumerへrouteし、pollで照合する | `src/webhook/` | `_system/webhook/` ✅ | Delivery Envelope・Durable Inbox・Repository Registration・Normalized Event・Reconciliation |
 
 **共有カーネル（Shared Kernel）**: `src/domain/`（`schema.ts` の zod 契約 ＋ `states.ts` の状態機械）と
 `src/store/`（Eval Result DB）は各状態コンテキストが共有する。これがコンテキスト間の **Published Language**
@@ -59,6 +60,9 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
   command形を知らず、agent-runtimeはqueue・panel verdictを決めない。
 - **GitHub → intake → planning**（ACL・Customer-Supplier）: intakeはreadyなGitHub Issueを外部投影としてclaimし、
   immutable原文snapshotをplanningへ供給する。planningがIssue Contract-readyへ昇格するまでexecution queueへ入れない。
+- **GitHub → webhook → intake/execution**（ACL・Published Language）: webhookはdeliveryを保存・重複排除し、
+  Normalized GitHub Eventだけをintake/PR revision loopへ渡す。payloadはtriggerであり真実ではないため、
+  consumerはcurrent snapshotを再取得する。pollは同じseamへreconciliation eventを供給する。
 - **planning → intake UI authoring → execution**（Customer-Supplier・ACL）: frontend/fullstack Candidateだけを専用
   ui-designer sessionへ渡し、AC-traceableなUI Design Artifactを検証する。不在・曖昧・不正はqueueへ投影せず、
   accepted artifactはIssueのPublished Languageとしてgeneratorと各reviewerへ渡す。

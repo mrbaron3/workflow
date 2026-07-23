@@ -59,6 +59,14 @@ import {
 } from '../workspace/target-binding.js';
 import { pollAndClaimGithubIssues, realGithubIssueRunner } from '../intake/github-issues.js';
 import { runGithubDevelopmentTurn, watchGithubDevelopment } from '../intake/development-turn.js';
+import { createWebhookConsumerAdapters } from '../webhook/consumers.js';
+import { GithubWebhookForwarderSupervisor } from '../webhook/forwarder.js';
+import { createWebhookControlServer } from '../webhook/server.js';
+import { WebhookControlStore } from '../webhook/store.js';
+import {
+  DEFAULT_WEBHOOK_RECONCILIATION_INTERVAL_MS,
+  WebhookReconciliationScheduler,
+} from '../webhook/reconciliation.js';
 
 const useColor = !process.env.NO_COLOR;
 const c = {
@@ -377,6 +385,81 @@ async function cmdGithubTurn(watch: boolean): Promise<void> {
   );
 }
 
+async function cmdWebhookDaemon(flags: Args['flags']): Promise<void> {
+  const host = typeof flags.host === 'string' ? flags.host : '127.0.0.1';
+  const rawPort = typeof flags.port === 'string' ? Number(flags.port) : 8377;
+  if (!Number.isInteger(rawPort) || rawPort < 0 || rawPort > 65_535) {
+    throw new Error('--port must be an integer between 0 and 65535');
+  }
+  const rawReconciliationInterval = typeof flags['reconcile-interval-ms'] === 'string'
+    ? Number(flags['reconcile-interval-ms'])
+    : DEFAULT_WEBHOOK_RECONCILIATION_INTERVAL_MS;
+  if (
+    !Number.isInteger(rawReconciliationInterval)
+    || rawReconciliationInterval <= 0
+    || rawReconciliationInterval > 2_147_483_647
+  ) {
+    throw new Error('--reconcile-interval-ms must be a positive timer-safe integer');
+  }
+  if (host !== '127.0.0.1' && host !== '::1' && !flags['allow-remote']) {
+    throw new Error('non-loopback --host requires --allow-remote');
+  }
+
+  const webhookStore = new WebhookControlStore(ROOT);
+  const orcaSyncScript = typeof flags['orca-sync-script'] === 'string'
+    ? path.resolve(ROOT, flags['orca-sync-script'])
+    : process.env.AGENTOPS_ORCA_SYNC_SCRIPT;
+  const consumers = createWebhookConsumerAdapters(webhookStore, {
+    harnessRoot: ROOT,
+    ...(orcaSyncScript ? { orcaSyncScript } : {}),
+    log,
+  });
+  let forwarders: GithubWebhookForwarderSupervisor | null = null;
+  const control = createWebhookControlServer({
+    store: webhookStore,
+    host,
+    port: rawPort,
+    consumers,
+    runtimeState: () => ({ forwarders: forwarders?.status() ?? [] }),
+    log,
+  });
+  const address = await control.listen();
+  forwarders = new GithubWebhookForwarderSupervisor(webhookStore, {
+    hookUrl: `${address.url}/hook`,
+    log,
+  });
+  if (!flags['no-forward']) forwarders.start();
+  const reconciliation = new WebhookReconciliationScheduler(
+    webhookStore,
+    consumers.agentops!,
+    { intervalMs: rawReconciliationInterval, log },
+  );
+  if (!flags['no-reconcile']) reconciliation.start();
+
+  log(c.green('✓ webhook control listening') + ` ${c.b(address.url)}`);
+  log(`  hook: ${c.dim(`${address.url}/hook`)}`);
+  log(`  registry: ${c.dim(path.relative(ROOT, webhookStore.file))}`);
+  log(c.dim(
+    flags['no-forward']
+      ? '  GitHub forwarders disabled (--no-forward)'
+      : '  enabled repositories are reconciled into one gh webhook forward process each',
+  ));
+  log(c.dim(
+    flags['no-reconcile']
+      ? '  polling reconciliation disabled (--no-reconcile)'
+      : `  polling reconciliation every ${rawReconciliationInterval} ms`,
+  ));
+  if (flags.open) openFile(address.url);
+
+  await new Promise<void>((resolve) => {
+    process.once('SIGINT', resolve);
+    process.once('SIGTERM', resolve);
+  });
+  reconciliation.stop();
+  forwarders.stop();
+  await control.close();
+}
+
 function cmdPlanTree(): void {
   const store = requireInit();
   const rm = store.db.roadmap;
@@ -672,6 +755,10 @@ ${c.b('Commands')}
   poll-intake          poll configured GitHub ready Issues and claim them idempotently
   github-turn          one ready Issue → planning → live drive → configured PR gate turn
   watch-github         continuously run github-turn (durable restart/idempotent inventory)
+  webhook-daemon       run the multi-repository webhook inbox + local control GUI
+       [--host H] [--port N] [--open] [--no-forward]
+       [--no-reconcile] [--reconcile-interval-ms N]
+       [--orca-sync-script F] [--allow-remote]
   plan-tree            print the planning tree (roadmap → epic → feature → spec)
   plan [--seed F]      LEGACY: ingest a seed roadmap into epics + Issue Contracts (demo)
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
@@ -731,6 +818,8 @@ async function main(): Promise<void> {
       return cmdGithubTurn(false);
     case 'watch-github':
       return cmdGithubTurn(true);
+    case 'webhook-daemon':
+      return cmdWebhookDaemon(flags);
     case 'plan-tree':
       return cmdPlanTree();
     case 'run':

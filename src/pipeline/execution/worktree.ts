@@ -111,6 +111,11 @@ export function buildChangedFiles(worktreePath: string): string[] {
     .filter((f) => f !== '.agentops' && !f.startsWith('.agentops/'));
 }
 
+/** Full immutable commit identity for the build currently checked out. */
+export function headCommit(worktreePath: string): string {
+  return git(worktreePath, ['rev-parse', 'HEAD']).out.trim();
+}
+
 /** Files changed in the worktree (tracked + untracked), for filesChanged / scope checks.
  *  Excludes `.agentops/` — the harness's own prompt/sentinel scaffolding, which is
  *  infrastructure the harness writes into every worktree, never the agent's edits.

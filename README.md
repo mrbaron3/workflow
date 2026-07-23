@@ -12,7 +12,8 @@ durable store you can resume, analyse and improve from.
 
 > This is an **MVP**: the entire pipeline runs end-to-end offline on a deterministic
 > **mock** backend. The grounded path adds GitHub Issue intake, provider-routed planning,
-> implementation, isolated review, and a GitHub PR gate. Its seams are permanently tested;
+> implementation, PR-first isolated review, current-head repair, and expected-SHA automatic
+> merge. Its seams are permanently tested;
 > a real remote/provider run is still required before claiming environment-level validation.
 
 ---
@@ -39,7 +40,7 @@ npm run dashboard   # .harness/dashboard.html をブラウザで開く
 ```
 
 実運用向けには、GitHub の `ready` Issue を取り込み、独立した planning session で契約化し、
-Claude Code / Codex を役割・レビュー観点ごとに振り分けて、既存の実装・評価・GitHub PR gateへ
+Claude Code / Codex を役割・レビュー観点ごとに振り分けて、PR作成後のcurrent-head評価・修正・自動mergeへ
 接続する経路もあります。設定例は [GitHub Issue watcher](#github-issue-watcher) を参照してください。
 
 ---
@@ -147,8 +148,10 @@ drive → panel → repair → gate all run without a real agent.
 **Real agents run as interactive tmux sessions on an actual git worktree**, grounded by real
 `tsc` / `vitest` against that checkout — not a headless `claude -p` shell-out (the old
 `CliAgentRunner` was deprecated with the tmux orchestration; headless is a North-Star non-goal,
-ADR-0005 Q2). A generator session edits files, the harness commits the build and grades it, then
-read-only perspective sessions review it, and an approved build stops at the human review gate.
+ADR-0005 Q2). A generator session edits files and commits the build, the GitHub PR is opened, then
+read-only perspective sessions review that exact head SHA. A blocker/major finding repairs and
+pushes the same branch; a clean current head is merged with an expected-SHA guard. The `store`
+gate remains available for local/manual runs.
 
 ```bash
 npx tsx scripts/real-run-sandbox.ts                  # scaffold a throwaway sandbox + ai-managed issue + config
@@ -156,8 +159,10 @@ LENSES=codeQuality npx tsx scripts/real-panel-run.ts # cheap: generator + one re
 npx tsx scripts/real-panel-run.ts                    # full 6-perspective panel
 ```
 
-`config.gate.backend` (`store` | `github`) chooses the review gate; `config.panel.maxConcurrent`
-bounds the review fan-out. The execution layer's design lives in
+`config.gate.backend` (`store` | `github`) chooses local/manual vs PR-native delivery.
+`gate.requiredChecks` names GitHub checks that must be green (empty means all visible checks), and
+`gate.mergeMethod` is `squash`, `merge`, or `rebase`. `config.panel.maxConcurrent` bounds the
+review fan-out. The execution layer's design lives in
 [ADR-0005](docs/decisions/ADR-0005-execution-layer-tmux-orchestration.md) /
 [ADR-0006](docs/decisions/ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) and the
 [`_system/execution`](docs/_system/execution/) views.
@@ -168,7 +173,7 @@ The live entry path is:
 
 ```text
 ready GitHub Issue → durable claim → isolated planning → conditional isolated UI design → trace gate → implementation
-→ isolated perspective reviews → configured human/GitHub PR gate
+→ GitHub PR → current-head isolated perspective reviews → same-branch repair → expected-SHA auto-merge
 ```
 
 Initialize the harness, then configure `.harness/config.json`. This example routes planning
@@ -203,7 +208,12 @@ inherits the corresponding CLI default.
       }
     }
   },
-  "gate": { "backend": "github", "baseBranch": "main" },
+  "gate": {
+    "backend": "github",
+    "baseBranch": "main",
+    "requiredChecks": ["test"],
+    "mergeMethod": "squash"
+  },
   "routes": {
     "planning": { "provider": "claude" },
     "uiDesign": { "provider": "codex" },
@@ -238,6 +248,33 @@ npm run harness -- watch-github   # repeat turns; Ctrl-C stops the watcher
 turns in milliseconds. It does not affect the one-shot `github-turn` command. Valid values are
 positive integers up to 2147483647 ms (Node's maximum timer delay); omitted or invalid
 values fall back to `DEFAULT_GITHUB_WATCH_INTERVAL_MS` (30000 ms).
+
+### Multi-repository webhook control
+
+Webhook is the immediate trigger; the same daemon also runs polling reconciliation, so a missed,
+late, or out-of-order delivery cannot become the source of truth. Start the loopback control plane:
+
+```bash
+npm run harness -- webhook-daemon --open
+```
+
+The GUI at `http://127.0.0.1:8377` adds/toggles repositories, selects allow-listed events and
+consumers, shows each forwarder state and recent durable deliveries, and retries failures.
+Registrations and payloads are stored atomically in `.harness/webhooks.json`, separately from the
+Eval DB. One `gh webhook forward` child is supervised per enabled repository; this requires the
+`gh webhook` extension. Use `--no-forward` when another ingress sends to `/hook`.
+
+The `agentops` consumer runs the fixed `github-turn` entry point—never a registration-supplied
+shell command. Each registration's `workspaceRoot` must contain a harness config whose
+`intake.repository` matches the registered `owner/name`; separate repositories may therefore use
+separate workspaces while sharing this daemon and GUI. The optional `orca-worktree-sync` adapter
+uses `--orca-sync-script F` (or `AGENTOPS_ORCA_SYNC_SCRIPT`) and preserves the old merged-PR/push
+event mapping without hard-coding a macOS path.
+
+Polling reconciliation defaults to 30000 ms and shares the same per-repository single-flight queue
+as webhook deliveries. Configure it with `--reconcile-interval-ms N`; use `--no-reconcile` only
+for diagnostics. Do not run `watch-github` against the same workspace at the same time as this
+daemon.
 
 Claiming removes `ready` and adds `agent-claimed`. The first source snapshot and every planning /
 UI-design / generation / perspective invocation retain stable provenance in `.harness/db.json`; restarts reuse

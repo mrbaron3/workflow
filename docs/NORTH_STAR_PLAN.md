@@ -48,6 +48,12 @@
   止まり、(iii) **UI/UX 著述ペルソナ**不在、の 3 点。入口の altitude を人間が確定（theme repo の
   GitHub Issue＝入口 → planning-agent が contract-ready へ昇格 → 決定論 intake が store へ）＝**ADR-0008**。
   新ギャップ **D7（intake）/A7（UI/UX 著述）** を台帳へ・**A5 を最優先の構造ギャップへ昇格**（本節 §2）。
+- **（2026-07-23 PR #8 grounded発見）PRが自動ループの外にある構造穴を確定**:
+  旧headへのP1→修正push後の再レビュー結果をハーネスが追跡できず、PR作成前パネル承認とGitHub上の
+  revision reviewが分断されていた。人間が目標動作を再確定: **PRを先に作り、current headを複数観点で
+  review→blocking findingを同branchへ修正→全観点再review→gate通過時に自動merge→次task**。
+  **D8（PR-native delivery）**をADR-0009/EPIC-11へ追加。同時に既存Octolink daemonを汎用化する
+  **D9（Webhook trigger＋poll reconciliation＋複数repo GUI）**をADR-0010/EPIC-12へ追加。
 
 残りを一言で: **(a) 測れていない軸を測る、(b) 横幅（規模・並行・多様性）、
 (c) 縦深（診断→改善の精度）、(d) 自分以外を開発する実証。**
@@ -97,6 +103,8 @@
 | D5 | **✅ 構造実装済み（FEAT-011）** — 1 store=1 canonical target binding、全mutation CLI preflight、legacy明示bind、mismatch fail-closed。現storeも明示移行済み | ADR-0001の組織境界 | EPIC-06 / FEAT-011 | 残り: 外部target往復時のgrounded mismatch証拠 |
 | D6 | **✅ 構造実装済み（FEAT-012）** — reviewer checkoutとevidence sidecarを分離。既知lockfile副作用は帰属してfindings保持、source/config変更は従来どおりdiscard | ②評価のfalse-escalation抑止 | EPIC-06 / FEAT-012 | 残り: 次の実live panelで3/4発生が消えるgrounded観測 |
 | D7 | **✅ 入口配線実装済み／実remote縦断待ち（FEAT-016..018）** — store-first GitHub claim、planning detached session、全AC source/system trace gate、`github-turn`/`watch-github`→既存runLoopLive/PR gateを実装。fake external/provider/drive縦断は恒久test済み | 究極目標「人間は WHAT のみ」の入口 | EPIC-08 | 残り: 実remote ready Issue→異種provider panel→GitHub PRのgrounded実測とHOW介入0計器 |
+| D8 | **✅ 構造実装済み／実remote縦断待ち（FEAT-022..024）** — PRを初回Perspective前に作成し、EvalRun/Invocationを`(prId, headSha)`へ束縛。head更新で旧revisionをstale化し、approve付きmajor/P1・未解決P0/P1 thread・check・mergeabilityをcurrent-head gateで拒否。同branch repairをfresh attemptとしてresumeし、全通過時だけ`--match-head-commit`でauto-merge。分割Source Issueは全子released後だけclose | 「承認済みなのに同じrevisionへP1」のfalse-passを禁止し、人間mergeを通常経路から外す | EPIC-11 / FEAT-022..024実装済み | 実GitHub PRでP1→修正push→全観点再review→expected-SHA merge→released→次taskをgrounded実測 |
+| D9 | **✅ 構造実装済み／常駐実走待ち（FEAT-025..027）** — persist-before-ack/delivery dedup/retry/restart recovery、repo registry/router、repo別`gh webhook forward`監督、固定AgentOps/Orca adapter、loopback GUI、同一single-flightのpoll reconciliationをNodeで実装。`.harness/webhooks.json`はEval DBと分離 | Issue/PR/review/checkを即時に同じ自律loopへ戻し、複数targetを運用可能にする | EPIC-12 / FEAT-025..027実装済み | 旧Octolink launchdを新daemonへ移行し、複数repoのdelivery/forwarder/reconciliationをgrounded実測 |
 
 ## 3. マイルストーン（依存順・「測る→広げる→深める→実証する」）
 
@@ -128,6 +136,10 @@
   provider backend → role/perspective routing）、**EPIC-08**（D7 GitHub poll/claim → traceable
   planning enrichment →実remote縦断）の順で進む。A7/A6 は非UI intakeを塞ぐhard dependencyにせず、
   UI要求を検出したときだけ理由付きで停止する条件付き能力として後続化する。
+  **2026-07-23追記**: EPIC-08の実remote縦断前に、PRの意味論を**EPIC-11（D8）**でPR-native loopへ
+  修正する。即時イベント配送は**EPIC-12（D9）**で追加するが、正しさはpoll reconciliationでも成立させる。
+  実装順は FEAT-022 revision identity → FEAT-025 durable inbox → FEAT-023 review/repair →
+  FEAT-024 atomic merge/continuation → FEAT-026 multi-repo runtime → FEAT-027 GUI。
   出口: 自分以外のソフトウェアが WHAT だけから released になり、A1 計器がそれを証明する
   — **一部到達**（EPIC-01・4 issue released）。ただし D4 が direct engineering 経路だった
   ことと、D5/D6 が operator の都度介入を要求したことから、**「HOW に人間が触れず」の条件は

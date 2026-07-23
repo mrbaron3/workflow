@@ -121,6 +121,52 @@ describe('runBoundedRepairLoop: threads the repair brief across attempts', () =>
     expect(res.status).toBe('needs-human-review'); // gate, never auto-released
     expect(res.escalated).toBe(false);
   });
+
+  it('resumes an existing PR at a fresh attempt with an external gate repair brief', async () => {
+    const store = tmpStore('live-resume');
+    addIssue(store, 'ISSUE-1');
+    store.setStatus('ISSUE-1', 'ready-for-generation');
+    store.setStatus('ISSUE-1', 'generation-in-progress');
+    store.setStatus('ISSUE-1', 'ready-for-evaluation');
+    store.setStatus('ISSUE-1', 'evaluation-in-progress');
+    store.setStatus('ISSUE-1', 'changes-requested');
+    const pr = addPR(store, 'ISSUE-1');
+    pr.attempts = 2;
+    store.setStatus('ISSUE-1', 'generation-in-progress');
+    const initial: RepairBrief = {
+      fromEvalRunId: 'revision-gate:PRGATE-1',
+      findings: [Finding.parse({
+        criterionId: 'PR-GATE-1',
+        severity: 'major',
+        expected: 'no P1',
+        observed: 'P1 remains',
+        requiredFix: ['resolve P1'],
+      })],
+      instructions: ['resolve P1'],
+    };
+    const attempts: number[] = [];
+    const briefs: Array<RepairBrief | null> = [];
+
+    const result = await runBoundedRepairLoop(
+      store,
+      { ...CONFIG, maxRepairs: 0 },
+      'ISSUE-1',
+      pr,
+      async (attempt, brief) => {
+        attempts.push(attempt);
+        briefs.push(brief);
+        store.setStatus('ISSUE-1', 'ready-for-evaluation');
+        store.setStatus('ISSUE-1', 'evaluation-in-progress');
+        return { panel: approvingPanel };
+      },
+      { startAttempt: 3, initialRepairBrief: initial },
+    );
+
+    expect(attempts).toEqual([3]);
+    expect(briefs[0]?.instructions).toEqual(['resolve P1']);
+    expect(result.attempts).toBe(3);
+    expect(result.verdict).toBe('approve');
+  });
 });
 
 describe('runBoundedRepairLoop: a stuck generator escalates without a silent grade', () => {

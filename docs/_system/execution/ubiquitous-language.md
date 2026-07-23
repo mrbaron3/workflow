@@ -27,3 +27,6 @@
 | LANG-execution-017 | Environment Artifact Mutation | reviewer の依存確認・test 実行が disposable checkout に残した lockfile 等の、source/config 変更ではない明示分類済み副作用。観測・帰属してから checkout と共に破棄し、健全な findings を無効化しない。 |
 | LANG-execution-018 | Verification Method Command | Acceptance Criterionの`verification.method`へtarget固有の実行commandを対応付ける設定。`typecheck`/`unit_tests`は互換aliasで、正規形はmethod-keyed registry。別methodへのfallbackをしない。 |
 | LANG-execution-019 | Criterion Verification Evidence | 1つのACについて、宣言method・実command・pass/fail・境界を切った出力を保持するgrounded証拠。command未設定も`command:null`の失敗証拠として残る。 |
+| LANG-execution-020 | PR Revision | 1つのGitHub PRの特定head SHA。レビュー・check・finding・承認が束縛される最小の配送単位。head更新で旧revisionの承認はstaleになる。 |
+| LANG-execution-021 | Revision Gate | current PR Revisionについて、必須Perspective・hard gates・GitHub checks・blocking thread・mergeabilityを集約する決定論ゲート。 |
+| LANG-execution-022 | Blocking Review Finding | P0/P1、blocker、`request_changes`、missing evidence等、current revisionのmerge資格を単独で拒否する指摘。 |

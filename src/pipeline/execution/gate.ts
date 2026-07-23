@@ -22,6 +22,7 @@ import { PrExternalRef } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
 import { recordHumanDecision, type HumanDecision } from './loop.js';
+import { observePrRevision } from './pr-native.js';
 
 /** A GitHub PR's lifecycle state, normalised from `gh pr view --json state`. */
 export type GhPrState = 'open' | 'merged' | 'closed';
@@ -57,6 +58,46 @@ export interface OpenGateInput {
   /** The checkout whose branch is pushed and from which the PR is opened. */
   worktree: string;
   title: string;
+}
+
+export interface ProjectReviewRevisionInput extends OpenGateInput {
+  headSha: string;
+}
+
+/**
+ * PR-first projection: push the new build revision before any LLM perspective
+ * reviews it. Repair attempts reuse the same external PR and only advance its head.
+ */
+export function projectReviewRevision(
+  store: Store,
+  config: HarnessConfig,
+  input: ProjectReviewRevisionInput,
+  runner: GhGateRunner,
+  log: (m: string) => void = () => {},
+) {
+  const revision = observePrRevision(store, input.pr, input.headSha);
+  if ((config.gate?.backend ?? 'store') !== 'github') return revision;
+
+  runner.pushBranch(input.worktree, input.pr.branch);
+  if (!input.pr.externalRef) {
+    const base = config.gate?.baseBranch ?? config.baseBranch;
+    const ref = PrExternalRef.parse(runner.createPr(input.worktree, {
+      base,
+      head: input.pr.branch,
+      title: input.title,
+      body: renderReviewPrBody(store, input.pr.issueId),
+    }));
+    input.pr.externalRef = ref;
+    log(`  ⇪ ${input.pr.issueId}: opened review PR ${ref.url} @ ${input.headSha.slice(0, 12)}`);
+  } else {
+    log(
+      `  ⇪ ${input.pr.issueId}: pushed repair revision `
+      + `${input.headSha.slice(0, 12)} to PR #${input.pr.externalRef.number}`,
+    );
+  }
+  input.pr.updatedAt = nowISO();
+  store.save();
+  return revision;
 }
 
 /**
@@ -162,6 +203,21 @@ export function renderGatePrBody(store: Store, issueId: string): string {
   if (source) {
     const relation = source.storeIssueIds.length === 1 ? 'Closes' : 'Refs';
     lines.push(``, `${relation} ${source.snapshot.repository}#${source.snapshot.number}`);
+  }
+  return lines.join('\n');
+}
+
+/** Initial body for a PR created before its first perspective review. */
+export function renderReviewPrBody(store: Store, issueId: string): string {
+  const lines = [
+    `このPRはAgentOpsのcurrent-headレビュー・修正ループで処理されます。`,
+    `各head SHAについて全必須観点・checks・未解決blocking threadを再評価し、`,
+    `ゲート通過時だけexpected SHA付きで自動mergeします。`,
+  ];
+  const source = store.db.intakeRecords.find((record) => record.storeIssueIds.includes(issueId));
+  if (source) {
+    const relation = source.storeIssueIds.length === 1 ? 'Closes' : 'Refs';
+    lines.push('', `${relation} ${source.snapshot.repository}#${source.snapshot.number}`);
   }
   return lines.join('\n');
 }

@@ -78,6 +78,8 @@ export interface PanelInput {
   agent: EvalRun['agent'];
   /** Non-deterministic reviewer invocation identities, keyed by perspective. */
   invocationKeys?: Record<string, string>;
+  revisionId?: string | null;
+  headSha?: string | null;
   featureArea?: string;
 }
 
@@ -212,7 +214,10 @@ export function runPanel(store: Store, config: HarnessConfig, input: PanelInput,
 
   const existing = store
     .runsForIssue(input.issueId)
-    .filter((r) => r.prId === input.prId && r.attempt === input.attempt);
+    .filter((r) => r.prId === input.prId && r.attempt === input.attempt)
+    .filter((r) => input.revisionId
+      ? r.revisionId === input.revisionId && r.headSha === input.headSha
+      : true);
 
   // --- gate-before-panel (AC-PANEL-002) -----------------------------------
   const base = gradeBuild(input.contract, input.artifact, config);
@@ -276,7 +281,16 @@ function gradeWithRetry(
 ): PerspectiveResult | null {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return PerspectiveResult.parse(grader(perspective, input.contract, input.artifact, config));
+      const parsed = PerspectiveResult.parse(grader(perspective, input.contract, input.artifact, config));
+      // ADR-0009: an approve token can never mask a P0/P1-equivalent finding.
+      if (
+        parsed.verdict === 'approve'
+        && parsed.findings.some((finding) =>
+          finding.severity === 'blocker' || finding.severity === 'major')
+      ) {
+        return { ...parsed, verdict: 'request_changes' };
+      }
+      return parsed;
     } catch {
       // invalid output (threw, or failed schema) — retry, then escalate
     }
@@ -314,6 +328,8 @@ function persistRun(
     humanVerdict: null,
     perspective,
     invocationKey: perspective === null ? null : input.invocationKeys?.[perspective] ?? null,
+    revisionId: input.revisionId ?? null,
+    headSha: input.headSha ?? null,
     createdAt: nowISO(),
   });
   return store.addEvalRun(run);

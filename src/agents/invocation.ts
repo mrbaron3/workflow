@@ -15,6 +15,8 @@ export interface InvocationCoordinates {
   attempt: number;
   role: InvocationRole;
   perspective?: string | null;
+  revisionId?: string | null;
+  headSha?: string | null;
 }
 
 export interface InvocationProvenanceInput extends InvocationCoordinates {
@@ -29,8 +31,10 @@ export interface InvocationProvenanceInput extends InvocationCoordinates {
 export function invocationKey(coordinates: InvocationCoordinates): string {
   const segment = (value: string | number | null | undefined): string =>
     value === null || value === undefined ? '-' : encodeURIComponent(String(value));
+  const revisionBound = coordinates.revisionId !== null && coordinates.revisionId !== undefined
+    || coordinates.headSha !== null && coordinates.headSha !== undefined;
   return [
-    'invocation:v1',
+    revisionBound ? 'invocation:v2' : 'invocation:v1',
     segment(coordinates.subjectId),
     segment(coordinates.issueId),
     segment(coordinates.prId),
@@ -38,6 +42,9 @@ export function invocationKey(coordinates: InvocationCoordinates): string {
     segment(coordinates.attempt),
     segment(coordinates.role),
     segment(coordinates.perspective),
+    ...(revisionBound
+      ? [segment(coordinates.revisionId), segment(coordinates.headSha)]
+      : []),
   ].join(':');
 }
 
@@ -60,6 +67,8 @@ const PROVENANCE_FIELDS = [
   'model',
   'prompt',
   'outcome',
+  'revisionId',
+  'headSha',
 ] as const satisfies readonly (keyof AgentInvocation)[];
 
 /**
@@ -81,6 +90,8 @@ export function recordAgentInvocation(store: Store, input: InvocationProvenanceI
     model: input.model ?? null,
     prompt: input.prompt,
     outcome: input.outcome,
+    revisionId: input.revisionId ?? null,
+    headSha: input.headSha ?? null,
   };
   const existing = store.invocationByKey(key);
   if (existing) {

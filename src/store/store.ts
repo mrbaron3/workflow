@@ -22,7 +22,9 @@ import type {
   IntakeRecord,
   Issue,
   PR,
+  PrRevision,
   PromptRecord,
+  RevisionGateSnapshot,
   PlanningEnrichmentRecord,
   RegressionRun,
   Roadmap,
@@ -169,6 +171,24 @@ export class Store {
 
   prForIssue(issueId: string): PR | undefined {
     return this.db.prs.find((p) => p.issueId === issueId);
+  }
+
+  upsertPrRevision(revision: PrRevision): PrRevision {
+    const existing = this.db.prRevisions.find(
+      (row) => row.prId === revision.prId && row.headSha === revision.headSha,
+    );
+    if (existing) return existing;
+    this.db.prRevisions.push(revision);
+    return revision;
+  }
+
+  revisionForHead(prId: string, headSha: string): PrRevision | undefined {
+    return this.db.prRevisions.find((row) => row.prId === prId && row.headSha === headSha);
+  }
+
+  addRevisionGateSnapshot(snapshot: RevisionGateSnapshot): RevisionGateSnapshot {
+    this.db.revisionGateSnapshots.push(snapshot);
+    return snapshot;
   }
 
   // --- spec states (M20 signing) -------------------------------------------

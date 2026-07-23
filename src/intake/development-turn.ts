@@ -20,6 +20,12 @@ import {
 } from './planning-enrichment.js';
 import { runPlanningSession, type PlanningSessionResult } from './planning-session.js';
 import { runUiDesignSession, type UiDesignSessionResult } from './ui-design-session.js';
+import { PERSPECTIVES } from '../pipeline/panel.js';
+import {
+  realPrNativeGithubRunner,
+  reconcilePrNativeGates,
+  type PrNativeGithubRunner,
+} from '../pipeline/execution/pr-native.js';
 
 export interface PlanningRunnerInput {
   intake: IntakeRecord;
@@ -40,6 +46,7 @@ export interface GithubDevelopmentTurnDeps {
   planningRunner?: PlanningRunner;
   uiDesignRunner?: UiDesignRunner;
   driveQueue?: QueueDriver;
+  prNativeRunner?: PrNativeGithubRunner;
 }
 
 export interface GithubDevelopmentTurnResult {
@@ -55,6 +62,23 @@ export async function runGithubDevelopmentTurn(
   harnessRoot: string = process.cwd(),
   log: (message: string) => void = () => {},
 ): Promise<GithubDevelopmentTurnResult> {
+  const prNativeRunner = deps.prNativeRunner
+    ?? realPrNativeGithubRunner(config.gate?.mergeMethod);
+  if ((config.gate?.backend ?? 'store') === 'github' && config.target) {
+    const results = reconcilePrNativeGates(
+      store,
+      config,
+      prNativeRunner,
+      path.resolve(harnessRoot, config.target.repo),
+      PERSPECTIVES.map((perspective) => perspective.key),
+    );
+    for (const result of results) {
+      log(
+        `⇩ reconciled ${result.prId}@${result.headSha.slice(0, 12)} → ${result.decision}`
+        + (result.reasons.length ? ` (${result.reasons.join('; ')})` : ''),
+      );
+    }
+  }
   const intakeResults = pollAndClaimGithubIssues(store, config, deps.issueRunner);
   const systemDir = config.target?.systemDir
     ? path.resolve(harnessRoot, config.target.systemDir)
@@ -134,7 +158,8 @@ export async function runGithubDevelopmentTurn(
   }
 
   // The downstream is the existing queue driver — no intake-specific implementation pipeline.
-  const driveQueue = deps.driveQueue ?? (() => runLoopLive(store, config, harnessRoot, {}, log));
+  const driveQueue = deps.driveQueue
+    ?? (() => runLoopLive(store, config, harnessRoot, { prNativeRunner }, log));
   const driveResults = await driveQueue();
   return { intake: intakeResults, enrichmentIds, driveResults };
 }

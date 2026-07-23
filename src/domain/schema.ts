@@ -284,6 +284,9 @@ export const IntakeRecord = z.object({
   status: IntakeStatus.default('claim-pending'),
   claimedAt: z.string().nullable().default(null),
   storeIssueIds: z.array(z.string()).default([]),
+  /** Split-source aggregation close result (single-child sources use the PR's Closes relation). */
+  sourceClosedAt: z.string().nullable().default(null),
+  sourceCloseError: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -351,10 +354,70 @@ export const PR = z.object({
   // ADR-0006 G1: set when an approved build is projected to a GitHub PR gate. null = no
   // projection (store-direct gate / local sandbox). Additive — absent on older records.
   externalRef: PrExternalRef.nullable().default(null),
+  // ADR-0009: the only revision whose evidence may currently qualify this PR for merge.
+  currentRevisionId: z.string().nullable().default(null),
+  headSha: z.string().nullable().default(null),
+  mergedHeadSha: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type PR = z.infer<typeof PR>;
+
+export const PrRevisionStatus = z.enum([
+  'pending',
+  'reviewing',
+  'changes-requested',
+  'approved',
+  'merged',
+  'stale',
+  'failed',
+]);
+export type PrRevisionStatus = z.infer<typeof PrRevisionStatus>;
+
+/** Durable identity for exactly one observed GitHub PR head (ADR-0009 / DATA-execution-010). */
+export const PrRevision = z.object({
+  id: z.string(),
+  prId: z.string(),
+  headSha: z.string().min(7),
+  ordinal: z.number().int().positive(),
+  status: PrRevisionStatus.default('pending'),
+  mergeRequestedAt: z.string().nullable().default(null),
+  createdAt: z.string(),
+  completedAt: z.string().nullable().default(null),
+});
+export type PrRevision = z.infer<typeof PrRevision>;
+
+export const RevisionCheck = z.object({
+  name: z.string().min(1),
+  status: z.enum(['pending', 'success', 'failure']),
+});
+export type RevisionCheck = z.infer<typeof RevisionCheck>;
+
+export const RevisionReviewThread = z.object({
+  id: z.string().min(1),
+  body: z.string().min(1),
+  path: z.string().nullable().default(null),
+  line: z.number().int().positive().nullable().default(null),
+});
+export type RevisionReviewThread = z.infer<typeof RevisionReviewThread>;
+
+/** One merge-decision fact captured against one immutable head SHA. */
+export const RevisionGateSnapshot = z.object({
+  id: z.string(),
+  prId: z.string(),
+  revisionId: z.string(),
+  headSha: z.string().min(7),
+  requiredPerspectives: z.array(z.string()).default([]),
+  perspectiveVerdicts: z.record(Verdict).default({}),
+  checks: z.array(RevisionCheck).default([]),
+  unresolvedBlockingThreadIds: z.array(z.string()).default([]),
+  blockingReviewThreads: z.array(RevisionReviewThread).default([]),
+  mergeability: z.enum(['mergeable', 'conflicting', 'unknown']),
+  decision: z.enum(['pending', 'changes-requested', 'approved']),
+  reasons: z.array(z.string()).default([]),
+  createdAt: z.string(),
+});
+export type RevisionGateSnapshot = z.infer<typeof RevisionGateSnapshot>;
 
 /**
  * ISSUE-0009: on a re-review (attempt > 1) the reviewer ATTESTS each finding's lineage —
@@ -423,6 +486,9 @@ export const EvalRun = z.object({
   // DATA-agent-runtime-004: reviewer invocation that produced this perspective verdict.
   // null = legacy, deterministic grader, or pre-provenance run.
   invocationKey: z.string().nullable().default(null),
+  // ADR-0009: null only for legacy pre-PR-revision scorecards.
+  revisionId: z.string().nullable().default(null),
+  headSha: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type EvalRun = z.infer<typeof EvalRun>;
@@ -531,6 +597,8 @@ export const AgentInvocation = z.object({
   model: z.string().nullable().default(null),
   prompt: z.string(),
   outcome: InvocationOutcome,
+  revisionId: z.string().nullable().default(null),
+  headSha: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type AgentInvocation = z.infer<typeof AgentInvocation>;
@@ -645,6 +713,8 @@ export const DB = z.object({
   features: z.array(Feature).default([]),
   issues: z.array(Issue).default([]),
   prs: z.array(PR).default([]),
+  prRevisions: z.array(PrRevision).default([]),
+  revisionGateSnapshots: z.array(RevisionGateSnapshot).default([]),
   evalRuns: z.array(EvalRun).default([]),
   evalTasks: z.array(EvalTask).default([]),
   regressionRuns: z.array(RegressionRun).default([]), // ③ regression executions (additive)

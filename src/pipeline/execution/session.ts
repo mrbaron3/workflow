@@ -15,7 +15,14 @@ import type { AgentProvider, Issue, IssueContract } from '../../domain/schema.js
 import type { HarnessConfig, TargetRepoConfig } from '../../config.js';
 import type { RepairBrief } from '../../domain/artifact.js';
 import { loadRolePrompt } from '../../agents/prompts.js';
-import { createWorktree, worktreeExists, changedFiles, commitBuild, buildChangedFiles } from './worktree.js';
+import {
+  createWorktree,
+  worktreeExists,
+  changedFiles,
+  commitBuild,
+  buildChangedFiles,
+  headCommit,
+} from './worktree.js';
 import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
 import { providerReadyPattern } from '../../agents/interactive-backend.js';
 import { resolveAgentRoute } from '../../agents/routing.js';
@@ -28,6 +35,8 @@ export interface GeneratorSessionInput {
   attempt: number;
   /** Present on repair attempts (attempt > 1): the reviewers' required fixes to apply on top. */
   repairBrief?: RepairBrief | null;
+  /** Existing PR head used to reconstruct a missing repair worktree after restart. */
+  resumeRef?: string | null;
 }
 
 export interface SessionResult {
@@ -39,6 +48,8 @@ export interface SessionResult {
   session: string;
   outcome: LivenessOutcome;
   changed: string[];
+  /** Immutable build revision. null only when no build commit exists. */
+  headSha: string | null;
   paneTail: string;
   /** The exact prompt written to PROMPT.md this attempt — returned so the orchestrator can persist
    *  it for audit (the file itself is overwritten next attempt and wiped with .harness/). */
@@ -95,7 +106,9 @@ export async function runGeneratorSession(
   const wt = path.join(harnessRoot, '.harness', 'worktrees', key);
 
   // fresh worktree on the first attempt; reuse it for repair attempts so edits accumulate
-  if (input.attempt === 1 || !worktreeExists(wt)) createWorktree(repoAbs, branch, baseRef, wt);
+  if (input.attempt === 1 || !worktreeExists(wt)) {
+    createWorktree(repoAbs, branch, input.attempt > 1 ? input.resumeRef ?? baseRef : baseRef, wt);
+  }
 
   // the full prompt lives in a file — send-keys can't carry multi-line text without
   // submitting early — and the agent reads it (Read is in allowedTools)
@@ -145,7 +158,19 @@ export async function runGeneratorSession(
   // The build's cumulative change set comes from the commit once there is one; fall back to the
   // working tree for a stuck/empty session (nothing committed).
   const changed = committed ? buildChangedFiles(wt) : changedFiles(wt);
-  return { provider, model: route.model, worktree: wt, branch, session, outcome, changed, paneTail, prompt };
+  const headSha = committed ? headCommit(wt) : null;
+  return {
+    provider,
+    model: route.model,
+    worktree: wt,
+    branch,
+    session,
+    outcome,
+    changed,
+    headSha,
+    paneTail,
+    prompt,
+  };
 }
 
 /**

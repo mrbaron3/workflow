@@ -49,16 +49,18 @@ export function configuredGraderCommand(
 }
 
 /**
- * The human review gate's backend (ADR-0006 G1-G2). `store` (default) keeps the gate
- * direct — an approved build stops at needs-human-review and a human calls recordHumanDecision
- * (CLI / dashboard); nothing leaves the machine. `github` projects the approved build to a real
- * PR (push + `gh pr create`) and polls that PR's merge/close as the human decision. The store
- * stays SoT either way; github is opt-in and requires a pushable remote + `gh` auth.
+ * Delivery backend. `store` (default) keeps the legacy local human decision gate.
+ * `github` uses ADR-0009's PR-first current-head review/repair loop and expected-SHA
+ * automatic merge. The store stays SoT; GitHub is the external projection/snapshot.
  */
 export interface GateConfig {
   backend: 'store' | 'github';
   /** github only: base branch for the PR (defaults to config.baseBranch). */
   baseBranch?: string;
+  /** GitHub check names required by the current-head revision gate. Empty = all visible checks. */
+  requiredChecks?: string[];
+  /** Merge strategy used after the current-head gate passes. */
+  mergeMethod?: 'squash' | 'merge' | 'rebase';
 }
 
 /**
@@ -127,7 +129,7 @@ export interface HarnessConfig {
   };
   /** Target repo for grounded runs (execution layer edits worktrees of it). */
   target?: TargetRepoConfig;
-  /** Human review gate backend (ADR-0006 G1). Absent = store-direct gate (current behavior). */
+  /** Delivery gate backend. Absent = store-direct human gate. */
   gate?: GateConfig;
   /** Per-role session model overrides. Absent = every role inherits the user's default model. */
   models?: ModelConfig;

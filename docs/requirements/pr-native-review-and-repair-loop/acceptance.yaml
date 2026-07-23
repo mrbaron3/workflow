@@ -1,0 +1,27 @@
+dependsOn:
+  - ARCH-execution-020
+  - ARCH-execution-021
+  - DOM-execution-013
+  - DOM-execution-014
+
+verifications:
+  AC-PRLOOP-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "初回headでPR create後にreview revisionを返し、repairは同PRへpushだけ行う"
+  AC-PRLOOP-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "approveとmajor findingの同居がrequest_changesになる"
+  AC-PRLOOP-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "resume attemptが既存attempt+1と外部Repair Briefから開始する"
+  AC-PRLOOP-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "未解決P1 threadがgateを拒否し、本文をsnapshotへ残す"

@@ -152,19 +152,29 @@ export async function runBoundedRepairLoop(
   issueId: string,
   pr: PR,
   produce: ProduceAttempt,
-  opts: { log?: (m: string) => void; manageIssueStatus?: boolean } = {},
+  opts: {
+    log?: (m: string) => void;
+    manageIssueStatus?: boolean;
+    /** Resume an existing PR without reusing an old attempt identity. */
+    startAttempt?: number;
+    /** Blocking GitHub review/check evidence that triggered this resumed turn. */
+    initialRepairBrief?: RepairBrief | null;
+  } = {},
 ): Promise<LoopOutcome> {
   const log = opts.log ?? (() => {});
   const manage = opts.manageIssueStatus ?? true;
-  const maxAttempts = config.maxRepairs + 1; // 1 initial + maxRepairs repairs — the "repeat N" bound
-  let repairBrief: RepairBrief | null = null;
+  const startAttempt = opts.startAttempt ?? 1;
+  const maxAttempts = startAttempt + config.maxRepairs;
+  let repairBrief: RepairBrief | null = opts.initialRepairBrief ?? null;
   let lastVerdict: Verdict = 'request_changes';
   let gateFailed = false;
   let panelEscalated = false;
   let stuck = false;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    if (manage && attempt > 1) store.setStatus(issueId, 'generation-in-progress'); // changes-requested -> generation (repair)
+  for (let attempt = startAttempt; attempt <= maxAttempts; attempt++) {
+    if (manage && attempt > startAttempt) {
+      store.setStatus(issueId, 'generation-in-progress'); // changes-requested -> generation (repair)
+    }
     pr.attempts = attempt;
 
     const outcome = await produce(attempt, repairBrief);

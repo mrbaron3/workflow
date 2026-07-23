@@ -12,7 +12,16 @@ import { Store, nowISO } from '../src/store/store.js';
 import { Issue, PR, EvalRun, IntakeRecord } from '../src/domain/schema.js';
 import type { IssueStatus } from '../src/domain/states.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
-import { prStateToDecision, openGate, pollGate, renderGatePrBody, type GhGateRunner, type GhPrState } from '../src/pipeline/execution/gate.js';
+import {
+  prStateToDecision,
+  openGate,
+  pollGate,
+  projectReviewRevision,
+  renderGatePrBody,
+  renderReviewPrBody,
+  type GhGateRunner,
+  type GhPrState,
+} from '../src/pipeline/execution/gate.js';
 
 const STORE: HarnessConfig = { ...DEFAULT_CONFIG }; // gate absent = store-direct (default)
 const GITHUB: HarnessConfig = { ...DEFAULT_CONFIG, gate: { backend: 'github' } };
@@ -100,6 +109,61 @@ describe('openGate: project an approved build to the gate UI', () => {
     const ref = openGate(store, GITHUB, { pr, worktree: '/wt', title: 't' }, runner);
     expect(ref?.number).toBe(5);
     expect(calls).toEqual({ push: 0, create: 0, view: 0 }); // no re-push / re-create
+  });
+});
+
+describe('projectReviewRevision: PR exists before perspective review', () => {
+  it('creates the PR on the first head, then pushes repairs to the same PR', () => {
+    const store = tmpStore('review-revisions');
+    const pr = seedGatedIssue(store, 'ISSUE-1', null);
+    const pushes: string[] = [];
+    const bodies: string[] = [];
+    const runner: GhGateRunner = {
+      pushBranch: (_worktree, branch) => { pushes.push(branch); },
+      createPr: (_cwd, args) => {
+        bodies.push(args.body);
+        return {
+          provider: 'github',
+          number: 8,
+          url: 'https://github.com/o/r/pull/8',
+        };
+      },
+      viewPr: () => 'open',
+    };
+    const firstSha = 'a'.repeat(40);
+    const secondSha = 'b'.repeat(40);
+
+    const first = projectReviewRevision(
+      store,
+      GITHUB,
+      { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: firstSha },
+      runner,
+    );
+    first.status = 'approved';
+    const second = projectReviewRevision(
+      store,
+      GITHUB,
+      { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: secondSha },
+      runner,
+    );
+
+    expect(pushes).toEqual([pr.branch, pr.branch]);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain('current-head');
+    expect(bodies[0]).not.toContain('自動評価パネルはこのビルドを**承認**');
+    expect(pr.externalRef?.number).toBe(8);
+    expect(first.status).toBe('stale');
+    expect(second).toMatchObject({ headSha: secondSha, ordinal: 2 });
+  });
+
+  it('uses Refs, not Closes, while a split source still has sibling work', () => {
+    const store = tmpStore('review-body-split');
+    seedGatedIssue(store, 'ISSUE-1', 1);
+    seedGatedIssue(store, 'ISSUE-2', 2);
+    seedIntake(store, ['ISSUE-1', 'ISSUE-2'], 9);
+
+    expect(renderReviewPrBody(store, 'ISSUE-1')).toContain('Refs o/r#9');
+    expect(renderReviewPrBody(store, 'ISSUE-1')).not.toContain('Closes o/r#9');
   });
 });
 

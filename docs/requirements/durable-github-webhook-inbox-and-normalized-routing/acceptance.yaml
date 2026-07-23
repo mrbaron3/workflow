@@ -1,0 +1,47 @@
+# Durable GitHub webhook inbox and normalized routing — 受け入れ検証
+
+dependsOn:
+  - ARCH-webhook-001
+  - ARCH-webhook-002
+  - ARCH-webhook-003
+  - DOM-webhook-001
+  - DOM-webhook-002
+  - DOM-webhook-003
+  - DOM-webhook-004
+  - DOM-webhook-005
+  - DATA-webhook-001
+  - DATA-webhook-002
+  - DATA-webhook-003
+  - DATA-webhook-005
+
+verifications:
+  AC-WHIN-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "persist成功後だけaccepted receiptを返し、write失敗は例外になる"
+  AC-WHIN-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同一delivery IDの2回受信でdelivery record数とconsumer call数が1のまま"
+  AC-WHIN-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "未登録repo・未許可eventはignored reasonを残しconsumer call 0"
+  AC-WHIN-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "登録repoのeventが列挙consumerへNormalized GitHub Eventとして渡る"
+  AC-WHIN-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "consumer failureがpayload付きfailed recordになりretryで再処理できる"
+  AC-WHIN-006:
+    severity: major
+    method: unit_test
+    expected:
+      - "atomic temp renameでwebhooks.jsonだけを更新しdb.jsonを変更しない"
