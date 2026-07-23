@@ -144,6 +144,23 @@ export interface WatchGithubDevelopmentOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** Safe deterministic pacing when the recurring watcher has no valid configured interval. */
+export const DEFAULT_GITHUB_WATCH_INTERVAL_MS = 30_000;
+
+/** Node clamps setTimeout delays above 2^31−1 ms to 1 ms, so larger configured values are invalid. */
+export const MAX_GITHUB_WATCH_INTERVAL_MS = 2_147_483_647;
+
+function configuredGithubWatchInterval(config: HarnessConfig): number {
+  const configured = config.intake?.pollIntervalMs;
+  return typeof configured === 'number'
+    && Number.isFinite(configured)
+    && Number.isInteger(configured)
+    && configured > 0
+    && configured <= MAX_GITHUB_WATCH_INTERVAL_MS
+    ? configured
+    : DEFAULT_GITHUB_WATCH_INTERVAL_MS;
+}
+
 /** Recurring monitor; failures are surfaced and retried from durable store inventory next turn. */
 export async function watchGithubDevelopment(
   store: Store,
@@ -154,7 +171,7 @@ export async function watchGithubDevelopment(
   opts: WatchGithubDevelopmentOptions = {},
 ): Promise<never> {
   const wait = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const intervalMs = opts.intervalMs ?? 30_000;
+  const intervalMs = opts.intervalMs ?? configuredGithubWatchInterval(config);
   for (;;) {
     try {
       await runGithubDevelopmentTurn(store, config, deps, harnessRoot, log);

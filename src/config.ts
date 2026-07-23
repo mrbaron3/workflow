@@ -93,6 +93,11 @@ export interface IntakeConfig {
   repository: string; // owner/name
   readyLabel?: string;
   claimedLabel?: string;
+  /**
+   * Recurring GitHub watcher delay in milliseconds. Absent or invalid (non-positive, non-integer,
+   * or above Node's 2^31−1 ms timer maximum) uses the watcher default.
+   */
+  pollIntervalMs?: number;
 }
 
 export interface HarnessConfig {
