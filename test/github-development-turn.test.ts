@@ -9,6 +9,7 @@ import { Store, nowISO } from '../src/store/store.js';
 import type { GithubIssueRunner } from '../src/intake/github-issues.js';
 import {
   DEFAULT_GITHUB_WATCH_INTERVAL_MS,
+  MAX_GITHUB_WATCH_INTERVAL_MS,
   runGithubDevelopmentTurn,
   watchGithubDevelopment,
 } from '../src/intake/development-turn.js';
@@ -138,6 +139,28 @@ describe('GitHub development turn', () => {
         sleep: async (ms) => { sleeps.push(ms); throw stopped; },
       })).rejects.toBe(stopped);
       expect(sleeps, `configured value ${String(value)}`).toEqual([30_000]);
+    }
+  });
+
+  it('AC-GWATCH-003 treats intervals above the Node timer maximum as invalid, accepting the boundary', async () => {
+    expect(MAX_GITHUB_WATCH_INTERVAL_MS).toBe(2_147_483_647);
+    const cases: Array<[configured: number, slept: number]> = [
+      [MAX_GITHUB_WATCH_INTERVAL_MS, MAX_GITHUB_WATCH_INTERVAL_MS],
+      [MAX_GITHUB_WATCH_INTERVAL_MS + 1, DEFAULT_GITHUB_WATCH_INTERVAL_MS],
+    ];
+
+    for (const [configured, slept] of cases) {
+      const env = setup();
+      env.config.intake!.pollIntervalMs = configured;
+      const sleeps: number[] = [];
+      const stopped = new Error('stop watcher');
+      await expect(watchGithubDevelopment(env.store, env.config, {
+        issueRunner: { listReadyIssues: () => [], claimIssue: () => {} },
+        driveQueue: async () => [],
+      }, process.cwd(), () => {}, {
+        sleep: async (ms) => { sleeps.push(ms); throw stopped; },
+      })).rejects.toBe(stopped);
+      expect(sleeps, `configured value ${configured}`).toEqual([slept]);
     }
   });
 

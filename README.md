@@ -235,7 +235,8 @@ npm run harness -- watch-github   # repeat turns; Ctrl-C stops the watcher
 ```
 
 `intake.pollIntervalMs` is optional and controls the delay between recurring `watch-github`
-turns in milliseconds. It does not affect the one-shot `github-turn` command; omitted or invalid
+turns in milliseconds. It does not affect the one-shot `github-turn` command. Valid values are
+positive integers up to 2147483647 ms (Node's maximum timer delay); omitted or invalid
 values fall back to `DEFAULT_GITHUB_WATCH_INTERVAL_MS` (30000 ms).
 
 Claiming removes `ready` and adds `agent-claimed`. The first source snapshot and every planning /

@@ -147,12 +147,16 @@ export interface WatchGithubDevelopmentOptions {
 /** Safe deterministic pacing when the recurring watcher has no valid configured interval. */
 export const DEFAULT_GITHUB_WATCH_INTERVAL_MS = 30_000;
 
+/** Node clamps setTimeout delays above 2^31−1 ms to 1 ms, so larger configured values are invalid. */
+export const MAX_GITHUB_WATCH_INTERVAL_MS = 2_147_483_647;
+
 function configuredGithubWatchInterval(config: HarnessConfig): number {
   const configured = config.intake?.pollIntervalMs;
   return typeof configured === 'number'
     && Number.isFinite(configured)
     && Number.isInteger(configured)
     && configured > 0
+    && configured <= MAX_GITHUB_WATCH_INTERVAL_MS
     ? configured
     : DEFAULT_GITHUB_WATCH_INTERVAL_MS;
 }
