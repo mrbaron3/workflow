@@ -130,6 +130,15 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
       const profile = prepared.args[1] ?? '';
       expect(profile).not.toContain('(subpath "/Library")');
       expect(profile).not.toContain('(subpath "/opt")');
+      expect(profile).toContain(
+        '(subpath "/Library/Developer/CommandLineTools/usr/libexec/git-core")',
+      );
+      expect(profile).toContain(
+        '(subpath "/Library/Developer/CommandLineTools/usr/share/git-core")',
+      );
+      expect(profile).toContain(
+        '(literal "/Library/Developer/CommandLineTools/usr/bin/git")',
+      );
     } finally {
       prepared.cleanup();
     }

@@ -8,6 +8,11 @@ export const ISOLATED_GRADER_MIN_PORT = 30_000;
 export const ISOLATED_GRADER_PORT_WINDOW = 20_000;
 const NESTED_ISOLATED_GRADER_PORT_COUNT = 16;
 const INHERITED_ISOLATED_GRADER_PORTS = 'AGENTOPS_ISOLATED_GRADER_PORTS';
+const MACOS_GIT_SUPPORT_ROOTS = [
+  '/Library/Developer/CommandLineTools/usr/libexec/git-core',
+  '/Library/Developer/CommandLineTools/usr/share/git-core',
+] as const;
+const MACOS_GIT_EXECUTABLE = '/Library/Developer/CommandLineTools/usr/bin/git';
 
 export interface IsolatedExecution {
   command: string;
@@ -255,6 +260,15 @@ function resolveTrustPolicy(
 ): TrustPolicy {
   const trustedReadRoots = new Set<string>([path.dirname(path.dirname(nodeExecutable))]);
   const trustedReadFiles = new Set<string>([nodeExecutable]);
+  // CommandLineTools Git dispatches root-owned helpers and reads templates/config from
+  // these two git-core trees. Grant those immutable trees, never /Library as a whole.
+  for (const root of MACOS_GIT_SUPPORT_ROOTS) {
+    if (fs.existsSync(root)) trustedReadRoots.add(root);
+  }
+  // Most git-core helpers are symlinks back to this one binary.
+  if (fs.existsSync(MACOS_GIT_EXECUTABLE)) {
+    trustedReadFiles.add(MACOS_GIT_EXECUTABLE);
+  }
   const executable = resolveExecutable(command);
   if (executable && !executable.startsWith(`${cwd}${path.sep}`)) {
     const dependencyMarker = `${path.sep}node_modules${path.sep}`;
