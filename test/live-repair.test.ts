@@ -18,6 +18,7 @@ import {
   EvalRun as EvalRunSchema,
   Issue,
   PR,
+  PrHeadSha,
   Finding,
   transitionPR,
   updatePR,
@@ -27,6 +28,7 @@ import { DEFAULT_CONFIG, type HarnessConfig, type TargetRepoConfig } from '../sr
 import { runBoundedRepairLoop, type AttemptOutcome } from '../src/pipeline/execution/loop.js';
 import {
   buildGeneratorPrompt,
+  generatorWorktreeRequiresReset,
   generatorStartRef,
   type GeneratorSessionInput,
 } from '../src/pipeline/execution/session.js';
@@ -88,6 +90,12 @@ describe('buildGeneratorPrompt: a repair attempt carries the reviewers required 
     expect(generatorStartRef(null, 'main')).toBe('main');
   });
 
+  it('AC-PRLOOP-007 recreates a stale repair worktree before it can overwrite the PR head', () => {
+    expect(generatorWorktreeRequiresReset(26, true, 'old-head', 'current-head')).toBe(true);
+    expect(generatorWorktreeRequiresReset(27, true, 'current-head', 'current-head')).toBe(false);
+    expect(generatorWorktreeRequiresReset(1, true, 'current-head', 'current-head')).toBe(true);
+  });
+
   it('attempt 1 (no brief) has no repair section', () => {
     const prompt = buildGeneratorPrompt(genInput(null, 1), target);
     expect(prompt).not.toContain('## Repair');
@@ -116,7 +124,7 @@ describe('buildGeneratorPrompt: a repair attempt carries the reviewers required 
     const store = tmpStore('current-review-brief');
     addIssue(store, 'ISSUE-1');
     const created = addPR(store, 'ISSUE-1');
-    const headSha = 'a'.repeat(40);
+    const headSha = PrHeadSha.parse('a'.repeat(40));
     const pr = store.replacePR(transitionPR(created, {
       status: 'changes-requested',
       currentRevisionId: 'PRREV-1',

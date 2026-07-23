@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import type { WebhookRepositoryRegistration } from './schema.js';
 import { WebhookControlStore } from './store.js';
@@ -75,6 +75,9 @@ export function productionGithubWebhookForwarderSpawner(
 }
 
 export const MAX_RELAY_BODY_BYTES = 10 * 1024 * 1024;
+export function isRelayBodyWithinLimit(bytes: number): boolean {
+  return Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= MAX_RELAY_BODY_BYTES;
+}
 
 /**
  * `gh webhook forward` only accepts --secret on argv. Keep the verifier secret
@@ -83,6 +86,7 @@ export const MAX_RELAY_BODY_BYTES = 10 * 1024 * 1024;
  */
 export class GithubWebhookSigningRelay {
   private server: Server | null = null;
+  private readonly capability = randomBytes(32).toString('hex');
 
   constructor(
     private readonly upstreamHookUrl: string,
@@ -94,7 +98,12 @@ export class GithubWebhookSigningRelay {
   listen(): Promise<string> {
     if (this.server) throw new Error('webhook signing relay is already listening');
     this.server = createServer((request, response) => {
-      if (request.method !== 'POST' || request.url !== '/forward') {
+      const supplied = request.url?.startsWith('/forward/')
+        ? request.url.slice('/forward/'.length)
+        : '';
+      const authenticated = supplied.length === this.capability.length
+        && timingSafeEqual(Buffer.from(supplied), Buffer.from(this.capability));
+      if (request.method !== 'POST' || !authenticated) {
         response.writeHead(404).end('not found');
         return;
       }
@@ -102,7 +111,7 @@ export class GithubWebhookSigningRelay {
       let bytes = 0;
       request.on('data', (chunk: Buffer) => {
         bytes += chunk.length;
-        if (bytes > MAX_RELAY_BODY_BYTES) {
+        if (!isRelayBodyWithinLimit(bytes)) {
           response.writeHead(413).end('payload too large');
           request.destroy();
           return;
@@ -110,7 +119,7 @@ export class GithubWebhookSigningRelay {
         chunks.push(chunk);
       });
       request.on('end', () => {
-        if (bytes > MAX_RELAY_BODY_BYTES) return;
+        if (!isRelayBodyWithinLimit(bytes)) return;
         const body = Buffer.concat(chunks);
         const signature = `sha256=${createHmac('sha256', this.webhookSecret)
           .update(body)
@@ -152,7 +161,7 @@ export class GithubWebhookSigningRelay {
           reject(new Error('webhook signing relay did not bind a TCP address'));
           return;
         }
-        resolve(`http://127.0.0.1:${address.port}/forward`);
+        resolve(`http://127.0.0.1:${address.port}/forward/${this.capability}`);
       };
       server.once('error', onError);
       server.once('listening', onListening);

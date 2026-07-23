@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   GithubWebhookForwarderSupervisor,
   GithubWebhookSigningRelay,
+  MAX_RELAY_BODY_BYTES,
+  isRelayBodyWithinLimit,
   productionGithubWebhookForwarderSpawner,
   type GithubWebhookForwarderProcess,
 } from '../src/webhook/forwarder.js';
@@ -114,6 +116,39 @@ describe('multi-repository GitHub webhook forwarders', () => {
     await new Promise<void>((resolve, reject) => {
       upstream.close((error) => error ? reject(error) : resolve());
     });
+  });
+
+  it('ISSUE-0024/PR-INTENT rejects unauthenticated relay traffic before it reaches consumers', async () => {
+    let upstreamCalls = 0;
+    const upstream = createServer((_request, response) => {
+      upstreamCalls += 1;
+      response.writeHead(204).end();
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    const address = upstream.address();
+    if (!address || typeof address === 'string') throw new Error('fixture server did not bind');
+    const relay = new GithubWebhookSigningRelay(
+      `http://127.0.0.1:${address.port}/hook`,
+      'relay-only-secret',
+    );
+    const relayUrl = await relay.listen();
+    const origin = new URL(relayUrl).origin;
+
+    const response = await fetch(`${origin}/forward`, { method: 'POST', body: '{}' });
+
+    expect(response.status).toBe(404);
+    expect(upstreamCalls).toBe(0);
+    await relay.close();
+    await new Promise<void>((resolve, reject) => {
+      upstream.close((error) => error ? reject(error) : resolve());
+    });
+  });
+
+  it('ISSUE-0024/PR-INTENT pins the finite positive relay body cap', () => {
+    expect(MAX_RELAY_BODY_BYTES).toBe(10 * 1024 * 1024);
+    expect(Number.isSafeInteger(MAX_RELAY_BODY_BYTES)).toBe(true);
+    expect(isRelayBodyWithinLimit(MAX_RELAY_BODY_BYTES)).toBe(true);
+    expect(isRelayBodyWithinLimit(MAX_RELAY_BODY_BYTES + 1)).toBe(false);
   });
 
   it('AC-WHRT-001 starts one child per enabled registration and stops changed or disabled children', () => {

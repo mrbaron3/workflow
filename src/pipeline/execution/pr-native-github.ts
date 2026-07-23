@@ -5,7 +5,7 @@ import { runCommand as run } from './command.js';
 import type { PrNativeGithubRunner } from './pr-native.js';
 
 export const MAX_REVIEW_THREAD_BODY_CHARS = 8_000;
-const BLOCKING_REVIEW_COMMENT = /\[(?:P0|P1)\]|\bblocker\b|\brequest_changes\b/i;
+export const BLOCKING_REVIEW_COMMENT = /\[(?:P0|P1)\]|\bblocker\b|\brequest_changes\b/i;
 const GithubSha = z.string().regex(/^[0-9a-f]{40}$/i, 'expected a 40-character GitHub SHA');
 const GithubCheck = z.object({
   name: z.string().min(1).optional(),

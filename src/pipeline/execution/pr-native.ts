@@ -15,8 +15,10 @@ import {
 } from '../../domain/schema.js';
 import { Store, nowISO } from '../../store/store.js';
 export {
+  BLOCKING_REVIEW_COMMENT,
   GhPrListResponse,
   GhPrViewResponse,
+  MAX_REVIEW_THREAD_BODY_CHARS,
   ReviewThreadsResponse,
   parseBlockingReviewThreads,
   realPrNativeGithubRunner,
@@ -69,8 +71,6 @@ export interface RevisionGateInput {
 }
 
 export const MAX_REVIEW_THREAD_REASON_BODY_CHARS = 500;
-export const MAX_REVIEW_THREAD_BODY_CHARS = 8_000;
-const BLOCKING_REVIEW_COMMENT = /\[(?:P0|P1)\]|\bblocker\b|\brequest_changes\b/i;
 
 function currentRevisionRuns(
   store: Store,
@@ -499,9 +499,9 @@ export function autoMergeCurrentRevision(
           status: 'changes-requested',
         }));
     }
-    pr = store.replacePR(transitionPR(pr, {
-      status: snapshot.decision === 'changes-requested' ? 'changes-requested' : 'open',
-    }));
+    pr = store.replacePR(snapshot.decision === 'changes-requested'
+      ? transitionPR(pr, { status: 'changes-requested' })
+      : transitionPR(pr, { status: 'open' }));
     const issue = store.getIssue(pr.issueId);
     if (snapshot.decision === 'changes-requested' && issue) {
       if (issue.status === 'build-approved') {

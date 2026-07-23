@@ -176,16 +176,17 @@ export function pollGate(
 
     const rec = recordHumanDecision(store, issue.id, decision);
     if (decision === 'approve') {
-      // Legacy human-gate runners expose only state, not a SHA. Preserve the
-      // durable lifecycle invariant with an explicit legacy evidence identity;
-      // the PR-native path always records the real GitHub head SHA.
-      const legacyEvidence = `legacy-human-gate:${pr.externalRef.number}`;
-      store.replacePR(transitionPR(pr, {
-        status: 'merged',
-        currentRevisionId: pr.currentRevisionId ?? legacyEvidence,
-        headSha: pr.headSha ?? legacyEvidence,
-        mergedHeadSha: pr.headSha ?? legacyEvidence,
-      }));
+      // Legacy state-only runners cannot prove a commit identity. Release the
+      // legacy work unit but do not fabricate revision evidence or a merged PR
+      // variant; the PR-native path records the real full SHA before merging.
+      if (pr.currentRevisionId && pr.headSha) {
+        store.replacePR(transitionPR(pr, {
+          status: 'merged',
+          currentRevisionId: pr.currentRevisionId,
+          headSha: pr.headSha,
+          mergedHeadSha: pr.headSha,
+        }));
+      }
     } else {
       store.replacePR(transitionPR(pr, { status: 'changes-requested' }));
     }

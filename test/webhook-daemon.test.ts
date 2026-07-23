@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  MAX_TIMER_DELAY_MS,
   parseWebhookDaemonOptions,
   waitForWebhookDaemonShutdown,
 } from '../src/webhook/daemon.js';
@@ -114,8 +115,16 @@ describe('webhook-daemon command boundary', () => {
     [{ port: '65536' }, /--port/],
     [{ port: '1.5' }, /--port/],
     [{ 'reconcile-interval-ms': '0' }, /reconcile-interval-ms/],
+    [{ 'reconcile-interval-ms': String(MAX_TIMER_DELAY_MS + 1) }, /reconcile-interval-ms/],
   ])('ISSUE-0024/PR-INTENT rejects invalid daemon option %j', (flags, message) => {
     expect(() => parseWebhookDaemonOptions(flags, credentials)).toThrow(message);
+  });
+
+  it('ISSUE-0024/PR-INTENT accepts and pins the maximum timer-safe delay', () => {
+    expect(MAX_TIMER_DELAY_MS).toBe(2_147_483_647);
+    expect(parseWebhookDaemonOptions({
+      'reconcile-interval-ms': String(MAX_TIMER_DELAY_MS),
+    }, credentials).reconciliationIntervalMs).toBe(MAX_TIMER_DELAY_MS);
   });
 
   it('ISSUE-0024/PR-INTENT fails closed when either credential is missing', () => {

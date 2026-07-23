@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   emptyDB,
   PR,
+  PrHeadSha,
   PrRevision,
+  RevisionBinding,
   transitionPR,
   transitionPrRevision,
 } from '../src/domain/schema.js';
@@ -17,6 +19,25 @@ afterEach(() => {
 });
 
 describe('PR lifecycle values', () => {
+  it('PR-INTENT rejects short SHAs and partial revision bindings', () => {
+    expect(PrHeadSha.safeParse('abc1234').success).toBe(false);
+    expect(PrHeadSha.safeParse('a'.repeat(40)).success).toBe(true);
+    expect(RevisionBinding.safeParse({
+      revisionId: 'PRREV-1',
+      headSha: null,
+    }).success).toBe(false);
+    expect(PR.safeParse({
+      id: 'PR-1',
+      issueId: 'ISSUE-1',
+      branch: 'feature',
+      generator: 'mock',
+      currentRevisionId: 'PRREV-1',
+      headSha: null,
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    }).success).toBe(false);
+  });
+
   it('PR-INTENT requires approved PRs to identify a concrete current revision and head', () => {
     const base = {
       id: 'PR-1', issueId: 'ISSUE-1', branch: 'feature', generator: 'mock' as const,
@@ -33,13 +54,13 @@ describe('PR lifecycle values', () => {
     const approved = transitionPR(open, {
       status: 'approved',
       currentRevisionId: 'PRREV-1',
-      headSha: 'a'.repeat(40),
+      headSha: PrHeadSha.parse('a'.repeat(40)),
     });
     expect(Object.isFrozen(approved)).toBe(true);
     // @ts-expect-error merged destinations require the correlated revision/head identity
     expect(() => transitionPR(approved, {
       status: 'merged',
-      mergedHeadSha: 'b'.repeat(40),
+      mergedHeadSha: PrHeadSha.parse('b'.repeat(40)),
     })).toThrow();
     expect(approved).toMatchObject({ status: 'approved', headSha: 'a'.repeat(40) });
   });
@@ -114,6 +135,8 @@ describe('PR lifecycle values', () => {
     fs.mkdirSync(path.join(root, '.harness'));
     const legacy = JSON.parse(JSON.stringify(emptyDB())) as {
       prs: Array<Record<string, unknown>>;
+      evalRuns: Array<Record<string, unknown>>;
+      agentInvocations: Array<Record<string, unknown>>;
       revisionGateSnapshots: Array<Record<string, unknown>>;
     };
     legacy.prs.push({
@@ -127,6 +150,47 @@ describe('PR lifecycle values', () => {
       mergedHeadSha: null,
       createdAt: nowISO(),
       updatedAt: nowISO(),
+    });
+    legacy.evalRuns.push({
+      id: 'EVAL-LEGACY',
+      issueId: 'ISSUE-LEGACY',
+      prId: 'PR-LEGACY',
+      attempt: 1,
+      sampleIndex: 0,
+      agent: 'mock',
+      verdict: 'approve',
+      hardGates: {},
+      findings: [],
+      scores: {
+        functionality: 1,
+        codeQuality: 1,
+        testQuality: 1,
+        ux: 1,
+        accessibility: 1,
+      },
+      overall: 1,
+      cost: {},
+      revisionId: 'PRREV-LEGACY',
+      headSha: null,
+      createdAt: nowISO(),
+    });
+    legacy.agentInvocations.push({
+      id: 'INVOKE-LEGACY',
+      invocationKey: 'invocation:legacy',
+      subjectId: 'ISSUE-LEGACY',
+      issueId: 'ISSUE-LEGACY',
+      prId: 'PR-LEGACY',
+      sampleIndex: 0,
+      attempt: 1,
+      role: 'reviewer',
+      perspective: 'security',
+      provider: 'codex',
+      model: null,
+      prompt: 'legacy',
+      outcome: 'completed',
+      revisionId: 'PRREV-LEGACY',
+      headSha: null,
+      createdAt: nowISO(),
     });
     legacy.revisionGateSnapshots.push({
       id: 'PRGATE-LEGACY',
@@ -154,6 +218,14 @@ describe('PR lifecycle values', () => {
     expect(store.db.prs[0]).toMatchObject({
       status: 'open',
       currentRevisionId: null,
+      headSha: null,
+    });
+    expect(store.db.evalRuns[0]).toMatchObject({
+      revisionId: null,
+      headSha: null,
+    });
+    expect(store.db.agentInvocations[0]).toMatchObject({
+      revisionId: null,
       headSha: null,
     });
     expect(store.db.revisionGateSnapshots[0]).toMatchObject({

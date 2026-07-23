@@ -345,6 +345,27 @@ export const PlanningEnrichmentRecord = z.object({
 });
 export type PlanningEnrichmentRecord = z.infer<typeof PlanningEnrichmentRecord>;
 
+/** Full immutable Git commit identity used by every PR-revision boundary. */
+export const PrHeadSha = z.string()
+  .regex(/^[0-9a-f]{40}$/i, 'expected a full 40-character Git commit SHA')
+  .brand<'PrHeadSha'>();
+export type PrHeadSha = z.infer<typeof PrHeadSha>;
+
+/** Correlated revision evidence: either both coordinates exist or neither does. */
+export const RevisionBinding = z.object({
+  revisionId: z.string().min(1),
+  headSha: PrHeadSha,
+});
+export type RevisionBinding = DeepReadonly<z.infer<typeof RevisionBinding>>;
+const UnboundRevisionCoordinates = z.object({
+  revisionId: z.null().default(null),
+  headSha: z.null().default(null),
+});
+const NullableRevisionCoordinates = z.union([
+  RevisionBinding,
+  UnboundRevisionCoordinates,
+]);
+
 const PRCommon = z.object({
   id: z.string(), // PR-0001
   issueId: z.string(),
@@ -366,34 +387,44 @@ const PRCommon = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 });
-const ActivePRFields = {
-  currentRevisionId: z.string().nullable().default(null),
-  headSha: z.string().nullable().default(null),
+const BoundCurrentRevisionFields = {
+  currentRevisionId: z.string().min(1),
+  headSha: PrHeadSha,
   mergedHeadSha: z.null().default(null),
 };
-export const OpenPR = PRCommon.extend({
-  status: z.literal('open').default('open'),
-  ...ActivePRFields,
-});
-export const ChangesRequestedPR = PRCommon.extend({
-  status: z.literal('changes-requested'),
-  ...ActivePRFields,
-});
+const UnboundCurrentRevisionFields = {
+  currentRevisionId: z.null().default(null),
+  headSha: z.null().default(null),
+  mergedHeadSha: z.null().default(null),
+};
+const activePR = <S extends 'changes-requested' | 'closed'>(status: S) =>
+  z.union([
+    PRCommon.extend({ status: z.literal(status), ...BoundCurrentRevisionFields }),
+    PRCommon.extend({ status: z.literal(status), ...UnboundCurrentRevisionFields }),
+  ]);
+export const OpenPR = z.union([
+  PRCommon.extend({
+    status: z.literal('open').default('open'),
+    ...BoundCurrentRevisionFields,
+  }),
+  PRCommon.extend({
+    status: z.literal('open').default('open'),
+    ...UnboundCurrentRevisionFields,
+  }),
+]);
+export const ChangesRequestedPR = activePR('changes-requested');
 export const ApprovedPR = PRCommon.extend({
   status: z.literal('approved'),
   currentRevisionId: z.string().min(1),
-  headSha: z.string().min(1),
+  headSha: PrHeadSha,
   mergedHeadSha: z.null().default(null),
 });
-export const ClosedPR = PRCommon.extend({
-  status: z.literal('closed'),
-  ...ActivePRFields,
-});
+export const ClosedPR = activePR('closed');
 const MergedPRRecord = PRCommon.extend({
   status: z.literal('merged'),
   currentRevisionId: z.string().min(1),
-  headSha: z.string().min(1),
-  mergedHeadSha: z.string().min(1),
+  headSha: PrHeadSha,
+  mergedHeadSha: PrHeadSha,
 }).refine((pr) => pr.headSha === pr.mergedHeadSha, {
   path: ['mergedHeadSha'],
   message: 'mergedHeadSha must equal headSha',
@@ -405,22 +436,26 @@ export function createMergedPR(input: z.input<typeof MergedPRRecord>): MergedPR 
 }
 export const PR = z.union([OpenPR, ChangesRequestedPR, ApprovedPR, ClosedPR, MergedPR]);
 type DeepReadonly<T> =
+  T extends string | number | boolean | bigint | symbol | null | undefined ? T :
   T extends (...args: never[]) => unknown ? T :
   T extends readonly (infer U)[] ? readonly DeepReadonly<U>[] :
   T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } :
   T;
 export type PR = DeepReadonly<z.infer<typeof PR>>;
 type PRPatch = Partial<Omit<z.infer<typeof PR>, 'status' | 'currentRevisionId' | 'headSha' | 'mergedHeadSha'>>;
+type ActivePRDestinationFields =
+  | { currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha?: null }
+  | { currentRevisionId?: null; headSha?: null; mergedHeadSha?: null };
 type OpenPRDestination =
-  PRPatch & { status: 'open'; currentRevisionId?: string | null; headSha?: string | null; mergedHeadSha?: null };
+  PRPatch & ActivePRDestinationFields & { status: 'open' };
 type ChangesRequestedPRDestination =
-  PRPatch & { status: 'changes-requested'; currentRevisionId?: string | null; headSha?: string | null; mergedHeadSha?: null };
+  PRPatch & ActivePRDestinationFields & { status: 'changes-requested' };
 type ApprovedPRDestination =
-  PRPatch & { status: 'approved'; currentRevisionId: string; headSha: string; mergedHeadSha?: null };
+  PRPatch & { status: 'approved'; currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha?: null };
 type ClosedPRDestination =
-  PRPatch & { status: 'closed'; currentRevisionId?: string | null; headSha?: string | null; mergedHeadSha?: null };
+  PRPatch & ActivePRDestinationFields & { status: 'closed' };
 type MergedPRDestination =
-  PRPatch & { status: 'merged'; currentRevisionId: string; headSha: string; mergedHeadSha: string };
+  PRPatch & { status: 'merged'; currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha: PrHeadSha };
 export type PRTransitionDestination =
   | OpenPRDestination
   | ChangesRequestedPRDestination
@@ -492,14 +527,13 @@ export type PrRevisionStatus = z.infer<typeof PrRevisionStatus>;
 const PrRevisionRecord = z.object({
   id: z.string(),
   prId: z.string(),
-  headSha: z.string().min(7),
+  headSha: PrHeadSha,
   ordinal: z.number().int().positive(),
   status: PrRevisionStatus.default('pending'),
   mergeRequestedAt: z.string().nullable().default(null),
   createdAt: z.string(),
   completedAt: z.string().nullable().default(null),
 });
-export const PrHeadSha = PrRevisionRecord.shape.headSha;
 const RevisionIdentity = PrRevisionRecord.omit({
   status: true, mergeRequestedAt: true, completedAt: true,
 });
@@ -637,7 +671,7 @@ const RevisionGateSnapshotRecord = z.object({
   id: z.string(),
   prId: z.string(),
   revisionId: z.string(),
-  headSha: z.string().min(7),
+  headSha: PrHeadSha,
   requiredPerspectives: z.array(z.string()).default([]),
   perspectiveVerdicts: z.record(Verdict).default({}),
   checks: z.array(RevisionCheck).default([]),
@@ -739,7 +773,7 @@ export type Cost = z.infer<typeof Cost>;
  * "Eval Result DB" the spec keeps returning to: re-runnable, comparable, the basis
  * for pass@k / pass^k and every dashboard number.
  */
-export const EvalRun = z.object({
+const EvalRunRecord = z.object({
   id: z.string(), // EVAL-...
   issueId: z.string(),
   prId: z.string(),
@@ -764,11 +798,11 @@ export const EvalRun = z.object({
   // DATA-agent-runtime-004: reviewer invocation that produced this perspective verdict.
   // null = legacy, deterministic grader, or pre-provenance run.
   invocationKey: z.string().nullable().default(null),
-  // ADR-0009: null only for legacy pre-PR-revision scorecards.
-  revisionId: z.string().nullable().default(null),
-  headSha: z.string().nullable().default(null),
   createdAt: z.string(),
 });
+// ADR-0009: null only for legacy pre-PR-revision scorecards. The union keeps
+// revisionId and headSha correlated in both the runtime schema and inferred type.
+export const EvalRun = EvalRunRecord.and(NullableRevisionCoordinates);
 export type EvalRun = z.infer<typeof EvalRun>;
 
 /** A row in the Eval Task Registry (lightweight v0). */
@@ -861,7 +895,7 @@ export type PromptRecord = z.infer<typeof PromptRecord>;
  * generator-only PromptRecord, this records generator, planning and each reviewer perspective
  * through one identity and keeps provider separate from model.
  */
-export const AgentInvocation = z.object({
+const AgentInvocationRecord = z.object({
   id: z.string(), // INVOKE-0001
   invocationKey: z.string().min(1),
   subjectId: z.string().min(1),
@@ -875,10 +909,10 @@ export const AgentInvocation = z.object({
   model: z.string().nullable().default(null),
   prompt: z.string(),
   outcome: InvocationOutcome,
-  revisionId: z.string().nullable().default(null),
-  headSha: z.string().nullable().default(null),
   createdAt: z.string(),
 });
+export const AgentInvocation =
+  AgentInvocationRecord.and(NullableRevisionCoordinates);
 export type AgentInvocation = z.infer<typeof AgentInvocation>;
 
 /**

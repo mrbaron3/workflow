@@ -56,16 +56,34 @@ export type StoreView = Omit<DB, 'prs' | 'prRevisions'> & {
 function normalizeLegacyDB(input: unknown): unknown {
   if (!input || typeof input !== 'object') return input;
   const record = input as Record<string, unknown>;
+  const normalizeRevisionCoordinates = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object') return value;
+    const row = value as Record<string, unknown>;
+    const bound = typeof row.revisionId === 'string'
+      && typeof row.headSha === 'string'
+      && /^[0-9a-f]{40}$/i.test(row.headSha);
+    if (bound) return value;
+    return { ...row, revisionId: null, headSha: null };
+  };
   return {
     ...record,
     ...(Array.isArray(record.prs) ? {
       prs: record.prs.map((value) => {
         if (!value || typeof value !== 'object') return value;
         const pr = value as Record<string, unknown>;
-        if (
-          pr.status !== 'approved'
-          || (typeof pr.currentRevisionId === 'string' && typeof pr.headSha === 'string')
-        ) return value;
+        const bound = typeof pr.currentRevisionId === 'string'
+          && typeof pr.headSha === 'string'
+          && /^[0-9a-f]{40}$/i.test(pr.headSha);
+        if (bound) return value;
+        if (pr.status !== 'approved' && pr.status !== 'merged') {
+          return {
+            ...pr,
+            currentRevisionId: null,
+            headSha: null,
+            mergedHeadSha: null,
+          };
+        }
+        if (pr.status === 'merged') return value;
         return {
           ...pr,
           status: 'open',
@@ -74,6 +92,12 @@ function normalizeLegacyDB(input: unknown): unknown {
           mergedHeadSha: null,
         };
       }),
+    } : {}),
+    ...(Array.isArray(record.evalRuns) ? {
+      evalRuns: record.evalRuns.map(normalizeRevisionCoordinates),
+    } : {}),
+    ...(Array.isArray(record.agentInvocations) ? {
+      agentInvocations: record.agentInvocations.map(normalizeRevisionCoordinates),
     } : {}),
     ...(Array.isArray(record.revisionGateSnapshots) ? {
       revisionGateSnapshots: record.revisionGateSnapshots.map((value) => {

@@ -19,6 +19,7 @@ import {
   fileBackedGrader,
   sessionBackedGrader,
   perspectivePrompt,
+  restrictedPerspectivePrompt,
   findingsPath,
   restrictedReviewLaunch,
   staticUntrustedReviewMaterial,
@@ -176,6 +177,17 @@ describe('restricted repository-PR reviewers', () => {
     expect(schema.properties.findings.items.required).toContain('lineage');
     expect(schema.properties.findings.items.properties.lineage.anyOf)
       .toContainEqual({ type: 'null' });
+  });
+
+  it('PR-INTENT tells a no-tool reviewer to return JSON without attempting a file write', () => {
+    const prompt = restrictedPerspectivePrompt(
+      perspectivePrompt('security', contract, '/tmp/eval/security'),
+    );
+
+    expect(prompt).toContain('Return your verdict as JSON matching this schema');
+    expect(prompt).toContain('Do not edit code or attempt filesystem writes');
+    expect(prompt).not.toContain('Write your verdict to');
+    expect(prompt).not.toContain('only write findings.json');
   });
 
   it('PR-INTENT gives Claude no tools, extensions, persistence, or MCP servers', () => {

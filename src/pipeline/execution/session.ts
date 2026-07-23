@@ -84,6 +84,18 @@ export function generatorStartRef(
   return resumeRef ?? configuredBaseRef;
 }
 
+/** A repair workspace is reusable only while it still represents the current PR head. */
+export function generatorWorktreeRequiresReset(
+  attempt: number,
+  exists: boolean,
+  worktreeHead: string | null,
+  resumeRef: string | null | undefined,
+): boolean {
+  return attempt === 1
+    || !exists
+    || (resumeRef !== null && resumeRef !== undefined && worktreeHead !== resumeRef);
+}
+
 /**
  * The per-(issue, sample) identity every physical resource derives from — branch
  * `agent/<key>`, tmux session `ao-<key>`, worktree `.harness/worktrees/<key>`. Exported so
@@ -113,8 +125,17 @@ export async function runGeneratorSession(
   const provider = route.provider;
   const wt = path.join(harnessRoot, '.harness', 'worktrees', key);
 
-  // fresh worktree on the first attempt; reuse it for repair attempts so edits accumulate
-  if (input.attempt === 1 || !worktreeExists(wt)) {
+  // Reuse only a repair worktree that still matches the durable current PR head.
+  // A daemon restart may leave an older AgentOps worktree behind; reusing it
+  // would force-push a repair that silently discards newer PR revisions.
+  const exists = worktreeExists(wt);
+  const worktreeHead = exists ? headCommit(wt) : null;
+  if (generatorWorktreeRequiresReset(
+    input.attempt,
+    exists,
+    worktreeHead,
+    input.resumeRef,
+  )) {
     // A repository-discovered PR is already an implementation: its first AgentOps
     // generator turn is a repair and must start from the observed PR head, not main.
     createWorktree(repoAbs, branch, generatorStartRef(input.resumeRef, baseRef), wt);

@@ -113,12 +113,6 @@ export async function runIssue(
 
   // Release manager: merge the first approved candidate, advance the issue.
   if (approvedAny) {
-    const winning = samples.find((r) => r.approved);
-    if (winning) {
-      const pr = store.getPR(winning.prId);
-      // Store-gated legacy runs have no GitHub revision/head evidence, so they
-      // must not fabricate the revision-dependent `merged` PR variant.
-    }
     store.setStatus(issue.id, 'approved');
     store.setStatus(issue.id, 'ready-to-merge');
     store.setStatus(issue.id, 'released');

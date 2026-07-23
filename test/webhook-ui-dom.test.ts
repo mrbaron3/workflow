@@ -156,4 +156,53 @@ describe('webhook control GUI runtime', () => {
     expect(document.querySelector('#connection-announcement')?.textContent).toBe(announcement);
     expect(document.querySelector('#last-updated')?.textContent).toContain('最終更新');
   });
+
+  it('PR-INTENT preserves a successful mutation when the follow-up state refresh fails', async () => {
+    const window = new Window({
+      url: 'http://127.0.0.1:8377/',
+      settings: { disableJavaScriptEvaluation: false },
+    });
+    windows.push(window);
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/state') && fetchMock.mock.calls.length > 2) {
+        throw new Error('refresh unavailable');
+      }
+      return {
+        ok: true,
+        json: async () => url.endsWith('/api/state') ? state(0) : {},
+      };
+    });
+    Object.defineProperty(window, 'fetch', { configurable: true, value: fetchMock });
+    Object.defineProperty(window, 'setInterval', {
+      configurable: true,
+      value: () => 1,
+    });
+    Object.defineProperty(window, 'clearInterval', {
+      configurable: true,
+      value: () => {},
+    });
+    const html = webhookControlHtml();
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('generated GUI has no executable script');
+    window.document.write(html.replace(/<script>[\s\S]*<\/script>/, ''));
+    window.document.close();
+    window.eval(script);
+    await flush();
+
+    const toggle = window.document.querySelector(
+      '[data-key="WHREPO-1"] .toggle',
+    ) as HTMLButtonElement;
+    toggle.click();
+    await flush();
+    await flush();
+
+    const status = window.document.querySelector('#repo-action-WHREPO-1');
+    expect(status?.textContent).toContain('状態変更 は完了しましたが、表示の更新に失敗しました');
+    expect(status?.textContent).not.toContain('状態変更 に失敗しました');
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('/api/repositories/WHREPO-1'))).toHaveLength(1);
+    expect(window.document.querySelector('#connection-announcement')?.textContent)
+      .toContain('接続できません');
+  });
 });

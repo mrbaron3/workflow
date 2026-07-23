@@ -119,7 +119,7 @@ async function runLiveSample(
         sampleIndex,
         attempt,
         repairBrief,
-        resumeRef: pr.headSha,
+        resumeRef: store.getPR(pr.id)?.headSha ?? pr.headSha,
       },
       harnessRoot,
       log,

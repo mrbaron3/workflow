@@ -580,6 +580,19 @@ export interface RestrictedReviewLaunch {
   writesResult: boolean;
 }
 
+/** Replace the interactive findings-file instruction for a no-tool review process. */
+export function restrictedPerspectivePrompt(prompt: string): string {
+  return prompt
+    .replace(
+      /^Write your verdict to .*\/findings\.json as JSON:$/m,
+      'Return your verdict as JSON matching this schema:',
+    )
+    .replace(
+      'Do not edit code — only write findings.json.',
+      'Do not edit code or attempt filesystem writes. Return only the JSON verdict.',
+    );
+}
+
 /**
  * Enforce a no-tool provider boundary for attacker-controlled PR content.
  * Provider authentication remains in the parent CLI only. Codex subprocesses
@@ -593,7 +606,7 @@ export function restrictedReviewLaunch(
   const evidenceDir = path.dirname(job.sentinel);
   const schemaPath = path.join(evidenceDir, 'findings.schema.json');
   fs.writeFileSync(schemaPath, `${JSON.stringify(RESTRICTED_FINDINGS_JSON_SCHEMA)}\n`, 'utf8');
-  const prompt = fs.readFileSync(job.prompt, 'utf8');
+  const prompt = restrictedPerspectivePrompt(fs.readFileSync(job.prompt, 'utf8'));
   if (route.provider === 'codex') {
     return {
       executable: 'codex',

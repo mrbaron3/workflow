@@ -1,6 +1,8 @@
 import { DEFAULT_WEBHOOK_RECONCILIATION_INTERVAL_MS } from './reconciliation.js';
 import { DEFAULT_WEBHOOK_CONTROL_PORT } from './server.js';
 
+export const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export interface WebhookDaemonOptions {
   host: '127.0.0.1' | '::1';
   port: number;
@@ -70,7 +72,7 @@ export function parseWebhookDaemonOptions(
   if (
     !Number.isInteger(reconciliationIntervalMs)
     || reconciliationIntervalMs <= 0
-    || reconciliationIntervalMs > 2_147_483_647
+    || reconciliationIntervalMs > MAX_TIMER_DELAY_MS
   ) {
     throw new Error('--reconcile-interval-ms must be a positive timer-safe integer');
   }

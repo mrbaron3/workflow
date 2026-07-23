@@ -64,7 +64,7 @@ export function webhookControlHtml(): string {
 <main>
   <header><div><h1>Webhook Control</h1><p>複数repoのGitHubイベントを、耐久受信箱から安全に配送します。</p></div>
     <div><span class="badge" id="mode-badge">loopback only</span>
-      <button id="auto-refresh" class="secondary" type="button" aria-pressed="false">自動更新を一時停止</button></div></header>
+      <button id="auto-refresh" class="secondary" type="button" aria-pressed="false">自動更新</button></div></header>
   <div id="connection-status">
     <span id="connection-announcement" role="status" aria-live="polite">運用状態を読み込んでいます…</span>
     <span id="last-updated" aria-live="off"></span>
@@ -171,15 +171,23 @@ function reconcile(root, rows, key, render, empty, colspan) {
 }
 document.querySelector('#repo-form').addEventListener('submit', async event => {
   event.preventDefault(); const formElement=event.currentTarget; const form = new FormData(formElement);
+  let mutationSucceeded=false;
   try {
     await api('/api/repositories',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
       repository:form.get('repository'), workspaceRoot:form.get('workspaceRoot')||null, enabled:true,
       events:form.getAll('events'), consumers:form.getAll('consumers'), readyLabel:null, baseBranch:null
     })});
-    notice('追加しました。'); formElement.reset();
-    checks(document.querySelector('#events'),'events',EVENT_VALUES,DEFAULT_EVENTS);
-    checks(document.querySelector('#consumers'),'consumers',CONSUMER_VALUES,DEFAULT_CONSUMERS); await refresh();
+    mutationSucceeded=true;
   } catch (error) { notice(error.message,true); }
+  if (!mutationSucceeded) return;
+  notice('追加しました。'); formElement.reset();
+  checks(document.querySelector('#events'),'events',EVENT_VALUES,DEFAULT_EVENTS);
+  checks(document.querySelector('#consumers'),'consumers',CONSUMER_VALUES,DEFAULT_CONSUMERS);
+  try { await refresh(); }
+  catch (error) {
+    notice('追加しました。表示の更新に失敗しました。安全に再読み込みしてください。',true);
+    reportDisconnect(error);
+  }
 });
 document.addEventListener('click', async event => {
   const target = event.target;
@@ -191,15 +199,24 @@ document.addEventListener('click', async event => {
     const status=document.querySelector('#'+(retry?'delivery-action-':'repo-action-')+CSS.escape(target.dataset.id));
     target.disabled=true; target.setAttribute('aria-busy','true');
     status.textContent=subject+' の '+action+' を実行中…'; status.classList.remove('error');
+    let mutationSucceeded=false;
     try {
       if (!retry) await api('/api/repositories/'+target.dataset.id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:target.dataset.enabled!=='true'})});
       else await api('/api/deliveries/'+target.dataset.id+'/retry',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+      mutationSucceeded=true;
       status.textContent=subject+' の '+action+' が完了しました。';
-      await refresh();
     } catch (error) {
       status.textContent=subject+' の '+action+' に失敗しました: '+error.message;
       status.classList.add('error'); notice(status.textContent,true);
-    } finally { target.disabled=false; target.removeAttribute('aria-busy'); }
+    }
+    if (mutationSucceeded) {
+      try { await refresh(); }
+      catch (error) {
+        status.textContent=subject+' の '+action+' は完了しましたが、表示の更新に失敗しました。安全に再読み込みしてください。';
+        status.classList.add('error'); notice(status.textContent,true); reportDisconnect(error);
+      }
+    }
+    target.disabled=false; target.removeAttribute('aria-busy');
   }
 });
 let refreshTimer;
@@ -237,7 +254,6 @@ function startRefresh() {
 document.querySelector('#auto-refresh').addEventListener('click', event => {
   const paused=event.currentTarget.getAttribute('aria-pressed')!=='true';
   event.currentTarget.setAttribute('aria-pressed',String(paused));
-  event.currentTarget.textContent=paused?'自動更新を再開':'自動更新を一時停止';
   if (paused) { clearInterval(refreshTimer); setConnectionState('paused'); }
   else { startRefresh(); refresh().catch(reportDisconnect); }
 });
