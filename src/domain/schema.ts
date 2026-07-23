@@ -453,25 +453,19 @@ type OpenPRDestination =
   PRPatch & ActivePRDestinationFields & { status: 'open' };
 type ChangesRequestedPRDestination =
   PRPatch & ActivePRDestinationFields & { status: 'changes-requested' };
-type ApprovedPRDestination =
-  PRPatch & { status: 'approved'; currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha?: null };
 type ClosedPRDestination =
   PRPatch & ActivePRDestinationFields & { status: 'closed' };
-type MergedPRDestination =
-  PRPatch & { status: 'merged'; currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha: PrHeadSha };
 export type PRTransitionDestination =
   | OpenPRDestination
   | ChangesRequestedPRDestination
-  | ApprovedPRDestination
-  | ClosedPRDestination
-  | MergedPRDestination;
+  | ClosedPRDestination;
 type PRTransitionFor<S extends PR['status']> =
   S extends 'open'
-    ? OpenPRDestination | ChangesRequestedPRDestination | ApprovedPRDestination | ClosedPRDestination
+    ? OpenPRDestination | ChangesRequestedPRDestination | ClosedPRDestination
     : S extends 'changes-requested'
-      ? OpenPRDestination | ChangesRequestedPRDestination | ApprovedPRDestination | ClosedPRDestination
+      ? OpenPRDestination | ChangesRequestedPRDestination | ClosedPRDestination
       : S extends 'approved'
-        ? OpenPRDestination | ChangesRequestedPRDestination | ApprovedPRDestination | ClosedPRDestination | MergedPRDestination
+        ? OpenPRDestination | ChangesRequestedPRDestination | ClosedPRDestination
         : never;
 
 const PR_TRANSITIONS: Readonly<Record<PR['status'], readonly PR['status'][]>> = {
@@ -503,14 +497,76 @@ export function transitionPR<
   if (!PR_TRANSITIONS[pr.status].includes(destination.status)) {
     throw new Error(`invalid PR transition: ${pr.status} -> ${destination.status}`);
   }
-  const normalized = destination.status === 'merged'
-    ? destination
-    : { mergedHeadSha: null, ...destination };
+  const normalized = { mergedHeadSha: null, ...destination };
   return deepFreeze(PR.parse({
     ...pr,
     ...normalized,
     updatedAt: new Date().toISOString(),
   })) as Extract<PR, { status: D['status'] }>;
+}
+
+declare const correlatedRevisionBrand: unique symbol;
+export type CorrelatedRevisionBinding = RevisionBinding & {
+  readonly prId: string;
+  readonly [correlatedRevisionBrand]: true;
+};
+
+/**
+ * The only constructor for coordinates consumed by approval/merge. It checks
+ * PR ownership once and returns an opaque binding, so lifecycle callers cannot
+ * independently pair a revision id with another head SHA.
+ */
+export function bindRevisionToPR(
+  pr: PR,
+  revision: Pick<PrRevision, 'id' | 'prId' | 'headSha'>,
+): CorrelatedRevisionBinding {
+  if (revision.prId !== pr.id) {
+    throw new Error(`revision ${revision.id} does not belong to PR ${pr.id}`);
+  }
+  return Object.freeze({
+    prId: pr.id,
+    revisionId: revision.id,
+    headSha: revision.headSha,
+  }) as CorrelatedRevisionBinding;
+}
+
+export function approvePR(
+  pr: PR,
+  binding: CorrelatedRevisionBinding,
+): Extract<PR, { status: 'approved' }> {
+  if (pr.status === 'closed' || pr.status === 'merged') {
+    throw new Error(`cannot approve terminal PR ${pr.id} (${pr.status})`);
+  }
+  if (binding.prId !== pr.id) throw new Error(`revision binding does not belong to PR ${pr.id}`);
+  return deepFreeze(ApprovedPR.parse({
+    ...pr,
+    status: 'approved',
+    currentRevisionId: binding.revisionId,
+    headSha: binding.headSha,
+    mergedHeadSha: null,
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
+export function mergeApprovedPR(
+  pr: Extract<PR, { status: 'approved' }>,
+  binding: CorrelatedRevisionBinding,
+): MergedPR {
+  if (
+    binding.prId !== pr.id
+    || binding.revisionId !== pr.currentRevisionId
+    || binding.headSha !== pr.headSha
+  ) {
+    throw new Error(`approved revision binding does not match PR ${pr.id}`);
+  }
+  return deepFreeze(createMergedPR({
+    ...pr,
+    status: 'merged',
+    currentRevisionId: binding.revisionId,
+    headSha: binding.headSha,
+    mergedHeadSha: binding.headSha,
+    updatedAt: new Date().toISOString(),
+  }));
 }
 
 /** Update non-variant metadata without changing the lifecycle discriminant. */

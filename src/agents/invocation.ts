@@ -4,10 +4,11 @@ import {
   type AgentProvider,
   type InvocationOutcome,
   type InvocationRole,
+  type RevisionBinding,
 } from '../domain/schema.js';
 import { Store, nowISO } from '../store/store.js';
 
-export interface InvocationCoordinates {
+interface InvocationCoordinatesBase {
   subjectId: string;
   issueId?: string | null;
   prId?: string | null;
@@ -15,17 +16,23 @@ export interface InvocationCoordinates {
   attempt: number;
   role: InvocationRole;
   perspective?: string | null;
-  revisionId?: string | null;
-  headSha?: string | null;
 }
 
-export interface InvocationProvenanceInput extends InvocationCoordinates {
+type UnboundInvocation = {
+  revisionId?: null;
+  headSha?: null;
+};
+
+export type InvocationCoordinates =
+  InvocationCoordinatesBase & (RevisionBinding | UnboundInvocation);
+
+export type InvocationProvenanceInput = InvocationCoordinates & {
   provider: AgentProvider;
   model?: string | null;
   prompt: string;
   outcome: InvocationOutcome;
   createdAt?: string;
-}
+};
 
 /** Stable, inspectable logical key. Encoding keeps separators in user/remote ids unambiguous. */
 export function invocationKey(coordinates: InvocationCoordinates): string {

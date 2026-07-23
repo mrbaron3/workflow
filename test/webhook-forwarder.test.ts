@@ -8,6 +8,8 @@ import {
   GithubWebhookForwarderSupervisor,
   GithubWebhookSigningRelay,
   MAX_RELAY_BODY_BYTES,
+  forwardedDeliveryKey,
+  inferGithubWebhookEvent,
   isRelayBodyWithinLimit,
   productionGithubWebhookForwarderSpawner,
   type GithubWebhookForwarderProcess,
@@ -43,11 +45,23 @@ afterEach(() => {
 });
 
 describe('multi-repository GitHub webhook forwarders', () => {
-  it('ISSUE-0024/PR-INTENT never places the verifier secret in gh argv or logs', () => {
+  it('ISSUE-0024/PR-INTENT wires the real verifier secret without exposing it in gh argv or logs', async () => {
     const calls: Array<{ executable: string; args: string[] }> = [];
     const logs: string[] = [];
     const secret = 'same-secret-as-verifier';
     const process = new FakeProcess();
+    let observedSignature = '';
+    let releaseForward!: () => void;
+    const forwarded = new Promise<void>((resolve) => { releaseForward = resolve; });
+    const relay = new GithubWebhookSigningRelay(
+      'http://127.0.0.1:8377/hook',
+      secret,
+      async (_input, init) => {
+        observedSignature = new Headers(init?.headers).get('x-hub-signature-256') ?? '';
+        releaseForward();
+        return new Response(null, { status: 202 });
+      },
+    );
     const spawn = productionGithubWebhookForwarderSpawner(
       (message) => logs.push(message),
       ((executable: string, args: readonly string[]) => {
@@ -68,8 +82,10 @@ describe('multi-repository GitHub webhook forwarders', () => {
       updatedAt: new Date().toISOString(),
     };
 
-    spawn(registration, async () => {});
+    spawn(registration, (event) => relay.forwardTrustedEvent(event).then(() => undefined));
     process.stderr.emit('data', 'forwarder configured');
+    process.stdout.emit('data', '{"action":"opened","pull_request":{"id":9}}\n');
+    await forwarded;
 
     expect(calls[0]).toEqual(expect.objectContaining({
       executable: 'gh',
@@ -78,6 +94,7 @@ describe('multi-repository GitHub webhook forwarders', () => {
     expect(calls[0]!.args).not.toEqual(expect.arrayContaining([expect.stringContaining('--secret')]));
     expect(calls[0]!.args).not.toEqual(expect.arrayContaining([expect.stringContaining('--url')]));
     expect(logs.join('\n')).not.toContain(secret);
+    expect(observedSignature).toMatch(/^sha256=[0-9a-f]{64}$/);
   });
 
   it('ISSUE-0024/PR-INTENT signs unsigned gh traffic inside the daemon process', async () => {
@@ -145,8 +162,9 @@ describe('multi-repository GitHub webhook forwarders', () => {
     expect(consumerBody).toBe('{"action":"opened","pull_request":{"id":9}}');
   });
 
-  it('ISSUE-0024/PR-INTENT exact current-state payloads cannot reach the pipe-authenticated signer', async () => {
+  it('ISSUE-0024/PR-INTENT never signs synthesized current-state data from a non-payload child channel', async () => {
     let upstreamCalls = 0;
+    const process = new FakeProcess();
     const relay = new GithubWebhookSigningRelay(
       'http://127.0.0.1:8377/hook',
       'relay-only-secret',
@@ -159,10 +177,57 @@ describe('multi-repository GitHub webhook forwarders', () => {
       action: 'closed',
       pull_request: { state: 'closed', merged: true, head: { sha: 'a'.repeat(40) } },
     });
-    expect(synthesizedCurrentGithubState).toContain('a'.repeat(40));
+    const spawn = productionGithubWebhookForwarderSpawner(
+      () => {},
+      (() => process),
+    );
+    const registration = {
+      id: 'WHREPO-0001',
+      repository: 'acme/theme',
+      enabled: true,
+      events: ['pull_request'],
+      consumers: ['agentops'],
+      workspaceRoot: null,
+      readyLabel: null,
+      baseBranch: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } satisfies WebhookRepositoryRegistration;
+    spawn(registration, (event) => relay.forwardTrustedEvent(event).then(() => undefined));
+
+    // stderr and process metadata are observable to peer local processes; neither
+    // is an authenticated event channel. Only the child's private stdout pipe is.
+    process.stderr.emit('data', synthesizedCurrentGithubState);
+    await new Promise((resolve) => setImmediate(resolve));
     expect('listen' in relay).toBe(false);
     expect(upstreamCalls).toBe(0);
+
+    process.stdout.emit('data', `${synthesizedCurrentGithubState}\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(upstreamCalls).toBe(1);
     await relay.close();
+  });
+
+  it('ISSUE-0024/PR-INTENT infers every supported payload kind and creates stable delivery keys', () => {
+    const cases = [
+      ['issues', { issue: {} }],
+      ['issue_comment', { issue: {}, comment: {} }],
+      ['pull_request', { pull_request: {} }],
+      ['pull_request_review', { pull_request: {}, review: {} }],
+      ['pull_request_review_comment', { pull_request: {}, comment: {} }],
+      ['check_run', { check_run: {} }],
+      ['check_suite', { check_suite: {} }],
+      ['push', { ref: 'refs/heads/main', before: 'a', after: 'b' }],
+    ] as const;
+    for (const [event, payload] of cases) {
+      expect(inferGithubWebhookEvent(payload)).toBe(event);
+    }
+    expect(inferGithubWebhookEvent({ repository: {} })).toBeNull();
+
+    const body = Buffer.from('{"ref":"refs/heads/main","before":"a","after":"b"}');
+    const first = forwardedDeliveryKey('acme/theme', 'push', body);
+    expect(forwardedDeliveryKey('acme/theme', 'push', body)).toBe(first);
+    expect(forwardedDeliveryKey('acme/other', 'push', body)).not.toBe(first);
   });
 
   it('ISSUE-0024/PR-INTENT pins the finite positive relay body cap', () => {

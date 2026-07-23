@@ -375,7 +375,6 @@ describe('PR revision identity and automatic current-head gate', () => {
         );
         merges.push({ number, sha });
       },
-      resolveReviewThread: () => {},
       closeIssue: () => {},
     };
 
@@ -412,7 +411,6 @@ describe('PR revision identity and automatic current-head gate', () => {
         checks: [],
       }),
       merge: () => { merges += 1; },
-      resolveReviewThread: () => {},
       closeIssue: () => {},
     };
 
@@ -463,6 +461,48 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(snapshot.reasons).toContain('mergeability is unknown');
   });
 
+  it('PR-INTENT does not regrant repair budget when polling the same rejected head', () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) {
+      addReview(
+        store,
+        pr,
+        revision.id,
+        SHA_A,
+        perspective,
+        perspective === 'security'
+          ? [{
+              criterionId: 'P1-auth',
+              severity: 'major',
+              expected: 'authenticated ingress',
+              observed: 'authentication is bypassable',
+              reproductionSteps: [],
+              evidence: {},
+              requiredFix: ['close the bypass'],
+            }]
+          : [],
+      );
+    }
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => {},
+      closeIssue: () => {},
+    };
+
+    const result = autoMergeCurrentRevision(
+      store,
+      CONFIG,
+      store.getPR(pr.id)!,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+    );
+
+    expect(result.decision).toBe('changes-requested');
+    expect(store.getIssue(pr.issueId)?.status).toBe('needs-human-review');
+  });
+
   it('PR-INTENT re-evaluates an unchanged changes-requested head when external gate facts recover', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
@@ -487,7 +527,6 @@ describe('PR revision identity and automatic current-head gate', () => {
         views += 1;
         return views === 1 ? greenGithub() : { ...greenGithub(), state: 'merged' };
       },
-      resolveReviewThread: () => {},
       merge: () => {},
       closeIssue: () => {},
     };
@@ -535,7 +574,6 @@ describe('PR revision identity and automatic current-head gate', () => {
     let merges = 0;
     const runner: PrNativeGithubRunner = {
       viewRevision: () => greenGithub(),
-      resolveReviewThread: () => {},
       merge: () => { merges += 1; },
       closeIssue: () => {},
     };
@@ -582,7 +620,6 @@ describe('PR revision identity and automatic current-head gate', () => {
     }));
     const runner: PrNativeGithubRunner = {
       viewRevision: () => ({ ...greenGithub(), isDraft: true }),
-      resolveReviewThread: () => {},
       merge: () => { throw new Error('failed revision must not merge'); },
       closeIssue: () => {},
     };
@@ -608,7 +645,6 @@ describe('PR revision identity and automatic current-head gate', () => {
         state: 'merged',
       }),
       merge: () => { throw new Error('must not merge twice'); },
-      resolveReviewThread: () => {},
       closeIssue: () => {},
     };
 
@@ -663,7 +699,6 @@ describe('PR revision identity and automatic current-head gate', () => {
     for (const perspective of PERSPECTIVES) {
       addReview(store, pr, repaired.id, SHA_B, perspective);
     }
-    const resolved: string[] = [];
     const runner: PrNativeGithubRunner = {
       viewRevision: () => ({
         ...greenGithub(SHA_B),
@@ -675,7 +710,6 @@ describe('PR revision identity and automatic current-head gate', () => {
           line: 42,
         }],
       }),
-      resolveReviewThread: (_cwd, threadId) => { resolved.push(threadId); },
       merge: () => { throw new Error('an unresolved P1 must block merge'); },
       closeIssue: () => {},
     };
@@ -689,7 +723,6 @@ describe('PR revision identity and automatic current-head gate', () => {
       PERSPECTIVES,
     );
 
-    expect(resolved).toEqual([]);
     expect(result).toMatchObject({ decision: 'changes-requested', merged: false });
     expect(result.reasons.join('\n')).toContain('unresolved blocking review thread: PRRT-P1');
   });
@@ -743,7 +776,6 @@ describe('PR revision identity and automatic current-head gate', () => {
     const runner: PrNativeGithubRunner = {
       viewRevision: () => greenGithub(),
       merge: () => {},
-      resolveReviewThread: () => {},
       closeIssue: (_cwd, repository, number) => { closes.push(`${repository}#${number}`); },
     };
 

@@ -1,4 +1,9 @@
-import { HTMLButtonElement, Window } from 'happy-dom';
+import {
+  HTMLButtonElement,
+  HTMLFormElement,
+  HTMLInputElement,
+  Window,
+} from 'happy-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   WEBHOOK_UI_VISIBLE_DELIVERY_LIMIT,
@@ -210,6 +215,55 @@ describe('webhook control GUI runtime', () => {
       String(url).includes('/api/repositories/WHREPO-1'))).toHaveLength(1);
     expect(window.document.querySelector('#connection-announcement')?.textContent)
       .toContain('接続できません');
+  });
+
+  it('PR-INTENT coalesces repeated repository submissions and exposes busy state', async () => {
+    const window = new Window({
+      url: 'http://127.0.0.1:8377/',
+      settings: { disableJavaScriptEvaluation: false },
+    });
+    windows.push(window);
+    let releasePost!: () => void;
+    const blockedPost = new Promise<void>((resolve) => { releasePost = resolve; });
+    const fetchMock = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.endsWith('/api/repositories')) {
+        await blockedPost;
+        return { ok: true, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => state(0) };
+    });
+    Object.defineProperty(window, 'fetch', { configurable: true, value: fetchMock });
+    Object.defineProperty(window, 'setInterval', { configurable: true, value: () => 1 });
+    Object.defineProperty(window, 'clearInterval', { configurable: true, value: () => {} });
+    const html = webhookControlHtml();
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('generated GUI has no executable script');
+    window.document.write(html.replace(/<script>[\s\S]*<\/script>/, ''));
+    window.document.close();
+    window.eval(script);
+    await flush();
+
+    const form = window.document.querySelector('#repo-form') as HTMLFormElement;
+    const repository = form.querySelector('#repository') as HTMLInputElement;
+    const submit = form.querySelector('button[type="submit"]') as HTMLButtonElement;
+    repository.value = 'acme/new-repository';
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+
+    expect(submit.disabled).toBe(true);
+    expect(submit.getAttribute('aria-busy')).toBe('true');
+    expect(window.document.querySelector('#notice')?.textContent).toContain('追加しています');
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith('/api/repositories'))).toHaveLength(1);
+
+    releasePost();
+    await flush();
+    await flush();
+    expect(submit.disabled).toBe(false);
+    expect(submit.hasAttribute('aria-busy')).toBe(false);
+    expect(window.document.querySelector('#notice')?.textContent).toContain('追加しました');
   });
 
   it('PR-INTENT moves focus to the deliveries region when passive polling removes the focused retry row', async () => {

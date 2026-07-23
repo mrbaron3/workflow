@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store } from '../src/store/store.js';
-import { Issue, PR, type IssueContract } from '../src/domain/schema.js';
+import { Issue, PR, PrHeadSha, type IssueContract } from '../src/domain/schema.js';
 import type { BuildArtifact } from '../src/domain/artifact.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import {
@@ -83,6 +83,20 @@ function panelInput(issueId: string, prId: string, artifact: BuildArtifact, atte
 }
 
 describe('AC-PANEL-001: completed sample graded across all perspectives', () => {
+  it('PR-INTENT rejects partial panel revision coordinates at compile time', () => {
+    const store = tmpStore('panel-partial-revision-binding');
+    const { issueId, prId } = seed(store);
+    const partial = {
+      ...panelInput(issueId, prId, goodArtifact()),
+      revisionId: 'PRREV-0001',
+    };
+    if (false) {
+      // @ts-expect-error panel evidence must bind revisionId and headSha together
+      runPanel(store, CONFIG, partial);
+    }
+    expect(partial.revisionId).toBe('PRREV-0001');
+  });
+
   it('leaves exactly one perspective-tagged EvalRun per perspective, each with findings-shaped evidence', () => {
     const store = tmpStore('panel-001');
     const { issueId, prId } = seed(store);
@@ -98,7 +112,7 @@ describe('AC-PANEL-001: completed sample graded across all perspectives', () => 
   it('binds every perspective result to the reviewed PR head revision', () => {
     const store = tmpStore('panel-revision-binding');
     const { issueId, prId } = seed(store);
-    const headSha = 'a'.repeat(40);
+    const headSha = PrHeadSha.parse('a'.repeat(40));
     runPanel(store, CONFIG, {
       ...panelInput(issueId, prId, goodArtifact()),
       revisionId: 'PRREV-0001',

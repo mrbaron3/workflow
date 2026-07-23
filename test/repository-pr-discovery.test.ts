@@ -62,7 +62,6 @@ function setup() {
       checks: [],
       unresolvedBlockingThreadIds: [],
     }),
-    resolveReviewThread: () => {},
     merge: () => {},
     closeIssue: () => {},
   };
@@ -520,6 +519,19 @@ describe('repository-wide pull request discovery', () => {
     expect(behavior).not.toContain(env.pulls[0]!.title);
     expect(behavior).not.toContain(env.pulls[0]!.body);
     expect(behavior).toContain('untrusted metadata');
+  });
+
+  it('PR-INTENT keeps the synthetic contract revision-neutral and repository-owned', () => {
+    const env = setup();
+    const contract = discoverRepositoryPullRequests(
+      env.store, env.config, env.runner, env.root,
+    )[0]!.issue.contract!;
+    const criterion = contract.acceptanceCriteria[0]!;
+
+    expect(criterion.behavior).not.toContain(SHA_A);
+    expect(criterion.behavior).toContain('immutable current head');
+    expect(criterion.verification.expected.join('\n')).not.toContain('PR title');
+    expect(criterion.verification.expected.join('\n')).toContain('repository-owned requirements');
   });
 
   it('AC-PRLOOP-005 does not auto-manage a fork head because the repair branch is not writable in the target repository', () => {

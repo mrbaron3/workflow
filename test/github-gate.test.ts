@@ -187,7 +187,7 @@ describe('pollGate: a merge/close becomes the human decision', () => {
     expect(pollGate(store, STORE, fakeRunner('merged').runner, '/repo')).toEqual([]);
   });
 
-  it('merged → released + humanVerdict=approve on the winning runs (true-pass harvest)', () => {
+  it('merged → released + humanVerdict=approve without fabricating revision coordinates', () => {
     const store = tmpStore('poll-merged');
     seedGatedIssue(store, 'ISSUE-1', 1);
     const res = pollGate(store, GITHUB, fakeRunner('merged').runner, '/repo')[0]!;
@@ -195,7 +195,11 @@ describe('pollGate: a merge/close becomes the human decision', () => {
     expect(res.changed).toBe(true);
     expect(store.getIssue('ISSUE-1')!.status).toBe('released');
     expect(store.runsForIssue('ISSUE-1').every((r) => r.humanVerdict === 'approve')).toBe(true);
-    expect(store.prForIssue('ISSUE-1')!.status).toBe('merged');
+    // This compatibility runner only returns a lifecycle state, not the merged
+    // commit SHA. Keep the last correlated approved identity instead of
+    // manufacturing a merged PR variant with unproven coordinates.
+    expect(store.prForIssue('ISSUE-1')!.status).toBe('approved');
+    expect(store.prForIssue('ISSUE-1')!.mergedHeadSha).toBeNull();
   });
 
   it('closed → repair lane + humanVerdict=request_changes (a false-pass the panel let through)', () => {

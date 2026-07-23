@@ -177,7 +177,13 @@ function reconcile(root, rows, key, render, empty, colspan) {
   }
 }
 document.querySelector('#repo-form').addEventListener('submit', async event => {
-  event.preventDefault(); const formElement=event.currentTarget; const form = new FormData(formElement);
+  event.preventDefault(); const formElement=event.currentTarget;
+  if (formElement.dataset.submitting==='true') return;
+  const submit=formElement.querySelector('button[type="submit"]');
+  formElement.dataset.submitting='true';
+  submit.disabled=true; submit.setAttribute('aria-busy','true');
+  notice('Repository を追加しています…');
+  const form = new FormData(formElement);
   let mutationSucceeded=false;
   try {
     await api('/api/repositories',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
@@ -185,15 +191,19 @@ document.querySelector('#repo-form').addEventListener('submit', async event => {
       events:form.getAll('events'), consumers:form.getAll('consumers'), readyLabel:null, baseBranch:null
     })});
     mutationSucceeded=true;
-  } catch (error) { notice(error.message,true); }
-  if (!mutationSucceeded) return;
-  notice('追加しました。'); formElement.reset();
-  checks(document.querySelector('#events'),'events',EVENT_VALUES,DEFAULT_EVENTS);
-  checks(document.querySelector('#consumers'),'consumers',CONSUMER_VALUES,DEFAULT_CONSUMERS);
-  try { await refresh(); }
-  catch (error) {
-    notice('追加しました。表示の更新に失敗しました。安全に再読み込みしてください。',true);
-    reportDisconnect(error);
+    notice('追加しました。'); formElement.reset();
+    checks(document.querySelector('#events'),'events',EVENT_VALUES,DEFAULT_EVENTS);
+    checks(document.querySelector('#consumers'),'consumers',CONSUMER_VALUES,DEFAULT_CONSUMERS);
+    try { await refresh(); }
+    catch (error) {
+      notice('追加しました。表示の更新に失敗しました。安全に再読み込みしてください。',true);
+      reportDisconnect(error);
+    }
+  } catch (error) {
+    notice(error.message,true);
+  } finally {
+    delete formElement.dataset.submitting;
+    submit.disabled=false; submit.removeAttribute('aria-busy');
   }
 });
 document.addEventListener('click', async event => {

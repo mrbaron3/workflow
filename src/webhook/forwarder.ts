@@ -1,7 +1,12 @@
 import { spawn } from 'node:child_process';
-import { createHmac, randomUUID } from 'node:crypto';
-import type { WebhookRepositoryRegistration } from './schema.js';
+import { createHash, createHmac } from 'node:crypto';
+import type { WebhookEvent, WebhookRepositoryRegistration } from './schema.js';
 import { WebhookControlStore } from './store.js';
+
+export const MAX_RELAY_BODY_BYTES = 10 * 1024 * 1024;
+export function isRelayBodyWithinLimit(bytes: number): boolean {
+  return Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= MAX_RELAY_BODY_BYTES;
+}
 
 export interface GithubWebhookForwarderProcess {
   kill(signal?: NodeJS.Signals): boolean;
@@ -54,6 +59,47 @@ type ForwarderSpawn = (
   options: { stdio: ['ignore', 'pipe', 'pipe'] },
 ) => GithubWebhookForwarderProcess;
 
+export function inferGithubWebhookEvent(
+  payload: Readonly<Record<string, unknown>>,
+): WebhookEvent | null {
+  if (payload.check_run && typeof payload.check_run === 'object') return 'check_run';
+  if (payload.check_suite && typeof payload.check_suite === 'object') return 'check_suite';
+  if (payload.pull_request && typeof payload.pull_request === 'object') {
+    if (payload.comment && typeof payload.comment === 'object') {
+      return 'pull_request_review_comment';
+    }
+    if (payload.review && typeof payload.review === 'object') return 'pull_request_review';
+    return 'pull_request';
+  }
+  if (payload.issue && typeof payload.issue === 'object') {
+    return payload.comment && typeof payload.comment === 'object'
+      ? 'issue_comment'
+      : 'issues';
+  }
+  if (
+    typeof payload.ref === 'string'
+    && typeof payload.before === 'string'
+    && typeof payload.after === 'string'
+  ) {
+    return 'push';
+  }
+  return null;
+}
+
+export function forwardedDeliveryKey(
+  repository: string,
+  event: WebhookEvent,
+  body: Buffer,
+): string {
+  return `pipe-${createHash('sha256')
+    .update(repository)
+    .update('\0')
+    .update(event)
+    .update('\0')
+    .update(body)
+    .digest('hex')}`;
+}
+
 export function productionGithubWebhookForwarderSpawner(
   log: (message: string) => void,
   spawnProcess: ForwarderSpawn = spawn as ForwarderSpawn,
@@ -70,6 +116,11 @@ export function productionGithubWebhookForwarderSpawner(
     let pending = '';
     child.stdout?.on('data', (chunk: Buffer | string) => {
       pending += String(chunk);
+      if (!isRelayBodyWithinLimit(Buffer.byteLength(pending))) {
+        pending = '';
+        log(`[${registration.repository}] discarded oversized forwarder payload`);
+        return;
+      }
       const lines = pending.split('\n');
       pending = lines.pop() ?? '';
       for (const line of lines) {
@@ -78,14 +129,16 @@ export function productionGithubWebhookForwarderSpawner(
         try {
           const parsed = JSON.parse(raw) as Record<string, unknown>;
           const body = Buffer.from(line);
-          const event = parsed.pull_request ? 'pull_request'
-            : parsed.issue ? 'issues'
-              : registration.events.length === 1 ? registration.events[0]! : '';
-          if (!event) {
-            log(`[${registration.repository}] discarded event with ambiguous type`);
+          const event = inferGithubWebhookEvent(parsed);
+          if (!event || !registration.events.includes(event)) {
+            log(`[${registration.repository}] discarded unrecognized or disabled event`);
             continue;
           }
-          void forwardEvent({ body, event, delivery: randomUUID() }).catch((error: unknown) => {
+          void forwardEvent({
+            body,
+            event,
+            delivery: forwardedDeliveryKey(registration.repository, event, body),
+          }).catch((error: unknown) => {
             log(`[${registration.repository}] secure forward failed: ${
               error instanceof Error ? error.message : String(error)
             }`);
@@ -101,11 +154,6 @@ export function productionGithubWebhookForwarderSpawner(
     });
     return child;
   };
-}
-
-export const MAX_RELAY_BODY_BYTES = 10 * 1024 * 1024;
-export function isRelayBodyWithinLimit(bytes: number): boolean {
-  return Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= MAX_RELAY_BODY_BYTES;
 }
 
 /** Signs only events received over the child process' private stdout pipe. */

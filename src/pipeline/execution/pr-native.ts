@@ -4,6 +4,9 @@ import {
   PrHeadSha,
   ApprovedRevisionGateSnapshot,
   RevisionGateSnapshot,
+  approvePR,
+  bindRevisionToPR,
+  mergeApprovedPR,
   stalePrRevision,
   transitionPR,
   transitionPrRevision,
@@ -47,7 +50,6 @@ export interface GithubOpenPullRequest {
 
 export interface PrNativeGithubRunner {
   viewRevision(cwd: string, prNumber: number): GithubPrRevisionState;
-  resolveReviewThread(cwd: string, threadId: string): void;
   merge(cwd: string, prNumber: number, expectedHeadSha: string): void;
   closeIssue(cwd: string, repository: string, issueNumber: number): void;
   /** Optional on test doubles; the production runner enables repository-wide discovery. */
@@ -113,12 +115,14 @@ export function observePrRevision(
   const parsedSha = PrHeadSha.parse(headSha);
   const existing = store.revisionForHead(pr.id, parsedSha);
   if (existing) {
-    store.replacePR(transitionPR(pr, {
-      status: pr.status,
-      currentRevisionId: existing.id,
-      headSha: existing.headSha,
-      mergedHeadSha: null,
-    }));
+    store.replacePR(pr.status === 'approved'
+      ? approvePR(pr, bindRevisionToPR(pr, existing))
+      : transitionPR(pr, {
+        status: pr.status,
+        currentRevisionId: existing.id,
+        headSha: existing.headSha,
+        mergedHeadSha: null,
+      }));
     return existing;
   }
 
@@ -296,12 +300,10 @@ function finalizeMergedRevision(
     status: 'merged',
     completedAt: nowISO(),
   }));
-  const mergedPr = store.replacePR(transitionPR(pr, {
-    status: 'merged',
-    currentRevisionId: mergedRevision.id,
-    headSha: mergedRevision.headSha,
-    mergedHeadSha: mergedRevision.headSha,
-  }));
+  const mergedPr = store.replacePR(mergeApprovedPR(
+    pr,
+    bindRevisionToPR(pr, mergedRevision),
+  ));
   if (store.getIssue(mergedPr.issueId)?.status !== 'released') {
     store.setStatus(mergedPr.issueId, 'released');
   }
@@ -451,11 +453,7 @@ export function autoMergeCurrentRevision(
       : store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
     const approvedPr = pr.status === 'approved'
       ? pr
-      : store.replacePR(transitionPR(pr, {
-        status: 'approved',
-        currentRevisionId: approvedRevision.id,
-        headSha: approvedRevision.headSha,
-      }));
+      : store.replacePR(approvePR(pr, bindRevisionToPR(pr, approvedRevision)));
     if (approvedPr.status !== 'approved' || approvedRevision.status !== 'approved') {
       throw new Error('approved lifecycle transition did not produce approved variants');
     }
@@ -507,10 +505,10 @@ export function autoMergeCurrentRevision(
       if (issue.status === 'build-approved') {
         store.setStatus(issue.id, 'needs-human-review');
       }
-      if (
-        issue.status === 'needs-human-review'
-        || issue.status === 'evaluation-in-progress'
-      ) {
+      // Exhausting the bounded repair loop is a durable escalation. Polling the
+      // same rejected revision must not turn needs-human-review back into a fresh
+      // repair budget; only observing a new head re-enters evaluation.
+      if (issue.status === 'evaluation-in-progress') {
         store.setStatus(issue.id, 'changes-requested');
       }
     }
@@ -526,11 +524,7 @@ export function autoMergeCurrentRevision(
   }
 
   revision = store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
-  pr = store.replacePR(transitionPR(pr, {
-    status: 'approved',
-    currentRevisionId: revision.id,
-    headSha: revision.headSha,
-  }));
+  pr = store.replacePR(approvePR(pr, bindRevisionToPR(pr, revision)));
   if (revision.mergeRequestedAt) {
     store.save();
     return {
@@ -565,11 +559,7 @@ export function autoMergeCurrentRevision(
     };
   }
   if (afterMerge.state !== 'merged') {
-    pr = store.replacePR(transitionPR(pr, {
-      status: 'approved',
-      currentRevisionId: revision.id,
-      headSha: revision.headSha,
-    }));
+    pr = store.replacePR(approvePR(pr, bindRevisionToPR(pr, revision)));
     store.save();
     return {
       prId: pr.id,

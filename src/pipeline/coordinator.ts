@@ -9,7 +9,14 @@
  * real ticket; the per-sample/per-attempt detail lives in PRs and EvalRuns.
  */
 
-import { PR, transitionPR, updatePR, type Issue } from '../domain/schema.js';
+import {
+  PR,
+  approvePR,
+  bindRevisionToPR,
+  transitionPR,
+  updatePR,
+  type Issue,
+} from '../domain/schema.js';
 import type { Verdict } from '../domain/schema.js';
 import type { HarnessConfig } from '../config.js';
 import { Store, nowISO } from '../store/store.js';
@@ -90,12 +97,11 @@ export async function runIssue(
       const tag = `${issue.id} s${s} a${attempt}`;
       if (run.verdict === 'approve') {
         approved = true;
-        pr = pr.currentRevisionId && pr.headSha
-          ? store.replacePR(transitionPR(pr, {
-            status: 'approved',
-            currentRevisionId: pr.currentRevisionId,
-            headSha: pr.headSha,
-          }))
+        const currentRevision = pr.headSha
+          ? store.revisionForHead(pr.id, pr.headSha)
+          : undefined;
+        pr = currentRevision
+          ? store.replacePR(approvePR(pr, bindRevisionToPR(pr, currentRevision)))
           : store.replacePR(transitionPR(pr, { status: 'open' }));
         log(`  ✓ ${tag}: approved (overall ${run.overall.toFixed(2)})`);
         break;

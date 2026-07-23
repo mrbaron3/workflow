@@ -111,6 +111,23 @@ describe('perspectivePrompt', () => {
     expect(p.toLowerCase()).toContain('read-only');
   });
 
+  it('binds every review prompt to the current immutable head and rejects stale SHA text', () => {
+    const headSha = 'b'.repeat(40);
+    const p = perspectivePrompt(
+      'security',
+      contract,
+      '.agentops/eval/security',
+      [],
+      null,
+      { baseRef: 'main', headSha },
+    );
+
+    expect(p).toContain(`Head SHA: ${headSha}`);
+    expect(p).toContain(`main...${headSha}`);
+    expect(p).toContain('another SHA');
+    expect(p).toContain('stale evidence');
+  });
+
   it('adds the accepted UI design contract without changing non-UI briefings', () => {
     const without = perspectivePrompt('ux', contract, '.agentops/eval/ux');
     expect(without).not.toContain('## UI Design Contract');

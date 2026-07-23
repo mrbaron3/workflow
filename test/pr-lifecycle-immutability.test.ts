@@ -8,6 +8,9 @@ import {
   PrHeadSha,
   PrRevision,
   RevisionBinding,
+  approvePR,
+  bindRevisionToPR,
+  mergeApprovedPR,
   transitionPR,
   transitionPrRevision,
   updatePR,
@@ -79,17 +82,26 @@ describe('PR lifecycle values', () => {
       id: 'PR-1', issueId: 'ISSUE-1', branch: 'feature', generator: 'mock',
       createdAt: nowISO(), updatedAt: nowISO(),
     });
-    const approved = transitionPR(open, {
-      status: 'approved',
-      currentRevisionId: 'PRREV-1',
-      headSha: PrHeadSha.parse('a'.repeat(40)),
+    const revision = PrRevision.parse({
+      id: 'PRREV-1', prId: open.id, headSha: 'a'.repeat(40), ordinal: 1,
+      status: 'approved', createdAt: nowISO(),
     });
+    const binding = bindRevisionToPR(open, revision);
+    const approved = approvePR(open, binding);
     expect(Object.isFrozen(approved)).toBe(true);
-    // @ts-expect-error merged destinations require the correlated revision/head identity
-    expect(() => transitionPR(approved, {
-      status: 'merged',
-      mergedHeadSha: PrHeadSha.parse('b'.repeat(40)),
-    })).toThrow();
+    const merged = mergeApprovedPR(approved, binding);
+    expect(merged.headSha).toBe(merged.mergedHeadSha);
+    if (false) {
+      const invalidApproval = {
+        status: 'approved' as const,
+        currentRevisionId: 'PRREV-other',
+        headSha: PrHeadSha.parse('b'.repeat(40)),
+      };
+      // @ts-expect-error approval coordinates cannot be supplied independently
+      transitionPR(open, invalidApproval);
+    }
+    // mergeApprovedPR exposes no second SHA input; both persisted fields are
+    // derived from the opaque binding.
     expect(approved).toMatchObject({ status: 'approved', headSha: 'a'.repeat(40) });
   });
 

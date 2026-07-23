@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 export const ISOLATED_GRADER_PORT_COUNT = 128;
 export const ISOLATED_GRADER_MIN_PORT = 30_000;
@@ -91,13 +92,45 @@ function projectCommandDependencies(command: string, cwd: string): DependencyPro
   };
 }
 
+export function isIsolatedPortRangeAvailable(
+  base: number,
+  count: number,
+  nodeExecutable: string = process.execPath,
+): boolean {
+  if (!Number.isInteger(base) || !Number.isInteger(count) || base < 1 || count < 1) return false;
+  const probe = [
+    "const net=require('node:net');",
+    'const base=Number(process.argv[1]); const count=Number(process.argv[2]);',
+    'const servers=[]; let settled=false; let listening=0;',
+    'const finish=(code)=>{ if(settled)return; settled=true;',
+    '  for(const server of servers){try{server.close()}catch{}}',
+    '  setTimeout(()=>process.exit(code),0);',
+    '};',
+    'for(let offset=0;offset<count;offset+=1){',
+    '  const server=net.createServer(); servers.push(server);',
+    "  server.once('error',()=>finish(1));",
+    "  server.listen(base+offset,'127.0.0.1',()=>{listening+=1;if(listening===count)finish(0)});",
+    '}',
+    'setTimeout(()=>finish(1),1500);',
+  ].join('');
+  const result = spawnSync(nodeExecutable, ['-e', probe, String(base), String(count)], {
+    stdio: 'ignore',
+    timeout: 2_000,
+  });
+  return result.status === 0;
+}
+
 function createPortPolicy(tmp: string): PortPolicy {
-  const base = ISOLATED_GRADER_MIN_PORT
-    + Math.floor(Math.random() * ISOLATED_GRADER_PORT_WINDOW);
-  return {
-    ports: Array.from({ length: ISOLATED_GRADER_PORT_COUNT }, (_, index) => base + index),
-    lockDirectory: path.join(tmp, 'ports'),
-  };
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const base = ISOLATED_GRADER_MIN_PORT
+      + Math.floor(Math.random() * ISOLATED_GRADER_PORT_WINDOW);
+    if (!isIsolatedPortRangeAvailable(base, ISOLATED_GRADER_PORT_COUNT)) continue;
+    return {
+      ports: Array.from({ length: ISOLATED_GRADER_PORT_COUNT }, (_, index) => base + index),
+      lockDirectory: path.join(tmp, 'ports'),
+    };
+  }
+  throw new Error('could not reserve a collision-free isolated grader port range');
 }
 
 function writeLocalhostPreload(

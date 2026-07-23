@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AgentInvocation, DB, PromptRecord } from '../src/domain/schema.js';
+import { AgentInvocation, DB, PrHeadSha, PromptRecord } from '../src/domain/schema.js';
 import { Store } from '../src/store/store.js';
 import {
   InvocationProvenanceConflictError,
@@ -37,6 +37,16 @@ const coordinates = {
 };
 
 describe('Invocation Identity and recorder', () => {
+  it('PR-INTENT rejects partial revision coordinates at compile time', () => {
+    if (false) {
+      // @ts-expect-error revisionId and headSha are a both-or-neither binding
+      invocationKey({ ...coordinates, revisionId: 'PRREV-1' });
+      // @ts-expect-error revisionId and headSha are a both-or-neither binding
+      invocationKey({ ...coordinates, headSha: PrHeadSha.parse('a'.repeat(40)) });
+    }
+    expect(invocationKey(coordinates)).toContain('invocation:v1');
+  });
+
   it('AC-AGINV-001 is stable for the same coordinates and distinct across every execution dimension', () => {
     const base = invocationKey(coordinates);
     expect(invocationKey({ ...coordinates })).toBe(base);

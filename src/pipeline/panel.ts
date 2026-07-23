@@ -20,6 +20,7 @@ import {
   Verdict,
   type GateResult,
   type IssueContract,
+  type RevisionBinding,
 } from '../domain/schema.js';
 import type { BuildArtifact } from '../domain/artifact.js';
 import type { HarnessConfig } from '../config.js';
@@ -68,7 +69,7 @@ export type PerspectiveGrader = (
   config: HarnessConfig,
 ) => PerspectiveResult;
 
-export interface PanelInput {
+interface PanelInputBase {
   issueId: string;
   prId: string;
   contract: IssueContract;
@@ -78,10 +79,10 @@ export interface PanelInput {
   agent: EvalRun['agent'];
   /** Non-deterministic reviewer invocation identities, keyed by perspective. */
   invocationKeys?: Record<string, string>;
-  revisionId?: string | null;
-  headSha?: string | null;
   featureArea?: string;
 }
+type UnboundPanelInput = { revisionId?: null; headSha?: null };
+export type PanelInput = PanelInputBase & (RevisionBinding | UnboundPanelInput);
 
 export interface PanelResult {
   verdict: Verdict; // aggregate (approve | request_changes | needs_human)

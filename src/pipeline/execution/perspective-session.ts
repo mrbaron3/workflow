@@ -148,6 +148,11 @@ export function sessionBackedGrader(evalRoot: string): PerspectiveGrader {
 /** What a re-review prompt shows of a prior finding — enough to recognise the problem. */
 export type PriorFinding = Pick<Finding, 'criterionId' | 'observed'>;
 
+export interface ImmutableReviewTarget {
+  headSha: string;
+  baseRef?: string;
+}
+
 /**
  * The read-only briefing a perspective session runs on (it writes only its sidecar findings.json).
  * On a re-review (ISSUE-0009), `priorFindings` — the SAME lens's previous-attempt findings —
@@ -160,6 +165,7 @@ export function perspectivePrompt(
   evalRelDir: string,
   priorFindings: readonly PriorFinding[] = [],
   uiDesign: UiDesignArtifact | null = null,
+  reviewTarget: ImmutableReviewTarget | null = null,
 ): string {
   const lens = PERSPECTIVE_LENS[perspective] ?? 'correctness and quality for this lens';
   const rubric = PERSPECTIVE_RUBRIC[perspective] ?? [];
@@ -172,6 +178,16 @@ export function perspectivePrompt(
     ``,
     `## Acceptance criteria`,
     ...contract.acceptanceCriteria.map((a) => `- [${a.id}] (${a.severity}) ${a.behavior}`),
+    ...(reviewTarget
+      ? [
+          ``,
+          `## Immutable review target`,
+          `- Head SHA: ${reviewTarget.headSha}`,
+          ...(reviewTarget.baseRef ? [`- Base ref: ${reviewTarget.baseRef}`] : []),
+          `Review only this committed head${reviewTarget.baseRef ? ` and the complete ${reviewTarget.baseRef}...${reviewTarget.headSha} diff` : ''}.`,
+          `If any carried contract or prior finding names another SHA, it is stale evidence and must be ignored.`,
+        ]
+      : []),
     ...(uiDesign
       ? [
           ``,
@@ -201,7 +217,9 @@ export function perspectivePrompt(
     ...(reReview
       ? [`   "observed": "...", "expected": "...", "requiredFix": ["..."],`, `   "lineage": "persisted" | "new"}]}`]
       : [`   "observed": "...", "expected": "...", "requiredFix": ["..."]}]}`]),
-    `Approve only if nothing in your lens needs changing. Do not edit code — only write findings.json.`,
+    `Use request_changes only for a concrete blocker or major defect. Minor suggestions may be`,
+    `reported with approve and must never be promoted solely because of function length, style,`,
+    `or an unproven hypothetical. Do not edit code — only write findings.json.`,
   ].join('\n');
 }
 
@@ -216,8 +234,16 @@ export function promptForLens(
   evalRelDir: string,
   priorFindings?: Record<string, readonly PriorFinding[]>,
   uiDesign: UiDesignArtifact | null = null,
+  reviewTarget: ImmutableReviewTarget | null = null,
 ): string {
-  return perspectivePrompt(perspective, contract, evalRelDir, priorFindings?.[perspective] ?? [], uiDesign);
+  return perspectivePrompt(
+    perspective,
+    contract,
+    evalRelDir,
+    priorFindings?.[perspective] ?? [],
+    uiDesign,
+    reviewTarget,
+  );
 }
 
 export interface PerspectiveSessionsInput {
@@ -452,6 +478,10 @@ export async function runPerspectiveSessions(
       evidenceDir,
       input.priorFindings,
       input.uiDesign,
+      {
+        headSha: input.buildRef,
+        ...(input.baseRef ? { baseRef: input.baseRef } : {}),
+      },
     );
     fs.writeFileSync(
       job.prompt,

@@ -190,14 +190,6 @@ export function realPrNativeGithubRunner(
         '--match-head-commit', expectedHeadSha, '--delete-branch',
       ], cwd);
     },
-    resolveReviewThread(cwd, threadId) {
-      const mutation = `mutation($threadId: ID!) {
-        resolveReviewThread(input: {threadId: $threadId}) { thread { id isResolved } }
-      }`;
-      run('gh', [
-        'api', 'graphql', '-f', `query=${mutation}`, '-F', `threadId=${threadId}`,
-      ], cwd);
-    },
     closeIssue(cwd, repository, issueNumber) {
       run('gh', [
         'issue', 'close', String(issueNumber), '--repo', repository, '--comment',

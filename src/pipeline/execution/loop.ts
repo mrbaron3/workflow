@@ -9,7 +9,16 @@
  * auto-releases). The two never share a control path — runAll stays as-is.
  */
 
-import { PR, transitionPR, updatePR, type Issue, type Verdict, type EvalRun } from '../../domain/schema.js';
+import {
+  PR,
+  approvePR,
+  bindRevisionToPR,
+  transitionPR,
+  updatePR,
+  type Issue,
+  type Verdict,
+  type EvalRun,
+} from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import type { RepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
@@ -203,12 +212,14 @@ export async function runBoundedRepairLoop(
       // Local/store gating has no immutable GitHub head to approve. Only the
       // issue advances to its human gate; the PR remains open until revision
       // identity exists.
-      currentPr = currentPr.currentRevisionId && currentPr.headSha
-        ? store.replacePR(transitionPR(currentPr, {
-          status: 'approved',
-          currentRevisionId: currentPr.currentRevisionId,
-          headSha: currentPr.headSha,
-        }))
+      const currentRevision = currentPr.headSha
+        ? store.revisionForHead(currentPr.id, currentPr.headSha)
+        : undefined;
+      currentPr = currentRevision
+        ? store.replacePR(approvePR(
+          currentPr,
+          bindRevisionToPR(currentPr, currentRevision),
+        ))
         : store.replacePR(transitionPR(currentPr, { status: 'open' }));
       break;
     }

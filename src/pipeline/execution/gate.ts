@@ -179,14 +179,6 @@ export function pollGate(
       // Legacy state-only runners cannot prove a commit identity. Release the
       // legacy work unit but do not fabricate revision evidence or a merged PR
       // variant; the PR-native path records the real full SHA before merging.
-      if (pr.currentRevisionId && pr.headSha) {
-        store.replacePR(transitionPR(pr, {
-          status: 'merged',
-          currentRevisionId: pr.currentRevisionId,
-          headSha: pr.headSha,
-          mergedHeadSha: pr.headSha,
-        }));
-      }
     } else {
       store.replacePR(transitionPR(pr, { status: 'changes-requested' }));
     }

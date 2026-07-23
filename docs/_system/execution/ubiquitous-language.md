@@ -18,7 +18,7 @@
 | LANG-execution-008 | Sentinel（完了印） | セッション完了時に worktree へ書かれる印（`.agentops/done.json`）。orchestrator が polling で検知して grade へハンドオフする。tmux の生存は状態ではない。 |
 | LANG-execution-009 | Evaluator Panel（観点パネル） | 単一 Evaluator（`LANG-evaluation-005`）でなく、**観点ごとに独立した Evaluator セッション群**。各自 Verdict（`LANG-evaluation-007`）を出し、集約する。 |
 | LANG-execution-010 | Perspective（観点） | レビューの独立した lens。**7観点**＝functionality / codeQuality / testQuality / ux / accessibility（grader 5次元）＋ security ＋ type-design。 |
-| LANG-execution-011 | Human Review Gate（人間審査ゲート） | パネル approve 後・`released` 前の人間判断点。`needs-human-review` で停止し、人間承認で `released` へ（`LANG-evaluation-010`/`016` の延長）。 |
+| LANG-execution-011 | Human Review Gate（人間審査ゲート） | legacy/store 手動経路と自動処理不能時の昇格先。GitHub PR-native 通常経路の merge 条件ではなく、通常判定は `LANG-execution-021` Revision Gate が担う。 |
 | LANG-execution-012 | Scoping Guard / ai-managed | 実装層が触ってよい issue の **opt-in 指定**。`assignedAgent` が担当 AI に設定された issue のみ。未指定／他人が作った issue は決して触らない（デフォルト非処理）。 |
 | LANG-execution-013 | Execution Backend | セッションを実行する基盤の pluggable な差し替え（自前 tmux／将来 Hermes）。evaluation の AgentRunner seam（`ARCH-evaluation-002`）の裏に位置する。 |
 | LANG-execution-014 | Liveness / stuck | sentinel を出さないままセッションが進捗を止めた状態（入力待ち・質問・ハング）。正常完了（sentinel）に対する**異常停止**。auto-mode 起動でも起こり得るため、検知して顕在化する対象。 |

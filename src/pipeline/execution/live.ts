@@ -145,8 +145,9 @@ async function runLiveSample(
       subjectId: issue.id, issueId: issue.id, prId: pr.id, sampleIndex, attempt,
       role: 'generator', perspective: null, provider: sess.provider,
       model: sess.model, outcome: sess.outcome, prompt: sess.prompt,
-      revisionId: revision?.id ?? null,
-      headSha: sess.headSha,
+      ...(revision
+        ? { revisionId: revision.id, headSha: revision.headSha }
+        : { revisionId: null, headSha: null }),
     });
     if (sess.outcome !== 'completed') {
       log(`  ⚠ ${issue.id} s${sampleIndex}: generator ${sess.outcome} — escalating, session kept alive`);
@@ -179,6 +180,7 @@ async function runLiveSample(
         issueKey,
         repo: path.resolve(harnessRoot, target.repo),
         buildRef: sess.headSha,
+        baseRef: target.baseRef,
         priorFindings,
         uiDesign: issue.uiDesign,
       },
