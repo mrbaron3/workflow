@@ -57,19 +57,22 @@ function isolatedCommand(
       );
       const destination = path.join(isolatedCwd, 'node_modules');
       if (fs.existsSync(destination)) {
-        throw new Error(
-          `untrusted checkout already contains node_modules: ${destination}`,
-        );
+        if (fs.realpathSync(destination) !== dependencyRoot) {
+          throw new Error(
+            `untrusted checkout already contains a different node_modules: ${destination}`,
+          );
+        }
+      } else {
+        fs.mkdirSync(destination);
+        for (const entry of fs.readdirSync(dependencyRoot)) {
+          if (entry === '.vite' || entry === '.vite-temp') continue;
+          fs.symlinkSync(
+            path.join(dependencyRoot, entry),
+            path.join(destination, entry),
+          );
+        }
+        projectedDependencies = destination;
       }
-      fs.mkdirSync(destination);
-      for (const entry of fs.readdirSync(dependencyRoot)) {
-        if (entry === '.vite' || entry === '.vite-temp') continue;
-        fs.symlinkSync(
-          path.join(dependencyRoot, entry),
-          path.join(destination, entry),
-        );
-      }
-      projectedDependencies = destination;
     }
   }
   const sandboxPortBase = 30_000 + Math.floor(Math.random() * 20_000);
