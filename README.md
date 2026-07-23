@@ -274,7 +274,11 @@ event mapping without hard-coding a macOS path.
 Polling reconciliation defaults to 30000 ms and shares the same per-repository single-flight queue
 as webhook deliveries. Configure it with `--reconcile-interval-ms N`; use `--no-reconcile` only
 for diagnostics. Do not run `watch-github` against the same workspace at the same time as this
-daemon.
+daemon. Repository registration is the only intake boundary: each turn also discovers existing
+and new same-repository Open PRs targeting the configured base branch, imports each PR number
+idempotently, and reviews every unseen current head. Draft heads are reviewed but remain pending
+until ready; fork heads are not auto-repaired because target-repository write authority is not
+assumed.
 
 Claiming removes `ready` and adds `agent-claimed`. The first source snapshot and every planning /
 UI-design / generation / perspective invocation retain stable provenance in `.harness/db.json`; restarts reuse

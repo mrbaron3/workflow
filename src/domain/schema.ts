@@ -349,6 +349,13 @@ export const PR = z.object({
   branch: z.string(),
   baseBranch: z.string().default('main'),
   generator: GeneratorAgent,
+  /**
+   * `issue-pipeline` PRs are created by AgentOps from a Source Issue. `repository-discovery`
+   * PRs already existed on GitHub and were imported by repository-wide reconciliation.
+   * The latter still receive a synthetic review work unit, but are never individually
+   * registered by an operator.
+   */
+  origin: z.enum(['issue-pipeline', 'repository-discovery']).default('issue-pipeline'),
   attempts: z.number().int().nonnegative().default(0), // generation attempts incl. repairs
   status: z.enum(['open', 'changes-requested', 'approved', 'merged']).default('open'),
   // ADR-0006 G1: set when an approved build is projected to a GitHub PR gate. null = no

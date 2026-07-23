@@ -16,6 +16,7 @@ import {
   prStateToDecision,
   openGate,
   pollGate,
+  prHeadRefspec,
   projectReviewRevision,
   renderGatePrBody,
   renderReviewPrBody,
@@ -76,6 +77,14 @@ describe('prStateToDecision: the pure heart of the gate', () => {
     expect(prStateToDecision('merged')).toBe('approve');
     expect(prStateToDecision('closed')).toBe('reject');
     expect(prStateToDecision('open')).toBeNull();
+  });
+});
+
+describe('repository-discovered PR repair projection', () => {
+  it('AC-PRLOOP-007 pushes the local repair HEAD to the original GitHub PR branch', () => {
+    expect(prHeadRefspec('feature/existing-pr')).toBe(
+      'HEAD:refs/heads/feature/existing-pr',
+    );
   });
 });
 

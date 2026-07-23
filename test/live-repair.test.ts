@@ -17,7 +17,11 @@ import { Store, nowISO } from '../src/store/store.js';
 import { Issue, PR, Finding, type EvalRun } from '../src/domain/schema.js';
 import { DEFAULT_CONFIG, type HarnessConfig, type TargetRepoConfig } from '../src/config.js';
 import { runBoundedRepairLoop, type AttemptOutcome } from '../src/pipeline/execution/loop.js';
-import { buildGeneratorPrompt, type GeneratorSessionInput } from '../src/pipeline/execution/session.js';
+import {
+  buildGeneratorPrompt,
+  generatorStartRef,
+  type GeneratorSessionInput,
+} from '../src/pipeline/execution/session.js';
 import type { PanelResult } from '../src/pipeline/panel.js';
 import type { RepairBrief } from '../src/domain/artifact.js';
 
@@ -70,6 +74,11 @@ function genInput(repairBrief: RepairBrief | null, attempt: number): GeneratorSe
 }
 
 describe('buildGeneratorPrompt: a repair attempt carries the reviewers required fixes', () => {
+  it('AC-PRLOOP-007 starts a repository-discovered repair from its observed PR head', () => {
+    expect(generatorStartRef('abc1234', 'main')).toBe('abc1234');
+    expect(generatorStartRef(null, 'main')).toBe('main');
+  });
+
   it('attempt 1 (no brief) has no repair section', () => {
     const prompt = buildGeneratorPrompt(genInput(null, 1), target);
     expect(prompt).not.toContain('## Repair');

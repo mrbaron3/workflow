@@ -30,3 +30,4 @@
 | LANG-execution-020 | PR Revision | 1つのGitHub PRの特定head SHA。レビュー・check・finding・承認が束縛される最小の配送単位。head更新で旧revisionの承認はstaleになる。 |
 | LANG-execution-021 | Revision Gate | current PR Revisionについて、必須Perspective・hard gates・GitHub checks・blocking thread・mergeabilityを集約する決定論ゲート。 |
 | LANG-execution-022 | Blocking Review Finding | P0/P1、blocker、`request_changes`、missing evidence等、current revisionのmerge資格を単独で拒否する指摘。 |
+| LANG-execution-023 | Repository-discovered PR | Repository RegistrationからGitHub current snapshotをpollして取り込んだOpen PR。個別登録を持たず、外部PR番号で冪等化し、same-repository headだけを自動修正対象にする。 |

@@ -298,6 +298,24 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.getIssue(pr.issueId)?.status).toBe('needs-human-review');
   });
 
+  it('AC-PRLOOP-006 reviews a draft current head but keeps automatic merge pending until it is ready', () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) {
+      addReview(store, pr, revision.id, SHA_A, perspective);
+    }
+
+    const snapshot = evaluateRevisionGate(store, {
+      pr,
+      revision,
+      requiredPerspectives: PERSPECTIVES,
+      github: { ...greenGithub(), isDraft: true },
+    });
+
+    expect(snapshot.decision).toBe('pending');
+    expect(snapshot.reasons).toContain('pull request is draft');
+  });
+
   it('waits for confirmed merged state when GitHub accepts or queues a merge request', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);

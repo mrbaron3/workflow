@@ -14,10 +14,23 @@ import { Store, nowISO } from '../../store/store.js';
 export interface GithubPrRevisionState {
   state: 'open' | 'merged' | 'closed';
   headSha: string;
+  isDraft?: boolean;
   mergeability: 'mergeable' | 'conflicting' | 'unknown';
   checks: RevisionCheck[];
   unresolvedBlockingThreadIds: string[];
   blockingReviewThreads?: RevisionReviewThread[];
+}
+
+export interface GithubOpenPullRequest {
+  number: number;
+  url: string;
+  title: string;
+  body: string;
+  headRefName: string;
+  headSha: string;
+  baseRefName: string;
+  isDraft: boolean;
+  isCrossRepository: boolean;
 }
 
 export interface PrNativeGithubRunner {
@@ -25,6 +38,16 @@ export interface PrNativeGithubRunner {
   resolveReviewThread(cwd: string, threadId: string): void;
   merge(cwd: string, prNumber: number, expectedHeadSha: string): void;
   closeIssue(cwd: string, repository: string, issueNumber: number): void;
+  /** Optional on test doubles; the production runner enables repository-wide discovery. */
+  listOpenPullRequests?(cwd: string, baseBranch: string): GithubOpenPullRequest[];
+  fetchPullRequestHead?(
+    cwd: string,
+    prNumber: number,
+    expectedHeadSha: string,
+    headRefName?: string,
+    baseRefName?: string,
+  ): void;
+  pullRequestChangedFiles?(cwd: string, prNumber: number): string[];
 }
 
 export interface RevisionGateInput {
@@ -180,6 +203,9 @@ export function evaluateRevisionGate(
     blockingReasons.push('pull request has merge conflicts');
   } else if (input.github.mergeability === 'unknown') {
     pendingReasons.push('mergeability is unknown');
+  }
+  if (input.github.isDraft) {
+    pendingReasons.push('pull request is draft');
   }
   if (input.github.state !== 'open') {
     blockingReasons.push(`pull request state is ${input.github.state}`);
@@ -599,11 +625,12 @@ export function realPrNativeGithubRunner(
         'view',
         String(prNumber),
         '--json',
-        'id,state,headRefOid,mergeable,reviewDecision,statusCheckRollup',
+        'id,state,isDraft,headRefOid,mergeable,reviewDecision,statusCheckRollup',
       ], cwd);
       const raw = JSON.parse(output) as {
         id: string;
         state: string;
+        isDraft?: boolean;
         headRefOid: string;
         mergeable: string;
         reviewDecision?: string;
@@ -626,6 +653,7 @@ export function realPrNativeGithubRunner(
       return {
         state: state === 'MERGED' ? 'merged' : state === 'CLOSED' ? 'closed' : 'open',
         headSha: raw.headRefOid,
+        isDraft: raw.isDraft ?? false,
         mergeability: String(raw.mergeable).toUpperCase() === 'MERGEABLE'
           ? 'mergeable'
           : String(raw.mergeable).toUpperCase() === 'CONFLICTING'
@@ -635,6 +663,72 @@ export function realPrNativeGithubRunner(
         unresolvedBlockingThreadIds: [...new Set(blockingThreads.map((thread) => thread.id))],
         blockingReviewThreads: blockingThreads,
       };
+    },
+    listOpenPullRequests(cwd, baseBranch) {
+      const output = run('gh', [
+        'pr',
+        'list',
+        '--state',
+        'open',
+        '--base',
+        baseBranch,
+        '--limit',
+        '100',
+        '--json',
+        'number,url,title,body,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository',
+      ], cwd);
+      const rows = JSON.parse(output) as Array<{
+        number: number;
+        url: string;
+        title: string;
+        body?: string;
+        headRefName: string;
+        headRefOid: string;
+        baseRefName: string;
+        isDraft?: boolean;
+        isCrossRepository?: boolean;
+      }>;
+      return rows.map((row) => ({
+        number: row.number,
+        url: row.url,
+        title: row.title,
+        body: row.body ?? '',
+        headRefName: row.headRefName,
+        headSha: row.headRefOid,
+        baseRefName: row.baseRefName,
+        isDraft: row.isDraft ?? false,
+        isCrossRepository: row.isCrossRepository ?? false,
+      }));
+    },
+    fetchPullRequestHead(cwd, prNumber, expectedHeadSha, headRefName, baseRefName) {
+      const localRef = `refs/agentops/pull/${prNumber}`;
+      const refspecs = [
+        `+refs/pull/${prNumber}/head:${localRef}`,
+        ...(headRefName
+          ? [`+refs/heads/${headRefName}:refs/remotes/origin/${headRefName}`]
+          : []),
+        ...(baseRefName && baseRefName !== headRefName
+          ? [`+refs/heads/${baseRefName}:refs/remotes/origin/${baseRefName}`]
+          : []),
+      ];
+      run('git', [
+        'fetch',
+        '--no-tags',
+        'origin',
+        ...refspecs,
+      ], cwd);
+      const fetched = run('git', ['rev-parse', localRef], cwd).trim();
+      if (fetched !== expectedHeadSha) {
+        throw new Error(
+          `PR #${prNumber} head changed while fetching: expected ${expectedHeadSha}, got ${fetched}`,
+        );
+      }
+    },
+    pullRequestChangedFiles(cwd, prNumber) {
+      return run('gh', ['pr', 'diff', String(prNumber), '--name-only'], cwd)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
     },
     merge(cwd, prNumber, expectedHeadSha) {
       run('gh', [

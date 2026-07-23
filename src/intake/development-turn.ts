@@ -26,6 +26,11 @@ import {
   reconcilePrNativeGates,
   type PrNativeGithubRunner,
 } from '../pipeline/execution/pr-native.js';
+import {
+  discoverRepositoryPullRequests,
+  reviewRepositoryPullRequest,
+  type RepositoryPullRequestReviewer,
+} from '../pipeline/execution/repository-pr.js';
 
 export interface PlanningRunnerInput {
   intake: IntakeRecord;
@@ -47,6 +52,7 @@ export interface GithubDevelopmentTurnDeps {
   uiDesignRunner?: UiDesignRunner;
   driveQueue?: QueueDriver;
   prNativeRunner?: PrNativeGithubRunner;
+  repositoryPullRequestReviewer?: RepositoryPullRequestReviewer;
 }
 
 export interface GithubDevelopmentTurnResult {
@@ -65,11 +71,36 @@ export async function runGithubDevelopmentTurn(
   const prNativeRunner = deps.prNativeRunner
     ?? realPrNativeGithubRunner(config.gate?.mergeMethod);
   if ((config.gate?.backend ?? 'store') === 'github' && config.target) {
+    const targetRoot = path.resolve(harnessRoot, config.target.repo);
+    const discoveries = discoverRepositoryPullRequests(
+      store,
+      config,
+      prNativeRunner,
+      targetRoot,
+    );
+    const review = deps.repositoryPullRequestReviewer
+      ?? ((discovery) => reviewRepositoryPullRequest(
+        store,
+        config,
+        discovery,
+        prNativeRunner,
+        harnessRoot,
+        log,
+      ));
+    for (const discovery of discoveries) {
+      if (discovery.imported) {
+        log(
+          `⇩ discovered ${discovery.pr.id} from repository PR `
+          + `#${discovery.pullRequest.number}@${discovery.revision.headSha.slice(0, 12)}`,
+        );
+      }
+      if (discovery.reviewRequired) await review(discovery);
+    }
     const results = reconcilePrNativeGates(
       store,
       config,
       prNativeRunner,
-      path.resolve(harnessRoot, config.target.repo),
+      targetRoot,
       PERSPECTIVES.map((perspective) => perspective.key),
     );
     for (const result of results) {

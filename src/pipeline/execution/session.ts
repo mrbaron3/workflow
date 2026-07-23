@@ -76,6 +76,14 @@ async function waitForReady(session: string, provider: AgentProvider, timeoutMs:
  */
 export const GENERATOR_LIVENESS = { idleMs: 90_000, activeCapMs: 1000 * 60 * 60 * 4, pollMs: 3000 } as const;
 
+/** Repository-discovered repairs start at the observed PR head, including their first AgentOps turn. */
+export function generatorStartRef(
+  resumeRef: string | null | undefined,
+  configuredBaseRef: string,
+): string {
+  return resumeRef ?? configuredBaseRef;
+}
+
 /**
  * The per-(issue, sample) identity every physical resource derives from — branch
  * `agent/<key>`, tmux session `ao-<key>`, worktree `.harness/worktrees/<key>`. Exported so
@@ -107,7 +115,9 @@ export async function runGeneratorSession(
 
   // fresh worktree on the first attempt; reuse it for repair attempts so edits accumulate
   if (input.attempt === 1 || !worktreeExists(wt)) {
-    createWorktree(repoAbs, branch, input.attempt > 1 ? input.resumeRef ?? baseRef : baseRef, wt);
+    // A repository-discovered PR is already an implementation: its first AgentOps
+    // generator turn is a repair and must start from the observed PR head, not main.
+    createWorktree(repoAbs, branch, generatorStartRef(input.resumeRef, baseRef), wt);
   }
 
   // the full prompt lives in a file — send-keys can't carry multi-line text without

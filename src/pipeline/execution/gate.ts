@@ -53,6 +53,11 @@ export interface GhGateRunner {
   viewPr(cwd: string, prNumber: number): GhPrState;
 }
 
+/** Stable PR identity: any local repair branch publishes its HEAD to the original GitHub head. */
+export function prHeadRefspec(branch: string): string {
+  return `HEAD:refs/heads/${branch}`;
+}
+
 export interface OpenGateInput {
   pr: PR;
   /** The checkout whose branch is pushed and from which the PR is opened. */
@@ -241,8 +246,18 @@ function run(cmd: string, args: string[], cwd: string): string {
 export function realGhGateRunner(): GhGateRunner {
   return {
     pushBranch(worktree, branch) {
-      // force-with-lease so a repaired branch (rewritten history across attempts) re-pushes safely
-      run('git', ['-C', worktree, 'push', '--force-with-lease', '-u', 'origin', branch], worktree);
+      // Push the reviewed worktree HEAD to the PR's remote branch. Repository-discovered
+      // PRs use an AgentOps-local repair branch, while their GitHub head branch keeps its
+      // original name; HEAD:<branch> preserves that stable external PR identity.
+      run('git', [
+        '-C',
+        worktree,
+        'push',
+        '--force-with-lease',
+        '-u',
+        'origin',
+        prHeadRefspec(branch),
+      ], worktree);
     },
     createPr(cwd, args) {
       const bodyFile = path.join(os.tmpdir(), `ao-gate-body-${args.head.replace(/\W+/g, '-')}.md`);

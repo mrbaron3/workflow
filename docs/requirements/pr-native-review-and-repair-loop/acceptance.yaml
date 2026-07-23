@@ -25,3 +25,18 @@ verifications:
     method: unit_test
     expected:
       - "未解決P1 threadがgateを拒否し、本文をsnapshotへ残す"
+  AC-PRLOOP-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "repository pollが既存Open PRを1回だけStoreへ取り込み、head更新ごとにfresh revisionをreview対象にする"
+  AC-PRLOOP-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "Draft current headはreviewできるがRevision Gateがpendingを返してmergeしない"
+  AC-PRLOOP-007:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "repairは観測済みPR headから開始し、HEADを元GitHub head branchへpushする"

@@ -28,8 +28,25 @@
   - WhenWebhookまたはpoll reconciliationが実行される
   - Then本文/path/lineをdurable gate snapshotへ保存し、同PRのfresh attempt用Repair Briefにする
 
+- **[AC-PRLOOP-005] Repository登録だけで既存・新規Open PRを取り込む**
+  - Givenenabled repository registrationと対象base branch
+  - Whengithub-turnのreconciliationを実行する
+  - Then同一repositoryのOpen PRを番号で冪等upsertし、未reviewのcurrent headをPerspective reviewへ投入する
+
+- **[AC-PRLOOP-006] Draft PRはreviewするがready前にmergeしない**
+  - Givenreview対象のcurrent headがDraft PR
+  - When全Perspectiveとchecksがapproveする
+  - Thenreview evidenceは保存するがRevision Gateはpendingを維持し、ready event/poll後に再評価する
+
+- **[AC-PRLOOP-007] 既存PRの修正を同じGitHub head branchへpushする**
+  - Givenrepository discoveryで取り込んだPRがrequest_changes
+  - WhenGeneratorがRepair Briefを処理する
+  - Then観測済みheadから修正を開始し、local repair HEADを元PRのhead branchへpushする
+
 ## レッドライン
 
 - PR作成前のreview結果だけでGitHub PRをmerge可能にしない。
 - 修正push後に旧review runを再利用しない。
 - approve tokenでP0/P1相当findingを隠さない。
+- repository registrationとは別にPR/Issue単位の手動登録を要求しない。
+- fork headへ書込み権限を推測して自動修正・mergeしない。
