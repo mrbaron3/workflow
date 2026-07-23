@@ -266,6 +266,101 @@ describe('webhook control GUI runtime', () => {
     expect(window.document.querySelector('#notice')?.textContent).toContain('追加しました');
   });
 
+  it('AC-WHUI-001 edits validated repository settings with single-flight status feedback', async () => {
+    const window = new Window({
+      url: 'http://127.0.0.1:8377/',
+      settings: { disableJavaScriptEvaluation: false },
+    });
+    windows.push(window);
+    let releasePatch!: () => void;
+    const blockedPatch = new Promise<void>((resolve) => { releasePatch = resolve; });
+    let patchCount = 0;
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        patchCount += 1;
+        if (patchCount > 1) {
+          return { ok: false, json: async () => ({ error: 'update rejected' }) };
+        }
+        await blockedPatch;
+        return { ok: true, json: async () => ({}) };
+      }
+      return { ok: true, json: async () => state(0) };
+    });
+    Object.defineProperty(window, 'fetch', { configurable: true, value: fetchMock });
+    let intervalCallback: (() => unknown) | null = null;
+    Object.defineProperty(window, 'setInterval', {
+      configurable: true,
+      value: (callback: () => unknown) => {
+        intervalCallback = callback;
+        return 1;
+      },
+    });
+    Object.defineProperty(window, 'clearInterval', { configurable: true, value: () => {} });
+    const html = webhookControlHtml();
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('generated GUI has no executable script');
+    window.document.write(html.replace(/<script>[\s\S]*<\/script>/, ''));
+    window.document.close();
+    window.eval(script);
+    await flush();
+
+    const repository = window.document.querySelector('[data-key="WHREPO-1"]')!;
+    (repository.querySelector('.edit') as HTMLButtonElement).click();
+    const form = repository.querySelector('.edit-form') as HTMLFormElement;
+    expect(form.hidden).toBe(false);
+    expect(form.querySelectorAll('input[name="events"]')).toHaveLength(8);
+    expect(form.querySelectorAll('input[name="consumers"]')).toHaveLength(2);
+    expect(form.querySelector('input[name="workspaceRoot"]')).not.toBeNull();
+
+    for (const input of form.querySelectorAll('input[name="consumers"]')) {
+      (input as HTMLInputElement).checked = false;
+    }
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+    expect(repository.querySelector('.action-status')?.textContent).toContain('Consumerを1つ以上');
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(0);
+
+    (form.querySelector('input[name="consumers"]') as HTMLInputElement).checked = true;
+    (form.querySelector('input[name="workspaceRoot"]') as HTMLInputElement).value = '/work/acme-one';
+    (form.querySelector('input[name="readyLabel"]') as HTMLInputElement).value = 'ready';
+    (form.querySelector('input[name="baseBranch"]') as HTMLInputElement).value = 'main';
+    if (!intervalCallback) throw new Error('polling interval is not active');
+    await (intervalCallback as unknown as () => unknown)();
+    await flush();
+    expect((repository.querySelector(
+      'input[name="workspaceRoot"]',
+    ) as HTMLInputElement).value).toBe('/work/acme-one');
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    form.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+    const save = form.querySelector('.edit-save') as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    expect((repository.querySelector('.toggle') as HTMLButtonElement).disabled).toBe(true);
+    expect(repository.querySelector('.action-status')?.textContent).toContain('保存しています');
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1);
+
+    releasePatch();
+    await flush();
+    await flush();
+    expect(repository.querySelector('.action-status')?.textContent).toContain('保存しました');
+    const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH');
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
+      events: ['pull_request'],
+      consumers: ['agentops'],
+      workspaceRoot: '/work/acme-one',
+      readyLabel: 'ready',
+      baseBranch: 'main',
+    });
+
+    const liveForm = window.document.querySelector(
+      '[data-key="WHREPO-1"] .edit-form',
+    ) as HTMLFormElement;
+    liveForm.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+    await flush();
+    expect(window.document.querySelector('#repo-action-WHREPO-1')?.textContent)
+      .toContain('update rejected');
+  });
+
   it('PR-INTENT preserves toggle and retry single-flight state across background polling', async () => {
     const window = new Window({
       url: 'http://127.0.0.1:8377/',

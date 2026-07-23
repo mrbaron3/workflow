@@ -50,9 +50,11 @@ export class WebhookRouter {
 
     try {
       for (const consumer of registration.consumers) {
+        if (started.completedConsumers.includes(consumer)) continue;
         const handler = this.consumers[consumer];
         if (!handler) throw new Error(`consumer adapter is not configured: ${consumer}`);
         await handler(event);
+        this.store.markConsumerCompleted(delivery.id, consumer);
       }
       return this.store.markProcessed(delivery.id);
     } catch (error) {

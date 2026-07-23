@@ -83,7 +83,6 @@ function normalizeLegacyDB(input: unknown): unknown {
             mergedHeadSha: null,
           };
         }
-        if (pr.status === 'merged') return value;
         return {
           ...pr,
           status: 'open',

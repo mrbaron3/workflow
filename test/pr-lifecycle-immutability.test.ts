@@ -316,4 +316,35 @@ describe('PR lifecycle values', () => {
     });
     expect(() => new Store(root)).not.toThrow();
   });
+
+  it('PR-INTENT migrates an unbound pre-revision merged PR to readable fail-closed state', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ao-pr-legacy-merged-'));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, '.harness'), { recursive: true });
+    const legacy = emptyDB();
+    legacy.prs.push({
+      id: 'PR-LEGACY-MERGED',
+      issueId: 'ISSUE-LEGACY-MERGED',
+      branch: 'feature/legacy-merged',
+      generator: 'mock',
+      status: 'merged',
+      externalRef: null,
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    } as never);
+    fs.writeFileSync(
+      path.join(root, '.harness', 'db.json'),
+      JSON.stringify(legacy, null, 2) + '\n',
+    );
+
+    const store = new Store(root);
+    expect(store.db.prs[0]).toMatchObject({
+      status: 'open',
+      currentRevisionId: null,
+      headSha: null,
+      mergedHeadSha: null,
+    });
+    store.save();
+    expect(() => new Store(root)).not.toThrow();
+  });
 });

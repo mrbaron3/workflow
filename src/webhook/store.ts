@@ -9,6 +9,7 @@ import {
   WebhookRepositoryRegistrationPatch,
   emptyWebhookControlDB,
   failWebhookDelivery,
+  completeWebhookConsumer,
   ignoreWebhookDelivery,
   processWebhookDelivery,
   retryWebhookDelivery,
@@ -16,6 +17,7 @@ import {
   type WebhookControlDB as WebhookControlDBType,
   type WebhookDelivery as WebhookDeliveryType,
   type WebhookReceipt,
+  type WebhookConsumer,
   type WebhookRepositoryRegistration as WebhookRepositoryRegistrationType,
 } from './schema.js';
 
@@ -252,6 +254,14 @@ export class WebhookControlStore {
 
   markProcessed(id: string): WebhookDeliveryType {
     return this.transitionDelivery(id, 'processing', (row) => processWebhookDelivery(row, nowISO()));
+  }
+
+  markConsumerCompleted(id: string, consumer: WebhookConsumer): WebhookDeliveryType {
+    return this.transitionDelivery(
+      id,
+      'processing',
+      (row) => completeWebhookConsumer(row, consumer, nowISO()),
+    );
   }
 
   markIgnored(id: string, reason: string): WebhookDeliveryType {

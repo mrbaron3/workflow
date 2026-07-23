@@ -20,7 +20,7 @@ import path from 'node:path';
 import type { PR, EvalRun } from '../../domain/schema.js';
 import { PrExternalRef, transitionPR, updatePR } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
-import { Store, nowISO } from '../../store/store.js';
+import { Store } from '../../store/store.js';
 import { recordHumanDecision, type HumanDecision } from './loop.js';
 import { runCommand as run } from './command.js';
 import { observePrRevision } from './pr-native.js';

@@ -250,6 +250,42 @@ describe('durable GitHub webhook inbox and router', () => {
     expect(calls).toBe(2);
   });
 
+  it('AC-WHIN-002 AC-WHIN-005 retries only unfinished consumers after a partial failure', async () => {
+    const store = new WebhookControlStore(tempRoot());
+    store.addRepository({
+      repository: 'acme/theme',
+      enabled: true,
+      events: ['pull_request'],
+      consumers: ['agentops', 'orca-worktree-sync'],
+      workspaceRoot: null,
+      readyLabel: null,
+      baseBranch: null,
+    });
+    let firstEffects = 0;
+    let secondAttempts = 0;
+    const router = new WebhookRouter(store, {
+      agentops: () => { firstEffects += 1; },
+      'orca-worktree-sync': () => {
+        secondAttempts += 1;
+        if (secondAttempts === 1) throw new Error('second consumer failed');
+      },
+    });
+    const receipt = store.receiveDelivery({
+      deliveryKey: 'delivery-partial-retry',
+      event: 'pull_request',
+      headers: {},
+      payload: payload(),
+    });
+
+    expect((await router.route(receipt.deliveryId)).status).toBe('failed');
+    expect(firstEffects).toBe(1);
+    expect(secondAttempts).toBe(1);
+
+    expect((await router.retry(receipt.deliveryId)).status).toBe('processed');
+    expect(firstEffects).toBe(1);
+    expect(secondAttempts).toBe(2);
+  });
+
   it('recovers a delivery interrupted while processing after daemon restart', () => {
     const root = tempRoot();
     const store = new WebhookControlStore(root);

@@ -65,6 +65,7 @@ const WebhookDeliveryBase = z.object({
   headers: z.record(z.string()).default({}),
   payload: z.record(z.unknown()),
   attempts: z.number().int().nonnegative().default(0),
+  completedConsumers: z.array(WebhookConsumer).refine(uniqueValues, 'completedConsumers must be unique').default([]),
   receivedAt: z.string(),
   updatedAt: z.string(),
 });
@@ -146,6 +147,20 @@ export function failWebhookDelivery(
   updatedAt: string,
 ): Readonly<z.infer<typeof FailedWebhookDelivery>> {
   return FailedWebhookDelivery.parse({ ...delivery, status: 'failed', lastError, updatedAt });
+}
+
+export function completeWebhookConsumer(
+  delivery: z.infer<typeof ProcessingWebhookDelivery>,
+  consumer: WebhookConsumer,
+  updatedAt: string,
+): Readonly<z.infer<typeof ProcessingWebhookDelivery>> {
+  return ProcessingWebhookDelivery.parse({
+    ...delivery,
+    completedConsumers: delivery.completedConsumers.includes(consumer)
+      ? delivery.completedConsumers
+      : [...delivery.completedConsumers, consumer],
+    updatedAt,
+  });
 }
 
 export function ignoreWebhookDelivery(

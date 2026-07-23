@@ -35,7 +35,7 @@ export function webhookControlHtml(): string {
     button:disabled { cursor:not-allowed; opacity:.55; }
     button:focus-visible,input:focus-visible,.table-wrap:focus-visible,tr:focus-visible { outline:3px solid #91ffe0; outline-offset:2px; }
     .stack { display:grid; gap:10px; }
-    .repo { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; padding:13px;
+    .repo { display:grid; grid-template-columns:minmax(0,1fr) auto auto; gap:10px; padding:13px;
       background:#0c1428; border:1px solid var(--line); border-radius:11px; }
     .repo strong { font-size:15px; }
     .meta { color:var(--muted); font-size:12px; margin-top:4px; }
@@ -54,6 +54,8 @@ export function webhookControlHtml(): string {
     .operational-stale { border:2px dashed var(--warn); background:#181b2a; }
     .action-status { grid-column:1/-1; min-height:20px; color:var(--accent); font-size:12px; }
     .action-status.error { color:var(--bad); }
+    .edit-form { grid-column:1/-1; padding-top:10px; border-top:1px solid var(--line); }
+    .edit-form[hidden] { display:none; }
     .visually-hidden { position:absolute; width:1px; height:1px; padding:0; margin:-1px;
       overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
     @media (max-width:800px) { .grid { grid-template-columns:1fr; } header { align-items:start; flex-direction:column; }
@@ -99,14 +101,17 @@ const CONSUMER_VALUES = ['agentops','orca-worktree-sync'];
 const DEFAULT_EVENTS = ['issues','pull_request','pull_request_review','pull_request_review_comment','check_run'];
 const DEFAULT_CONSUMERS = ['agentops'];
 const actionStates = new Map();
+const editingRepositories = new Set();
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const actionKey = (kind,id) => kind+':'+id;
 function applyActionState(root, key) {
   const state=actionStates.get(key);
   if (!state) return;
-  const button=root.querySelector('.toggle,.retry');
+  const buttons=root.querySelectorAll(key.startsWith('delivery:')
+    ? '.retry'
+    : '.toggle,.edit,.edit-save');
   const status=root.querySelector('.action-status');
-  if (button) {
+  for (const button of buttons) {
     button.disabled=state.pending;
     if (state.pending) button.setAttribute('aria-busy','true');
     else button.removeAttribute('aria-busy');
@@ -133,6 +138,9 @@ function pruneActionStates(kind, ids) {
 function checks(root, name, values, defaults) {
   root.innerHTML = values.map(value => '<label class="check"><input type="checkbox" name="'+name+'" value="'+value+'" '+(defaults.includes(value)?'checked':'')+'>'+value+'</label>').join('');
 }
+function checkMarkup(name, values, selected) {
+  return values.map(value => '<label class="check"><input type="checkbox" name="'+name+'" value="'+value+'" '+(selected.includes(value)?'checked':'')+'>'+value+'</label>').join('');
+}
 checks(document.querySelector('#events'),'events',EVENT_VALUES,DEFAULT_EVENTS);
 checks(document.querySelector('#consumers'),'consumers',CONSUMER_VALUES,DEFAULT_CONSUMERS);
 function notice(message, error=false) {
@@ -156,7 +164,7 @@ async function refresh() {
       ? ' · '+forwarder.error+(forwarder.failedAt?' · '+new Date(forwarder.failedAt).toLocaleString():'')
       : '';
     const node=document.createElement('article'); node.className='repo';
-    node.innerHTML='<div><strong>'+esc(repo.repository)+'</strong><span class="health health-'+esc(health)+'">'+esc(health+healthDetail)+'</span><div class="meta">'+esc(repo.events.join(', '))+' · '+esc(repo.consumers.join(', '))+(repo.workspaceRoot?' · '+esc(repo.workspaceRoot):'')+' · updated '+esc(new Date(repo.updatedAt).toLocaleString())+'</div></div><button class="secondary toggle" data-id="'+esc(repo.id)+'" data-subject="'+esc(repo.repository)+'" data-enabled="'+repo.enabled+'" aria-describedby="repo-action-'+esc(repo.id)+'" aria-label="'+esc(repo.repository+' を '+(repo.enabled?'停止':'有効化'))+'">'+(repo.enabled?'停止':'有効化')+'</button><div id="repo-action-'+esc(repo.id)+'" class="action-status" role="status" aria-live="polite"></div>';
+    node.innerHTML='<div><strong>'+esc(repo.repository)+'</strong><span class="health health-'+esc(health)+'">'+esc(health+healthDetail)+'</span><div class="meta">'+esc(repo.events.join(', '))+' · '+esc(repo.consumers.join(', '))+(repo.workspaceRoot?' · '+esc(repo.workspaceRoot):'')+' · updated '+esc(new Date(repo.updatedAt).toLocaleString())+'</div></div><button class="secondary edit" type="button" data-id="'+esc(repo.id)+'" aria-expanded="'+editingRepositories.has(repo.id)+'" aria-controls="repo-edit-'+esc(repo.id)+'">編集</button><button class="secondary toggle" data-id="'+esc(repo.id)+'" data-subject="'+esc(repo.repository)+'" data-enabled="'+repo.enabled+'" aria-describedby="repo-action-'+esc(repo.id)+'" aria-label="'+esc(repo.repository+' を '+(repo.enabled?'停止':'有効化'))+'">'+(repo.enabled?'停止':'有効化')+'</button><form id="repo-edit-'+esc(repo.id)+'" class="edit-form" data-id="'+esc(repo.id)+'" '+(editingRepositories.has(repo.id)?'':'hidden')+'><label>Workspace root（任意）<input name="workspaceRoot" type="text" value="'+esc(repo.workspaceRoot||'')+'" placeholder="/path/to/workflow"></label><label>Ready label（任意）<input name="readyLabel" type="text" value="'+esc(repo.readyLabel||'')+'"></label><label>Base branch（任意）<input name="baseBranch" type="text" value="'+esc(repo.baseBranch||'')+'"></label><fieldset><legend>Events（1つ以上）</legend><div class="checks">'+checkMarkup('events',EVENT_VALUES,repo.events)+'</div></fieldset><fieldset><legend>Consumers（1つ以上）</legend><div class="checks">'+checkMarkup('consumers',CONSUMER_VALUES,repo.consumers)+'</div></fieldset><button class="edit-save" type="submit">保存する</button></form><div id="repo-action-'+esc(repo.id)+'" class="action-status" role="status" aria-live="polite"></div>';
     applyActionState(node,actionKey('repository',repo.id));
     return node;
   }, 'まだrepositoryがありません。');
@@ -185,7 +193,7 @@ function reconcile(root, rows, key, render, empty, colspan) {
     const id=key(row); const old=existing.get(id); const fresh=render(row); fresh.dataset.key=id;
     const focused=old?.contains(document.activeElement);
     const focusSelector=focused && document.activeElement instanceof HTMLElement
-      ? (document.activeElement.classList.contains('toggle')?'.toggle':document.activeElement.classList.contains('retry')?'.retry':null)
+      ? (document.activeElement.classList.contains('toggle')?'.toggle':document.activeElement.classList.contains('retry')?'.retry':document.activeElement.classList.contains('edit')?'.edit':null)
       : null;
     const previousStatus=old?.querySelector('.action-status');
     const freshStatus=fresh.querySelector('.action-status');
@@ -195,6 +203,7 @@ function reconcile(root, rows, key, render, empty, colspan) {
     }
     let current=fresh;
     if (!old) root.append(fresh);
+    else if (old.querySelector('.edit-form:not([hidden])')) current=old;
     else if (old.innerHTML!==fresh.innerHTML) {
       old.replaceWith(fresh);
     } else current=old;
@@ -242,6 +251,17 @@ document.querySelector('#repo-form').addEventListener('submit', async event => {
 document.addEventListener('click', async event => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
+  if (target.matches('.edit')) {
+    const id=target.dataset.id;
+    if (actionStates.get(actionKey('repository',id))?.pending) return;
+    if (editingRepositories.has(id)) editingRepositories.delete(id);
+    else editingRepositories.add(id);
+    const form=target.closest('.repo').querySelector('.edit-form');
+    form.hidden=!editingRepositories.has(id);
+    target.setAttribute('aria-expanded',String(editingRepositories.has(id)));
+    if (!form.hidden) form.querySelector('input').focus();
+    return;
+  }
   if (target.matches('.toggle,.retry')) {
     const retry=target.matches('.retry');
     const kind=retry?'delivery':'repository';
@@ -278,6 +298,46 @@ document.addEventListener('click', async event => {
         notice(message,true); reportDisconnect(error);
       }
     }
+  }
+});
+document.addEventListener('submit', async event => {
+  const formElement=event.target;
+  if (!(formElement instanceof HTMLFormElement)||!formElement.matches('.edit-form')) return;
+  event.preventDefault();
+  const id=formElement.dataset.id;
+  const key=actionKey('repository',id);
+  if (actionStates.get(key)?.pending) return;
+  const form=new FormData(formElement);
+  const events=form.getAll('events');
+  const consumers=form.getAll('consumers');
+  if (!events.length||!consumers.length) {
+    const message=!events.length?'Eventを1つ以上選択してください。':'Consumerを1つ以上選択してください。';
+    setActionState('repository',id,{pending:false,error:true,message});
+    return;
+  }
+  setActionState('repository',id,{pending:true,error:false,message:'設定を保存しています…'});
+  try {
+    const optional=name => {
+      const value=String(form.get(name)||'').trim();
+      return value||null;
+    };
+    await api('/api/repositories/'+id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({
+      events,consumers,
+      workspaceRoot:optional('workspaceRoot'),
+      readyLabel:optional('readyLabel'),
+      baseBranch:optional('baseBranch'),
+    })});
+    editingRepositories.delete(id);
+    formElement.hidden=true;
+    formElement.closest('.repo')?.querySelector('.edit')?.setAttribute('aria-expanded','false');
+    setActionState('repository',id,{pending:false,error:false,message:'設定を保存しました。'});
+    try { await refresh(); }
+    catch (error) {
+      setActionState('repository',id,{pending:false,error:true,message:'設定は保存しましたが、表示の更新に失敗しました。'});
+      reportDisconnect(error);
+    }
+  } catch (error) {
+    setActionState('repository',id,{pending:false,error:true,message:'設定の保存に失敗しました: '+error.message});
   }
 });
 let refreshTimer;
