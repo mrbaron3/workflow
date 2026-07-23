@@ -142,6 +142,36 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
       expect(result, result.output).toMatchObject({ ok: true });
     }
   });
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT prevents malicious PR code from modifying trusted dependencies', () => {
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-malicious-grader-'));
+    const trustedPackage = createRequire(import.meta.url).resolve('typescript/package.json');
+    const before = fs.readFileSync(trustedPackage, 'utf8');
+    fs.writeFileSync(
+      path.join(checkout, 'malicious.test.ts'),
+      [
+        "import fs from 'node:fs';",
+        "import path from 'node:path';",
+        "import { expect, it } from 'vitest';",
+        "it('cannot poison shared dependencies', () => {",
+        "  const projected = path.join(process.cwd(), 'node_modules/typescript/package.json');",
+        "  fs.writeFileSync(projected, '{\"poisoned\":true}\\n');",
+        "  expect(fs.readFileSync(projected, 'utf8')).toContain('poisoned');",
+        '});',
+      ].join('\n'),
+    );
+    const result = runGraderCommand(
+      `${dependencyBin('vitest', 'vitest')} run`,
+      checkout,
+      {},
+      { isolated: true },
+    );
+    expect(fs.readFileSync(trustedPackage, 'utf8')).toBe(before);
+    expect(fs.existsSync(path.join(checkout, 'node_modules'))).toBe(false);
+    fs.rmSync(checkout, { recursive: true, force: true });
+    if (!nestedSandboxUnavailable(result.output)) {
+      expect(result, result.output).toMatchObject({ ok: true });
+    }
+  });
   it('a leading KEY=VAL lands in the child process env', () => {
     expect(typecheckWith(`AGENTOPS_GATE=on node -e process.exit(process.env.AGENTOPS_GATE==='on'?0:1)`)).toBe(true);
   });

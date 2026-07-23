@@ -184,13 +184,11 @@ document.querySelector('#repo-form').addEventListener('submit', async event => {
   submit.disabled=true; submit.setAttribute('aria-busy','true');
   notice('Repository を追加しています…');
   const form = new FormData(formElement);
-  let mutationSucceeded=false;
   try {
     await api('/api/repositories',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
       repository:form.get('repository'), workspaceRoot:form.get('workspaceRoot')||null, enabled:true,
       events:form.getAll('events'), consumers:form.getAll('consumers'), readyLabel:null, baseBranch:null
     })});
-    mutationSucceeded=true;
     notice('追加しました。'); formElement.reset();
     checks(document.querySelector('#events'),'events',EVENT_VALUES,DEFAULT_EVENTS);
     checks(document.querySelector('#consumers'),'consumers',CONSUMER_VALUES,DEFAULT_CONSUMERS);

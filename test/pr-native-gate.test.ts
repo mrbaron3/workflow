@@ -163,6 +163,10 @@ describe('ISSUE-0024/PR-INTENT durable lifecycle invariants', () => {
       ...base,
       pendingReasons: ['check pending'],
     })).toThrow();
+    expect(() => RevisionGateSnapshot.parse({
+      ...base,
+      unresolvedBlockingThreadIds: ['PRRT-P1'],
+    })).toThrow();
   });
 
   it('rejects malformed gh JSON instead of coercing it to a merge-eligible PR', () => {
@@ -396,6 +400,31 @@ describe('PR revision identity and automatic current-head gate', () => {
       mergedHeadSha: SHA_A,
     });
     expect(store.getIssue(pr.issueId)?.status).toBe('released');
+  });
+
+  it('AC-PRAUTO-003 keeps a failed merge retryable without releasing lifecycle state', () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) addReview(store, pr, revision.id, SHA_A, perspective);
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => { throw new Error('merge temporarily unavailable'); },
+      closeIssue: () => {},
+    };
+
+    expect(() => autoMergeCurrentRevision(
+      store, CONFIG, pr, runner, '/repo', PERSPECTIVES,
+    )).toThrow('merge temporarily unavailable');
+
+    expect(store.getPR(pr.id)).toMatchObject({ status: 'approved', mergedHeadSha: null });
+    expect(store.db.prRevisions.find((row) => row.id === revision.id)).toMatchObject({
+      status: 'approved',
+      mergeRequestedAt: null,
+    });
+    expect(store.getIssue(pr.issueId)?.status).not.toBe('released');
+    expect(() => autoMergeCurrentRevision(
+      store, CONFIG, store.getPR(pr.id)!, runner, '/repo', PERSPECTIVES,
+    )).toThrow('merge temporarily unavailable');
   });
 
   it('AC-PRAUTO-001 does not merge while a required check is pending', () => {
@@ -787,6 +816,49 @@ describe('PR revision identity and automatic current-head gate', () => {
     reconcileSplitSourceClosures(store, runner, '/repo');
 
     expect(closes).toEqual(['acme/theme#7']);
+    expect(intake.sourceClosedAt).not.toBeNull();
+    expect(intake.sourceCloseError).toBeNull();
+  });
+
+  it('AC-PRAUTO-004 records a close failure and retries once on the next reconciliation', () => {
+    const { store } = setup();
+    store.addIssue(Issue.parse({
+      ...store.getIssue('ISSUE-0001')!,
+      id: 'ISSUE-0002',
+      status: 'released',
+    }));
+    store.setStatus('ISSUE-0001', 'released');
+    const intake = store.addIntakeRecord(IntakeRecord.parse({
+      id: 'INTAKE-0001',
+      intakeKey: 'acme/theme#7',
+      provider: 'github',
+      snapshot: {
+        repository: 'acme/theme', number: 7, externalId: 'I_7', title: 'Split source',
+        body: 'two work units', url: 'https://github.com/acme/theme/issues/7',
+        state: 'open', sourceUpdatedAt: nowISO(), snapshotAt: nowISO(),
+      },
+      status: 'claimed',
+      storeIssueIds: ['ISSUE-0001', 'ISSUE-0002'],
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    }));
+    let calls = 0;
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => {},
+      closeIssue: () => {
+        calls += 1;
+        if (calls === 1) throw new Error('GitHub unavailable');
+      },
+    };
+
+    reconcileSplitSourceClosures(store, runner, '/repo');
+    expect(intake.sourceClosedAt).toBeNull();
+    expect(intake.sourceCloseError).toBe('GitHub unavailable');
+
+    reconcileSplitSourceClosures(store, runner, '/repo');
+    reconcileSplitSourceClosures(store, runner, '/repo');
+    expect(calls).toBe(2);
     expect(intake.sourceClosedAt).not.toBeNull();
     expect(intake.sourceCloseError).toBeNull();
   });

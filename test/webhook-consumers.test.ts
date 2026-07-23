@@ -94,6 +94,38 @@ describe('allow-listed webhook consumer adapters', () => {
     }]);
   });
 
+  it('AC-WHRT-003 rejects a registration/intake repository mismatch before spawning', async () => {
+    const root = tempRoot();
+    const workspace = path.join(root, 'repo-workspace');
+    fs.mkdirSync(workspace);
+    saveConfig(workspace, {
+      ...DEFAULT_CONFIG,
+      intake: { backend: 'github', repository: 'acme/other' },
+    });
+    const store = new WebhookControlStore(root);
+    const registration = store.addRepository({
+      repository: 'acme/theme', enabled: true, events: ['issues'], consumers: ['agentops'],
+      workspaceRoot: workspace, readyLabel: null, baseBranch: null,
+    });
+    let spawns = 0;
+    const adapters = createWebhookConsumerAdapters(store, {
+      harnessRoot: root,
+      runProcess: async () => { spawns += 1; },
+    });
+    const event = NormalizedGithubEvent.parse({
+      deliveryId: 'WHDEL-0001', deliveryKey: 'delivery-1',
+      registrationId: registration.id, repository: 'acme/theme',
+      event: 'issues', action: 'labeled',
+      payload: { repository: { full_name: 'acme/theme' } },
+      receivedAt: new Date().toISOString(),
+    });
+
+    await expect(adapters.agentops!(event)).rejects.toThrow(
+      'is not configured for GitHub intake acme/theme',
+    );
+    expect(spawns).toBe(0);
+  });
+
   it('PR-INTENT aborts the active consumer and does not start queued work during shutdown', async () => {
     const root = tempRoot();
     const workspace = path.join(root, 'repo-workspace');

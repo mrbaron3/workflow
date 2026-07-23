@@ -63,6 +63,28 @@ describe('durable GitHub webhook inbox and router', () => {
     expect(fs.statSync(store.file).mode & 0o777).toBe(0o600);
   });
 
+  it('AC-WHIN-006 leaves the existing inbox valid when persistence fails before rename', () => {
+    const root = tempRoot();
+    const store = new WebhookControlStore(root);
+    store.receiveDelivery({
+      deliveryKey: 'delivery-1', event: 'pull_request', headers: {}, payload: payload(),
+    });
+    const before = fs.readFileSync(store.file, 'utf8');
+    const originalRename = fs.renameSync;
+    fs.renameSync = (() => { throw new Error('interrupted before rename'); }) as typeof fs.renameSync;
+    try {
+      expect(() => store.receiveDelivery({
+        deliveryKey: 'delivery-2', event: 'pull_request', headers: {}, payload: payload(),
+      })).toThrow('interrupted before rename');
+    } finally {
+      fs.renameSync = originalRename;
+    }
+
+    expect(fs.readFileSync(store.file, 'utf8')).toBe(before);
+    expect(() => JSON.parse(before)).not.toThrow();
+    expect(new WebhookControlStore(root).snapshot().deliveries).toHaveLength(1);
+  });
+
   it('PR-INTENT persists only allowlisted, non-secret webhook headers', () => {
     const store = new WebhookControlStore(tempRoot());
     store.receiveDelivery({

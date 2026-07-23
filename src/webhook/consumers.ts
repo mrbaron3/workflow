@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { loadConfig } from '../config.js';
-import type { NormalizedGithubEvent, WebhookConsumer, WebhookConsumerEvent } from './schema.js';
+import type { WebhookConsumer, WebhookConsumerEvent } from './schema.js';
 import type { WebhookConsumerHandlers } from './router.js';
 import { WebhookControlStore } from './store.js';
 

@@ -63,7 +63,11 @@ function createTemporaryResources(): TemporaryResources {
   };
 }
 
-function projectCommandDependencies(command: string, cwd: string): DependencyProjection {
+function projectCommandDependencies(
+  command: string,
+  cwd: string,
+  scratch: string,
+): DependencyProjection {
   let destination: string | null = null;
   if (path.isAbsolute(command)) {
     const marker = `${path.sep}node_modules${path.sep}`;
@@ -72,14 +76,18 @@ function projectCommandDependencies(command: string, cwd: string): DependencyPro
       const dependencyRoot = fs.realpathSync(command.slice(0, markerIndex + marker.length - 1));
       const candidate = path.join(cwd, 'node_modules');
       if (fs.existsSync(candidate)) {
-        if (fs.realpathSync(candidate) !== dependencyRoot) {
-          throw new Error(`untrusted checkout already contains a different node_modules: ${candidate}`);
-        }
+        throw new Error(`untrusted checkout must not provide node_modules: ${candidate}`);
       } else {
+        const privateDependencyRoot = path.join(scratch, 'node_modules');
+        fs.cpSync(dependencyRoot, privateDependencyRoot, {
+          recursive: true,
+          dereference: true,
+          preserveTimestamps: true,
+        });
         fs.mkdirSync(candidate);
-        for (const entry of fs.readdirSync(dependencyRoot)) {
+        for (const entry of fs.readdirSync(privateDependencyRoot)) {
           if (entry === '.vite' || entry === '.vite-temp') continue;
-          fs.symlinkSync(path.join(dependencyRoot, entry), path.join(candidate, entry));
+          fs.symlinkSync(path.join(privateDependencyRoot, entry), path.join(candidate, entry));
         }
         destination = candidate;
       }
@@ -351,7 +359,7 @@ export function prepareIsolatedExecutionResources(
     const cwd = fs.realpathSync(checkout);
     const temporary = createTemporaryResources();
     resources.push(temporary);
-    const dependencies = projectCommandDependencies(command, cwd);
+    const dependencies = projectCommandDependencies(command, cwd, temporary.tmp);
     resources.push(dependencies);
     const ports = createPortPolicy(temporary.tmp);
     const preload = writeLocalhostPreload(cwd, ports);
