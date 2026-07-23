@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store, nowISO } from '../src/store/store.js';
-import { Issue, PR, EvalRun } from '../src/domain/schema.js';
+import { Issue, PR, EvalRun, IntakeRecord } from '../src/domain/schema.js';
 import type { IssueStatus } from '../src/domain/states.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import { prStateToDecision, openGate, pollGate, renderGatePrBody, type GhGateRunner, type GhPrState } from '../src/pipeline/execution/gate.js';
@@ -154,14 +154,40 @@ describe('pollGate: a merge/close becomes the human decision', () => {
   });
 });
 
+/** Seed the intake record that ties a store issue back to its source GitHub Issue. */
+function seedIntake(store: Store, issueId: string, number: number): void {
+  store.addIntakeRecord(IntakeRecord.parse({
+    id: store.nextId('INTAKE'), intakeKey: `o/r#${number}`, provider: 'github',
+    snapshot: {
+      repository: 'o/r', number, externalId: String(number), title: 't', body: 'b',
+      url: `https://github.com/o/r/issues/${number}`, labels: [], state: 'open',
+      sourceUpdatedAt: nowISO(), snapshotAt: nowISO(),
+    },
+    status: 'claimed', claimedAt: nowISO(), storeIssueIds: [issueId], createdAt: nowISO(), updatedAt: nowISO(),
+  }));
+}
+
 describe('renderGatePrBody: human-readable panel render', () => {
-  it('lists each perspective verdict and its findings', () => {
+  it('lists each perspective verdict and its findings, in Japanese prose', () => {
     const store = tmpStore('body');
     seedGatedIssue(store, 'ISSUE-1', 1);
     const body = renderGatePrBody(store, 'ISSUE-1');
-    expect(body).toContain('approved');
+    expect(body).toContain('承認');
     expect(body).toContain('functionality');
     expect(body).toContain('codeQuality');
     expect(body).toContain('codeQuality:AC-1'); // the finding
+  });
+
+  it('links the source GitHub issue so a merge closes it', () => {
+    const store = tmpStore('body-closes');
+    seedGatedIssue(store, 'ISSUE-1', 1);
+    seedIntake(store, 'ISSUE-1', 9);
+    expect(renderGatePrBody(store, 'ISSUE-1')).toContain('Closes o/r#9');
+  });
+
+  it('omits the Closes line when the issue has no external source', () => {
+    const store = tmpStore('body-no-source');
+    seedGatedIssue(store, 'ISSUE-1', 1);
+    expect(renderGatePrBody(store, 'ISSUE-1')).not.toContain('Closes');
   });
 });

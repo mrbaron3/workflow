@@ -139,20 +139,27 @@ export function pollGate(
  * The human-readable PR body (ADR-0006 G1): the evaluator panel's per-perspective verdict on the
  * build the human is judging, plus its findings. Rendered from the winning attempt's EvalRuns so a
  * reviewer sees WHY the harness approved before deciding to merge (release) or close (send back).
+ * Prose is Japanese (issue/PR authoring rule, CLAUDE.md); identifiers and enum values stay verbatim.
+ * When the issue came in through GitHub intake, a `Closes owner/repo#N` reference ties the merge to
+ * the Source Snapshot's issue — GitHub only closes on MERGE, so a gate rejection (close unmerged)
+ * leaves the source issue open for the repair lane. The qualified form also survives a gate repo
+ * that differs from the intake repo.
  */
 export function renderGatePrBody(store: Store, issueId: string): string {
   const runs = latestAttemptRuns(store.runsForIssue(issueId));
   const lines = [
-    `Automated evaluator panel **approved** this build. **Merge to release**, or **close to send it back** to the repair lane.`,
-    `The harness records your choice as the human verdict (false-pass calibration, ADR-0006 G3).`,
+    `自動評価パネルはこのビルドを**承認**しました。**マージ＝リリース**、**クローズ＝修理レーンへ差し戻し**です。`,
+    `この選択は人間の最終判定として記録されます（false-pass 較正、ADR-0006 G3）。`,
     ``,
-    `## Panel`,
+    `## パネル評決`,
   ];
   for (const r of runs) {
     const lens = r.perspective ?? 'composite';
     lines.push(`- **${lens}**: ${r.verdict}`);
     for (const f of r.findings) lines.push(`  - [${f.severity}] ${f.criterionId}: ${f.observed || f.expected || '—'}`);
   }
+  const source = store.db.intakeRecords.find((rec) => rec.storeIssueIds.includes(issueId));
+  if (source) lines.push(``, `Closes ${source.snapshot.repository}#${source.snapshot.number}`);
   return lines.join('\n');
 }
 
