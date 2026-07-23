@@ -47,6 +47,31 @@ function isolatedCommand(
   const rawSystemTmp = os.tmpdir();
   const systemTmp = fs.realpathSync(os.tmpdir());
   const nodeExecutable = fs.realpathSync(process.execPath);
+  let projectedDependencies: string | null = null;
+  if (path.isAbsolute(command)) {
+    const marker = `${path.sep}node_modules${path.sep}`;
+    const markerIndex = command.lastIndexOf(marker);
+    if (markerIndex >= 0) {
+      const dependencyRoot = fs.realpathSync(
+        command.slice(0, markerIndex + marker.length - 1),
+      );
+      const destination = path.join(isolatedCwd, 'node_modules');
+      if (fs.existsSync(destination)) {
+        throw new Error(
+          `untrusted checkout already contains node_modules: ${destination}`,
+        );
+      }
+      fs.mkdirSync(destination);
+      for (const entry of fs.readdirSync(dependencyRoot)) {
+        if (entry === '.vite' || entry === '.vite-temp') continue;
+        fs.symlinkSync(
+          path.join(dependencyRoot, entry),
+          path.join(destination, entry),
+        );
+      }
+      projectedDependencies = destination;
+    }
+  }
   const sandboxPortBase = 30_000 + Math.floor(Math.random() * 20_000);
   const sandboxPorts = Array.from({ length: 128 }, (_, index) => sandboxPortBase + index);
   const portLockDir = path.join(safeTmp, 'ports');
@@ -206,6 +231,9 @@ function isolatedCommand(
     env,
     cleanup: () => {
       if (fs.existsSync(localhostPreload)) fs.rmSync(localhostPreload, { force: true });
+      if (projectedDependencies && fs.existsSync(projectedDependencies)) {
+        fs.rmSync(projectedDependencies, { recursive: true, force: true });
+      }
       fs.rmSync(safeHome, { recursive: true, force: true });
       fs.rmSync(safeTmp, { recursive: true, force: true });
     },

@@ -106,6 +106,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
       {},
       { isolated: true },
     );
+    expect(fs.existsSync(path.join(checkout, 'node_modules'))).toBe(false);
     fs.rmSync(checkout, { recursive: true, force: true });
     if (!nestedSandboxUnavailable(result.output)) {
       expect(result.output).not.toContain('getaddrinfo ENOTFOUND localhost');
