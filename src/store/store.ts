@@ -48,6 +48,69 @@ export type StoreView = Omit<DB, 'prs' | 'prRevisions'> & {
   readonly prRevisions: readonly PrRevision[];
 };
 
+/**
+ * Normalize persisted records created before PR revisions became mandatory.
+ * Legacy approvals cannot prove which head they approved, so migration fails
+ * closed to `open`. Legacy gate reasons are retained as classified reasons.
+ */
+function normalizeLegacyDB(input: unknown): unknown {
+  if (!input || typeof input !== 'object') return input;
+  const record = input as Record<string, unknown>;
+  return {
+    ...record,
+    ...(Array.isArray(record.prs) ? {
+      prs: record.prs.map((value) => {
+        if (!value || typeof value !== 'object') return value;
+        const pr = value as Record<string, unknown>;
+        if (
+          pr.status !== 'approved'
+          || (typeof pr.currentRevisionId === 'string' && typeof pr.headSha === 'string')
+        ) return value;
+        return {
+          ...pr,
+          status: 'open',
+          currentRevisionId: null,
+          headSha: null,
+          mergedHeadSha: null,
+        };
+      }),
+    } : {}),
+    ...(Array.isArray(record.revisionGateSnapshots) ? {
+      revisionGateSnapshots: record.revisionGateSnapshots.map((value) => {
+        if (!value || typeof value !== 'object') return value;
+        const snapshot = value as Record<string, unknown>;
+        const reasons = Array.isArray(snapshot.reasons)
+          ? snapshot.reasons.filter((reason): reason is string => typeof reason === 'string')
+          : [];
+        if (snapshot.decision === 'changes-requested') {
+          return {
+            ...snapshot,
+            blockingReasons: Array.isArray(snapshot.blockingReasons)
+              && snapshot.blockingReasons.length > 0
+              ? snapshot.blockingReasons
+              : reasons.length > 0
+                ? reasons
+                : ['legacy changes-requested snapshot'],
+            pendingReasons: Array.isArray(snapshot.pendingReasons)
+              ? snapshot.pendingReasons
+              : [],
+          };
+        }
+        if (snapshot.decision === 'pending') {
+          return {
+            ...snapshot,
+            blockingReasons: [],
+            pendingReasons: Array.isArray(snapshot.pendingReasons)
+              ? snapshot.pendingReasons
+              : reasons,
+          };
+        }
+        return value;
+      }),
+    } : {}),
+  };
+}
+
 export class Store {
   readonly root: string;
   readonly dir: string;
@@ -75,7 +138,7 @@ export class Store {
   read(): DB {
     if (!fs.existsSync(this.dbPath)) return emptyDB();
     const raw = JSON.parse(fs.readFileSync(this.dbPath, 'utf8'));
-    return DB.parse(raw); // validate on load — a corrupt db fails loudly
+    return DB.parse(normalizeLegacyDB(raw)); // migrate known history, reject real corruption
   }
 
   save(): void {

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  emptyDB,
   PR,
   PrRevision,
   transitionPR,
@@ -105,5 +106,61 @@ describe('PR lifecycle values', () => {
       // @ts-expect-error lifecycle collections are readonly outside Store methods
       store.db.prs.push(pr);
     }
+  });
+
+  it('PR-INTENT migrates legacy unbound approvals and gate reasons without trusting them', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-lifecycle-'));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, '.harness'));
+    const legacy = JSON.parse(JSON.stringify(emptyDB())) as {
+      prs: Array<Record<string, unknown>>;
+      revisionGateSnapshots: Array<Record<string, unknown>>;
+    };
+    legacy.prs.push({
+      id: 'PR-LEGACY',
+      issueId: 'ISSUE-LEGACY',
+      branch: 'feature/legacy',
+      generator: 'mock',
+      status: 'approved',
+      currentRevisionId: null,
+      headSha: null,
+      mergedHeadSha: null,
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    });
+    legacy.revisionGateSnapshots.push({
+      id: 'PRGATE-LEGACY',
+      prId: 'PR-LEGACY',
+      revisionId: 'PRREV-LEGACY',
+      headSha: 'a'.repeat(40),
+      requiredPerspectives: [],
+      perspectiveVerdicts: {},
+      checks: [],
+      unresolvedBlockingThreadIds: [],
+      blockingReviewThreads: [],
+      mergeability: 'mergeable',
+      decision: 'changes-requested',
+      reasons: ['legacy blocker'],
+      createdAt: nowISO(),
+    });
+    fs.writeFileSync(
+      path.join(root, '.harness', 'db.json'),
+      JSON.stringify(legacy, null, 2) + '\n',
+    );
+
+    const store = new Store(root);
+    store.save();
+
+    expect(store.db.prs[0]).toMatchObject({
+      status: 'open',
+      currentRevisionId: null,
+      headSha: null,
+    });
+    expect(store.db.revisionGateSnapshots[0]).toMatchObject({
+      decision: 'changes-requested',
+      blockingReasons: ['legacy blocker'],
+      pendingReasons: [],
+    });
+    expect(() => new Store(root)).not.toThrow();
   });
 });
