@@ -9,6 +9,15 @@ AI 組織運用ハーネス。仕様の下書き（draft・正式 spec は to-sp
   hook / script / CI に置き、使用箇所で自己説明させる。毎セッション読み込みの CLAUDE.md に自明な手順を
   書かない（コンテキストの無駄）。
 
+## Issue / PR 著述規約
+
+- GitHub の issue と PR は**日本語で書く**（タイトル・本文とも。識別子・enum 値・コード片は原文のまま）。
+- **PR は元 issue と紐づける**。その PR だけで元 issue の作業が完了する場合は、マージで閉じる
+  `Closes <owner>/<repo>#<番号>` を本文に書く（GitHub の閉鎖キーワードは英語のみ有効）。
+  1つの元 issue を複数 PR に分割した場合、各途中 PR は `Refs <owner>/<repo>#<番号>` とし、
+  全 work unit の完了を確認する集約点だけが元 issue を閉じる。ハーネス生成の gate PR は
+  `renderGatePrBody` が intake の Source Snapshot と分割数から自動で選ぶ。手書きの PR も同様にする。
+
 ## Agent Skill 著述規約
 
 新しい skill を作る / 既存 skill を編集するときは必ず守る。

@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store, nowISO } from '../src/store/store.js';
-import { Issue, PR, EvalRun } from '../src/domain/schema.js';
+import { Issue, PR, EvalRun, IntakeRecord } from '../src/domain/schema.js';
 import type { IssueStatus } from '../src/domain/states.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import { prStateToDecision, openGate, pollGate, renderGatePrBody, type GhGateRunner, type GhPrState } from '../src/pipeline/execution/gate.js';
@@ -154,14 +154,55 @@ describe('pollGate: a merge/close becomes the human decision', () => {
   });
 });
 
+/** Seed the intake record that ties one or more store issues back to a source GitHub Issue. */
+function seedIntake(store: Store, issueIds: string | string[], number: number): void {
+  store.addIntakeRecord(IntakeRecord.parse({
+    id: store.nextId('INTAKE'), intakeKey: `o/r#${number}`, provider: 'github',
+    snapshot: {
+      repository: 'o/r', number, externalId: String(number), title: 't', body: 'b',
+      url: `https://github.com/o/r/issues/${number}`, labels: [], state: 'open',
+      sourceUpdatedAt: nowISO(), snapshotAt: nowISO(),
+    },
+    status: 'claimed', claimedAt: nowISO(),
+    storeIssueIds: Array.isArray(issueIds) ? issueIds : [issueIds],
+    createdAt: nowISO(), updatedAt: nowISO(),
+  }));
+}
+
 describe('renderGatePrBody: human-readable panel render', () => {
-  it('lists each perspective verdict and its findings', () => {
+  it('lists each perspective verdict and its findings, in Japanese prose', () => {
     const store = tmpStore('body');
     seedGatedIssue(store, 'ISSUE-1', 1);
     const body = renderGatePrBody(store, 'ISSUE-1');
-    expect(body).toContain('approved');
+    expect(body).toContain('承認');
     expect(body).toContain('functionality');
     expect(body).toContain('codeQuality');
     expect(body).toContain('codeQuality:AC-1'); // the finding
+  });
+
+  it('links the source GitHub issue so a merge closes it', () => {
+    const store = tmpStore('body-closes');
+    seedGatedIssue(store, 'ISSUE-1', 1);
+    seedIntake(store, 'ISSUE-1', 9);
+    expect(renderGatePrBody(store, 'ISSUE-1')).toContain('Closes o/r#9');
+  });
+
+  it('does not close a source GitHub issue from any one child when intake split it', () => {
+    const store = tmpStore('body-split-refs');
+    seedGatedIssue(store, 'ISSUE-1', 1);
+    seedGatedIssue(store, 'ISSUE-2', 2);
+    seedIntake(store, ['ISSUE-1', 'ISSUE-2'], 9);
+
+    for (const issueId of ['ISSUE-1', 'ISSUE-2']) {
+      const body = renderGatePrBody(store, issueId);
+      expect(body).toContain('Refs o/r#9');
+      expect(body).not.toContain('Closes o/r#9');
+    }
+  });
+
+  it('omits the Closes line when the issue has no external source', () => {
+    const store = tmpStore('body-no-source');
+    seedGatedIssue(store, 'ISSUE-1', 1);
+    expect(renderGatePrBody(store, 'ISSUE-1')).not.toContain('Closes');
   });
 });
