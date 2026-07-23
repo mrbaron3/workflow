@@ -65,6 +65,7 @@ describe('allow-listed webhook consumer adapters', () => {
     const calls: Array<{ executable: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }> = [];
     const adapters = createWebhookConsumerAdapters(store, {
       harnessRoot: root,
+      launcher: '/installed-agentops/bin/agentops.mjs',
       runProcess: async (executable, args, options) => {
         calls.push({ executable, args, cwd: options.cwd, env: options.env });
       },
@@ -84,7 +85,7 @@ describe('allow-listed webhook consumer adapters', () => {
 
     expect(calls).toEqual([{
       executable: process.execPath,
-      args: [path.join(root, 'bin', 'agentops.mjs'), 'github-turn'],
+      args: ['/installed-agentops/bin/agentops.mjs', 'github-turn'],
       cwd: workspace,
       env: expect.not.objectContaining({
         AGENTOPS_WEBHOOK_CONTROL_TOKEN: expect.anything(),

@@ -7,6 +7,8 @@ import { WebhookControlStore } from './store.js';
 
 export interface WebhookConsumerAdapterOptions {
   harnessRoot: string;
+  /** Trusted AgentOps launcher from the running installation, not the target workspace. */
+  launcher?: string;
   orcaSyncScript?: string;
   log?: (message: string) => void;
   runProcess?: (
@@ -105,7 +107,8 @@ export function createWebhookConsumerAdapters(
           `workspace ${workspaceRoot} is not configured for GitHub intake ${event.repository}`,
         );
       }
-      const launcher = path.join(options.harnessRoot, 'bin', 'agentops.mjs');
+      const launcher = options.launcher
+        ?? path.join(options.harnessRoot, 'bin', 'agentops.mjs');
       const previous = inFlightAgentOps.get(registration.id) ?? Promise.resolve();
       const current = previous
         .catch(() => {})

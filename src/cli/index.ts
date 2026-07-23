@@ -16,6 +16,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Verdict, emptyDB } from '../domain/schema.js';
 import { Store } from '../store/store.js';
 import { signRequirementDir } from '../authoring/sign-dir.js';
@@ -82,6 +83,7 @@ const c = {
   blue: (s: string) => (useColor ? `\x1b[34m${s}\x1b[0m` : s),
 };
 const log = (s = '') => console.log(s);
+const INSTALL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 interface Args {
   cmd: string;
@@ -401,6 +403,7 @@ async function cmdWebhookDaemon(flags: Args['flags']): Promise<void> {
     : undefined;
   const consumers = createWebhookConsumerAdapters(webhookStore, {
     harnessRoot: ROOT,
+    launcher: path.join(INSTALL_ROOT, 'bin', 'agentops.mjs'),
     ...(orcaSyncScript ? { orcaSyncScript } : {}),
     log,
   });
