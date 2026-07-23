@@ -423,9 +423,8 @@ async function cmdWebhookDaemon(flags: Args['flags']): Promise<void> {
     `${address.url}/hook`,
     options.webhookSecret,
   );
-  const forwarderUrl = await signingRelay.listen();
   forwarders = new GithubWebhookForwarderSupervisor(webhookStore, {
-    hookUrl: forwarderUrl,
+    forwardEvent: (event) => signingRelay.forwardTrustedEvent(event).then(() => undefined),
     log,
   });
   if (options.forward) forwarders.start();

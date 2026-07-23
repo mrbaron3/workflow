@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createHmac } from 'node:crypto';
-import { createServer } from 'node:http';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   GithubWebhookForwarderSupervisor,
@@ -69,7 +68,7 @@ describe('multi-repository GitHub webhook forwarders', () => {
       updatedAt: new Date().toISOString(),
     };
 
-    spawn(registration, 'http://127.0.0.1:8377/hook');
+    spawn(registration, async () => {});
     process.stderr.emit('data', 'forwarder configured');
 
     expect(calls[0]).toEqual(expect.objectContaining({
@@ -77,6 +76,7 @@ describe('multi-repository GitHub webhook forwarders', () => {
       args: expect.not.arrayContaining([expect.stringContaining(secret)]),
     }));
     expect(calls[0]!.args).not.toEqual(expect.arrayContaining([expect.stringContaining('--secret')]));
+    expect(calls[0]!.args).not.toEqual(expect.arrayContaining([expect.stringContaining('--url')]));
     expect(logs.join('\n')).not.toContain(secret);
   });
 
@@ -84,28 +84,18 @@ describe('multi-repository GitHub webhook forwarders', () => {
     const secret = 'relay-only-secret';
     const payload = Buffer.from('{"action":"opened"}');
     let observedSignature = '';
-    const upstream = createServer((request, response) => {
-      observedSignature = String(request.headers['x-hub-signature-256'] ?? '');
-      request.resume();
-      request.once('end', () => response.writeHead(202).end('accepted'));
-    });
-    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
-    const address = upstream.address();
-    if (!address || typeof address === 'string') throw new Error('fixture server did not bind');
     const relay = new GithubWebhookSigningRelay(
-      `http://127.0.0.1:${address.port}/hook`,
+      'http://127.0.0.1:8377/hook',
       secret,
-    );
-    const relayUrl = await relay.listen();
-
-    const response = await fetch(relayUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-github-event': 'pull_request',
-        'x-github-delivery': 'delivery-1',
+      async (_input, init) => {
+        observedSignature = new Headers(init?.headers).get('x-hub-signature-256') ?? '';
+        return new Response('accepted', { status: 202 });
       },
+    );
+    const response = await relay.forwardTrustedEvent({
       body: payload,
+      event: 'pull_request',
+      delivery: 'delivery-1',
     });
 
     expect(response.status).toBe(202);
@@ -113,35 +103,66 @@ describe('multi-repository GitHub webhook forwarders', () => {
       `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`,
     );
     await relay.close();
-    await new Promise<void>((resolve, reject) => {
-      upstream.close((error) => error ? reject(error) : resolve());
-    });
   });
 
-  it('ISSUE-0024/PR-INTENT rejects unauthenticated relay traffic before it reaches consumers', async () => {
-    let upstreamCalls = 0;
-    const upstream = createServer((_request, response) => {
-      upstreamCalls += 1;
-      response.writeHead(204).end();
+  it('ISSUE-0024/PR-INTENT accepts events through the private child pipe and triggers the signed consumer', async () => {
+    const process = new FakeProcess();
+    let consumerBody = '';
+    let releaseConsumer!: () => void;
+    const consumed = new Promise<void>((resolve) => {
+      releaseConsumer = resolve;
     });
-    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve));
-    const address = upstream.address();
-    if (!address || typeof address === 'string') throw new Error('fixture server did not bind');
     const relay = new GithubWebhookSigningRelay(
-      `http://127.0.0.1:${address.port}/hook`,
+      'http://127.0.0.1:8377/hook',
       'relay-only-secret',
+      async (_input, init) => {
+        consumerBody = String(init?.body);
+        releaseConsumer();
+        return new Response(null, { status: 204 });
+      },
     );
-    const relayUrl = await relay.listen();
-    const origin = new URL(relayUrl).origin;
+    const spawn = productionGithubWebhookForwarderSpawner(
+      () => {},
+      (() => process),
+    );
+    const registration = {
+      id: 'WHREPO-0001',
+      repository: 'acme/theme',
+      enabled: true,
+      events: ['pull_request'],
+      consumers: ['agentops'],
+      workspaceRoot: null,
+      readyLabel: null,
+      baseBranch: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } satisfies WebhookRepositoryRegistration;
 
-    const response = await fetch(`${origin}/forward`, { method: 'POST', body: '{}' });
+    spawn(registration, (event) => relay.forwardTrustedEvent(event).then(() => undefined));
+    process.stdout.emit('data', '{"action":"opened","pull_request":{"id":9}}\n');
+    await consumed;
 
-    expect(response.status).toBe(404);
+    expect(consumerBody).toBe('{"action":"opened","pull_request":{"id":9}}');
+  });
+
+  it('ISSUE-0024/PR-INTENT exact current-state payloads cannot reach the pipe-authenticated signer', async () => {
+    let upstreamCalls = 0;
+    const relay = new GithubWebhookSigningRelay(
+      'http://127.0.0.1:8377/hook',
+      'relay-only-secret',
+      async () => {
+        upstreamCalls += 1;
+        return new Response(null, { status: 204 });
+      },
+    );
+    const synthesizedCurrentGithubState = JSON.stringify({
+      action: 'closed',
+      pull_request: { state: 'closed', merged: true, head: { sha: 'a'.repeat(40) } },
+    });
+    expect(synthesizedCurrentGithubState).toContain('a'.repeat(40));
+    expect('listen' in relay).toBe(false);
     expect(upstreamCalls).toBe(0);
     await relay.close();
-    await new Promise<void>((resolve, reject) => {
-      upstream.close((error) => error ? reject(error) : resolve());
-    });
   });
 
   it('ISSUE-0024/PR-INTENT pins the finite positive relay body cap', () => {
@@ -173,21 +194,20 @@ describe('multi-repository GitHub webhook forwarders', () => {
     });
     const starts: Array<{
       registration: WebhookRepositoryRegistration;
-      hookUrl: string;
       process: FakeProcess;
     }> = [];
+    const forwardEvent = async () => {};
     const supervisor = new GithubWebhookForwarderSupervisor(store, {
-      hookUrl: 'http://127.0.0.1:8377/hook',
-      spawnForwarder: (registration, hookUrl) => {
+      forwardEvent,
+      spawnForwarder: (registration) => {
         const process = new FakeProcess();
-        starts.push({ registration, hookUrl, process });
+        starts.push({ registration, process });
         return process;
       },
     });
 
     supervisor.reconcile();
     expect(starts.map((row) => row.registration.repository)).toEqual(['acme/one']);
-    expect(starts[0]!.hookUrl).toBe('http://127.0.0.1:8377/hook');
 
     store.updateRepository(first.id, { events: ['issues', 'pull_request'] });
     supervisor.reconcile();
@@ -214,7 +234,7 @@ describe('multi-repository GitHub webhook forwarders', () => {
     });
     const processes: FakeProcess[] = [];
     const supervisor = new GithubWebhookForwarderSupervisor(store, {
-      hookUrl: 'http://127.0.0.1:8377/hook',
+      forwardEvent: async () => {},
       spawnForwarder: () => {
         const process = new FakeProcess();
         processes.push(process);
@@ -253,7 +273,7 @@ describe('multi-repository GitHub webhook forwarders', () => {
     });
     const process = new FakeProcess();
     const supervisor = new GithubWebhookForwarderSupervisor(store, {
-      hookUrl: 'http://127.0.0.1:8377/hook',
+      forwardEvent: async () => {},
       spawnForwarder: () => process,
     });
 

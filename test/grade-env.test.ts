@@ -9,12 +9,18 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
+import { createRequire } from 'node:module';
 import {
   GRADER_MAX_BUFFER_BYTES,
   GRADER_TIMEOUT_MS,
   groundArtifact,
   runGraderCommand,
 } from '../src/pipeline/execution/grade.js';
+import {
+  ISOLATED_GRADER_MIN_PORT,
+  ISOLATED_GRADER_PORT_COUNT,
+  ISOLATED_GRADER_PORT_WINDOW,
+} from '../src/pipeline/execution/isolation.js';
 import type { IssueContract } from '../src/domain/schema.js';
 
 const contract: IssueContract = {
@@ -42,6 +48,11 @@ function typecheckWith(command: string): boolean {
 function nestedSandboxUnavailable(output: string): boolean {
   return output.includes('sandbox_apply: Operation not permitted')
     || output.includes('terminated by signal: SIGABRT');
+}
+
+function dependencyBin(packageName: string, executable: string): string {
+  const packageFile = createRequire(import.meta.url).resolve(`${packageName}/package.json`);
+  return path.resolve(path.dirname(packageFile), '..', '.bin', executable);
 }
 
 describe('grader command env prefixes (KEY=VAL …)', () => {
@@ -78,11 +89,14 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
   it('ISSUE-0024/PR-INTENT pins grader resource limits', () => {
     expect(GRADER_TIMEOUT_MS).toBe(600_000);
     expect(GRADER_MAX_BUFFER_BYTES).toBe(64 * 1024 * 1_024);
+    expect(ISOLATED_GRADER_MIN_PORT).toBe(30_000);
+    expect(ISOLATED_GRADER_PORT_WINDOW).toBe(20_000);
+    expect(ISOLATED_GRADER_PORT_COUNT).toBe(128);
   });
   it.runIf(process.platform === 'darwin')('PR-INTENT permits only the configured external grader dependency tree', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-command-'));
     const result = runGraderCommand(
-      `${path.resolve('node_modules/.bin/tsc')} --version`,
+      `${dependencyBin('typescript', 'tsc')} --version`,
       checkout,
       {},
       { isolated: true },
@@ -101,7 +115,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     );
     fs.writeFileSync(path.join(checkout, 'tsconfig.json'), '{}\n');
     const result = runGraderCommand(
-      `${path.resolve('node_modules/.bin/vitest')} run`,
+      `${dependencyBin('vitest', 'vitest')} run`,
       checkout,
       {},
       { isolated: true },

@@ -10,6 +10,7 @@ import {
   RevisionBinding,
   transitionPR,
   transitionPrRevision,
+  updatePR,
 } from '../src/domain/schema.js';
 import { Store, nowISO } from '../src/store/store.js';
 
@@ -19,6 +20,33 @@ afterEach(() => {
 });
 
 describe('PR lifecycle values', () => {
+  it('PR-INTENT makes PR and revision identity mutations compile-time invalid', () => {
+    const open = PR.parse({
+      id: 'PR-1', issueId: 'ISSUE-1', branch: 'feature', generator: 'mock',
+      createdAt: nowISO(), updatedAt: nowISO(),
+    });
+    const pending = PrRevision.parse({
+      id: 'PRREV-1', prId: 'PR-1', headSha: 'a'.repeat(40), ordinal: 1,
+      status: 'pending', createdAt: nowISO(),
+    });
+    if (false) {
+      const badUpdate = { id: 'PR-2' };
+      const badPrTransition = { status: 'closed' as const, issueId: 'ISSUE-2' };
+      const badRevisionTransition = {
+        status: 'reviewing' as const,
+        headSha: PrHeadSha.parse('b'.repeat(40)),
+      };
+      // @ts-expect-error update metadata cannot contain durable PR identity
+      updatePR(open, badUpdate);
+      // @ts-expect-error transition destinations cannot contain issue ownership
+      transitionPR(open, badPrTransition);
+      // @ts-expect-error revision destinations contain state and evidence only
+      transitionPrRevision(pending, badRevisionTransition);
+    }
+    expect(open.id).toBe('PR-1');
+    expect(pending.id).toBe('PRREV-1');
+  });
+
   it('PR-INTENT rejects short SHAs and partial revision bindings', () => {
     expect(PrHeadSha.safeParse('abc1234').success).toBe(false);
     expect(PrHeadSha.safeParse('a'.repeat(40)).success).toBe(true);

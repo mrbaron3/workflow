@@ -114,6 +114,10 @@ describe('webhook control GUI runtime', () => {
     await flush();
 
     const document = window.document;
+    const autoRefresh = document.querySelector('#auto-refresh') as HTMLButtonElement;
+    expect(autoRefresh.textContent).toBe('更新を一時停止');
+    expect(autoRefresh.getAttribute('aria-pressed')).toBe('true');
+    expect(intervalCallback).not.toBeNull();
     expect([...document.querySelectorAll('#repositories [data-key]')].map(
       (node) => node.getAttribute('data-key'),
     )).toEqual(['WHREPO-1', 'WHREPO-2']);
@@ -130,15 +134,17 @@ describe('webhook control GUI runtime', () => {
       document.querySelector('[data-key="WHREPO-1"] .toggle'),
     );
 
-    const autoRefresh = document.querySelector('#auto-refresh') as HTMLButtonElement;
     autoRefresh.click();
-    expect(autoRefresh.getAttribute('aria-pressed')).toBe('true');
+    expect(autoRefresh.textContent).toBe('更新を再開');
+    expect(autoRefresh.getAttribute('aria-pressed')).toBe('false');
+    expect(intervalCallback).toBeNull();
     expect(document.querySelector('#connection-announcement')?.textContent)
       .toContain('一時停止中');
 
     autoRefresh.click();
     await flush();
-    expect(autoRefresh.getAttribute('aria-pressed')).toBe('false');
+    expect(autoRefresh.textContent).toBe('更新を一時停止');
+    expect(autoRefresh.getAttribute('aria-pressed')).toBe('true');
     expect(document.querySelector('#connection-announcement')?.textContent)
       .toContain('接続できません');
     expect(intervalCallback).not.toBeNull();
@@ -204,5 +210,64 @@ describe('webhook control GUI runtime', () => {
       String(url).includes('/api/repositories/WHREPO-1'))).toHaveLength(1);
     expect(window.document.querySelector('#connection-announcement')?.textContent)
       .toContain('接続できません');
+  });
+
+  it('PR-INTENT moves focus to the deliveries region when passive polling removes the focused retry row', async () => {
+    const window = new Window({
+      url: 'http://127.0.0.1:8377/',
+      settings: { disableJavaScriptEvaluation: false },
+    });
+    windows.push(window);
+    const failedDelivery = {
+      ...state(0),
+      deliveries: [{
+        id: 'WHDEL-failed',
+        repository: 'acme/one',
+        event: 'pull_request',
+        action: 'synchronize',
+        status: 'failed',
+        attempts: 1,
+        lastError: 'delivery failed',
+        ignoredReason: null,
+        updatedAt: '2026-07-23T00:00:00.000Z',
+      }],
+    };
+    const responses = [failedDelivery, { ...state(1), deliveries: [] }];
+    Object.defineProperty(window, 'fetch', {
+      configurable: true,
+      value: vi.fn(async () => ({ ok: true, json: async () => responses.shift() })),
+    });
+    let intervalCallback: (() => unknown) | null = null;
+    Object.defineProperty(window, 'setInterval', {
+      configurable: true,
+      value: (callback: () => unknown) => {
+        intervalCallback = callback;
+        return 1;
+      },
+    });
+    Object.defineProperty(window, 'clearInterval', {
+      configurable: true,
+      value: () => {
+        intervalCallback = null;
+      },
+    });
+    const html = webhookControlHtml();
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('generated GUI has no executable script');
+    window.document.write(html.replace(/<script>[\s\S]*<\/script>/, ''));
+    window.document.close();
+    window.eval(script);
+    await flush();
+
+    const retry = window.document.querySelector('#deliveries .retry') as HTMLButtonElement;
+    const deliveriesRegion = window.document.querySelector('.table-wrap');
+    retry.focus();
+    expect(window.document.activeElement).toBe(retry);
+    if (!intervalCallback) throw new Error('polling interval is not active');
+    await (intervalCallback as unknown as () => unknown)();
+    await flush();
+
+    expect(window.document.querySelector('#deliveries [data-empty]')).not.toBeNull();
+    expect(window.document.activeElement).toBe(deliveriesRegion);
   });
 });

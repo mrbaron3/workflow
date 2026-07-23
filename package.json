@@ -16,7 +16,7 @@
     "dashboard": "tsx src/cli/index.ts dashboard --open",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "vitest run",
+    "test": "vitest run --configLoader runner",
     "bundle-skills": "tsx scripts/bundle-skills.ts",
     "prepare": "git config core.hooksPath githooks 2>/dev/null || true"
   },

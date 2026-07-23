@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
+import { createHmac, randomUUID } from 'node:crypto';
 import type { WebhookRepositoryRegistration } from './schema.js';
 import { WebhookControlStore } from './store.js';
 
@@ -14,11 +13,18 @@ export interface GithubWebhookForwarderProcess {
 
 export type SpawnGithubWebhookForwarder = (
   registration: WebhookRepositoryRegistration,
-  hookUrl: string,
+  forwardEvent: TrustedGithubEventSink,
 ) => GithubWebhookForwarderProcess;
 
+export interface TrustedGithubEvent {
+  body: Buffer;
+  event: string;
+  delivery: string;
+}
+export type TrustedGithubEventSink = (event: TrustedGithubEvent) => Promise<void>;
+
 export interface GithubWebhookForwarderSupervisorOptions {
-  hookUrl: string;
+  forwardEvent: TrustedGithubEventSink;
   reconcileIntervalMs?: number;
   spawnForwarder?: SpawnGithubWebhookForwarder;
   log?: (message: string) => void;
@@ -52,19 +58,42 @@ export function productionGithubWebhookForwarderSpawner(
   log: (message: string) => void,
   spawnProcess: ForwarderSpawn = spawn as ForwarderSpawn,
 ): SpawnGithubWebhookForwarder {
-  return (registration, hookUrl) => {
+  return (registration, forwardEvent) => {
     const child = spawnProcess('gh', [
       'webhook',
       'forward',
       `--repo=${registration.repository}`,
       `--events=${registration.events.join(',')}`,
-      `--url=${hookUrl}`,
     ], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    let pending = '';
     child.stdout?.on('data', (chunk: Buffer | string) => {
-      const message = String(chunk).trim();
-      if (message) log(`[${registration.repository}] ${message}`);
+      pending += String(chunk);
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        const raw = line.trim();
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          const body = Buffer.from(line);
+          const event = parsed.pull_request ? 'pull_request'
+            : parsed.issue ? 'issues'
+              : registration.events.length === 1 ? registration.events[0]! : '';
+          if (!event) {
+            log(`[${registration.repository}] discarded event with ambiguous type`);
+            continue;
+          }
+          void forwardEvent({ body, event, delivery: randomUUID() }).catch((error: unknown) => {
+            log(`[${registration.repository}] secure forward failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`);
+          });
+        } catch {
+          log(`[${registration.repository}] ignored non-payload forwarder output`);
+        }
+      }
     });
     child.stderr?.on('data', (chunk: Buffer | string) => {
       const message = String(chunk).trim();
@@ -79,103 +108,38 @@ export function isRelayBodyWithinLimit(bytes: number): boolean {
   return Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= MAX_RELAY_BODY_BYTES;
 }
 
-/**
- * `gh webhook forward` only accepts --secret on argv. Keep the verifier secret
- * out of child process metadata by forwarding unsigned loopback traffic into
- * this in-process relay, which signs the exact raw body before it reaches /hook.
- */
+/** Signs only events received over the child process' private stdout pipe. */
 export class GithubWebhookSigningRelay {
-  private server: Server | null = null;
-  private readonly capability = randomBytes(32).toString('hex');
-
   constructor(
     private readonly upstreamHookUrl: string,
     private readonly webhookSecret: string,
+    private readonly request: typeof fetch = fetch,
   ) {
     if (!webhookSecret.trim()) throw new Error('non-empty webhookSecret is required');
   }
 
-  listen(): Promise<string> {
-    if (this.server) throw new Error('webhook signing relay is already listening');
-    this.server = createServer((request, response) => {
-      const supplied = request.url?.startsWith('/forward/')
-        ? request.url.slice('/forward/'.length)
-        : '';
-      const authenticated = supplied.length === this.capability.length
-        && timingSafeEqual(Buffer.from(supplied), Buffer.from(this.capability));
-      if (request.method !== 'POST' || !authenticated) {
-        response.writeHead(404).end('not found');
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let bytes = 0;
-      request.on('data', (chunk: Buffer) => {
-        bytes += chunk.length;
-        if (!isRelayBodyWithinLimit(bytes)) {
-          response.writeHead(413).end('payload too large');
-          request.destroy();
-          return;
-        }
-        chunks.push(chunk);
-      });
-      request.on('end', () => {
-        if (!isRelayBodyWithinLimit(bytes)) return;
-        const body = Buffer.concat(chunks);
-        const signature = `sha256=${createHmac('sha256', this.webhookSecret)
-          .update(body)
-          .digest('hex')}`;
-        const headers = new Headers({
-          'content-type': String(request.headers['content-type'] ?? 'application/json'),
-          'x-hub-signature-256': signature,
-        });
-        for (const name of ['x-github-event', 'x-github-delivery']) {
-          const value = request.headers[name];
-          if (typeof value === 'string') headers.set(name, value);
-        }
-        void fetch(this.upstreamHookUrl, {
-          method: 'POST',
-          headers,
-          body,
-          redirect: 'error',
-        }).then(async (upstream) => {
-          response.writeHead(upstream.status, {
-            'content-type': upstream.headers.get('content-type') ?? 'text/plain',
-          });
-          response.end(await upstream.text());
-        }).catch(() => {
-          response.writeHead(502).end('webhook relay failed');
-        });
-      });
-    });
-    return new Promise((resolve, reject) => {
-      const server = this.server!;
-      const onError = (error: Error) => {
-        server.removeListener('listening', onListening);
-        this.server = null;
-        reject(error);
-      };
-      const onListening = () => {
-        server.removeListener('error', onError);
-        const address = server.address();
-        if (!address || typeof address === 'string') {
-          reject(new Error('webhook signing relay did not bind a TCP address'));
-          return;
-        }
-        resolve(`http://127.0.0.1:${address.port}/forward/${this.capability}`);
-      };
-      server.once('error', onError);
-      server.once('listening', onListening);
-      server.listen(0, '127.0.0.1');
+  async forwardTrustedEvent(event: TrustedGithubEvent): Promise<Response> {
+    if (!isRelayBodyWithinLimit(event.body.length)) {
+      throw new Error('payload too large');
+    }
+    const signature = `sha256=${createHmac('sha256', this.webhookSecret)
+      .update(event.body)
+      .digest('hex')}`;
+    return this.request(this.upstreamHookUrl, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-hub-signature-256': signature,
+        'x-github-event': event.event,
+        'x-github-delivery': event.delivery,
+      },
+      body: event.body,
+      redirect: 'error',
     });
   }
 
   close(): Promise<void> {
-    const server = this.server;
-    this.server = null;
-    if (!server) return Promise.resolve();
-    return new Promise((resolve, reject) => {
-      server.close((error) => error ? reject(error) : resolve());
-    });
+    return Promise.resolve();
   }
 }
 
@@ -221,7 +185,7 @@ export class GithubWebhookForwarderSupervisor {
     for (const [id, registration] of desired) {
       if (this.running.has(id)) continue;
       this.failures.delete(id);
-      const process = this.spawnForwarder(registration, this.options.hookUrl);
+      const process = this.spawnForwarder(registration, this.options.forwardEvent);
       const running = { fingerprint: fingerprint(registration), process };
       this.running.set(id, running);
       process.once('exit', (code, signal) => {

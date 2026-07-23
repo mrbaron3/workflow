@@ -442,7 +442,10 @@ type DeepReadonly<T> =
   T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } :
   T;
 export type PR = DeepReadonly<z.infer<typeof PR>>;
-type PRPatch = Partial<Omit<z.infer<typeof PR>, 'status' | 'currentRevisionId' | 'headSha' | 'mergedHeadSha'>>;
+type PRPatch = Partial<Pick<
+  z.infer<typeof PRCommon>,
+  'branch' | 'baseBranch' | 'generator' | 'origin' | 'attempts' | 'externalRef'
+>>;
 type ActivePRDestinationFields =
   | { currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha?: null }
   | { currentRevisionId?: null; headSha?: null; mergedHeadSha?: null };
@@ -492,7 +495,10 @@ export function transitionPR<
   D extends PRTransitionFor<S>,
 >(
   pr: Extract<PR, { status: S }>,
-  destination: D,
+  destination: D & Record<
+    Exclude<keyof D, keyof Extract<PRTransitionFor<S>, { status: D['status'] }>>,
+    never
+  >,
 ): Extract<PR, { status: D['status'] }> {
   if (!PR_TRANSITIONS[pr.status].includes(destination.status)) {
     throw new Error(`invalid PR transition: ${pr.status} -> ${destination.status}`);
@@ -508,7 +514,10 @@ export function transitionPR<
 }
 
 /** Update non-variant metadata without changing the lifecycle discriminant. */
-export function updatePR(pr: PR, patch: PRPatch): PR {
+export function updatePR<const P>(
+  pr: PR,
+  patch: P & PRPatch & Record<Exclude<keyof P, keyof PRPatch>, never>,
+): PR {
   return deepFreeze(PR.parse({ ...pr, ...patch, updatedAt: new Date().toISOString() }));
 }
 
@@ -577,19 +586,18 @@ export const PrRevision = z.discriminatedUnion('status', [
   terminalRevision('failed'),
 ]);
 export type PrRevision = DeepReadonly<z.infer<typeof PrRevision>>;
-type RevisionPatch = Partial<Omit<z.infer<typeof PrRevision>, 'status' | 'mergeRequestedAt' | 'completedAt'>>;
 type ReviewingRevisionDestination =
-  RevisionPatch & { status: 'reviewing'; mergeRequestedAt?: null; completedAt?: null };
+  { status: 'reviewing'; mergeRequestedAt?: null; completedAt?: null };
 type ChangesRequestedRevisionDestination =
-  RevisionPatch & { status: 'changes-requested'; mergeRequestedAt?: null; completedAt?: null };
+  { status: 'changes-requested'; mergeRequestedAt?: null; completedAt?: null };
 type ApprovedRevisionDestination =
-  RevisionPatch & { status: 'approved'; mergeRequestedAt?: string | null; completedAt?: null };
+  { status: 'approved'; mergeRequestedAt?: string | null; completedAt?: null };
 type MergedRevisionDestination =
-  RevisionPatch & { status: 'merged'; mergeRequestedAt?: string | null; completedAt: string };
+  { status: 'merged'; mergeRequestedAt?: string | null; completedAt: string };
 type StaleRevisionDestination =
-  RevisionPatch & { status: 'stale'; mergeRequestedAt?: null; completedAt: string };
+  { status: 'stale'; mergeRequestedAt?: null; completedAt: string };
 type FailedRevisionDestination =
-  RevisionPatch & { status: 'failed'; mergeRequestedAt?: null; completedAt: string };
+  { status: 'failed'; mergeRequestedAt?: null; completedAt: string };
 export type PrRevisionTransitionDestination =
   | ReviewingRevisionDestination
   | ChangesRequestedRevisionDestination
@@ -625,7 +633,10 @@ export function transitionPrRevision<
   D extends PrRevisionTransitionFor<S>,
 >(
   revision: Extract<PrRevision, { status: S }>,
-  destination: D,
+  destination: D & Record<
+    Exclude<keyof D, keyof Extract<PrRevisionTransitionFor<S>, { status: D['status'] }>>,
+    never
+  >,
 ): Extract<PrRevision, { status: D['status'] }> {
   if (!PR_REVISION_TRANSITIONS[revision.status].includes(destination.status)) {
     throw new Error(`invalid PR revision transition: ${revision.status} -> ${destination.status}`);
