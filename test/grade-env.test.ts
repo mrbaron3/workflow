@@ -133,7 +133,9 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     } finally {
       prepared.cleanup();
     }
-    const untrustedRoot = fs.mkdtempSync('/private/tmp/agentops-system-readable-');
+    const untrustedRoot = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'agentops-system-readable-'),
+    );
     const sentinel = path.join(untrustedRoot, 'operator-secret');
     fs.writeFileSync(sentinel, 'secret');
     const result = runGraderCommand(
