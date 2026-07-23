@@ -68,6 +68,32 @@ function actionFrom(payload: Record<string, unknown>): string | null {
     : null;
 }
 
+/**
+ * Early daemon builds recovered interrupted deliveries by changing only their
+ * status to `pending`, leaving processing-only fields behind. Normalize that
+ * persisted shape before strict validation so upgrades do not require deleting
+ * the durable inbox.
+ */
+function normalizeLegacyControlDB(input: unknown): unknown {
+  if (!input || typeof input !== 'object') return input;
+  const record = input as Record<string, unknown>;
+  if (!Array.isArray(record.deliveries)) return input;
+  return {
+    ...record,
+    deliveries: record.deliveries.map((delivery) => {
+      if (!delivery || typeof delivery !== 'object') return delivery;
+      const row = delivery as Record<string, unknown>;
+      if (row.status !== 'pending') return delivery;
+      return {
+        ...row,
+        registrationId: null,
+        lastError: null,
+        ignoredReason: null,
+      };
+    }),
+  };
+}
+
 export class WebhookControlStore {
   readonly root: string;
   readonly dir: string;
@@ -83,7 +109,9 @@ export class WebhookControlStore {
 
   private read(): MutableWebhookControlDB {
     const parsed = fs.existsSync(this.file)
-      ? WebhookControlDB.parse(JSON.parse(fs.readFileSync(this.file, 'utf8')))
+      ? WebhookControlDB.parse(normalizeLegacyControlDB(
+        JSON.parse(fs.readFileSync(this.file, 'utf8')),
+      ))
       : emptyWebhookControlDB();
     return { ...parsed, deliveries: [...parsed.deliveries] };
   }

@@ -250,4 +250,40 @@ describe('durable GitHub webhook inbox and router', () => {
       lastError: null,
     });
   });
+
+  it('loads and normalizes a legacy interrupted pending delivery without deleting the inbox', () => {
+    const root = tempRoot();
+    const store = new WebhookControlStore(root);
+    register(store);
+    const receipt = store.receiveDelivery({
+      deliveryKey: 'delivery-legacy-interrupted',
+      event: 'pull_request',
+      headers: {},
+      payload: payload(),
+    });
+    const persisted = JSON.parse(
+      fs.readFileSync(path.join(root, '.harness', 'webhooks.json'), 'utf8'),
+    ) as {
+      deliveries: Array<Record<string, unknown>>;
+    };
+    Object.assign(persisted.deliveries[0]!, {
+      status: 'pending',
+      registrationId: 'WHREPO-0001',
+      lastError: 'delivery processing was interrupted; recovered on daemon start',
+    });
+    fs.writeFileSync(
+      path.join(root, '.harness', 'webhooks.json'),
+      JSON.stringify(persisted, null, 2) + '\n',
+    );
+
+    const restarted = new WebhookControlStore(root);
+    restarted.save();
+
+    expect(restarted.getDelivery(receipt.deliveryId)).toMatchObject({
+      status: 'pending',
+      registrationId: null,
+      lastError: null,
+    });
+    expect(restarted.snapshot().deliveries).toHaveLength(1);
+  });
 });
