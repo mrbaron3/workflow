@@ -96,13 +96,16 @@ async function runLiveSample(
   const manageIssueStatus = opts.manageIssueStatus;
   const generatorRoute = resolveAgentRoute(config, 'generator');
 
-  const pr = opts.resumePr ?? store.addPR(
+  const returnedPr = opts.resumePr ?? store.addPR(
     PR.parse({
       id: store.nextId('PR'), issueId: issue.id, branch: `agent/${issueKey}`,
       baseBranch: config.baseBranch, generator: generatorRoute.provider, attempts: 0, status: 'open',
       createdAt: nowISO(), updatedAt: nowISO(),
     }),
   );
+  const pr = opts.resumePr
+    ? returnedPr
+    : store.db.prs.find((candidate) => candidate.id === returnedPr.id)!;
   let worktree: string | null = null; // the last completed attempt's checkout = the build at the gate
 
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
@@ -217,17 +220,63 @@ async function runLiveSample(
   return { ...loop, sampleIndex, prId: pr.id, approved: loop.verdict === 'approve', worktree };
 }
 
-function revisionGateRepairBrief(store: Store, pr: PRType): RepairBrief | null {
+export function revisionGateRepairBrief(store: Store, pr: PRType): RepairBrief | null {
+  const currentRuns = store.db.evalRuns.filter((run) =>
+    run.prId === pr.id
+    && run.revisionId === pr.currentRevisionId
+    && run.headSha === pr.headSha);
+  const latestByPerspective = new Map<string, (typeof currentRuns)[number]>();
+  for (const run of currentRuns) {
+    const perspective = run.perspective ?? 'functionality';
+    const previous = latestByPerspective.get(perspective);
+    if (
+      !previous
+      || run.attempt > previous.attempt
+      || (run.attempt === previous.attempt && run.createdAt > previous.createdAt)
+    ) {
+      latestByPerspective.set(perspective, run);
+    }
+  }
+  const reviewFindings = [...latestByPerspective].flatMap(([perspective, run]) =>
+    run.findings.map((finding) => ({
+      ...finding,
+      criterionId: `${perspective}:${finding.criterionId}`,
+    })));
+  if (reviewFindings.length > 0) {
+    const sourceRun = [...latestByPerspective.values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]!;
+    const instructions = reviewFindings.flatMap((finding) =>
+      finding.requiredFix.length > 0
+        ? finding.requiredFix.map((fix) => `[${finding.criterionId}] ${fix}`)
+        : [`[${finding.criterionId}] ${finding.observed}`]);
+    return {
+      fromEvalRunId: sourceRun.id,
+      findings: reviewFindings,
+      instructions,
+    };
+  }
+
   const snapshot = store.db.revisionGateSnapshots
     .filter((row) => row.prId === pr.id && row.decision === 'changes-requested')
     .at(-1);
-  if (!snapshot || snapshot.reasons.length === 0) return null;
+  if (!snapshot) return null;
+  const classifiedBlockingReasons = snapshot.blockingReasons.length > 0
+    ? snapshot.blockingReasons
+    // Migration shim for snapshots persisted before blockingReasons/pendingReasons
+    // were separated. These strings are rendered by evaluateRevisionGate.
+    : snapshot.reasons.filter((reason) =>
+      !reason.startsWith('required check pending:')
+      && !reason.startsWith('missing review:')
+      && reason !== 'mergeability is unknown'
+      && reason !== 'pull request is draft');
+  if (classifiedBlockingReasons.length === 0) return null;
   const threadInstructions = snapshot.blockingReviewThreads.map((thread) =>
     `${thread.path ?? 'PR'}${thread.line ? `:${thread.line}` : ''}: ${thread.body}`);
-  const otherInstructions = snapshot.reasons.filter(
+  const otherInstructions = classifiedBlockingReasons.filter(
     (reason) => !reason.startsWith('unresolved blocking review thread:'),
   );
   const instructions = [...threadInstructions, ...otherInstructions];
+  if (instructions.length === 0) return null;
   return {
     fromEvalRunId: `revision-gate:${snapshot.id}`,
     instructions,
@@ -263,7 +312,8 @@ export async function driveIssueLive(
   if (!issue.contract) throw new Error(`${issue.id} has no contract`);
   if (!config.target) throw new Error('driveIssueLive requires config.target (a real repo)');
   const resumePr = issue.status === 'changes-requested'
-    ? [...store.db.prs].reverse().find((pr) => pr.issueId === issue.id && pr.status !== 'merged')
+    ? [...store.db.prs].reverse().find((pr) =>
+      pr.issueId === issue.id && pr.status !== 'merged' && pr.status !== 'closed')
     : undefined;
   if (issue.status === 'changes-requested' && !resumePr) {
     throw new Error(`${issue.id} is changes-requested but has no resumable PR`);
@@ -319,7 +369,7 @@ export async function driveIssueLive(
       (opts.perspectives ?? PERSPECTIVES).map((perspective) => perspective.key),
     );
     log(
-      `  ⇩ ${issue.id}: revision ${result.headSha.slice(0, 12)} `
+      `  ⇩ ${issue.id}: revision ${result.headSha?.slice(0, 12) ?? 'unobserved'} `
       + `→ ${result.decision}${result.reasons.length ? ` (${result.reasons.join('; ')})` : ''}`,
     );
   }

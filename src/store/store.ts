@@ -11,7 +11,13 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { DB, emptyDB } from '../domain/schema.js';
+import {
+  DB,
+  PR as PRSchema,
+  PrRevision as PrRevisionSchema,
+  RevisionGateSnapshot as RevisionGateSnapshotSchema,
+  emptyDB,
+} from '../domain/schema.js';
 import type {
   AgentInvocation,
   Epic,
@@ -37,12 +43,22 @@ export function nowISO(): string {
   return new Date().toISOString();
 }
 
+export type StoreView = Omit<DB, 'prs' | 'prRevisions'> & {
+  readonly prs: readonly PR[];
+  readonly prRevisions: readonly PrRevision[];
+};
+
 export class Store {
   readonly root: string;
   readonly dir: string;
   readonly dbPath: string;
   readonly evidenceRoot: string;
-  db: DB;
+  /**
+   * Public query view. PR lifecycle collections are readonly so callers cannot
+   * bypass replacePR/replacePrRevision; other legacy collections retain their
+   * existing mutable adapter surface until they receive dedicated repositories.
+   */
+  db: StoreView;
 
   constructor(root: string = process.cwd()) {
     this.root = root;
@@ -161,34 +177,67 @@ export class Store {
   // --- PRs -----------------------------------------------------------------
 
   addPR(p: PR): PR {
-    this.db.prs.push(p);
-    return p;
+    const stored = PRSchema.parse(structuredClone(p));
+    (this.db.prs as DB['prs']).push(stored);
+    return structuredClone(stored);
   }
 
   getPR(id: string): PR | undefined {
-    return this.db.prs.find((p) => p.id === id);
+    const found = this.db.prs.find((p) => p.id === id);
+    return found ? this.lifecycleCopy(found) : undefined;
   }
 
   prForIssue(issueId: string): PR | undefined {
-    return this.db.prs.find((p) => p.issueId === issueId);
+    const found = this.db.prs.find((p) => p.issueId === issueId);
+    return found ? this.lifecycleCopy(found) : undefined;
+  }
+
+  replacePR(p: PR): PR {
+    const index = this.db.prs.findIndex((row) => row.id === p.id);
+    if (index < 0) throw new Error(`No such PR: ${p.id}`);
+    const stored = PRSchema.parse(structuredClone(p));
+    (this.db.prs as DB['prs'])[index] = stored;
+    return this.lifecycleCopy(stored);
   }
 
   upsertPrRevision(revision: PrRevision): PrRevision {
     const existing = this.db.prRevisions.find(
       (row) => row.prId === revision.prId && row.headSha === revision.headSha,
     );
-    if (existing) return existing;
-    this.db.prRevisions.push(revision);
-    return revision;
+    if (existing) return this.lifecycleCopy(existing);
+    const stored = PrRevisionSchema.parse(structuredClone(revision));
+    (this.db.prRevisions as DB['prRevisions']).push(stored);
+    return this.lifecycleCopy(stored);
   }
 
   revisionForHead(prId: string, headSha: string): PrRevision | undefined {
-    return this.db.prRevisions.find((row) => row.prId === prId && row.headSha === headSha);
+    const found = this.db.prRevisions.find((row) => row.prId === prId && row.headSha === headSha);
+    return found ? this.lifecycleCopy(found) : undefined;
+  }
+
+  replacePrRevision(revision: PrRevision): PrRevision {
+    const index = this.db.prRevisions.findIndex((row) => row.id === revision.id);
+    if (index < 0) throw new Error(`No such PR revision: ${revision.id}`);
+    const stored = PrRevisionSchema.parse(structuredClone(revision));
+    (this.db.prRevisions as DB['prRevisions'])[index] = stored;
+    return this.lifecycleCopy(stored);
+  }
+
+  private lifecycleCopy<T>(value: T): T {
+    const copy = structuredClone(value);
+    const freeze = (item: unknown): void => {
+      if (!item || typeof item !== 'object' || Object.isFrozen(item)) return;
+      for (const nested of Object.values(item)) freeze(nested);
+      Object.freeze(item);
+    };
+    freeze(copy);
+    return copy;
   }
 
   addRevisionGateSnapshot(snapshot: RevisionGateSnapshot): RevisionGateSnapshot {
-    this.db.revisionGateSnapshots.push(snapshot);
-    return snapshot;
+    const stored = RevisionGateSnapshotSchema.parse(structuredClone(snapshot));
+    this.db.revisionGateSnapshots.push(stored);
+    return this.lifecycleCopy(stored);
   }
 
   // --- spec states (M20 signing) -------------------------------------------

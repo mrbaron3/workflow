@@ -3,11 +3,26 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
-import { EvalRun, IntakeRecord, Issue, PR, type Finding } from '../src/domain/schema.js';
+import {
+  EvalRun,
+  IntakeRecord,
+  Issue,
+  PR,
+  PrRevision,
+  RevisionGateSnapshot,
+  transitionPrRevision,
+  type Finding,
+} from '../src/domain/schema.js';
+import { WebhookDelivery } from '../src/webhook/schema.js';
 import {
   autoMergeCurrentRevision,
   evaluateRevisionGate,
+  GhPrListResponse,
+  GhPrViewResponse,
+  MAX_REVIEW_THREAD_BODY_CHARS,
+  MAX_REVIEW_THREAD_REASON_BODY_CHARS,
   observePrRevision,
+  parseBlockingReviewThreads,
   reconcileSplitSourceClosures,
   type GithubPrRevisionState,
   type PrNativeGithubRunner,
@@ -69,6 +84,8 @@ function setup(): { store: Store; pr: PR } {
     branch: 'agent/issue-0001-s0',
     generator: 'codex',
     status: 'approved',
+    currentRevisionId: 'PRREV-INITIAL',
+    headSha: SHA_A,
     externalRef: {
       provider: 'github',
       number: 8,
@@ -127,21 +144,125 @@ afterEach(() => {
   while (roots.length > 0) fs.rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
+describe('ISSUE-0024/PR-INTENT durable lifecycle invariants', () => {
+  it('rejects approved gate evidence that still contains blockers or pending reasons', () => {
+    const base = {
+      id: 'PRGATE-0001',
+      prId: 'PR-0001',
+      revisionId: 'PRREV-0001',
+      headSha: SHA_A,
+      mergeability: 'mergeable',
+      decision: 'approved',
+      createdAt: nowISO(),
+    };
+    expect(() => RevisionGateSnapshot.parse({
+      ...base,
+      blockingReasons: ['blocker survived'],
+    })).toThrow();
+    expect(() => RevisionGateSnapshot.parse({
+      ...base,
+      pendingReasons: ['check pending'],
+    })).toThrow();
+  });
+
+  it('rejects malformed gh JSON instead of coercing it to a merge-eligible PR', () => {
+    expect(() => GhPrViewResponse.parse({
+      id: 'PR_node',
+      state: 'SOMETHING_NEW',
+      headRefOid: SHA_A,
+      mergeable: 'MERGEABLE',
+      statusCheckRollup: [],
+    })).toThrow();
+    expect(() => GhPrListResponse.parse([{
+      number: 9,
+      url: 'https://github.com/acme/theme/pull/9',
+      title: 'change',
+      body: '',
+      headRefName: 'feature',
+      headRefOid: 'not-a-sha',
+      baseRefName: 'main',
+      isDraft: false,
+    }])).toThrow();
+    expect(() => GhPrViewResponse.parse({
+      id: 'PR_node',
+      state: 'OPEN',
+      isDraft: false,
+      headRefOid: SHA_A,
+      mergeable: 'MERGEABLE',
+      statusCheckRollup: [{ name: '', status: 'COMPLETED' }],
+    })).toThrow();
+  });
+
+  it('rejects lifecycle states missing completion evidence or carrying forbidden metadata', () => {
+    expect(() => PrRevision.parse({
+      id: 'PRREV-0001', prId: 'PR-0001', headSha: SHA_A, ordinal: 1,
+      status: 'merged', createdAt: nowISO(),
+    })).toThrow();
+    expect(() => WebhookDelivery.parse({
+      id: 'WHDEL-0001', deliveryKey: 'd', repository: 'acme/theme',
+      event: 'push', headers: {}, payload: {}, status: 'processed', attempts: 1,
+      ignoredReason: 'not applicable', receivedAt: nowISO(), updatedAt: nowISO(),
+    })).toThrow();
+  });
+});
+
 describe('PR revision identity and automatic current-head gate', () => {
-  it('invalidates an approved revision as soon as a new head is observed', () => {
+  it('PR-INTENT classifies unresolved blocking GraphQL threads and pagination safely', () => {
+    const longBody = `[P0] ${'x'.repeat(MAX_REVIEW_THREAD_BODY_CHARS + 10)}`;
+    const threads = parseBlockingReviewThreads({
+      data: { node: { reviewThreads: {
+        pageInfo: { hasNextPage: true },
+        nodes: [
+          { id: 'resolved', isResolved: true, path: null, line: null, comments: { pageInfo: { hasNextPage: false }, nodes: [{ body: '[P1] old' }] } },
+          { id: 'p0', isResolved: false, path: null, line: null, comments: { pageInfo: { hasNextPage: false }, nodes: [{ body: longBody }] } },
+          { id: 'blocker', isResolved: false, path: null, line: null, comments: { pageInfo: { hasNextPage: false }, nodes: [{ body: 'blocker: unsafe' }] } },
+          { id: 'request', isResolved: false, path: null, line: null, comments: { pageInfo: { hasNextPage: false }, nodes: [{ body: 'request_changes' }] } },
+          {
+            id: 'overflow',
+            isResolved: false,
+            path: null,
+            line: null,
+            comments: { pageInfo: { hasNextPage: true }, nodes: [] },
+          },
+        ],
+      } } },
+    });
+
+    expect(MAX_REVIEW_THREAD_REASON_BODY_CHARS).toBe(500);
+    expect(MAX_REVIEW_THREAD_BODY_CHARS).toBe(8_000);
+    expect(threads.map((thread) => thread.id)).toEqual([
+      'p0', 'blocker', 'request', 'overflow', 'review-threads:pagination-incomplete',
+    ]);
+    expect(threads[0]!.body).toHaveLength(MAX_REVIEW_THREAD_BODY_CHARS);
+    expect(threads[3]!.body).toContain('exceeded the inspected page');
+  });
+  it('AC-PRREV-001 reuses the durable revision for the same PR and head SHA', () => {
+    const { store, pr } = setup();
+
+    const first = observePrRevision(store, pr, SHA_A);
+    const second = observePrRevision(store, pr, SHA_A);
+
+    expect(second.id).toBe(first.id);
+    expect(store.db.prRevisions.filter((row) => row.prId === pr.id && row.headSha === SHA_A)).toHaveLength(1);
+  });
+
+  it('AC-PRREV-002 invalidates an approved revision as soon as a new head is observed', () => {
     const { store, pr } = setup();
     const oldRevision = observePrRevision(store, pr, SHA_A);
-    oldRevision.status = 'approved';
+    const reviewingOld = store.replacePrRevision(transitionPrRevision(oldRevision, {
+      status: 'reviewing',
+    }));
+    store.replacePrRevision(transitionPrRevision(reviewingOld, { status: 'approved' }));
 
     const current = observePrRevision(store, pr, SHA_B);
 
-    expect(oldRevision.status).toBe('stale');
-    expect(oldRevision.completedAt).not.toBeNull();
+    expect(store.revisionForHead(pr.id, SHA_A)?.status).toBe('stale');
+    expect(store.revisionForHead(pr.id, SHA_A)?.completedAt).not.toBeNull();
     expect(current).toMatchObject({ headSha: SHA_B, ordinal: 2, status: 'pending' });
-    expect(pr).toMatchObject({ currentRevisionId: current.id, headSha: SHA_B });
+    expect(store.getPR(pr.id)).toMatchObject({ currentRevisionId: current.id, headSha: SHA_B });
   });
 
-  it('requires every perspective to approve the same revision and current SHA', () => {
+  it('AC-PRREV-003 requires every perspective to approve the same revision and current SHA', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     addReview(store, pr, revision.id, SHA_A, 'functionality');
@@ -161,7 +282,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(snapshot.reasons).toContain('missing review: security');
   });
 
-  it('blocks an approved review that still contains a P1-equivalent major finding', () => {
+  it('AC-PRLOOP-002 blocks an approved review that still contains a P1-equivalent major finding', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -198,7 +319,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     );
   });
 
-  it('blocks unresolved GitHub P1 threads even when all internal reviews approve', () => {
+  it('AC-PRLOOP-004 AC-PRAUTO-001 blocks unresolved GitHub P1 threads even when all internal reviews approve', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -219,7 +340,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(snapshot.reasons).toContain('unresolved blocking review thread: PRRT-P1');
   });
 
-  it('merges with the expected current SHA only after all revision gates pass', () => {
+  it('AC-PRAUTO-002 AC-PRAUTO-003 merges with the expected current SHA only after all revision gates pass', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -258,7 +379,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(result).toMatchObject({ decision: 'merged', merged: true, headSha: SHA_A });
     expect(merges).toEqual([{ number: 8, sha: SHA_A }]);
     expect(gateWasDurableBeforeMerge).toBe(true);
-    expect(pr).toMatchObject({
+    expect(store.getPR(pr.id)).toMatchObject({
       status: 'merged',
       headSha: SHA_A,
       mergedHeadSha: SHA_A,
@@ -266,7 +387,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.getIssue(pr.issueId)?.status).toBe('released');
   });
 
-  it('does not merge while a required check is pending', () => {
+  it('AC-PRAUTO-001 does not merge while a required check is pending', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -296,6 +417,83 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(result.reasons).toContain('required check pending: test');
     expect(merges).toBe(0);
     expect(store.getIssue(pr.issueId)?.status).toBe('needs-human-review');
+  });
+
+  it('AC-PRAUTO-001 rejects a conflicting current head with a merge-conflicts reason', () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) addReview(store, pr, revision.id, SHA_A, perspective);
+
+    const snapshot = evaluateRevisionGate(store, {
+      pr,
+      revision,
+      requiredPerspectives: PERSPECTIVES,
+      github: { ...greenGithub(), mergeability: 'conflicting' },
+    });
+
+    expect(snapshot.decision).toBe('changes-requested');
+    expect(snapshot.reasons).toContain('pull request has merge conflicts');
+  });
+
+  it('AC-PRAUTO-001 keeps unknown mergeability pending', () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) addReview(store, pr, revision.id, SHA_A, perspective);
+
+    const snapshot = evaluateRevisionGate(store, {
+      pr,
+      revision,
+      requiredPerspectives: PERSPECTIVES,
+      github: { ...greenGithub(), mergeability: 'unknown' },
+    });
+
+    expect(snapshot.decision).toBe('pending');
+    expect(snapshot.reasons).toContain('mergeability is unknown');
+  });
+
+  it('PR-INTENT re-evaluates an unchanged changes-requested head when external gate facts recover', () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) addReview(store, pr, revision.id, SHA_A, perspective);
+    store.replacePrRevision(transitionPrRevision(revision, {
+      status: 'reviewing',
+    }));
+    const rejected = evaluateRevisionGate(store, {
+      pr,
+      revision,
+      requiredPerspectives: PERSPECTIVES,
+      github: { ...greenGithub(), mergeability: 'conflicting' },
+    });
+    store.addRevisionGateSnapshot(rejected);
+    store.replacePrRevision(transitionPrRevision(
+      store.revisionForHead(pr.id, SHA_A)!,
+      { status: 'changes-requested' },
+    ));
+    let views = 0;
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => {
+        views += 1;
+        return views === 1 ? greenGithub() : { ...greenGithub(), state: 'merged' };
+      },
+      resolveReviewThread: () => {},
+      merge: () => {},
+      closeIssue: () => {},
+    };
+
+    const result = autoMergeCurrentRevision(
+      store,
+      CONFIG,
+      store.getPR(pr.id)!,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+    );
+
+    expect(result).toMatchObject({ decision: 'merged', merged: true });
+    expect(store.revisionForHead(pr.id, SHA_A)).toMatchObject({
+      status: 'merged',
+      completedAt: expect.any(String),
+    });
   });
 
   it('AC-PRLOOP-006 reviews a draft current head but keeps automatic merge pending until it is ready', () => {
@@ -341,9 +539,9 @@ describe('PR revision identity and automatic current-head gate', () => {
 
     expect(merges).toBe(1);
     expect(result).toMatchObject({ decision: 'pending', merged: false });
-    expect(pr.status).toBe('approved');
-    expect(revision.status).toBe('approved');
-    expect(revision.mergeRequestedAt).not.toBeNull();
+    expect(store.getPR(pr.id)?.status).toBe('approved');
+    expect(store.revisionForHead(pr.id, SHA_A)?.status).toBe('approved');
+    expect(store.revisionForHead(pr.id, SHA_A)?.mergeRequestedAt).not.toBeNull();
     expect(store.getIssue(pr.issueId)?.status).toBe('needs-human-review');
     expect(store.db.revisionGateSnapshots).toHaveLength(1);
 
@@ -385,12 +583,12 @@ describe('PR revision identity and automatic current-head gate', () => {
       decision: 'unverified-merge',
       merged: false,
     });
-    expect(pr.status).toBe('merged');
+    expect(store.getPR(pr.id)?.status).not.toBe('merged');
     expect(store.getIssue(pr.issueId)?.status).toBe('needs-human-review');
     expect(store.db.prRevisions[0]?.status).toBe('failed');
   });
 
-  it('resolves prior P1 threads only after a repaired head passes fresh internal reviews', () => {
+  it('PR-INTENT keeps prior P1 threads blocking until an external reviewer resolves them', () => {
     const { store, pr } = setup();
     const oldRevision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -412,34 +610,31 @@ describe('PR revision identity and automatic current-head gate', () => {
       },
     });
     store.addRevisionGateSnapshot(rejected);
-    oldRevision.status = 'changes-requested';
+    const reviewingOld = store.replacePrRevision(transitionPrRevision(oldRevision, {
+      status: 'reviewing',
+    }));
+    store.replacePrRevision(transitionPrRevision(reviewingOld, {
+      status: 'changes-requested',
+    }));
 
     const repaired = observePrRevision(store, pr, SHA_B);
     for (const perspective of PERSPECTIVES) {
       addReview(store, pr, repaired.id, SHA_B, perspective);
     }
-    let views = 0;
     const resolved: string[] = [];
     const runner: PrNativeGithubRunner = {
-      viewRevision: () => {
-        views += 1;
-        return views === 1
-          ? {
-              ...greenGithub(SHA_B),
-              unresolvedBlockingThreadIds: ['PRRT-P1'],
-              blockingReviewThreads: [{
-                id: 'PRRT-P1',
-                body: '[P1] enforce authorization',
-                path: 'src/auth.ts',
-                line: 42,
-              }],
-            }
-          : views === 2
-            ? greenGithub(SHA_B)
-            : { ...greenGithub(SHA_B), state: 'merged' };
-      },
+      viewRevision: () => ({
+        ...greenGithub(SHA_B),
+        unresolvedBlockingThreadIds: ['PRRT-P1'],
+        blockingReviewThreads: [{
+          id: 'PRRT-P1',
+          body: '[P1] enforce authorization',
+          path: 'src/auth.ts',
+          line: 42,
+        }],
+      }),
       resolveReviewThread: (_cwd, threadId) => { resolved.push(threadId); },
-      merge: () => {},
+      merge: () => { throw new Error('an unresolved P1 must block merge'); },
       closeIssue: () => {},
     };
 
@@ -452,12 +647,12 @@ describe('PR revision identity and automatic current-head gate', () => {
       PERSPECTIVES,
     );
 
-    expect(resolved).toEqual(['PRRT-P1']);
-    expect(views).toBe(3);
-    expect(result.merged).toBe(true);
+    expect(resolved).toEqual([]);
+    expect(result).toMatchObject({ decision: 'changes-requested', merged: false });
+    expect(result.reasons.join('\n')).toContain('unresolved blocking review thread: PRRT-P1');
   });
 
-  it('closes a split Source Issue only after every child is released and records the result', () => {
+  it('AC-PRAUTO-004 closes a split Source Issue only after every child is released and records the result', () => {
     const { store } = setup();
     store.addIssue(Issue.parse({
       id: 'ISSUE-0002',

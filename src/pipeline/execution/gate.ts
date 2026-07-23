@@ -1,6 +1,7 @@
 /**
- * The GitHub PR gate backend (ADR-0006 G1-G3): the seam that turns a human's merge/close of a
- * projected PR into the deterministic recordHumanDecision the review gate already consumes.
+ * GitHub PR projection seams. projectReviewRevision is the production PR-native
+ * path: it binds every review cycle to a pushed head SHA. openGate/pollGate are
+ * retained for the legacy human-gate workflow and its compatibility tests.
  *
  * Same shape as the other execution seams — a non-deterministic producer feeding a deterministic
  * sink (ARCH-execution-011). The store is SoT (ADR-0001 / ARCH-execution-009); a GitHub PR is only
@@ -13,15 +14,15 @@
  * unit-testable with a fake runner (no network); only the real runner shells out (grounded only).
  */
 
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { PR, EvalRun } from '../../domain/schema.js';
-import { PrExternalRef } from '../../domain/schema.js';
+import { PrExternalRef, transitionPR, updatePR } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { Store, nowISO } from '../../store/store.js';
 import { recordHumanDecision, type HumanDecision } from './loop.js';
+import { runCommand as run } from './command.js';
 import { observePrRevision } from './pr-native.js';
 
 /** A GitHub PR's lifecycle state, normalised from `gh pr view --json state`. */
@@ -80,11 +81,13 @@ export function projectReviewRevision(
   runner: GhGateRunner,
   log: (m: string) => void = () => {},
 ) {
-  const revision = observePrRevision(store, input.pr, input.headSha);
+  let projectedPr = store.getPR(input.pr.id) ?? input.pr;
+  const revision = observePrRevision(store, projectedPr, input.headSha);
   if ((config.gate?.backend ?? 'store') !== 'github') return revision;
 
   runner.pushBranch(input.worktree, input.pr.branch);
-  if (!input.pr.externalRef) {
+  projectedPr = store.getPR(input.pr.id) ?? projectedPr;
+  if (!projectedPr.externalRef) {
     const base = config.gate?.baseBranch ?? config.baseBranch;
     const ref = PrExternalRef.parse(runner.createPr(input.worktree, {
       base,
@@ -92,15 +95,15 @@ export function projectReviewRevision(
       title: input.title,
       body: renderReviewPrBody(store, input.pr.issueId),
     }));
-    input.pr.externalRef = ref;
+    projectedPr = store.replacePR(updatePR(projectedPr, { externalRef: ref }));
     log(`  ⇪ ${input.pr.issueId}: opened review PR ${ref.url} @ ${input.headSha.slice(0, 12)}`);
   } else {
     log(
       `  ⇪ ${input.pr.issueId}: pushed repair revision `
-      + `${input.headSha.slice(0, 12)} to PR #${input.pr.externalRef.number}`,
+      + `${input.headSha.slice(0, 12)} to PR #${projectedPr.externalRef!.number}`,
     );
   }
-  input.pr.updatedAt = nowISO();
+  store.replacePR(updatePR(projectedPr, {}));
   store.save();
   return revision;
 }
@@ -119,14 +122,14 @@ export function openGate(
   log: (m: string) => void = () => {},
 ): PrExternalRef | null {
   if ((config.gate?.backend ?? 'store') !== 'github') return null; // store-direct gate: nothing to project
-  if (input.pr.externalRef) return input.pr.externalRef; // already projected (idempotent)
+  const currentPr = store.getPR(input.pr.id) ?? input.pr;
+  if (currentPr.externalRef) return currentPr.externalRef; // already projected (idempotent)
 
   const base = config.gate?.baseBranch ?? config.baseBranch;
   const body = renderGatePrBody(store, input.pr.issueId);
   runner.pushBranch(input.worktree, input.pr.branch);
   const ref = PrExternalRef.parse(runner.createPr(input.worktree, { base, head: input.pr.branch, title: input.title, body }));
-  input.pr.externalRef = ref;
-  input.pr.updatedAt = nowISO();
+  store.replacePR(updatePR(currentPr, { externalRef: ref }));
   store.save();
   log(`  ⇪ ${input.pr.issueId}: opened gate PR ${ref.url}`);
   return ref;
@@ -172,8 +175,20 @@ export function pollGate(
     }
 
     const rec = recordHumanDecision(store, issue.id, decision);
-    pr.status = decision === 'approve' ? 'merged' : 'changes-requested';
-    pr.updatedAt = nowISO();
+    if (decision === 'approve') {
+      // Legacy human-gate runners expose only state, not a SHA. Preserve the
+      // durable lifecycle invariant with an explicit legacy evidence identity;
+      // the PR-native path always records the real GitHub head SHA.
+      const legacyEvidence = `legacy-human-gate:${pr.externalRef.number}`;
+      store.replacePR(transitionPR(pr, {
+        status: 'merged',
+        currentRevisionId: pr.currentRevisionId ?? legacyEvidence,
+        headSha: pr.headSha ?? legacyEvidence,
+        mergedHeadSha: pr.headSha ?? legacyEvidence,
+      }));
+    } else {
+      store.replacePR(transitionPR(pr, { status: 'changes-requested' }));
+    }
     log(`  ⇩ ${issue.id}: PR #${pr.externalRef.number} ${state} → ${decision} → ${rec.status}`);
     results.push({ issueId: issue.id, prId: pr.id, state, decision, status: rec.status, changed: rec.changed });
   }
@@ -235,12 +250,6 @@ function latestAttemptRuns(runs: EvalRun[]): EvalRun[] {
 }
 
 // --- real backend (shells out; grounded only, never exercised in unit tests) ----------------
-
-function run(cmd: string, args: string[], cwd: string): string {
-  const res = spawnSync(cmd, args, { cwd, encoding: 'utf8' });
-  if (res.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed: ${res.stdout ?? ''}${res.stderr ?? ''}`);
-  return res.stdout ?? '';
-}
 
 /** The production GhGateRunner: real `git push` + `gh` against the target repo's remote. */
 export function realGhGateRunner(): GhGateRunner {

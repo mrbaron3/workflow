@@ -5,7 +5,16 @@
  * convention for self-hosted acceptance suites depends on this peeling.
  */
 import { describe, it, expect } from 'vitest';
-import { groundArtifact } from '../src/pipeline/execution/grade.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import net from 'node:net';
+import {
+  GRADER_MAX_BUFFER_BYTES,
+  GRADER_TIMEOUT_MS,
+  groundArtifact,
+  runGraderCommand,
+} from '../src/pipeline/execution/grade.js';
 import type { IssueContract } from '../src/domain/schema.js';
 
 const contract: IssueContract = {
@@ -31,6 +40,57 @@ function typecheckWith(command: string): boolean {
 }
 
 describe('grader command env prefixes (KEY=VAL …)', () => {
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT isolates a malicious head from operator credentials and network', async () => {
+    const operatorHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-operator-home-'));
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-head-'));
+    const sentinel = path.join(operatorHome, 'credential-sentinel');
+    fs.writeFileSync(sentinel, 'secret');
+    const listener = net.createServer((socket) => socket.end());
+    await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve));
+    const address = listener.address();
+    if (!address || typeof address === 'string') throw new Error('network fixture did not bind');
+    const result = runGraderCommand(
+      `node -e "const fs=require('fs');let read=false;try{read=fs.readFileSync('${sentinel}','utf8')==='secret'}catch{};const leaked=process.env.SSH_AUTH_SOCK||process.env.GITHUB_TOKEN||process.env.HOME==='${operatorHome}'||read;const socket=require('net').connect(${address.port},'127.0.0.1');socket.once('connect',()=>process.exit(1));socket.once('error',()=>process.exit(leaked?1:0));setTimeout(()=>process.exit(1),500)"`,
+      checkout,
+      { SSH_AUTH_SOCK: '/operator/agent.sock', GITHUB_TOKEN: 'secret' },
+      { isolated: true },
+    );
+    await new Promise<void>((resolve, reject) => {
+      listener.close((error) => error ? reject(error) : resolve());
+    });
+    fs.rmSync(operatorHome, { recursive: true, force: true });
+    fs.rmSync(checkout, { recursive: true, force: true });
+    if (
+      result.output.includes('sandbox_apply: Operation not permitted')
+      || result.output.includes('terminated by signal: SIGABRT')
+    ) {
+      // The outer CI sandbox forbids nesting sandbox-exec; production fails closed
+      // in that case instead of falling back to credential-bearing host execution.
+      expect(result.ok).toBe(false);
+    } else {
+      expect(result, result.output).toMatchObject({ ok: true });
+      expect(result.output).not.toContain('secret');
+    }
+  });
+
+  it('ISSUE-0024/PR-INTENT pins grader resource limits', () => {
+    expect(GRADER_TIMEOUT_MS).toBe(600_000);
+    expect(GRADER_MAX_BUFFER_BYTES).toBe(64 * 1024 * 1_024);
+  });
+  it.runIf(process.platform === 'darwin')('PR-INTENT permits only the configured external grader dependency tree', () => {
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-command-'));
+    const result = runGraderCommand(
+      `${path.resolve('node_modules/.bin/tsc')} --version`,
+      checkout,
+      {},
+      { isolated: true },
+    );
+    fs.rmSync(checkout, { recursive: true, force: true });
+    if (!result.output.includes('terminated by signal: SIGABRT')) {
+      expect(result, result.output).toMatchObject({ ok: true });
+      expect(result.output).toContain('Version');
+    }
+  });
   it('a leading KEY=VAL lands in the child process env', () => {
     expect(typecheckWith(`AGENTOPS_GATE=on node -e process.exit(process.env.AGENTOPS_GATE==='on'?0:1)`)).toBe(true);
   });

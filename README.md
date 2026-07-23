@@ -255,8 +255,17 @@ Webhook is the immediate trigger; the same daemon also runs polling reconciliati
 late, or out-of-order delivery cannot become the source of truth. Start the loopback control plane:
 
 ```bash
+export AGENTOPS_WEBHOOK_CONTROL_TOKEN='<random local bearer token>'
+export AGENTOPS_GITHUB_WEBHOOK_SECRET='<GitHub webhook secret>'
 npm run harness -- webhook-daemon --open
 ```
+
+Both credentials are mandatory and must be non-empty; the daemon refuses to listen if either is
+missing. With `--open`, the daemon opens a short-lived, single-use launch URL. It establishes an
+HttpOnly same-site browser session and immediately redirects to the clean GUI URL; subsequent GUI
+API calls authenticate through that session automatically. Scripts may instead send the control
+token as `Authorization: Bearer …`. The supervised `gh webhook forward` process receives the same
+webhook secret used by `/hook` to verify `X-Hub-Signature-256` before persistence.
 
 The GUI at `http://127.0.0.1:8377` adds/toggles repositories, selects allow-listed events and
 consumers, shows each forwarder state and recent durable deliveries, and retries failures.

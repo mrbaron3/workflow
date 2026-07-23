@@ -8,6 +8,11 @@ import {
   WebhookRepositoryRegistrationInput,
   WebhookRepositoryRegistrationPatch,
   emptyWebhookControlDB,
+  failWebhookDelivery,
+  ignoreWebhookDelivery,
+  processWebhookDelivery,
+  retryWebhookDelivery,
+  startWebhookDelivery,
   type WebhookControlDB as WebhookControlDBType,
   type WebhookDelivery as WebhookDeliveryType,
   type WebhookReceipt,
@@ -19,6 +24,26 @@ export interface ReceiveWebhookDeliveryInput {
   event: string;
   headers: Record<string, string>;
   payload: Record<string, unknown>;
+}
+const DURABLE_HEADER_ALLOWLIST = new Set([
+  'content-type',
+  'user-agent',
+  'x-github-delivery',
+  'x-github-event',
+  'x-github-hook-id',
+  'x-github-hook-installation-target-id',
+  'x-github-hook-installation-target-type',
+]);
+type MutableWebhookControlDB = Omit<WebhookControlDBType, 'deliveries'> & {
+  deliveries: WebhookDeliveryType[];
+};
+export function durableWebhookHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([name]) =>
+      DURABLE_HEADER_ALLOWLIST.has(name.toLowerCase())),
+  );
 }
 
 function nowISO(): string {
@@ -47,7 +72,7 @@ export class WebhookControlStore {
   readonly root: string;
   readonly dir: string;
   readonly file: string;
-  db: WebhookControlDBType;
+  private db: MutableWebhookControlDB;
 
   constructor(root: string = process.cwd()) {
     this.root = root;
@@ -56,26 +81,30 @@ export class WebhookControlStore {
     this.db = this.read();
   }
 
-  read(): WebhookControlDBType {
-    if (!fs.existsSync(this.file)) return emptyWebhookControlDB();
-    return WebhookControlDB.parse(JSON.parse(fs.readFileSync(this.file, 'utf8')));
+  private read(): MutableWebhookControlDB {
+    const parsed = fs.existsSync(this.file)
+      ? WebhookControlDB.parse(JSON.parse(fs.readFileSync(this.file, 'utf8')))
+      : emptyWebhookControlDB();
+    return { ...parsed, deliveries: [...parsed.deliveries] };
   }
 
-  reload(): WebhookControlDBType {
+  private reload(): MutableWebhookControlDB {
     this.db = this.read();
     return this.db;
   }
 
   save(): void {
-    fs.mkdirSync(this.dir, { recursive: true });
+    fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(this.dir, 0o700);
     const valid = WebhookControlDB.parse(this.db);
     const temp = path.join(
       this.dir,
       `.webhooks.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
     );
     try {
-      fs.writeFileSync(temp, JSON.stringify(valid, null, 2) + '\n', 'utf8');
+      fs.writeFileSync(temp, JSON.stringify(valid, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(temp, this.file);
+      fs.chmodSync(this.file, 0o600);
     } finally {
       if (fs.existsSync(temp)) fs.rmSync(temp, { force: true });
     }
@@ -89,13 +118,18 @@ export class WebhookControlStore {
   recoverInterruptedDeliveries(): number {
     this.reload();
     let recovered = 0;
-    for (const row of this.db.deliveries) {
-      if (row.status !== 'processing') continue;
-      row.status = 'pending';
-      row.lastError = 'delivery processing was interrupted; recovered on daemon start';
-      row.updatedAt = nowISO();
+    this.db.deliveries = this.db.deliveries.map((row) => {
+      if (row.status !== 'processing') return row;
       recovered += 1;
-    }
+      return {
+        ...row,
+        status: 'pending',
+        registrationId: null,
+        lastError: null,
+        ignoredReason: null,
+        updatedAt: nowISO(),
+      };
+    });
     if (recovered > 0) this.save();
     return recovered;
   }
@@ -160,10 +194,11 @@ export class WebhookControlStore {
       repository,
       event,
       action: actionFrom(input.payload),
-      headers: input.headers,
+      headers: durableWebhookHeaders(input.headers),
       payload: input.payload,
       receivedAt: timestamp,
       updatedAt: timestamp,
+      status: 'pending',
     });
     this.db.deliveries.push(delivery);
     this.save();
@@ -177,63 +212,54 @@ export class WebhookControlStore {
 
   startDelivery(id: string, registrationId: string): WebhookDeliveryType | null {
     this.reload();
-    const row = this.db.deliveries.find((candidate) => candidate.id === id);
+    const index = this.db.deliveries.findIndex((candidate) => candidate.id === id);
+    const row = this.db.deliveries[index];
     if (!row) throw new Error(`no such webhook delivery: ${id}`);
     if (row.status !== 'pending') return null;
-    row.status = 'processing';
-    row.registrationId = registrationId;
-    row.attempts += 1;
-    row.lastError = null;
-    row.ignoredReason = null;
-    row.updatedAt = nowISO();
+    const next = startWebhookDelivery(row, registrationId, nowISO());
+    this.db.deliveries[index] = next;
     this.save();
-    return WebhookDelivery.parse(row);
+    return next;
   }
 
   markProcessed(id: string): WebhookDeliveryType {
-    return this.updateDelivery(id, {
-      status: 'processed',
-      lastError: null,
-      ignoredReason: null,
-    });
+    return this.transitionDelivery(id, 'processing', (row) => processWebhookDelivery(row, nowISO()));
   }
 
   markIgnored(id: string, reason: string): WebhookDeliveryType {
-    return this.updateDelivery(id, {
-      status: 'ignored',
-      ignoredReason: reason,
-      lastError: null,
-    });
+    return this.transitionDelivery(id, 'pending', (row) => ignoreWebhookDelivery(row, reason, nowISO()));
   }
 
   markFailed(id: string, error: string): WebhookDeliveryType {
-    return this.updateDelivery(id, {
-      status: 'failed',
-      lastError: error,
-      ignoredReason: null,
-    });
+    return this.transitionDelivery(id, 'processing', (row) => failWebhookDelivery(row, error, nowISO()));
   }
 
   retryDelivery(id: string): WebhookDeliveryType {
     this.reload();
-    const row = this.db.deliveries.find((candidate) => candidate.id === id);
+    const index = this.db.deliveries.findIndex((candidate) => candidate.id === id);
+    const row = this.db.deliveries[index];
     if (!row) throw new Error(`no such webhook delivery: ${id}`);
     if (row.status !== 'failed') throw new Error(`only failed deliveries can be retried: ${id}`);
-    row.status = 'pending';
-    row.lastError = null;
-    row.ignoredReason = null;
-    row.updatedAt = nowISO();
+    const next = retryWebhookDelivery(row, nowISO());
+    this.db.deliveries[index] = next;
     this.save();
-    return WebhookDelivery.parse(row);
+    return next;
   }
 
-  private updateDelivery(id: string, patch: Partial<WebhookDeliveryType>): WebhookDeliveryType {
+  private transitionDelivery<S extends WebhookDeliveryType['status']>(
+    id: string,
+    expected: S,
+    transition: (row: Extract<WebhookDeliveryType, { status: S }>) => WebhookDeliveryType,
+  ): WebhookDeliveryType {
     this.reload();
-    const row = this.db.deliveries.find((candidate) => candidate.id === id);
+    const index = this.db.deliveries.findIndex((candidate) => candidate.id === id);
+    const row = this.db.deliveries[index];
     if (!row) throw new Error(`no such webhook delivery: ${id}`);
-    Object.assign(row, patch, { updatedAt: nowISO() });
-    const valid = WebhookDelivery.parse(row);
-    Object.assign(row, valid);
+    if (row.status !== expected) {
+      throw new Error(`delivery ${id} must be ${expected}, not ${row.status}`);
+    }
+    const valid = transition(row as Extract<WebhookDeliveryType, { status: S }>);
+    this.db.deliveries[index] = valid;
     this.save();
     return valid;
   }

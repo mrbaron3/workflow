@@ -1,7 +1,4 @@
-import {
-  NormalizedGithubEvent,
-  type NormalizedGithubEvent as NormalizedGithubEventType,
-} from './schema.js';
+import { ReconciliationEvent } from './schema.js';
 import type { WebhookConsumerHandler } from './router.js';
 import { WebhookControlStore } from './store.js';
 
@@ -40,15 +37,9 @@ export class WebhookReconciliationScheduler {
       (row) => row.enabled && row.consumers.includes('agentops'),
     );
     await Promise.all(registrations.map(async (registration) => {
-      const event: NormalizedGithubEventType = NormalizedGithubEvent.parse({
-        deliveryId: `reconcile:${registration.id}`,
-        deliveryKey: `reconcile:${registration.id}:${Date.now()}`,
+      const event = ReconciliationEvent.parse({
         registrationId: registration.id,
         repository: registration.repository,
-        event: 'issues',
-        action: 'reconcile',
-        payload: { repository: { full_name: registration.repository } },
-        receivedAt: new Date().toISOString(),
         source: 'reconciliation',
       });
       try {

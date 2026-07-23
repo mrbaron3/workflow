@@ -14,7 +14,15 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store, nowISO } from '../src/store/store.js';
-import { Issue, PR, Finding, type EvalRun } from '../src/domain/schema.js';
+import {
+  EvalRun as EvalRunSchema,
+  Issue,
+  PR,
+  Finding,
+  transitionPR,
+  updatePR,
+  type EvalRun,
+} from '../src/domain/schema.js';
 import { DEFAULT_CONFIG, type HarnessConfig, type TargetRepoConfig } from '../src/config.js';
 import { runBoundedRepairLoop, type AttemptOutcome } from '../src/pipeline/execution/loop.js';
 import {
@@ -24,6 +32,7 @@ import {
 } from '../src/pipeline/execution/session.js';
 import type { PanelResult } from '../src/pipeline/panel.js';
 import type { RepairBrief } from '../src/domain/artifact.js';
+import { revisionGateRepairBrief } from '../src/pipeline/execution/live.js';
 
 const CONFIG: HarnessConfig = { ...DEFAULT_CONFIG, generator: 'mock', samples: 1, maxRepairs: 2 }; // 3 attempts max
 
@@ -102,12 +111,55 @@ describe('buildGeneratorPrompt: a repair attempt carries the reviewers required 
     const empty: RepairBrief = { fromEvalRunId: '', findings: [], instructions: [] };
     expect(buildGeneratorPrompt(genInput(empty, 2), target)).not.toContain('## Repair');
   });
+
+  it('PR-INTENT resumes from the current revision detailed review findings before gate summaries', () => {
+    const store = tmpStore('current-review-brief');
+    addIssue(store, 'ISSUE-1');
+    const created = addPR(store, 'ISSUE-1');
+    const headSha = 'a'.repeat(40);
+    const pr = store.replacePR(transitionPR(created, {
+      status: 'changes-requested',
+      currentRevisionId: 'PRREV-1',
+      headSha,
+    }));
+    store.addEvalRun(EvalRunSchema.parse({
+      id: 'EVAL-SECURITY',
+      issueId: 'ISSUE-1',
+      prId: pr.id,
+      revisionId: 'PRREV-1',
+      headSha,
+      attempt: 4,
+      sampleIndex: 0,
+      agent: 'codex',
+      perspective: 'security',
+      verdict: 'request_changes',
+      findings: [Finding.parse({
+        criterionId: 'PR-INTENT',
+        severity: 'blocker',
+        expected: 'no credential access',
+        observed: 'reviewer can run host commands',
+        requiredFix: ['disable reviewer tools'],
+      })],
+      scores: { functionality: 0, codeQuality: 0, testQuality: 0, ux: 0, accessibility: 0 },
+      overall: 0,
+      cost: {},
+      createdAt: nowISO(),
+    }));
+
+    const brief = revisionGateRepairBrief(store, pr);
+
+    expect(brief?.fromEvalRunId).toBe('EVAL-SECURITY');
+    expect(brief?.instructions).toEqual([
+      '[security:PR-INTENT] disable reviewer tools',
+    ]);
+    expect(brief?.findings[0]?.observed).toContain('host commands');
+  });
 });
 
 // --- seam 2: the shared loop threads briefs and escalates a stuck generator -----------------
 
 describe('runBoundedRepairLoop: threads the repair brief across attempts', () => {
-  it('the second attempt receives a brief derived from the first attempt findings, then converges', async () => {
+  it('AC-PRLOOP-003 the second attempt receives a brief derived from the first attempt findings, then converges', async () => {
     const store = tmpStore('live-thread');
     const issue = addIssue(store, 'ISSUE-1');
     store.setStatus('ISSUE-1', 'ready-for-generation');
@@ -131,7 +183,7 @@ describe('runBoundedRepairLoop: threads the repair brief across attempts', () =>
     expect(res.escalated).toBe(false);
   });
 
-  it('resumes an existing PR at a fresh attempt with an external gate repair brief', async () => {
+  it('AC-PRLOOP-003 resumes an existing PR at a fresh attempt with an external gate repair brief', async () => {
     const store = tmpStore('live-resume');
     addIssue(store, 'ISSUE-1');
     store.setStatus('ISSUE-1', 'ready-for-generation');
@@ -139,8 +191,8 @@ describe('runBoundedRepairLoop: threads the repair brief across attempts', () =>
     store.setStatus('ISSUE-1', 'ready-for-evaluation');
     store.setStatus('ISSUE-1', 'evaluation-in-progress');
     store.setStatus('ISSUE-1', 'changes-requested');
-    const pr = addPR(store, 'ISSUE-1');
-    pr.attempts = 2;
+    const seededPr = addPR(store, 'ISSUE-1');
+    const pr = store.replacePR(updatePR(seededPr, { attempts: 2 }));
     store.setStatus('ISSUE-1', 'generation-in-progress');
     const initial: RepairBrief = {
       fromEvalRunId: 'revision-gate:PRGATE-1',
@@ -198,7 +250,7 @@ describe('runBoundedRepairLoop: a stuck generator escalates without a silent gra
     expect(res.attempts).toBe(1);
     expect(res.status).toBe('needs-human-review');
     expect(res.verdict).toBe('needs_human'); // no panel ran — needs a human, never a silent pass
-    expect(pr.status).toBe('changes-requested');
+    expect(store.getPR(pr.id)?.status).toBe('changes-requested');
   });
 });
 
@@ -216,7 +268,7 @@ describe('runBoundedRepairLoop: manageIssueStatus=false leaves the issue status 
       { manageIssueStatus: false });
 
     expect(res.verdict).toBe('approve');
-    expect(pr.status).toBe('approved'); // PR status still set (per-PR, not per-issue)
+    expect(pr.status).toBe('open'); // no revision/head exists to support an approved PR variant
     expect(store.getIssue('ISSUE-1')!.status).toBe(before); // issue status untouched — caller owns it
     expect(store.getIssue('ISSUE-1')!.status).not.toBe('needs-human-review');
   });

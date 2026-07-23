@@ -105,7 +105,7 @@ export async function runGithubDevelopmentTurn(
     );
     for (const result of results) {
       log(
-        `⇩ reconciled ${result.prId}@${result.headSha.slice(0, 12)} → ${result.decision}`
+        `⇩ reconciled ${result.prId}@${result.headSha?.slice(0, 12) ?? 'unobserved'} → ${result.decision}`
         + (result.reasons.length ? ` (${result.reasons.join('; ')})` : ''),
       );
     }

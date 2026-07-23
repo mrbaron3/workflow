@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store, nowISO } from '../src/store/store.js';
-import { Issue, PR, EvalRun, IntakeRecord } from '../src/domain/schema.js';
+import { Issue, PR, EvalRun, IntakeRecord, transitionPrRevision } from '../src/domain/schema.js';
 import type { IssueStatus } from '../src/domain/states.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import {
@@ -47,6 +47,7 @@ function seedGatedIssue(store: Store, id: string, prNumber: number | null): PR {
   for (const s of GATE_WALK) store.setStatus(id, s);
   const pr = store.addPR(PR.parse({
     id: store.nextId('PR'), issueId: id, branch: `agent/${id.toLowerCase()}-s0`, baseBranch: 'main', generator: 'mock', attempts: 1, status: 'approved',
+    currentRevisionId: `PRREV-${id}`, headSha: 'a'.repeat(40),
     externalRef: prNumber === null ? null : { provider: 'github', number: prNumber, url: `https://github.com/o/r/pull/${prNumber}` },
     createdAt: nowISO(), updatedAt: nowISO(),
   }));
@@ -107,8 +108,8 @@ describe('openGate: project an approved build to the gate UI', () => {
     expect(calls.push).toBe(1);
     expect(calls.create).toBe(1);
     expect(ref?.number).toBe(7);
-    expect(pr.externalRef?.number).toBe(7);
-    expect(pr.externalRef?.provider).toBe('github');
+    expect(store.getPR(pr.id)?.externalRef?.number).toBe(7);
+    expect(store.getPR(pr.id)?.externalRef?.provider).toBe('github');
   });
 
   it('is idempotent: a PR that already has an externalRef is not re-created', () => {
@@ -122,7 +123,7 @@ describe('openGate: project an approved build to the gate UI', () => {
 });
 
 describe('projectReviewRevision: PR exists before perspective review', () => {
-  it('creates the PR on the first head, then pushes repairs to the same PR', () => {
+  it('AC-PRLOOP-001 creates the PR on the first head, then pushes repairs to the same PR', () => {
     const store = tmpStore('review-revisions');
     const pr = seedGatedIssue(store, 'ISSUE-1', null);
     const pushes: string[] = [];
@@ -148,7 +149,10 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
       { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: firstSha },
       runner,
     );
-    first.status = 'approved';
+    const reviewingFirst = store.replacePrRevision(transitionPrRevision(first, {
+      status: 'reviewing',
+    }));
+    store.replacePrRevision(transitionPrRevision(reviewingFirst, { status: 'approved' }));
     const second = projectReviewRevision(
       store,
       GITHUB,
@@ -160,8 +164,8 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain('current-head');
     expect(bodies[0]).not.toContain('自動評価パネルはこのビルドを**承認**');
-    expect(pr.externalRef?.number).toBe(8);
-    expect(first.status).toBe('stale');
+    expect(store.getPR(pr.id)?.externalRef?.number).toBe(8);
+    expect(store.revisionForHead(pr.id, firstSha)?.status).toBe('stale');
     expect(second).toMatchObject({ headSha: secondSha, ordinal: 2 });
   });
 

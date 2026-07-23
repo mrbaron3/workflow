@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { loadConfig } from '../config.js';
-import type { NormalizedGithubEvent } from './schema.js';
+import type { NormalizedGithubEvent, WebhookConsumer, WebhookConsumerEvent } from './schema.js';
 import type { WebhookConsumerHandlers } from './router.js';
 import { WebhookControlStore } from './store.js';
 
@@ -12,18 +12,33 @@ export interface WebhookConsumerAdapterOptions {
   runProcess?: (
     executable: string,
     args: string[],
-    options: { cwd: string },
+    options: { cwd: string; env: NodeJS.ProcessEnv },
   ) => Promise<void>;
 }
 
-function productionProcessRunner(
+const CONSUMER_ENV_ALLOWLIST = new Set([
+  'LANG', 'LC_ALL', 'LC_CTYPE', 'NODE_EXTRA_CA_CERTS', 'PATH', 'SHELL',
+  'TMPDIR', 'TMP', 'TEMP', 'USER',
+]);
+
+export function sanitizedConsumerEnvironment(
+  source: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(source).filter(([name, value]) =>
+      CONSUMER_ENV_ALLOWLIST.has(name) && value !== undefined),
+  );
+}
+
+export function productionProcessRunner(
   executable: string,
   args: string[],
-  options: { cwd: string },
+  options: { cwd: string; env: NodeJS.ProcessEnv },
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, {
       cwd: options.cwd,
+      env: options.env,
       stdio: 'inherit',
     });
     child.once('error', reject);
@@ -47,7 +62,8 @@ function stringField(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function orcaSyncArgs(event: NormalizedGithubEvent): string[] | null {
+function orcaSyncArgs(event: WebhookConsumerEvent): string[] | null {
+  if (event.source === 'reconciliation') return null;
   if (event.event === 'pull_request' && event.action === 'closed') {
     const pr = object(event.payload.pull_request);
     if (!pr?.merged) return null;
@@ -71,10 +87,11 @@ function orcaSyncArgs(event: NormalizedGithubEvent): string[] | null {
 export function createWebhookConsumerAdapters(
   store: WebhookControlStore,
   options: WebhookConsumerAdapterOptions,
-): WebhookConsumerHandlers {
+): Record<WebhookConsumer, NonNullable<WebhookConsumerHandlers[WebhookConsumer]>> {
   const log = options.log ?? (() => {});
   const runProcess = options.runProcess ?? productionProcessRunner;
   const inFlightAgentOps = new Map<string, Promise<void>>();
+  const consumerEnv = sanitizedConsumerEnvironment();
 
   return {
     agentops: async (event) => {
@@ -92,8 +109,15 @@ export function createWebhookConsumerAdapters(
       const current = previous
         .catch(() => {})
         .then(async () => {
-          log(`agentops wake: ${event.repository} ${event.event}/${event.action ?? '-'}`);
-          await runProcess(process.execPath, [launcher, 'github-turn'], { cwd: workspaceRoot });
+          log(
+            event.source === 'reconciliation'
+              ? `agentops reconcile: ${event.repository}`
+              : `agentops wake: ${event.repository} ${event.event}/${event.action ?? '-'}`,
+          );
+          await runProcess(process.execPath, [launcher, 'github-turn'], {
+            cwd: workspaceRoot,
+            env: consumerEnv,
+          });
         });
       inFlightAgentOps.set(registration.id, current);
       try {
@@ -113,7 +137,10 @@ export function createWebhookConsumerAdapters(
         );
       }
       log(`orca sync: ${event.repository} ${args.join(' ')}`);
-      await runProcess(options.orcaSyncScript, args, { cwd: options.harnessRoot });
+      await runProcess(options.orcaSyncScript, args, {
+        cwd: options.harnessRoot,
+        env: consumerEnv,
+      });
     },
   };
 }

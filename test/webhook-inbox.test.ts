@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { NormalizedGithubEvent } from '../src/webhook/schema.js';
+import type { WebhookConsumerEvent } from '../src/webhook/schema.js';
 import { WebhookRouter } from '../src/webhook/router.js';
 import { WebhookControlStore } from '../src/webhook/store.js';
 
@@ -41,7 +41,7 @@ afterEach(() => {
 });
 
 describe('durable GitHub webhook inbox and router', () => {
-  it('AC-WHIN-001/006 persists before returning a receipt and does not mutate db.json', () => {
+  it('AC-WHIN-001 AC-WHIN-006 persists before returning a receipt and does not mutate db.json', () => {
     const root = tempRoot();
     const harnessDir = path.join(root, '.harness');
     fs.mkdirSync(harnessDir, { recursive: true });
@@ -60,6 +60,29 @@ describe('durable GitHub webhook inbox and router', () => {
     expect(fs.existsSync(store.file)).toBe(true);
     expect(new WebhookControlStore(root).getDelivery(receipt.deliveryId)?.payload).toEqual(payload());
     expect(fs.readFileSync(dbPath, 'utf8')).toBe('{"sentinel":true}\n');
+    expect(fs.statSync(store.file).mode & 0o777).toBe(0o600);
+  });
+
+  it('PR-INTENT persists only allowlisted, non-secret webhook headers', () => {
+    const store = new WebhookControlStore(tempRoot());
+    store.receiveDelivery({
+      deliveryKey: 'delivery-safe-headers',
+      event: 'pull_request',
+      headers: {
+        'x-github-delivery': 'delivery-safe-headers',
+        authorization: 'Bearer secret',
+        cookie: 'session=secret',
+        'proxy-authorization': 'Basic secret',
+        'x-hub-signature-256': 'sha256=secret',
+      },
+      payload: payload(),
+    });
+    // The ingress server supplies an allowlist; the durable store never needs credentials.
+    const persisted = store.snapshot().deliveries[0]!.headers;
+    expect(persisted).not.toHaveProperty('authorization');
+    expect(persisted).not.toHaveProperty('cookie');
+    expect(persisted).not.toHaveProperty('proxy-authorization');
+    expect(persisted).not.toHaveProperty('x-hub-signature-256');
   });
 
   it('AC-WHIN-001 surfaces persistence failures instead of returning an accepted receipt', () => {
@@ -78,7 +101,7 @@ describe('durable GitHub webhook inbox and router', () => {
   it('AC-WHIN-002 deduplicates a delivery key and invokes its consumer once', async () => {
     const store = new WebhookControlStore(tempRoot());
     register(store);
-    const calls: NormalizedGithubEvent[] = [];
+    const calls: WebhookConsumerEvent[] = [];
     const router = new WebhookRouter(store, {
       agentops: (event) => { calls.push(event); },
     });
@@ -142,7 +165,7 @@ describe('durable GitHub webhook inbox and router', () => {
       readyLabel: 'ready',
       baseBranch: 'main',
     });
-    const calls: Array<[string, NormalizedGithubEvent]> = [];
+    const calls: Array<[string, WebhookConsumerEvent]> = [];
     const router = new WebhookRouter(store, {
       agentops: (event) => { calls.push(['agentops', event]); },
       'orca-worktree-sync': (event) => { calls.push(['orca', event]); },
@@ -223,7 +246,8 @@ describe('durable GitHub webhook inbox and router', () => {
     expect(restarted.getDelivery(receipt.deliveryId)).toMatchObject({
       status: 'pending',
       attempts: 1,
-      lastError: 'delivery processing was interrupted; recovered on daemon start',
+      registrationId: null,
+      lastError: null,
     });
   });
 });

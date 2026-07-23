@@ -246,6 +246,8 @@ export type Feature = z.infer<typeof Feature>;
  */
 export const PrExternalRef = z.object({
   provider: z.literal('github'),
+  /** Repository-qualified identity; older persisted rows may omit it. */
+  repository: z.string().min(1).optional(),
   number: z.number().int().positive(), // the PR number in the target repo
   url: z.string(),
 });
@@ -343,7 +345,7 @@ export const PlanningEnrichmentRecord = z.object({
 });
 export type PlanningEnrichmentRecord = z.infer<typeof PlanningEnrichmentRecord>;
 
-export const PR = z.object({
+const PRCommon = z.object({
   id: z.string(), // PR-0001
   issueId: z.string(),
   branch: z.string(),
@@ -357,18 +359,123 @@ export const PR = z.object({
    */
   origin: z.enum(['issue-pipeline', 'repository-discovery']).default('issue-pipeline'),
   attempts: z.number().int().nonnegative().default(0), // generation attempts incl. repairs
-  status: z.enum(['open', 'changes-requested', 'approved', 'merged']).default('open'),
   // ADR-0006 G1: set when an approved build is projected to a GitHub PR gate. null = no
   // projection (store-direct gate / local sandbox). Additive — absent on older records.
   externalRef: PrExternalRef.nullable().default(null),
   // ADR-0009: the only revision whose evidence may currently qualify this PR for merge.
-  currentRevisionId: z.string().nullable().default(null),
-  headSha: z.string().nullable().default(null),
-  mergedHeadSha: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
-export type PR = z.infer<typeof PR>;
+const ActivePRFields = {
+  currentRevisionId: z.string().nullable().default(null),
+  headSha: z.string().nullable().default(null),
+  mergedHeadSha: z.null().default(null),
+};
+export const OpenPR = PRCommon.extend({
+  status: z.literal('open').default('open'),
+  ...ActivePRFields,
+});
+export const ChangesRequestedPR = PRCommon.extend({
+  status: z.literal('changes-requested'),
+  ...ActivePRFields,
+});
+export const ApprovedPR = PRCommon.extend({
+  status: z.literal('approved'),
+  currentRevisionId: z.string().min(1),
+  headSha: z.string().min(1),
+  mergedHeadSha: z.null().default(null),
+});
+export const ClosedPR = PRCommon.extend({
+  status: z.literal('closed'),
+  ...ActivePRFields,
+});
+const MergedPRRecord = PRCommon.extend({
+  status: z.literal('merged'),
+  currentRevisionId: z.string().min(1),
+  headSha: z.string().min(1),
+  mergedHeadSha: z.string().min(1),
+}).refine((pr) => pr.headSha === pr.mergedHeadSha, {
+  path: ['mergedHeadSha'],
+  message: 'mergedHeadSha must equal headSha',
+});
+export const MergedPR = MergedPRRecord.brand<'ValidatedMergedPR'>();
+export type MergedPR = z.infer<typeof MergedPR>;
+export function createMergedPR(input: z.input<typeof MergedPRRecord>): MergedPR {
+  return MergedPR.parse(input);
+}
+export const PR = z.union([OpenPR, ChangesRequestedPR, ApprovedPR, ClosedPR, MergedPR]);
+type DeepReadonly<T> =
+  T extends (...args: never[]) => unknown ? T :
+  T extends readonly (infer U)[] ? readonly DeepReadonly<U>[] :
+  T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } :
+  T;
+export type PR = DeepReadonly<z.infer<typeof PR>>;
+type PRPatch = Partial<Omit<z.infer<typeof PR>, 'status' | 'currentRevisionId' | 'headSha' | 'mergedHeadSha'>>;
+type OpenPRDestination =
+  PRPatch & { status: 'open'; currentRevisionId?: string | null; headSha?: string | null; mergedHeadSha?: null };
+type ChangesRequestedPRDestination =
+  PRPatch & { status: 'changes-requested'; currentRevisionId?: string | null; headSha?: string | null; mergedHeadSha?: null };
+type ApprovedPRDestination =
+  PRPatch & { status: 'approved'; currentRevisionId: string; headSha: string; mergedHeadSha?: null };
+type ClosedPRDestination =
+  PRPatch & { status: 'closed'; currentRevisionId?: string | null; headSha?: string | null; mergedHeadSha?: null };
+type MergedPRDestination =
+  PRPatch & { status: 'merged'; currentRevisionId: string; headSha: string; mergedHeadSha: string };
+export type PRTransitionDestination =
+  | OpenPRDestination
+  | ChangesRequestedPRDestination
+  | ApprovedPRDestination
+  | ClosedPRDestination
+  | MergedPRDestination;
+type PRTransitionFor<S extends PR['status']> =
+  S extends 'open'
+    ? OpenPRDestination | ChangesRequestedPRDestination | ApprovedPRDestination | ClosedPRDestination
+    : S extends 'changes-requested'
+      ? OpenPRDestination | ChangesRequestedPRDestination | ApprovedPRDestination | ClosedPRDestination
+      : S extends 'approved'
+        ? OpenPRDestination | ChangesRequestedPRDestination | ApprovedPRDestination | ClosedPRDestination | MergedPRDestination
+        : never;
+
+const PR_TRANSITIONS: Readonly<Record<PR['status'], readonly PR['status'][]>> = {
+  open: ['open', 'changes-requested', 'approved', 'closed'],
+  'changes-requested': ['open', 'changes-requested', 'approved', 'closed'],
+  approved: ['open', 'changes-requested', 'approved', 'closed', 'merged'],
+  closed: [],
+  merged: [],
+};
+
+function deepFreeze<T>(value: T): DeepReadonly<T> {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value)) deepFreeze(nested);
+    Object.freeze(value);
+  }
+  return value as DeepReadonly<T>;
+}
+
+export function transitionPR<
+  S extends PR['status'],
+  D extends PRTransitionFor<S>,
+>(
+  pr: Extract<PR, { status: S }>,
+  destination: D,
+): Extract<PR, { status: D['status'] }> {
+  if (!PR_TRANSITIONS[pr.status].includes(destination.status)) {
+    throw new Error(`invalid PR transition: ${pr.status} -> ${destination.status}`);
+  }
+  const normalized = destination.status === 'merged'
+    ? destination
+    : { mergedHeadSha: null, ...destination };
+  return deepFreeze(PR.parse({
+    ...pr,
+    ...normalized,
+    updatedAt: new Date().toISOString(),
+  })) as Extract<PR, { status: D['status'] }>;
+}
+
+/** Update non-variant metadata without changing the lifecycle discriminant. */
+export function updatePR(pr: PR, patch: PRPatch): PR {
+  return deepFreeze(PR.parse({ ...pr, ...patch, updatedAt: new Date().toISOString() }));
+}
 
 export const PrRevisionStatus = z.enum([
   'pending',
@@ -382,7 +489,7 @@ export const PrRevisionStatus = z.enum([
 export type PrRevisionStatus = z.infer<typeof PrRevisionStatus>;
 
 /** Durable identity for exactly one observed GitHub PR head (ADR-0009 / DATA-execution-010). */
-export const PrRevision = z.object({
+const PrRevisionRecord = z.object({
   id: z.string(),
   prId: z.string(),
   headSha: z.string().min(7),
@@ -392,7 +499,124 @@ export const PrRevision = z.object({
   createdAt: z.string(),
   completedAt: z.string().nullable().default(null),
 });
-export type PrRevision = z.infer<typeof PrRevision>;
+export const PrHeadSha = PrRevisionRecord.shape.headSha;
+const RevisionIdentity = PrRevisionRecord.omit({
+  status: true, mergeRequestedAt: true, completedAt: true,
+});
+const ActiveRevisionFields = {
+  mergeRequestedAt: z.null().default(null),
+  completedAt: z.null().default(null),
+};
+const PendingPrRevision = RevisionIdentity.extend({
+  status: z.literal('pending').default('pending'), ...ActiveRevisionFields,
+});
+const ReviewingPrRevision = RevisionIdentity.extend({
+  status: z.literal('reviewing'), ...ActiveRevisionFields,
+});
+const ApprovedPrRevision = RevisionIdentity.extend({
+  status: z.literal('approved'),
+  mergeRequestedAt: z.string().nullable().default(null),
+  completedAt: z.null().default(null),
+});
+const ChangesRequestedPrRevision = RevisionIdentity.extend({
+  status: z.literal('changes-requested'),
+  ...ActiveRevisionFields,
+});
+const terminalRevision = <S extends 'stale' | 'failed'>(status: S) =>
+  RevisionIdentity.extend({
+    status: z.literal(status),
+    mergeRequestedAt: z.null().default(null),
+    completedAt: z.string(),
+  });
+const MergedPrRevision = RevisionIdentity.extend({
+  status: z.literal('merged'),
+  mergeRequestedAt: z.string().nullable().default(null),
+  completedAt: z.string(),
+});
+export const PrRevision = z.discriminatedUnion('status', [
+  PendingPrRevision,
+  ReviewingPrRevision,
+  ChangesRequestedPrRevision,
+  ApprovedPrRevision,
+  MergedPrRevision,
+  terminalRevision('stale'),
+  terminalRevision('failed'),
+]);
+export type PrRevision = DeepReadonly<z.infer<typeof PrRevision>>;
+type RevisionPatch = Partial<Omit<z.infer<typeof PrRevision>, 'status' | 'mergeRequestedAt' | 'completedAt'>>;
+type ReviewingRevisionDestination =
+  RevisionPatch & { status: 'reviewing'; mergeRequestedAt?: null; completedAt?: null };
+type ChangesRequestedRevisionDestination =
+  RevisionPatch & { status: 'changes-requested'; mergeRequestedAt?: null; completedAt?: null };
+type ApprovedRevisionDestination =
+  RevisionPatch & { status: 'approved'; mergeRequestedAt?: string | null; completedAt?: null };
+type MergedRevisionDestination =
+  RevisionPatch & { status: 'merged'; mergeRequestedAt?: string | null; completedAt: string };
+type StaleRevisionDestination =
+  RevisionPatch & { status: 'stale'; mergeRequestedAt?: null; completedAt: string };
+type FailedRevisionDestination =
+  RevisionPatch & { status: 'failed'; mergeRequestedAt?: null; completedAt: string };
+export type PrRevisionTransitionDestination =
+  | ReviewingRevisionDestination
+  | ChangesRequestedRevisionDestination
+  | ApprovedRevisionDestination
+  | MergedRevisionDestination
+  | StaleRevisionDestination
+  | FailedRevisionDestination;
+type PrRevisionTransitionFor<S extends PrRevision['status']> =
+  S extends 'pending'
+    ? ReviewingRevisionDestination | StaleRevisionDestination | FailedRevisionDestination
+    : S extends 'reviewing' | 'changes-requested'
+      ? ReviewingRevisionDestination | ChangesRequestedRevisionDestination
+        | ApprovedRevisionDestination | StaleRevisionDestination | FailedRevisionDestination
+      : S extends 'approved'
+        ? ReviewingRevisionDestination | ChangesRequestedRevisionDestination
+          | ApprovedRevisionDestination | MergedRevisionDestination
+          | StaleRevisionDestination | FailedRevisionDestination
+        : never;
+
+const PR_REVISION_TRANSITIONS:
+Readonly<Record<PrRevision['status'], readonly PrRevision['status'][]>> = {
+  pending: ['reviewing', 'stale', 'failed'],
+  reviewing: ['reviewing', 'changes-requested', 'approved', 'stale', 'failed'],
+  'changes-requested': ['reviewing', 'changes-requested', 'approved', 'stale', 'failed'],
+  approved: ['reviewing', 'changes-requested', 'approved', 'merged', 'stale', 'failed'],
+  merged: [],
+  stale: [],
+  failed: [],
+};
+
+export function transitionPrRevision<
+  S extends PrRevision['status'],
+  D extends PrRevisionTransitionFor<S>,
+>(
+  revision: Extract<PrRevision, { status: S }>,
+  destination: D,
+): Extract<PrRevision, { status: D['status'] }> {
+  if (!PR_REVISION_TRANSITIONS[revision.status].includes(destination.status)) {
+    throw new Error(`invalid PR revision transition: ${revision.status} -> ${destination.status}`);
+  }
+  const normalized = destination.status === 'merged'
+    ? destination
+    : destination.status === 'approved'
+      ? { completedAt: null, ...destination }
+      : { mergeRequestedAt: null, completedAt: null, ...destination };
+  return deepFreeze(PrRevision.parse({
+    ...revision,
+    ...normalized,
+  })) as Extract<PrRevision, { status: D['status'] }>;
+}
+
+export function stalePrRevision(
+  revision: Exclude<PrRevision, { status: 'merged' | 'stale' | 'failed' }>,
+  completedAt: string,
+): Extract<PrRevision, { status: 'stale' }> {
+  return transitionPrRevision(revision, {
+    status: 'stale',
+    mergeRequestedAt: null,
+    completedAt,
+  }) as Extract<PrRevision, { status: 'stale' }>;
+}
 
 export const RevisionCheck = z.object({
   name: z.string().min(1),
@@ -409,7 +633,7 @@ export const RevisionReviewThread = z.object({
 export type RevisionReviewThread = z.infer<typeof RevisionReviewThread>;
 
 /** One merge-decision fact captured against one immutable head SHA. */
-export const RevisionGateSnapshot = z.object({
+const RevisionGateSnapshotRecord = z.object({
   id: z.string(),
   prId: z.string(),
   revisionId: z.string(),
@@ -421,10 +645,57 @@ export const RevisionGateSnapshot = z.object({
   blockingReviewThreads: z.array(RevisionReviewThread).default([]),
   mergeability: z.enum(['mergeable', 'conflicting', 'unknown']),
   decision: z.enum(['pending', 'changes-requested', 'approved']),
+  blockingReasons: z.array(z.string()).default([]),
+  pendingReasons: z.array(z.string()).default([]),
+  /** Legacy display projection; repair logic uses the classified fields above. */
   reasons: z.array(z.string()).default([]),
   createdAt: z.string(),
 });
-export type RevisionGateSnapshot = z.infer<typeof RevisionGateSnapshot>;
+const EmptyReadonlyTuple = z.tuple([]).readonly();
+const ApprovedRevisionGateSnapshotRecord = RevisionGateSnapshotRecord.extend({
+  decision: z.literal('approved'),
+  mergeability: z.literal('mergeable'),
+  blockingReasons: EmptyReadonlyTuple.default([]),
+  pendingReasons: EmptyReadonlyTuple.default([]),
+  unresolvedBlockingThreadIds: EmptyReadonlyTuple.default([]),
+  blockingReviewThreads: EmptyReadonlyTuple.default([]),
+}).superRefine((snapshot, context) => {
+  for (const check of snapshot.checks) {
+    if (check.status !== 'success') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['checks'],
+        message: 'approved snapshots require every check to succeed',
+      });
+    }
+  }
+  for (const perspective of snapshot.requiredPerspectives) {
+    if (snapshot.perspectiveVerdicts[perspective] !== 'approve') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['perspectiveVerdicts', perspective],
+        message: 'approved snapshots require every required perspective to approve',
+      });
+    }
+  }
+});
+export const ApprovedRevisionGateSnapshot =
+  ApprovedRevisionGateSnapshotRecord.brand<'ValidatedApprovedRevisionGateSnapshot'>();
+export type ApprovedRevisionGateSnapshot = z.infer<typeof ApprovedRevisionGateSnapshot>;
+const PendingRevisionGateSnapshot = RevisionGateSnapshotRecord.extend({
+  decision: z.literal('pending'),
+  blockingReasons: EmptyReadonlyTuple.default([]),
+});
+const ChangesRequestedRevisionGateSnapshot = RevisionGateSnapshotRecord.extend({
+  decision: z.literal('changes-requested'),
+  blockingReasons: z.array(z.string()).min(1),
+});
+export const RevisionGateSnapshot = z.union([
+  PendingRevisionGateSnapshot,
+  ChangesRequestedRevisionGateSnapshot,
+  ApprovedRevisionGateSnapshotRecord,
+]);
+export type RevisionGateSnapshot = DeepReadonly<z.infer<typeof RevisionGateSnapshot>>;
 
 /**
  * ISSUE-0009: on a re-review (attempt > 1) the reviewer ATTESTS each finding's lineage —

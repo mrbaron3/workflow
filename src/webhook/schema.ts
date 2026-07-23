@@ -56,7 +56,7 @@ export const WebhookDeliveryStatus = z.enum([
 ]);
 export type WebhookDeliveryStatus = z.infer<typeof WebhookDeliveryStatus>;
 
-export const WebhookDelivery = z.object({
+const WebhookDeliveryBase = z.object({
   id: z.string().min(1),
   deliveryKey: z.string().min(1),
   repository: RepositoryName,
@@ -64,26 +64,109 @@ export const WebhookDelivery = z.object({
   action: z.string().nullable().default(null),
   headers: z.record(z.string()).default({}),
   payload: z.record(z.unknown()),
-  registrationId: z.string().nullable().default(null),
-  status: WebhookDeliveryStatus.default('pending'),
   attempts: z.number().int().nonnegative().default(0),
-  lastError: z.string().nullable().default(null),
-  ignoredReason: z.string().nullable().default(null),
   receivedAt: z.string(),
   updatedAt: z.string(),
 });
-export type WebhookDelivery = z.infer<typeof WebhookDelivery>;
+const PendingWebhookDelivery = WebhookDeliveryBase.extend({
+  status: z.literal('pending').default('pending'),
+  registrationId: z.null().default(null),
+  lastError: z.null().default(null),
+  ignoredReason: z.null().default(null),
+});
+const RegisteredWebhookDeliveryBase = WebhookDeliveryBase.extend({
+  registrationId: z.string().min(1),
+  lastError: z.null().default(null),
+  ignoredReason: z.null().default(null),
+});
+export const ProcessingWebhookDelivery = RegisteredWebhookDeliveryBase.extend({
+  status: z.literal('processing'),
+});
+export const ProcessedWebhookDelivery = RegisteredWebhookDeliveryBase.extend({
+  status: z.literal('processed'),
+});
+export const FailedWebhookDelivery = RegisteredWebhookDeliveryBase.extend({
+  status: z.literal('failed'),
+  lastError: z.string().min(1),
+});
+export const IgnoredWebhookDelivery = WebhookDeliveryBase.extend({
+  status: z.literal('ignored'),
+  registrationId: z.null().default(null),
+  lastError: z.null().default(null),
+  ignoredReason: z.string().min(1),
+});
+export const WebhookDelivery = z.discriminatedUnion('status', [
+  PendingWebhookDelivery,
+  ProcessingWebhookDelivery,
+  ProcessedWebhookDelivery,
+  FailedWebhookDelivery,
+  IgnoredWebhookDelivery,
+]);
+export type WebhookDelivery = Readonly<z.infer<typeof WebhookDelivery>>;
 
 export const WebhookControlDB = z.object({
   version: z.literal(1).default(1),
   counters: z.record(z.number().int().nonnegative()).default({}),
   repositories: z.array(WebhookRepositoryRegistration).default([]),
-  deliveries: z.array(WebhookDelivery).default([]),
+  deliveries: z.array(WebhookDelivery).default([]).readonly(),
 });
-export type WebhookControlDB = z.infer<typeof WebhookControlDB>;
+type ParsedWebhookControlDB = z.infer<typeof WebhookControlDB>;
+export type WebhookControlDB = Omit<ParsedWebhookControlDB, 'deliveries'> & {
+  readonly deliveries: readonly WebhookDelivery[];
+};
 
 export function emptyWebhookControlDB(): WebhookControlDB {
   return WebhookControlDB.parse({});
+}
+
+export function startWebhookDelivery(
+  delivery: z.infer<typeof PendingWebhookDelivery>,
+  registrationId: string,
+  updatedAt: string,
+): Readonly<z.infer<typeof ProcessingWebhookDelivery>> {
+  return ProcessingWebhookDelivery.parse({
+    ...delivery,
+    status: 'processing',
+    registrationId,
+    attempts: delivery.attempts + 1,
+    updatedAt,
+  });
+}
+
+export function processWebhookDelivery(
+  delivery: z.infer<typeof ProcessingWebhookDelivery>,
+  updatedAt: string,
+): Readonly<z.infer<typeof ProcessedWebhookDelivery>> {
+  return ProcessedWebhookDelivery.parse({ ...delivery, status: 'processed', updatedAt });
+}
+
+export function failWebhookDelivery(
+  delivery: z.infer<typeof ProcessingWebhookDelivery>,
+  lastError: string,
+  updatedAt: string,
+): Readonly<z.infer<typeof FailedWebhookDelivery>> {
+  return FailedWebhookDelivery.parse({ ...delivery, status: 'failed', lastError, updatedAt });
+}
+
+export function ignoreWebhookDelivery(
+  delivery: z.infer<typeof PendingWebhookDelivery>,
+  ignoredReason: string,
+  updatedAt: string,
+): Readonly<z.infer<typeof IgnoredWebhookDelivery>> {
+  return IgnoredWebhookDelivery.parse({ ...delivery, status: 'ignored', ignoredReason, updatedAt });
+}
+
+export function retryWebhookDelivery(
+  delivery: z.infer<typeof FailedWebhookDelivery>,
+  updatedAt: string,
+): Readonly<z.infer<typeof PendingWebhookDelivery>> {
+  return PendingWebhookDelivery.parse({
+    ...delivery,
+    status: 'pending',
+    registrationId: null,
+    lastError: null,
+    updatedAt,
+  });
 }
 
 export const WebhookReceipt = z.object({
@@ -102,6 +185,16 @@ export const NormalizedGithubEvent = z.object({
   action: z.string().nullable(),
   payload: z.record(z.unknown()),
   receivedAt: z.string(),
-  source: z.enum(['webhook', 'reconciliation']).default('webhook'),
+  source: z.literal('webhook').default('webhook'),
 });
 export type NormalizedGithubEvent = z.infer<typeof NormalizedGithubEvent>;
+
+export const ReconciliationEvent = z.object({
+  source: z.literal('reconciliation'),
+  registrationId: z.string(),
+  repository: RepositoryName,
+});
+export type ReconciliationEvent = z.infer<typeof ReconciliationEvent>;
+
+export const WebhookConsumerEvent = z.union([NormalizedGithubEvent, ReconciliationEvent]);
+export type WebhookConsumerEvent = z.infer<typeof WebhookConsumerEvent>;

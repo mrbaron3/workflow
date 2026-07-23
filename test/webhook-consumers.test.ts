@@ -3,7 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, saveConfig } from '../src/config.js';
-import { createWebhookConsumerAdapters } from '../src/webhook/consumers.js';
+import {
+  createWebhookConsumerAdapters,
+  sanitizedConsumerEnvironment,
+} from '../src/webhook/consumers.js';
 import { NormalizedGithubEvent } from '../src/webhook/schema.js';
 import { WebhookControlStore } from '../src/webhook/store.js';
 
@@ -20,7 +23,21 @@ afterEach(() => {
 });
 
 describe('allow-listed webhook consumer adapters', () => {
-  it('wakes agentops with the fixed launcher in the registration workspace', async () => {
+  it('ISSUE-0024/PR-INTENT strips daemon credentials from both production consumer environments', () => {
+    const env = sanitizedConsumerEnvironment({
+      PATH: '/bin',
+      HOME: '/safe/home',
+      AGENTOPS_WEBHOOK_CONTROL_TOKEN: 'control-secret',
+      AGENTOPS_GITHUB_WEBHOOK_SECRET: 'webhook-secret',
+    });
+
+    expect(env).toMatchObject({ PATH: '/bin' });
+    expect(env).not.toHaveProperty('HOME');
+    expect(env).not.toHaveProperty('SSH_AUTH_SOCK');
+    expect(env).not.toHaveProperty('AGENTOPS_WEBHOOK_CONTROL_TOKEN');
+    expect(env).not.toHaveProperty('AGENTOPS_GITHUB_WEBHOOK_SECRET');
+  });
+  it('AC-WHRT-003 wakes agentops with the fixed launcher in the registration workspace', async () => {
     const root = tempRoot();
     const workspace = path.join(root, 'repo-workspace');
     fs.mkdirSync(workspace);
@@ -38,11 +55,11 @@ describe('allow-listed webhook consumer adapters', () => {
       readyLabel: 'ready',
       baseBranch: 'main',
     });
-    const calls: Array<{ executable: string; args: string[]; cwd: string }> = [];
+    const calls: Array<{ executable: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }> = [];
     const adapters = createWebhookConsumerAdapters(store, {
       harnessRoot: root,
       runProcess: async (executable, args, options) => {
-        calls.push({ executable, args, cwd: options.cwd });
+        calls.push({ executable, args, cwd: options.cwd, env: options.env });
       },
     });
     const event = NormalizedGithubEvent.parse({
@@ -62,10 +79,14 @@ describe('allow-listed webhook consumer adapters', () => {
       executable: process.execPath,
       args: [path.join(root, 'bin', 'agentops.mjs'), 'github-turn'],
       cwd: workspace,
+      env: expect.not.objectContaining({
+        AGENTOPS_WEBHOOK_CONTROL_TOKEN: expect.anything(),
+        AGENTOPS_GITHUB_WEBHOOK_SECRET: expect.anything(),
+      }),
     }]);
   });
 
-  it('maps merged PR and push payloads to the typed Orca sync adapter', async () => {
+  it('AC-WHRT-004 maps merged PR and push payloads to the typed Orca sync adapter', async () => {
     const root = tempRoot();
     const store = new WebhookControlStore(root);
     const registration = store.addRepository({
@@ -77,11 +98,13 @@ describe('allow-listed webhook consumer adapters', () => {
       readyLabel: null,
       baseBranch: null,
     });
-    const calls: string[][] = [];
+    const calls: Array<{ command: string[]; env: NodeJS.ProcessEnv }> = [];
     const adapters = createWebhookConsumerAdapters(store, {
       harnessRoot: root,
       orcaSyncScript: '/portable/orca-sync-worktrees.py',
-      runProcess: async (executable, args) => { calls.push([executable, ...args]); },
+      runProcess: async (executable, args, options) => {
+        calls.push({ command: [executable, ...args], env: options.env });
+      },
     });
     const common = {
       deliveryId: 'WHDEL-0001',
@@ -117,9 +140,12 @@ describe('allow-listed webhook consumer adapters', () => {
       },
     }));
 
-    expect(calls).toEqual([
+    expect(calls.map((call) => call.command)).toEqual([
       ['/portable/orca-sync-worktrees.py', '--event', 'pr-merged', '--head', 'feature/webhooks', '--base', 'main'],
       ['/portable/orca-sync-worktrees.py', '--event', 'push', '--branch', 'main'],
     ]);
+    expect(calls.every(({ env }) =>
+      !('AGENTOPS_WEBHOOK_CONTROL_TOKEN' in env)
+      && !('AGENTOPS_GITHUB_WEBHOOK_SECRET' in env))).toBe(true);
   });
 });

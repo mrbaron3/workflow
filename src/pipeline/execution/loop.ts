@@ -9,7 +9,7 @@
  * auto-releases). The two never share a control path — runAll stays as-is.
  */
 
-import { PR, type Issue, type Verdict, type EvalRun } from '../../domain/schema.js';
+import { PR, transitionPR, updatePR, type Issue, type Verdict, type EvalRun } from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import type { RepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
@@ -170,12 +170,13 @@ export async function runBoundedRepairLoop(
   let gateFailed = false;
   let panelEscalated = false;
   let stuck = false;
+  let currentPr = pr;
 
   for (let attempt = startAttempt; attempt <= maxAttempts; attempt++) {
     if (manage && attempt > startAttempt) {
       store.setStatus(issueId, 'generation-in-progress'); // changes-requested -> generation (repair)
     }
-    pr.attempts = attempt;
+    currentPr = store.replacePR(updatePR(currentPr, { attempts: attempt }));
 
     const outcome = await produce(attempt, repairBrief);
 
@@ -184,7 +185,7 @@ export async function runBoundedRepairLoop(
       // No panel ran, so the aggregate outcome is "needs a human", not a changes-requested verdict.
       stuck = true;
       lastVerdict = 'needs_human';
-      pr.status = 'changes-requested';
+      currentPr = store.replacePR(transitionPR(currentPr, { status: 'changes-requested' }));
       if (manage && store.getIssue(issueId)!.status !== 'needs-human-review') store.setStatus(issueId, 'needs-human-review');
       break;
     }
@@ -199,12 +200,21 @@ export async function runBoundedRepairLoop(
     }
     if (panel.verdict === 'approve') {
       if (manage) applyPanelVerdict(store, issueId, 'approve'); // build-approved -> needs-human-review (gate)
-      pr.status = 'approved';
+      // Local/store gating has no immutable GitHub head to approve. Only the
+      // issue advances to its human gate; the PR remains open until revision
+      // identity exists.
+      currentPr = currentPr.currentRevisionId && currentPr.headSha
+        ? store.replacePR(transitionPR(currentPr, {
+          status: 'approved',
+          currentRevisionId: currentPr.currentRevisionId,
+          headSha: currentPr.headSha,
+        }))
+        : store.replacePR(transitionPR(currentPr, { status: 'open' }));
       break;
     }
     // request_changes: route back and carry this attempt's findings into the next generate.
     if (manage) applyPanelVerdict(store, issueId, 'request_changes');
-    pr.status = 'changes-requested';
+    currentPr = store.replacePR(transitionPR(currentPr, { status: 'changes-requested' }));
     repairBrief = toGenerateBrief(buildPanelRepairBrief(panel.runs));
     if (attempt < maxAttempts) log(`  ↻ ${issueId}: request_changes → repair (${repairBrief.instructions.length} fix(es))`);
   }
@@ -216,13 +226,13 @@ export async function runBoundedRepairLoop(
     store.setStatus(issueId, 'needs-human-review');
   }
 
-  pr.updatedAt = nowISO();
+  currentPr = store.replacePR(updatePR(currentPr, {}));
   return {
     verdict: lastVerdict,
     status: store.getIssue(issueId)!.status,
     gateFailed,
     escalated: panelEscalated || stuck,
-    attempts: pr.attempts,
+    attempts: currentPr.attempts,
     exhausted,
   };
 }
@@ -271,7 +281,7 @@ export async function driveIssueOnce(store: Store, config: HarnessConfig, runner
 
   store.setStatus(issue.id, 'ready-for-generation');
   store.setStatus(issue.id, 'generation-in-progress');
-  const pr = store.addPR(
+  const createdPr = store.addPR(
     PR.parse({
       id: store.nextId('PR'),
       issueId: issue.id,
@@ -284,6 +294,7 @@ export async function driveIssueOnce(store: Store, config: HarnessConfig, runner
       updatedAt: nowISO(),
     }),
   );
+  const pr = store.db.prs.find((candidate) => candidate.id === createdPr.id)!;
 
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
     const artifact = await runner.generate({ issue, contract, sampleIndex: 0, attempt, repairBrief });

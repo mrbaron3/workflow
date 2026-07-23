@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   WebhookReconciliationScheduler,
 } from '../src/webhook/reconciliation.js';
-import type { NormalizedGithubEvent } from '../src/webhook/schema.js';
+import type { WebhookConsumerEvent } from '../src/webhook/schema.js';
 import { WebhookControlStore } from '../src/webhook/store.js';
 
 const roots: string[] = [];
@@ -46,7 +46,7 @@ describe('webhook polling reconciliation fallback', () => {
       readyLabel: null,
       baseBranch: null,
     });
-    const calls: NormalizedGithubEvent[] = [];
+    const calls: WebhookConsumerEvent[] = [];
     const scheduler = new WebhookReconciliationScheduler(
       store,
       (event) => { calls.push(event); },
@@ -58,9 +58,10 @@ describe('webhook polling reconciliation fallback', () => {
     expect(calls[0]).toMatchObject({
       registrationId: enabled.id,
       repository: 'acme/one',
-      action: 'reconcile',
       source: 'reconciliation',
     });
+    expect(calls[0]).not.toHaveProperty('deliveryId');
+    expect(calls[0]).not.toHaveProperty('event');
   });
 
   it('coalesces overlapping timer ticks instead of queueing duplicate development turns', async () => {

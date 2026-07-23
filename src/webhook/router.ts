@@ -1,12 +1,13 @@
 import {
   NormalizedGithubEvent,
   type NormalizedGithubEvent as NormalizedGithubEventType,
+  type WebhookConsumerEvent,
   type WebhookConsumer,
   type WebhookDelivery,
 } from './schema.js';
 import { WebhookControlStore } from './store.js';
 
-export type WebhookConsumerHandler = (event: NormalizedGithubEventType) => Promise<void> | void;
+export type WebhookConsumerHandler = (event: WebhookConsumerEvent) => Promise<void> | void;
 export type WebhookConsumerHandlers = Partial<Record<WebhookConsumer, WebhookConsumerHandler>>;
 
 export class WebhookRouter {
@@ -20,7 +21,7 @@ export class WebhookRouter {
     if (!delivery) throw new Error(`no such webhook delivery: ${deliveryId}`);
     if (delivery.status !== 'pending') return delivery;
 
-    const registration = this.store.db.repositories.find(
+    const registration = this.store.snapshot().repositories.find(
       (row) => row.enabled && row.repository.toLowerCase() === delivery.repository.toLowerCase(),
     );
     if (!registration) {

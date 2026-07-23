@@ -9,7 +9,7 @@
  * real ticket; the per-sample/per-attempt detail lives in PRs and EvalRuns.
  */
 
-import { PR, type Issue } from '../domain/schema.js';
+import { PR, transitionPR, updatePR, type Issue } from '../domain/schema.js';
 import type { Verdict } from '../domain/schema.js';
 import type { HarnessConfig } from '../config.js';
 import { Store, nowISO } from '../store/store.js';
@@ -55,7 +55,7 @@ export async function runIssue(
   let approvedAny = false;
 
   for (let s = 0; s < config.samples; s++) {
-    const pr = store.addPR(
+    const createdPr = store.addPR(
       PR.parse({
         id: store.nextId('PR'),
         issueId: issue.id,
@@ -68,6 +68,7 @@ export async function runIssue(
         updatedAt: nowISO(),
       }),
     );
+    let pr = store.getPR(createdPr.id)!;
 
     let repairBrief: RepairBrief | null = null;
     let approved = false;
@@ -76,7 +77,7 @@ export async function runIssue(
 
     for (let attempt = 1; attempt <= config.maxRepairs + 1; attempt++) {
       attempts = attempt;
-      pr.attempts = attempt;
+      pr = store.replacePR(updatePR(pr, { attempts: attempt }));
       const artifact = await runner.generate({
         issue,
         contract,
@@ -89,17 +90,23 @@ export async function runIssue(
       const tag = `${issue.id} s${s} a${attempt}`;
       if (run.verdict === 'approve') {
         approved = true;
-        pr.status = 'approved';
+        pr = pr.currentRevisionId && pr.headSha
+          ? store.replacePR(transitionPR(pr, {
+            status: 'approved',
+            currentRevisionId: pr.currentRevisionId,
+            headSha: pr.headSha,
+          }))
+          : store.replacePR(transitionPR(pr, { status: 'open' }));
         log(`  ✓ ${tag}: approved (overall ${run.overall.toFixed(2)})`);
         break;
       }
-      pr.status = 'changes-requested';
+      pr = store.replacePR(transitionPR(pr, { status: 'changes-requested' }));
       repairBrief = buildRepairBrief(run);
       const blockers = run.findings.filter((f) => f.severity === 'blocker').length;
       log(`  ✗ ${tag}: request_changes (${blockers} blocker(s)) → repair`);
     }
 
-    pr.updatedAt = nowISO();
+    pr = store.replacePR(updatePR(pr, {}));
     samples.push({ sampleIndex: s, prId: pr.id, approved, attempts, finalVerdict });
     if (approved) approvedAny = true;
   }
@@ -109,7 +116,8 @@ export async function runIssue(
     const winning = samples.find((r) => r.approved);
     if (winning) {
       const pr = store.getPR(winning.prId);
-      if (pr) pr.status = 'merged';
+      // Store-gated legacy runs have no GitHub revision/head evidence, so they
+      // must not fabricate the revision-dependent `merged` PR variant.
     }
     store.setStatus(issue.id, 'approved');
     store.setStatus(issue.id, 'ready-to-merge');

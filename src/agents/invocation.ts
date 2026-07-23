@@ -31,8 +31,7 @@ export interface InvocationProvenanceInput extends InvocationCoordinates {
 export function invocationKey(coordinates: InvocationCoordinates): string {
   const segment = (value: string | number | null | undefined): string =>
     value === null || value === undefined ? '-' : encodeURIComponent(String(value));
-  const revisionBound = coordinates.revisionId !== null && coordinates.revisionId !== undefined
-    || coordinates.headSha !== null && coordinates.headSha !== undefined;
+  const revisionBound = coordinates.revisionId != null || coordinates.headSha != null;
   return [
     revisionBound ? 'invocation:v2' : 'invocation:v1',
     segment(coordinates.subjectId),
