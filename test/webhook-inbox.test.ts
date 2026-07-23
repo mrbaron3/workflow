@@ -252,7 +252,7 @@ describe('durable GitHub webhook inbox and router', () => {
 
   it('AC-WHIN-002 AC-WHIN-005 retries only unfinished consumers after a partial failure', async () => {
     const store = new WebhookControlStore(tempRoot());
-    store.addRepository({
+    const registration = store.addRepository({
       repository: 'acme/theme',
       enabled: true,
       events: ['pull_request'],
@@ -280,6 +280,9 @@ describe('durable GitHub webhook inbox and router', () => {
     expect((await router.route(receipt.deliveryId)).status).toBe('failed');
     expect(firstEffects).toBe(1);
     expect(secondAttempts).toBe(1);
+    store.updateRepository(registration.id, {
+      consumers: ['agentops'],
+    });
 
     expect((await router.retry(receipt.deliveryId)).status).toBe('processed');
     expect(firstEffects).toBe(1);
@@ -297,14 +300,18 @@ describe('durable GitHub webhook inbox and router', () => {
       payload: payload(),
     });
     const registration = store.snapshot().repositories[0]!;
-    store.startDelivery(receipt.deliveryId, registration.id);
+    store.startDelivery(receipt.deliveryId, {
+      registrationId: registration.id,
+      consumers: registration.consumers,
+    });
 
     const restarted = new WebhookControlStore(root);
     expect(restarted.recoverInterruptedDeliveries()).toBe(1);
     expect(restarted.getDelivery(receipt.deliveryId)).toMatchObject({
       status: 'pending',
       attempts: 1,
-      registrationId: null,
+      registrationId: registration.id,
+      plannedConsumers: ['agentops'],
       lastError: null,
     });
   });
@@ -339,7 +346,8 @@ describe('durable GitHub webhook inbox and router', () => {
 
     expect(restarted.getDelivery(receipt.deliveryId)).toMatchObject({
       status: 'pending',
-      registrationId: null,
+      registrationId: 'WHREPO-0001',
+      plannedConsumers: ['agentops'],
       lastError: null,
     });
     expect(restarted.snapshot().deliveries).toHaveLength(1);

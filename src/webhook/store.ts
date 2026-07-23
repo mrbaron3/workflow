@@ -18,6 +18,7 @@ import {
   type WebhookDelivery as WebhookDeliveryType,
   type WebhookReceipt,
   type WebhookConsumer,
+  type WebhookRoutePlan,
   type WebhookRepositoryRegistration as WebhookRepositoryRegistrationType,
 } from './schema.js';
 
@@ -80,18 +81,55 @@ function normalizeLegacyControlDB(input: unknown): unknown {
   if (!input || typeof input !== 'object') return input;
   const record = input as Record<string, unknown>;
   if (!Array.isArray(record.deliveries)) return input;
+  const repositories = Array.isArray(record.repositories)
+    ? record.repositories.filter(
+      (registration): registration is Record<string, unknown> =>
+        Boolean(registration) && typeof registration === 'object',
+    )
+    : [];
   return {
     ...record,
     deliveries: record.deliveries.map((delivery) => {
       if (!delivery || typeof delivery !== 'object') return delivery;
       const row = delivery as Record<string, unknown>;
-      if (row.status !== 'pending') return delivery;
-      return {
-        ...row,
-        registrationId: null,
-        lastError: null,
-        ignoredReason: null,
-      };
+      const registration = repositories.find(
+        (candidate) => candidate.id === row.registrationId,
+      );
+      const completedConsumers = Array.isArray(row.completedConsumers)
+        ? row.completedConsumers
+        : [];
+      const inferredPlan = Array.isArray(row.plannedConsumers)
+        && row.plannedConsumers.length > 0
+        ? row.plannedConsumers
+        : Array.isArray(registration?.consumers)
+          ? registration.consumers
+          : completedConsumers;
+      if (row.status === 'pending' && typeof row.registrationId !== 'string') {
+        return {
+          ...row,
+          registrationId: null,
+          plannedConsumers: [],
+          completedConsumers: [],
+          lastError: null,
+          ignoredReason: null,
+        };
+      }
+      if (['pending', 'processing', 'processed', 'failed'].includes(String(row.status))) {
+        return {
+          ...row,
+          plannedConsumers: inferredPlan,
+          completedConsumers,
+          ...(row.status === 'pending' ? { lastError: null, ignoredReason: null } : {}),
+        };
+      }
+      if (row.status === 'ignored') {
+        return {
+          ...row,
+          plannedConsumers: [],
+          completedConsumers: [],
+        };
+      }
+      return delivery;
     }),
   };
 }
@@ -154,7 +192,6 @@ export class WebhookControlStore {
       return {
         ...row,
         status: 'pending',
-        registrationId: null,
         lastError: null,
         ignoredReason: null,
         updatedAt: nowISO(),
@@ -240,13 +277,13 @@ export class WebhookControlStore {
     return this.db.deliveries.find((row) => row.id === id);
   }
 
-  startDelivery(id: string, registrationId: string): WebhookDeliveryType | null {
+  startDelivery(id: string, routePlan: WebhookRoutePlan): WebhookDeliveryType | null {
     this.reload();
     const index = this.db.deliveries.findIndex((candidate) => candidate.id === id);
     const row = this.db.deliveries[index];
     if (!row) throw new Error(`no such webhook delivery: ${id}`);
     if (row.status !== 'pending') return null;
-    const next = startWebhookDelivery(row, registrationId, nowISO());
+    const next = startWebhookDelivery(row, routePlan, nowISO());
     this.db.deliveries[index] = next;
     this.save();
     return next;
@@ -265,7 +302,12 @@ export class WebhookControlStore {
   }
 
   markIgnored(id: string, reason: string): WebhookDeliveryType {
-    return this.transitionDelivery(id, 'pending', (row) => ignoreWebhookDelivery(row, reason, nowISO()));
+    return this.transitionDelivery(id, 'pending', (row) => {
+      if (row.registrationId !== null) {
+        throw new Error(`routed delivery ${id} cannot be ignored`);
+      }
+      return ignoreWebhookDelivery(row, reason, nowISO());
+    });
   }
 
   markFailed(id: string, error: string): WebhookDeliveryType {

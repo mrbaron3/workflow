@@ -28,6 +28,7 @@ import {
   type PrNativeGithubRunner,
 } from '../src/pipeline/execution/pr-native.js';
 import { Store, nowISO } from '../src/store/store.js';
+import { pollable } from '../src/pipeline/execution/guard.js';
 
 const roots: string[] = [];
 const SHA_A = 'a'.repeat(40);
@@ -358,6 +359,30 @@ describe('PR revision identity and automatic current-head gate', () => {
 
   it('AC-PRAUTO-002 AC-PRAUTO-003 merges with the expected current SHA only after all revision gates pass', () => {
     const { store, pr } = setup();
+    const dependent = store.addIssue(Issue.parse({
+      id: 'ISSUE-0002',
+      type: 'feature',
+      title: 'Run after PR-native delivery',
+      area: 'harness',
+      status: 'contract-drafted',
+      assignedAgent: 'mock',
+      dependsOnIssues: [pr.issueId],
+      contract: {
+        productGoal: 'continue the queue after merge',
+        userStory: 'As an operator I get the next unblocked task',
+        scope: { include: ['src/**'], exclude: [] },
+        acceptanceCriteria: [{
+          id: 'AC-NEXT',
+          severity: 'blocker',
+          behavior: 'run after the dependency releases',
+          verification: { method: 'unit_test', expected: ['selected on next poll'] },
+        }],
+        redLines: [],
+      },
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    }));
+    expect(pollable(store, CONFIG).map((issue) => issue.id)).not.toContain(dependent.id);
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
       addReview(store, pr, revision.id, SHA_A, perspective);
@@ -400,6 +425,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       mergedHeadSha: SHA_A,
     });
     expect(store.getIssue(pr.issueId)?.status).toBe('released');
+    expect(pollable(store, CONFIG).map((issue) => issue.id)).toContain(dependent.id);
   });
 
   it('AC-PRAUTO-003 keeps a failed merge retryable without releasing lifecycle state', () => {

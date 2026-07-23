@@ -21,25 +21,45 @@ export class WebhookRouter {
     if (!delivery) throw new Error(`no such webhook delivery: ${deliveryId}`);
     if (delivery.status !== 'pending') return delivery;
 
-    const registration = this.store.snapshot().repositories.find(
-      (row) => row.enabled && row.repository.toLowerCase() === delivery.repository.toLowerCase(),
-    );
-    if (!registration) {
-      return this.store.markIgnored(delivery.id, `repository is not registered or enabled: ${delivery.repository}`);
-    }
-    if (!registration.events.includes(delivery.event)) {
-      return this.store.markIgnored(
-        delivery.id,
-        `event ${delivery.event} is not enabled for ${delivery.repository}`,
+    let routePlan;
+    if (delivery.registrationId === null) {
+      const registration = this.store.snapshot().repositories.find(
+        (row) =>
+          row.enabled
+          && row.repository.toLowerCase() === delivery.repository.toLowerCase(),
       );
+      if (!registration) {
+        return this.store.markIgnored(
+          delivery.id,
+          `repository is not registered or enabled: ${delivery.repository}`,
+        );
+      }
+      if (!registration.events.includes(delivery.event)) {
+        return this.store.markIgnored(
+          delivery.id,
+          `event ${delivery.event} is not enabled for ${delivery.repository}`,
+        );
+      }
+      routePlan = {
+        registrationId: registration.id,
+        consumers: registration.consumers,
+      };
+    } else {
+      routePlan = {
+        registrationId: delivery.registrationId,
+        consumers: delivery.plannedConsumers,
+      };
     }
 
-    const started = this.store.startDelivery(delivery.id, registration.id);
+    const started = this.store.startDelivery(delivery.id, routePlan);
     if (!started) return this.store.getDelivery(delivery.id)!;
+    if (started.status !== 'processing') {
+      throw new Error(`delivery ${delivery.id} did not enter processing`);
+    }
     const event = NormalizedGithubEvent.parse({
       deliveryId: started.id,
       deliveryKey: started.deliveryKey,
-      registrationId: registration.id,
+      registrationId: started.registrationId,
       repository: started.repository,
       event: started.event,
       action: started.action,
@@ -49,7 +69,7 @@ export class WebhookRouter {
     });
 
     try {
-      for (const consumer of registration.consumers) {
+      for (const consumer of started.plannedConsumers) {
         if (started.completedConsumers.includes(consumer)) continue;
         const handler = this.consumers[consumer];
         if (!handler) throw new Error(`consumer adapter is not configured: ${consumer}`);

@@ -65,38 +65,81 @@ const WebhookDeliveryBase = z.object({
   headers: z.record(z.string()).default({}),
   payload: z.record(z.unknown()),
   attempts: z.number().int().nonnegative().default(0),
-  completedConsumers: z.array(WebhookConsumer).refine(uniqueValues, 'completedConsumers must be unique').default([]),
   receivedAt: z.string(),
   updatedAt: z.string(),
 });
-const PendingWebhookDelivery = WebhookDeliveryBase.extend({
+const UnroutedPendingWebhookDelivery = WebhookDeliveryBase.extend({
   status: z.literal('pending').default('pending'),
   registrationId: z.null().default(null),
+  plannedConsumers: z.tuple([]).default([]),
+  completedConsumers: z.tuple([]).default([]),
   lastError: z.null().default(null),
   ignoredReason: z.null().default(null),
 });
-const RegisteredWebhookDeliveryBase = WebhookDeliveryBase.extend({
+export const WebhookRoutePlan = z.object({
   registrationId: z.string().min(1),
+  consumers: z.array(WebhookConsumer).min(1).refine(uniqueValues, 'consumers must be unique'),
+});
+export type WebhookRoutePlan = z.infer<typeof WebhookRoutePlan>;
+const RoutedWebhookDeliveryBase = WebhookDeliveryBase.extend({
+  registrationId: z.string().min(1),
+  plannedConsumers: z.array(WebhookConsumer)
+    .min(1)
+    .refine(uniqueValues, 'plannedConsumers must be unique'),
+  completedConsumers: z.array(WebhookConsumer)
+    .refine(uniqueValues, 'completedConsumers must be unique')
+    .default([]),
   lastError: z.null().default(null),
   ignoredReason: z.null().default(null),
 });
-export const ProcessingWebhookDelivery = RegisteredWebhookDeliveryBase.extend({
+function completedConsumersBelongToPlan(
+  delivery: {
+    completedConsumers: readonly WebhookConsumer[];
+    plannedConsumers: readonly WebhookConsumer[];
+  },
+): boolean {
+  return delivery.completedConsumers.every(
+    (consumer) => delivery.plannedConsumers.includes(consumer),
+  );
+}
+export const RetryPendingWebhookDelivery = RoutedWebhookDeliveryBase.extend({
+  status: z.literal('pending'),
+}).refine(completedConsumersBelongToPlan, {
+  message: 'completedConsumers must belong to plannedConsumers',
+});
+const PendingWebhookDelivery = z.union([
+  UnroutedPendingWebhookDelivery,
+  RetryPendingWebhookDelivery,
+]);
+export const ProcessingWebhookDelivery = RoutedWebhookDeliveryBase.extend({
   status: z.literal('processing'),
+}).refine(completedConsumersBelongToPlan, {
+  message: 'completedConsumers must belong to plannedConsumers',
 });
-export const ProcessedWebhookDelivery = RegisteredWebhookDeliveryBase.extend({
+export const ProcessedWebhookDelivery = RoutedWebhookDeliveryBase.extend({
   status: z.literal('processed'),
-});
-export const FailedWebhookDelivery = RegisteredWebhookDeliveryBase.extend({
+}).refine(
+  (delivery) => completedConsumersBelongToPlan(delivery)
+    && delivery.plannedConsumers.every(
+      (consumer) => delivery.completedConsumers.includes(consumer),
+    ),
+  { message: 'processed deliveries require every planned consumer to be completed' },
+);
+export const FailedWebhookDelivery = RoutedWebhookDeliveryBase.extend({
   status: z.literal('failed'),
   lastError: z.string().min(1),
+}).refine(completedConsumersBelongToPlan, {
+  message: 'completedConsumers must belong to plannedConsumers',
 });
 export const IgnoredWebhookDelivery = WebhookDeliveryBase.extend({
   status: z.literal('ignored'),
   registrationId: z.null().default(null),
+  plannedConsumers: z.tuple([]).default([]),
+  completedConsumers: z.tuple([]).default([]),
   lastError: z.null().default(null),
   ignoredReason: z.string().min(1),
 });
-export const WebhookDelivery = z.discriminatedUnion('status', [
+export const WebhookDelivery = z.union([
   PendingWebhookDelivery,
   ProcessingWebhookDelivery,
   ProcessedWebhookDelivery,
@@ -122,13 +165,26 @@ export function emptyWebhookControlDB(): WebhookControlDB {
 
 export function startWebhookDelivery(
   delivery: z.infer<typeof PendingWebhookDelivery>,
-  registrationId: string,
+  routePlan: WebhookRoutePlan,
   updatedAt: string,
 ): Readonly<z.infer<typeof ProcessingWebhookDelivery>> {
+  if (
+    delivery.registrationId !== null
+    && (
+      delivery.registrationId !== routePlan.registrationId
+      || delivery.plannedConsumers.length !== routePlan.consumers.length
+      || delivery.plannedConsumers.some(
+        (consumer, index) => consumer !== routePlan.consumers[index],
+      )
+    )
+  ) {
+    throw new Error(`retry route plan changed for delivery ${delivery.id}`);
+  }
   return ProcessingWebhookDelivery.parse({
     ...delivery,
     status: 'processing',
-    registrationId,
+    registrationId: routePlan.registrationId,
+    plannedConsumers: [...routePlan.consumers],
     attempts: delivery.attempts + 1,
     updatedAt,
   });
@@ -164,7 +220,7 @@ export function completeWebhookConsumer(
 }
 
 export function ignoreWebhookDelivery(
-  delivery: z.infer<typeof PendingWebhookDelivery>,
+  delivery: z.infer<typeof UnroutedPendingWebhookDelivery>,
   ignoredReason: string,
   updatedAt: string,
 ): Readonly<z.infer<typeof IgnoredWebhookDelivery>> {
@@ -174,11 +230,10 @@ export function ignoreWebhookDelivery(
 export function retryWebhookDelivery(
   delivery: z.infer<typeof FailedWebhookDelivery>,
   updatedAt: string,
-): Readonly<z.infer<typeof PendingWebhookDelivery>> {
-  return PendingWebhookDelivery.parse({
+): Readonly<z.infer<typeof RetryPendingWebhookDelivery>> {
+  return RetryPendingWebhookDelivery.parse({
     ...delivery,
     status: 'pending',
-    registrationId: null,
     lastError: null,
     updatedAt,
   });
