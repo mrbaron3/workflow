@@ -50,6 +50,21 @@ interface SandboxProfileInputs {
   ports: number[];
 }
 
+function copyDependencyTree(source: string, destination: string): void {
+  // APFS clonefile gives each untrusted grader a private copy-on-write tree
+  // without paying for a full node_modules byte copy on every gate.
+  const clone = spawnSync('/bin/cp', ['-cRLp', source, destination], {
+    stdio: 'ignore',
+    timeout: 60_000,
+  });
+  if (clone.status === 0) return;
+  fs.cpSync(source, destination, {
+    recursive: true,
+    dereference: true,
+    preserveTimestamps: true,
+  });
+}
+
 function createTemporaryResources(): TemporaryResources {
   const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-home-')));
   const tmp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-tmp-')));
@@ -79,11 +94,7 @@ function projectCommandDependencies(
         throw new Error(`untrusted checkout must not provide node_modules: ${candidate}`);
       } else {
         const privateDependencyRoot = path.join(scratch, 'node_modules');
-        fs.cpSync(dependencyRoot, privateDependencyRoot, {
-          recursive: true,
-          dereference: true,
-          preserveTimestamps: true,
-        });
+        copyDependencyTree(dependencyRoot, privateDependencyRoot);
         fs.mkdirSync(candidate);
         for (const entry of fs.readdirSync(privateDependencyRoot)) {
           if (entry === '.vite' || entry === '.vite-temp') continue;

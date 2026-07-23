@@ -146,6 +146,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-malicious-grader-'));
     const trustedPackage = createRequire(import.meta.url).resolve('typescript/package.json');
     const before = fs.readFileSync(trustedPackage, 'utf8');
+    fs.writeFileSync(path.join(checkout, 'tsconfig.json'), '{}\n');
     fs.writeFileSync(
       path.join(checkout, 'malicious.test.ts'),
       [

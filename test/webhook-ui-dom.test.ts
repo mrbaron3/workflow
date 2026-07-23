@@ -266,6 +266,119 @@ describe('webhook control GUI runtime', () => {
     expect(window.document.querySelector('#notice')?.textContent).toContain('追加しました');
   });
 
+  it('PR-INTENT preserves toggle and retry single-flight state across background polling', async () => {
+    const window = new Window({
+      url: 'http://127.0.0.1:8377/',
+      settings: { disableJavaScriptEvaluation: false },
+    });
+    windows.push(window);
+    let releaseToggle!: () => void;
+    let releaseRetry!: () => void;
+    const blockedToggle = new Promise<void>((resolve) => { releaseToggle = resolve; });
+    const blockedRetry = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    const failedDelivery = {
+      id: 'WHDEL-failed',
+      repository: 'acme/one',
+      event: 'pull_request',
+      action: 'synchronize',
+      status: 'failed',
+      attempts: 1,
+      lastError: 'delivery failed',
+      ignoredReason: null,
+      updatedAt: '2026-07-23T00:00:00.000Z',
+    };
+    let visibleState = { ...state(0), deliveries: [failedDelivery] };
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/repositories/WHREPO-1')) {
+        await blockedToggle;
+        return { ok: true, json: async () => ({}) };
+      }
+      if (url.includes('/api/deliveries/WHDEL-failed/retry')) {
+        await blockedRetry;
+        return { ok: true, json: async () => ({}) };
+      }
+      expect(init?.method).toBeUndefined();
+      return { ok: true, json: async () => visibleState };
+    });
+    Object.defineProperty(window, 'fetch', { configurable: true, value: fetchMock });
+    let intervalCallback: (() => unknown) | null = null;
+    Object.defineProperty(window, 'setInterval', {
+      configurable: true,
+      value: (callback: () => unknown) => {
+        intervalCallback = callback;
+        return 1;
+      },
+    });
+    Object.defineProperty(window, 'clearInterval', {
+      configurable: true,
+      value: () => {
+        intervalCallback = null;
+      },
+    });
+    const html = webhookControlHtml();
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('generated GUI has no executable script');
+    window.document.write(html.replace(/<script>[\s\S]*<\/script>/, ''));
+    window.document.close();
+    window.eval(script);
+    await flush();
+
+    (window.document.querySelector('[data-key="WHREPO-1"] .toggle') as HTMLButtonElement).click();
+    (window.document.querySelector('[data-key="WHDEL-failed"] .retry') as HTMLButtonElement).click();
+    await flush();
+
+    visibleState = {
+      ...state(1),
+      deliveries: [{ ...failedDelivery, updatedAt: '2026-07-23T00:00:01.000Z' }],
+    };
+    if (!intervalCallback) throw new Error('polling interval is not active');
+    await (intervalCallback as unknown as () => unknown)();
+    await flush();
+
+    const liveToggle = window.document.querySelector(
+      '[data-key="WHREPO-1"] .toggle',
+    ) as HTMLButtonElement;
+    const liveRetry = window.document.querySelector(
+      '[data-key="WHDEL-failed"] .retry',
+    ) as HTMLButtonElement;
+    expect(liveToggle.disabled).toBe(true);
+    expect(liveRetry.disabled).toBe(true);
+    expect(liveToggle.getAttribute('aria-busy')).toBe('true');
+    expect(liveRetry.getAttribute('aria-busy')).toBe('true');
+    expect(window.document.querySelector('#repo-action-WHREPO-1')?.textContent)
+      .toContain('実行中');
+    expect(window.document.querySelector('#delivery-action-WHDEL-failed')?.textContent)
+      .toContain('実行中');
+    liveToggle.click();
+    liveRetry.click();
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('/api/repositories/WHREPO-1'))).toHaveLength(1);
+    expect(fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('/api/deliveries/WHDEL-failed/retry'))).toHaveLength(1);
+
+    releaseToggle();
+    releaseRetry();
+    await flush();
+    await flush();
+    await flush();
+
+    const completedToggle = window.document.querySelector(
+      '[data-key="WHREPO-1"] .toggle',
+    ) as HTMLButtonElement;
+    const completedRetry = window.document.querySelector(
+      '[data-key="WHDEL-failed"] .retry',
+    ) as HTMLButtonElement;
+    expect(completedToggle.disabled).toBe(false);
+    expect(completedRetry.disabled).toBe(false);
+    expect(completedToggle.hasAttribute('aria-busy')).toBe(false);
+    expect(completedRetry.hasAttribute('aria-busy')).toBe(false);
+    expect(window.document.querySelector('#repo-action-WHREPO-1')?.textContent)
+      .toContain('完了しました');
+    expect(window.document.querySelector('#delivery-action-WHDEL-failed')?.textContent)
+      .toContain('完了しました');
+  });
+
   it('PR-INTENT moves focus to the deliveries region when passive polling removes the focused retry row', async () => {
     const window = new Window({
       url: 'http://127.0.0.1:8377/',

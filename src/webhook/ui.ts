@@ -98,7 +98,38 @@ const EVENT_VALUES = ['issues','pull_request','pull_request_review','pull_reques
 const CONSUMER_VALUES = ['agentops','orca-worktree-sync'];
 const DEFAULT_EVENTS = ['issues','pull_request','pull_request_review','pull_request_review_comment','check_run'];
 const DEFAULT_CONSUMERS = ['agentops'];
+const actionStates = new Map();
 const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
+const actionKey = (kind,id) => kind+':'+id;
+function applyActionState(root, key) {
+  const state=actionStates.get(key);
+  if (!state) return;
+  const button=root.querySelector('.toggle,.retry');
+  const status=root.querySelector('.action-status');
+  if (button) {
+    button.disabled=state.pending;
+    if (state.pending) button.setAttribute('aria-busy','true');
+    else button.removeAttribute('aria-busy');
+  }
+  if (status) {
+    status.textContent=state.message;
+    status.classList.toggle('error',state.error);
+  }
+}
+function setActionState(kind, id, state) {
+  const key=actionKey(kind,id);
+  actionStates.set(key,state);
+  const root=document.querySelector('[data-key="'+CSS.escape(id)+'"]');
+  if (root) applyActionState(root,key);
+}
+function pruneActionStates(kind, ids) {
+  const visible=new Set(ids);
+  for (const [key,state] of actionStates) {
+    if (key.startsWith(kind+':') && !state.pending && !visible.has(key.slice(kind.length+1))) {
+      actionStates.delete(key);
+    }
+  }
+}
 function checks(root, name, values, defaults) {
   root.innerHTML = values.map(value => '<label class="check"><input type="checkbox" name="'+name+'" value="'+value+'" '+(defaults.includes(value)?'checked':'')+'>'+value+'</label>').join('');
 }
@@ -126,14 +157,18 @@ async function refresh() {
       : '';
     const node=document.createElement('article'); node.className='repo';
     node.innerHTML='<div><strong>'+esc(repo.repository)+'</strong><span class="health health-'+esc(health)+'">'+esc(health+healthDetail)+'</span><div class="meta">'+esc(repo.events.join(', '))+' · '+esc(repo.consumers.join(', '))+(repo.workspaceRoot?' · '+esc(repo.workspaceRoot):'')+' · updated '+esc(new Date(repo.updatedAt).toLocaleString())+'</div></div><button class="secondary toggle" data-id="'+esc(repo.id)+'" data-subject="'+esc(repo.repository)+'" data-enabled="'+repo.enabled+'" aria-describedby="repo-action-'+esc(repo.id)+'" aria-label="'+esc(repo.repository+' を '+(repo.enabled?'停止':'有効化'))+'">'+(repo.enabled?'停止':'有効化')+'</button><div id="repo-action-'+esc(repo.id)+'" class="action-status" role="status" aria-live="polite"></div>';
+    applyActionState(node,actionKey('repository',repo.id));
     return node;
   }, 'まだrepositoryがありません。');
+  pruneActionStates('repository',state.repositories.map(row => row.id));
   const deliveries=state.deliveries.slice().reverse().slice(0,${WEBHOOK_UI_VISIBLE_DELIVERY_LIMIT});
   reconcile(document.querySelector('#deliveries'), deliveries, row => row.id, row => {
     const node=document.createElement('tr'); node.tabIndex=-1; const detail=row.lastError||row.ignoredReason;
     node.innerHTML='<td>'+esc(row.repository)+'</td><td>'+esc(row.event+(row.action?' / '+row.action:''))+'</td><td class="status-'+esc(row.status)+'">'+esc(row.status)+(detail?'<div class="meta">'+esc(detail)+'</div>':'')+'</td><td>'+row.attempts+'</td><td>'+esc(new Date(row.updatedAt).toLocaleString())+'</td><td>'+(row.status==='failed'?'<button class="secondary retry" data-id="'+esc(row.id)+'" data-subject="'+esc(row.repository+' '+row.event)+'" aria-describedby="delivery-action-'+esc(row.id)+'" aria-label="'+esc(row.repository+' の '+row.event+' delivery を retry')+'">retry</button>':'')+'<div id="delivery-action-'+esc(row.id)+'" class="action-status" role="status" aria-live="polite"></div></td>';
+    applyActionState(node,actionKey('delivery',row.id));
     return node;
   }, 'まだ配送がありません。', 6);
+  pruneActionStates('delivery',deliveries.map(row => row.id));
 }
 function reconcile(root, rows, key, render, empty, colspan) {
   const existing=new Map([...root.children].filter(node => node.dataset.key).map(node => [node.dataset.key,node]));
@@ -209,29 +244,40 @@ document.addEventListener('click', async event => {
   if (!(target instanceof HTMLElement)) return;
   if (target.matches('.toggle,.retry')) {
     const retry=target.matches('.retry');
+    const kind=retry?'delivery':'repository';
+    const id=target.dataset.id;
+    const key=actionKey(kind,id);
+    if (actionStates.get(key)?.pending) return;
     const action=retry?'retry':'状態変更';
-    const subject=target.dataset.subject||target.dataset.id;
-    const status=document.querySelector('#'+(retry?'delivery-action-':'repo-action-')+CSS.escape(target.dataset.id));
-    target.disabled=true; target.setAttribute('aria-busy','true');
-    status.textContent=subject+' の '+action+' を実行中…'; status.classList.remove('error');
+    const subject=target.dataset.subject||id;
+    setActionState(kind,id,{
+      pending:true,
+      error:false,
+      message:subject+' の '+action+' を実行中…',
+    });
     let mutationSucceeded=false;
     try {
-      if (!retry) await api('/api/repositories/'+target.dataset.id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:target.dataset.enabled!=='true'})});
-      else await api('/api/deliveries/'+target.dataset.id+'/retry',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
+      if (!retry) await api('/api/repositories/'+id,{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({enabled:target.dataset.enabled!=='true'})});
+      else await api('/api/deliveries/'+id+'/retry',{method:'POST',headers:{'content-type':'application/json'},body:'{}'});
       mutationSucceeded=true;
-      status.textContent=subject+' の '+action+' が完了しました。';
+      setActionState(kind,id,{
+        pending:false,
+        error:false,
+        message:subject+' の '+action+' が完了しました。',
+      });
     } catch (error) {
-      status.textContent=subject+' の '+action+' に失敗しました: '+error.message;
-      status.classList.add('error'); notice(status.textContent,true);
+      const message=subject+' の '+action+' に失敗しました: '+error.message;
+      setActionState(kind,id,{pending:false,error:true,message});
+      notice(message,true);
     }
     if (mutationSucceeded) {
       try { await refresh(); }
       catch (error) {
-        status.textContent=subject+' の '+action+' は完了しましたが、表示の更新に失敗しました。安全に再読み込みしてください。';
-        status.classList.add('error'); notice(status.textContent,true); reportDisconnect(error);
+        const message=subject+' の '+action+' は完了しましたが、表示の更新に失敗しました。安全に再読み込みしてください。';
+        setActionState(kind,id,{pending:false,error:true,message});
+        notice(message,true); reportDisconnect(error);
       }
     }
-    target.disabled=false; target.removeAttribute('aria-busy');
   }
 });
 let refreshTimer;
