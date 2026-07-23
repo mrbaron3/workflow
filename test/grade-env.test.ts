@@ -122,6 +122,23 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
       expect(result.output).toContain('Version');
     }
   });
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT denies untrusted files under otherwise system-readable roots', () => {
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-root-head-'));
+    const untrustedRoot = fs.mkdtempSync('/private/tmp/agentops-system-readable-');
+    const sentinel = path.join(untrustedRoot, 'operator-secret');
+    fs.writeFileSync(sentinel, 'secret');
+    const result = runGraderCommand(
+      `node -e "const fs=require('fs');try{fs.readFileSync('${sentinel}');process.exit(1)}catch{process.exit(0)}"`,
+      checkout,
+      {},
+      { isolated: true },
+    );
+    fs.rmSync(untrustedRoot, { recursive: true, force: true });
+    fs.rmSync(checkout, { recursive: true, force: true });
+    if (!nestedSandboxUnavailable(result.output)) {
+      expect(result, result.output).toMatchObject({ ok: true });
+    }
+  });
   it.runIf(process.platform === 'darwin')('PR-INTENT starts Vitest without granting DNS or cross-sandbox loopback access', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-vitest-'));
     fs.writeFileSync(

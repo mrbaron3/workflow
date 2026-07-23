@@ -18,7 +18,7 @@ import {
   IssueContract,
   PR,
   approvePR,
-  bindRevisionToPR,
+  bindApprovalRevisionToPR,
   transitionPR,
   transitionPrRevision,
   updatePR,
@@ -403,7 +403,7 @@ export async function reviewRepositoryPullRequest(
       : panel.verdict === 'request_changes'
         ? 'changes-requested'
         : 'failed';
-    store.replacePrRevision(
+    const reviewedRevision = store.replacePrRevision(
       revisionStatus === 'reviewing'
         ? transitionPrRevision(reviewingRevision, { status: 'reviewing' })
         : revisionStatus === 'changes-requested'
@@ -414,7 +414,7 @@ export async function reviewRepositoryPullRequest(
           }),
     );
     store.replacePR(panel.verdict === 'approve'
-      ? approvePR(reviewingPR, bindRevisionToPR(reviewingPR, revision))
+      ? approvePR(reviewingPR, bindApprovalRevisionToPR(reviewingPR, reviewedRevision))
       : transitionPR(reviewingPR, {
         status: 'changes-requested',
         currentRevisionId: revision.id,

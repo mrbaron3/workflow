@@ -38,6 +38,7 @@ interface GeneratedPreload {
 
 interface TrustPolicy {
   trustedReadRoots: string[];
+  trustedReadFiles: string[];
 }
 
 interface SandboxProfileInputs {
@@ -47,6 +48,7 @@ interface SandboxProfileInputs {
   rawSystemTmp: string;
   systemTmp: string;
   trustedReadRoots: string[];
+  trustedReadFiles: string[];
   ports: number[];
 }
 
@@ -252,17 +254,21 @@ function resolveTrustPolicy(
   nodeExecutable: string,
 ): TrustPolicy {
   const trustedReadRoots = new Set<string>([path.dirname(path.dirname(nodeExecutable))]);
+  const trustedReadFiles = new Set<string>([nodeExecutable]);
   const executable = resolveExecutable(command);
   if (executable && !executable.startsWith(`${cwd}${path.sep}`)) {
-    let cursor = path.dirname(executable);
-    while (cursor !== path.dirname(cursor) && path.basename(cursor) !== 'node_modules') {
-      cursor = path.dirname(cursor);
+    const dependencyMarker = `${path.sep}node_modules${path.sep}`;
+    const dependencyIndex = executable.lastIndexOf(dependencyMarker);
+    if (dependencyIndex >= 0) {
+      trustedReadRoots.add(executable.slice(0, dependencyIndex + dependencyMarker.length - 1));
+    } else {
+      trustedReadFiles.add(executable);
     }
-    trustedReadRoots.add(
-      path.basename(cursor) === 'node_modules' ? cursor : path.dirname(executable),
-    );
   }
-  return { trustedReadRoots: [...trustedReadRoots] };
+  return {
+    trustedReadRoots: [...trustedReadRoots],
+    trustedReadFiles: [...trustedReadFiles],
+  };
 }
 
 function quoteProfileValue(value: string): string {
@@ -271,9 +277,12 @@ function quoteProfileValue(value: string): string {
 
 function renderSandboxProfile(inputs: SandboxProfileInputs): string {
   const quoted = quoteProfileValue;
-  const { cwd, home, tmp, rawSystemTmp, systemTmp, trustedReadRoots, ports } = inputs;
+  const {
+    cwd, home, tmp, rawSystemTmp, systemTmp, trustedReadRoots, trustedReadFiles, ports,
+  } = inputs;
   const trustedReadRules = trustedReadRoots.map((root) => `(subpath "${quoted(root)}")`).join(' ');
-  const ancestorRules = [...trustedReadRoots, cwd, home, tmp]
+  const trustedFileRules = trustedReadFiles.map((file) => `(literal "${quoted(file)}")`).join(' ');
+  const ancestorRules = [...trustedReadRoots, ...trustedReadFiles, cwd, home, tmp]
     .map((root) => `(path-ancestors "${quoted(root)}")`).join(' ');
   const localTestPorts = ports.map((port) => `(local tcp "localhost:${port}")`).join(' ');
   const remoteTestPorts = ports.map((port) => `(remote tcp "localhost:${port}")`).join(' ');
@@ -298,8 +307,8 @@ function renderSandboxProfile(inputs: SandboxProfileInputs): string {
     `    (require-not (subpath "${quoted(cwd)}"))`,
     `    (require-not (subpath "${quoted(home)}"))`,
     `    (require-not (subpath "${quoted(tmp)}"))))`,
-    '(allow file-read* file-test-existence (subpath "/System") (subpath "/usr") (subpath "/Library") (subpath "/opt")',
-    `  ${trustedReadRules} (subpath "${quoted(cwd)}") (subpath "${quoted(home)}") (subpath "${quoted(tmp)}"))`,
+    '(allow file-read* file-test-existence (subpath "/System/Library") (subpath "/usr/lib") (subpath "/usr/share")',
+    `  ${trustedReadRules} ${trustedFileRules} (subpath "${quoted(cwd)}") (subpath "${quoted(home)}") (subpath "${quoted(tmp)}"))`,
     `(allow file-write* (subpath "${quoted(cwd)}") (subpath "${quoted(home)}") (subpath "${quoted(tmp)}"))`,
     ...(rawSystemTmp === systemTmp ? [] : [
       '(deny file-read* file-test-existence',
@@ -384,6 +393,7 @@ export function prepareIsolatedExecutionResources(
       rawSystemTmp: os.tmpdir(),
       systemTmp: fs.realpathSync(os.tmpdir()),
       trustedReadRoots: trust.trustedReadRoots,
+      trustedReadFiles: trust.trustedReadFiles,
       ports: ports.ports,
     });
     return {

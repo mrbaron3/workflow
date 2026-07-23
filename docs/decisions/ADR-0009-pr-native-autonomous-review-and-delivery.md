@@ -1,6 +1,6 @@
 # ADR-0009: PR の head revision を自動レビュー・修正・merge の耐久単位にする
 
-- 状態: 採択・吸収済み（2026-07-23。実装と grounded run は未完了）
+- 状態: 採択・吸収・構造実装済み（2026-07-23。grounded run は未完了）
 - supersedes:
   - ADR-0006 G1 の「パネル承認後にPRを作る」
   - ADR-0006 G1/G3 の「人間mergeだけがrelease承認」

@@ -1,6 +1,6 @@
 # ADR-0010: Webhookを即時トリガー、pollをreconciliationとする複数repo制御面を置く
 
-- 状態: 採択・吸収済み（2026-07-23。実装と grounded run は未完了）
+- 状態: 採択・吸収・構造実装済み（2026-07-23。grounded run は未完了）
 - supersedes:
   - ADR-0006 G1 の「webhookを建てない」
   - ADR-0008 I3 の「webhookを建てない」

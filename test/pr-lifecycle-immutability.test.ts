@@ -9,11 +9,14 @@ import {
   PrRevision,
   RevisionBinding,
   approvePR,
-  bindRevisionToPR,
+  bindApprovalRevisionToPR,
+  bindMergeRevisionToPR,
   mergeApprovedPR,
   transitionPR,
   transitionPrRevision,
   updatePR,
+  validatePRTransition,
+  validatePrRevisionTransition,
 } from '../src/domain/schema.js';
 import { Store, nowISO } from '../src/store/store.js';
 
@@ -26,6 +29,7 @@ describe('PR lifecycle values', () => {
   it('PR-INTENT makes PR and revision identity mutations compile-time invalid', () => {
     const open = PR.parse({
       id: 'PR-1', issueId: 'ISSUE-1', branch: 'feature', generator: 'mock',
+      currentRevisionId: 'PRREV-1', headSha: 'a'.repeat(40),
       createdAt: nowISO(), updatedAt: nowISO(),
     });
     const pending = PrRevision.parse({
@@ -80,16 +84,18 @@ describe('PR lifecycle values', () => {
   it('PR-INTENT transitions atomically to deeply readonly validated variants', () => {
     const open = PR.parse({
       id: 'PR-1', issueId: 'ISSUE-1', branch: 'feature', generator: 'mock',
+      currentRevisionId: 'PRREV-1', headSha: 'a'.repeat(40),
       createdAt: nowISO(), updatedAt: nowISO(),
     });
     const revision = PrRevision.parse({
       id: 'PRREV-1', prId: open.id, headSha: 'a'.repeat(40), ordinal: 1,
       status: 'approved', createdAt: nowISO(),
     });
-    const binding = bindRevisionToPR(open, revision);
+    if (revision.status !== 'approved') throw new Error('fixture must be approved');
+    const binding = bindApprovalRevisionToPR(open, revision);
     const approved = approvePR(open, binding);
     expect(Object.isFrozen(approved)).toBe(true);
-    const merged = mergeApprovedPR(approved, binding);
+    const merged = mergeApprovedPR(approved, bindMergeRevisionToPR(approved, revision));
     expect(merged.headSha).toBe(merged.mergedHeadSha);
     if (false) {
       const invalidApproval = {
@@ -134,8 +140,7 @@ describe('PR lifecycle values', () => {
       updatedAt: nowISO(),
     });
     if (merged.status !== 'merged') throw new Error('fixture must be merged');
-    // @ts-expect-error a merged PR has no legal transition destination
-    expect(() => transitionPR(merged, { status: 'open' })).toThrow('invalid PR transition');
+    expect(() => validatePRTransition(merged, 'open')).toThrow('invalid PR transition');
 
     const failed = PrRevision.parse({
       id: 'PRREV-1',
@@ -147,9 +152,28 @@ describe('PR lifecycle values', () => {
       createdAt: nowISO(),
     });
     if (failed.status !== 'failed') throw new Error('fixture must be failed');
-    // @ts-expect-error a failed revision cannot return to reviewing
-    expect(() => transitionPrRevision(failed, { status: 'reviewing' }))
+    expect(() => validatePrRevisionTransition(failed, 'reviewing'))
       .toThrow('invalid PR revision transition');
+  });
+
+  it('PR-INTENT refuses stale, ineligible, or non-current revision approval authority', () => {
+    const currentId = 'PRREV-current';
+    const sha = PrHeadSha.parse('a'.repeat(40));
+    const pr = PR.parse({
+      id: 'PR-1', issueId: 'ISSUE-1', branch: 'feature', generator: 'mock',
+      currentRevisionId: currentId, headSha: sha,
+      createdAt: nowISO(), updatedAt: nowISO(),
+    });
+    const historical = PrRevision.parse({
+      id: 'PRREV-old', prId: pr.id, headSha: 'b'.repeat(40), ordinal: 1,
+      status: 'approved', createdAt: nowISO(),
+    });
+    expect(() => bindApprovalRevisionToPR(pr, historical)).toThrow('not the current revision');
+    const pending = PrRevision.parse({
+      id: currentId, prId: pr.id, headSha: sha, ordinal: 2,
+      status: 'pending', createdAt: nowISO(),
+    });
+    expect(() => bindApprovalRevisionToPR(pr, pending)).toThrow('not eligible for approval');
   });
 
   it('PR-INTENT Store does not return mutable stored lifecycle references', () => {

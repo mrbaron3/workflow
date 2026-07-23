@@ -459,22 +459,21 @@ export type PRTransitionDestination =
   | OpenPRDestination
   | ChangesRequestedPRDestination
   | ClosedPRDestination;
-type PRTransitionFor<S extends PR['status']> =
-  S extends 'open'
-    ? OpenPRDestination | ChangesRequestedPRDestination | ClosedPRDestination
-    : S extends 'changes-requested'
-      ? OpenPRDestination | ChangesRequestedPRDestination | ClosedPRDestination
-      : S extends 'approved'
-        ? OpenPRDestination | ChangesRequestedPRDestination | ClosedPRDestination
-        : never;
-
-const PR_TRANSITIONS: Readonly<Record<PR['status'], readonly PR['status'][]>> = {
-  open: ['open', 'changes-requested', 'approved', 'closed'],
-  'changes-requested': ['open', 'changes-requested', 'approved', 'closed'],
-  approved: ['open', 'changes-requested', 'approved', 'closed', 'merged'],
-  closed: [],
-  merged: [],
-};
+const PR_TRANSITIONS = {
+  open: { open: true, 'changes-requested': true, closed: true },
+  'changes-requested': { open: true, 'changes-requested': true, closed: true },
+  approved: { open: true, 'changes-requested': true, closed: true },
+  closed: {},
+  merged: {},
+} as const satisfies Readonly<Record<PR['status'], Readonly<Partial<
+  Record<PRTransitionDestination['status'], true>
+>>>>;
+type PRTransitionStatusFor<S extends PR['status']> =
+  S extends PR['status'] ? keyof typeof PR_TRANSITIONS[S] : never;
+type PRTransitionFor<S extends PR['status']> = Extract<
+  PRTransitionDestination,
+  { status: PRTransitionStatusFor<S> }
+>;
 
 function deepFreeze<T>(value: T): DeepReadonly<T> {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
@@ -494,9 +493,7 @@ export function transitionPR<
     never
   >,
 ): Extract<PR, { status: D['status'] }> {
-  if (!PR_TRANSITIONS[pr.status].includes(destination.status)) {
-    throw new Error(`invalid PR transition: ${pr.status} -> ${destination.status}`);
-  }
+  validatePRTransition(pr, destination.status);
   const normalized = { mergedHeadSha: null, ...destination };
   return deepFreeze(PR.parse({
     ...pr,
@@ -505,34 +502,73 @@ export function transitionPR<
   })) as Extract<PR, { status: D['status'] }>;
 }
 
-declare const correlatedRevisionBrand: unique symbol;
-export type CorrelatedRevisionBinding = RevisionBinding & {
-  readonly prId: string;
-  readonly [correlatedRevisionBrand]: true;
-};
+/** Runtime seam for data whose destination status was not statically known. */
+export function validatePRTransition(pr: PR, destinationStatus: string): void {
+  if (!Object.hasOwn(PR_TRANSITIONS[pr.status], destinationStatus)) {
+    throw new Error(`invalid PR transition: ${pr.status} -> ${destinationStatus}`);
+  }
+}
 
+declare const approvalRevisionBrand: unique symbol;
+export type ApprovalRevisionBinding = RevisionBinding & {
+  readonly prId: string;
+  readonly [approvalRevisionBrand]: true;
+};
+declare const mergeRevisionBrand: unique symbol;
+export type MergeRevisionBinding = RevisionBinding & {
+  readonly prId: string;
+  readonly [mergeRevisionBrand]: true;
+};
 /**
- * The only constructor for coordinates consumed by approval/merge. It checks
- * PR ownership once and returns an opaque binding, so lifecycle callers cannot
- * independently pair a revision id with another head SHA.
+ * Approval authority is minted only for the exact current, review-eligible revision.
  */
-export function bindRevisionToPR(
+export function bindApprovalRevisionToPR(
   pr: PR,
-  revision: Pick<PrRevision, 'id' | 'prId' | 'headSha'>,
-): CorrelatedRevisionBinding {
+  revision: PrRevision,
+): ApprovalRevisionBinding {
+  if (!['reviewing', 'changes-requested', 'approved'].includes(revision.status)) {
+    throw new Error(`revision ${revision.id} (${revision.status}) is not eligible for approval`);
+  }
   if (revision.prId !== pr.id) {
     throw new Error(`revision ${revision.id} does not belong to PR ${pr.id}`);
+  }
+  if (revision.id !== pr.currentRevisionId || revision.headSha !== pr.headSha) {
+    throw new Error(`revision ${revision.id} is not the current revision of PR ${pr.id}`);
   }
   return Object.freeze({
     prId: pr.id,
     revisionId: revision.id,
     headSha: revision.headSha,
-  }) as CorrelatedRevisionBinding;
+  }) as ApprovalRevisionBinding;
+}
+
+/** @deprecated Use the approval-specific name; this never grants merge authority. */
+export const bindRevisionToPR = bindApprovalRevisionToPR;
+/** @deprecated Approval and merge bindings are now intentionally distinct. */
+export type CorrelatedRevisionBinding = ApprovalRevisionBinding;
+
+/** Merge authority is deliberately distinct from review approval authority. */
+export function bindMergeRevisionToPR(
+  pr: Extract<PR, { status: 'approved' }>,
+  revision: Extract<PrRevision, { status: 'approved' }>,
+): MergeRevisionBinding {
+  if (
+    revision.prId !== pr.id
+    || revision.id !== pr.currentRevisionId
+    || revision.headSha !== pr.headSha
+  ) {
+    throw new Error(`approved revision ${revision.id} is not current for PR ${pr.id}`);
+  }
+  return Object.freeze({
+    prId: pr.id,
+    revisionId: revision.id,
+    headSha: revision.headSha,
+  }) as MergeRevisionBinding;
 }
 
 export function approvePR(
   pr: PR,
-  binding: CorrelatedRevisionBinding,
+  binding: ApprovalRevisionBinding,
 ): Extract<PR, { status: 'approved' }> {
   if (pr.status === 'closed' || pr.status === 'merged') {
     throw new Error(`cannot approve terminal PR ${pr.id} (${pr.status})`);
@@ -550,7 +586,7 @@ export function approvePR(
 
 export function mergeApprovedPR(
   pr: Extract<PR, { status: 'approved' }>,
-  binding: CorrelatedRevisionBinding,
+  binding: MergeRevisionBinding,
 ): MergedPR {
   if (
     binding.prId !== pr.id
@@ -661,42 +697,46 @@ export type PrRevisionTransitionDestination =
   | MergedRevisionDestination
   | StaleRevisionDestination
   | FailedRevisionDestination;
-type PrRevisionTransitionFor<S extends PrRevision['status']> =
-  S extends 'pending'
-    ? ReviewingRevisionDestination | StaleRevisionDestination | FailedRevisionDestination
-    : S extends 'reviewing' | 'changes-requested'
-      ? ReviewingRevisionDestination | ChangesRequestedRevisionDestination
-        | ApprovedRevisionDestination | StaleRevisionDestination | FailedRevisionDestination
-      : S extends 'approved'
-        ? ReviewingRevisionDestination | ChangesRequestedRevisionDestination
-          | ApprovedRevisionDestination | MergedRevisionDestination
-          | StaleRevisionDestination | FailedRevisionDestination
-        : never;
-
-const PR_REVISION_TRANSITIONS:
-Readonly<Record<PrRevision['status'], readonly PrRevision['status'][]>> = {
-  pending: ['reviewing', 'stale', 'failed'],
-  reviewing: ['reviewing', 'changes-requested', 'approved', 'stale', 'failed'],
-  'changes-requested': ['reviewing', 'changes-requested', 'approved', 'stale', 'failed'],
-  approved: ['reviewing', 'changes-requested', 'approved', 'merged', 'stale', 'failed'],
-  merged: [],
-  stale: [],
-  failed: [],
-};
+const PR_REVISION_TRANSITIONS = {
+  pending: { reviewing: true, stale: true, failed: true },
+  reviewing: {
+    reviewing: true, 'changes-requested': true, approved: true, stale: true, failed: true,
+  },
+  'changes-requested': {
+    reviewing: true, 'changes-requested': true, approved: true, stale: true, failed: true,
+  },
+  approved: {
+    reviewing: true,
+    'changes-requested': true,
+    approved: true,
+    merged: true,
+    stale: true,
+    failed: true,
+  },
+  merged: {},
+  stale: {},
+  failed: {},
+} as const satisfies Readonly<Record<PrRevision['status'], Readonly<Partial<
+  Record<PrRevisionTransitionDestination['status'], true>
+>>>>;
+type PrRevisionTransitionStatusFor<S extends PrRevision['status']> =
+  S extends PrRevision['status'] ? keyof typeof PR_REVISION_TRANSITIONS[S] : never;
+type DerivedPrRevisionTransitionFor<S extends PrRevision['status']> = Extract<
+  PrRevisionTransitionDestination,
+  { status: PrRevisionTransitionStatusFor<S> }
+>;
 
 export function transitionPrRevision<
   S extends PrRevision['status'],
-  D extends PrRevisionTransitionFor<S>,
+  D extends DerivedPrRevisionTransitionFor<S>,
 >(
   revision: Extract<PrRevision, { status: S }>,
   destination: D & Record<
-    Exclude<keyof D, keyof Extract<PrRevisionTransitionFor<S>, { status: D['status'] }>>,
+    Exclude<keyof D, keyof Extract<DerivedPrRevisionTransitionFor<S>, { status: D['status'] }>>,
     never
   >,
 ): Extract<PrRevision, { status: D['status'] }> {
-  if (!PR_REVISION_TRANSITIONS[revision.status].includes(destination.status)) {
-    throw new Error(`invalid PR revision transition: ${revision.status} -> ${destination.status}`);
-  }
+  validatePrRevisionTransition(revision, destination.status);
   const normalized = destination.status === 'merged'
     ? destination
     : destination.status === 'approved'
@@ -706,6 +746,18 @@ export function transitionPrRevision<
     ...revision,
     ...normalized,
   })) as Extract<PrRevision, { status: D['status'] }>;
+}
+
+/** Runtime seam for persisted or otherwise intentionally unknown revision transitions. */
+export function validatePrRevisionTransition(
+  revision: PrRevision,
+  destinationStatus: string,
+): void {
+  if (!Object.hasOwn(PR_REVISION_TRANSITIONS[revision.status], destinationStatus)) {
+    throw new Error(
+      `invalid PR revision transition: ${revision.status} -> ${destinationStatus}`,
+    );
+  }
 }
 
 export function stalePrRevision(

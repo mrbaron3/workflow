@@ -5,7 +5,8 @@ import {
   ApprovedRevisionGateSnapshot,
   RevisionGateSnapshot,
   approvePR,
-  bindRevisionToPR,
+  bindApprovalRevisionToPR,
+  bindMergeRevisionToPR,
   mergeApprovedPR,
   stalePrRevision,
   transitionPR,
@@ -106,19 +107,20 @@ function selectedChecks(
  */
 export function observePrRevision(
   store: Store,
-  pr: PR,
+  observedPr: PR,
   headSha: string,
 ): PrRevision {
+  const pr = store.getPR(observedPr.id) ?? observedPr;
   if (pr.status === 'merged' || pr.status === 'closed') {
     throw new Error(`cannot observe a new revision for terminal PR ${pr.id} (${pr.status})`);
   }
   const parsedSha = PrHeadSha.parse(headSha);
   const existing = store.revisionForHead(pr.id, parsedSha);
   if (existing) {
-    store.replacePR(pr.status === 'approved'
-      ? approvePR(pr, bindRevisionToPR(pr, existing))
+    store.replacePR(pr.status === 'approved' && existing.status === 'approved'
+      ? approvePR(pr, bindApprovalRevisionToPR(pr, existing))
       : transitionPR(pr, {
-        status: pr.status,
+        status: pr.status === 'approved' ? 'open' : pr.status,
         currentRevisionId: existing.id,
         headSha: existing.headSha,
         mergedHeadSha: null,
@@ -296,13 +298,14 @@ function finalizeMergedRevision(
   runner: PrNativeGithubRunner,
   cwd: string,
 ): AutoMergeResult {
+  const mergeBinding = bindMergeRevisionToPR(pr, revision);
   const mergedRevision = store.replacePrRevision(transitionPrRevision(revision, {
     status: 'merged',
     completedAt: nowISO(),
   }));
   const mergedPr = store.replacePR(mergeApprovedPR(
     pr,
-    bindRevisionToPR(pr, mergedRevision),
+    mergeBinding,
   ));
   if (store.getIssue(mergedPr.issueId)?.status !== 'released') {
     store.setStatus(mergedPr.issueId, 'released');
@@ -400,6 +403,9 @@ export function autoMergeCurrentRevision(
   }
   const github = runner.viewRevision(cwd, externalRef.number);
   let revision = observePrRevision(store, pr, github.headSha);
+  // Observation atomically projects the exact revision coordinates onto the PR.
+  // Continue from that stored value rather than the caller's potentially unbound snapshot.
+  pr = store.getPR(pr.id)!;
   if (revision.status === 'pending') {
     revision = store.replacePrRevision(transitionPrRevision(revision, {
       status: 'reviewing',
@@ -453,7 +459,7 @@ export function autoMergeCurrentRevision(
       : store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
     const approvedPr = pr.status === 'approved'
       ? pr
-      : store.replacePR(approvePR(pr, bindRevisionToPR(pr, approvedRevision)));
+      : store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, approvedRevision)));
     if (approvedPr.status !== 'approved' || approvedRevision.status !== 'approved') {
       throw new Error('approved lifecycle transition did not produce approved variants');
     }
@@ -524,7 +530,7 @@ export function autoMergeCurrentRevision(
   }
 
   revision = store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
-  pr = store.replacePR(approvePR(pr, bindRevisionToPR(pr, revision)));
+  pr = store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, revision)));
   if (revision.mergeRequestedAt) {
     store.save();
     return {
@@ -559,7 +565,7 @@ export function autoMergeCurrentRevision(
     };
   }
   if (afterMerge.state !== 'merged') {
-    pr = store.replacePR(approvePR(pr, bindRevisionToPR(pr, revision)));
+    pr = store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, revision)));
     store.save();
     return {
       prId: pr.id,

@@ -69,7 +69,7 @@ async function flush(): Promise<void> {
 }
 
 describe('webhook control GUI runtime', () => {
-  it('PR-INTENT executes polling, preserves focus, recovers after resume failure, and caps rows', async () => {
+  it('AC-WHUI-001 PR-INTENT renders populated API state, preserves focus, recovers after resume failure, and caps rows', async () => {
     const window = new Window({
       url: 'http://127.0.0.1:8377/',
       settings: { disableJavaScriptEvaluation: false },
@@ -120,7 +120,7 @@ describe('webhook control GUI runtime', () => {
 
     const document = window.document;
     const autoRefresh = document.querySelector('#auto-refresh') as HTMLButtonElement;
-    expect(autoRefresh.textContent).toBe('更新を一時停止');
+    expect(autoRefresh.textContent).toBe('自動更新');
     expect(autoRefresh.getAttribute('aria-pressed')).toBe('true');
     expect(intervalCallback).not.toBeNull();
     expect([...document.querySelectorAll('#repositories [data-key]')].map(
@@ -140,7 +140,7 @@ describe('webhook control GUI runtime', () => {
     );
 
     autoRefresh.click();
-    expect(autoRefresh.textContent).toBe('更新を再開');
+    expect(autoRefresh.textContent).toBe('自動更新');
     expect(autoRefresh.getAttribute('aria-pressed')).toBe('false');
     expect(intervalCallback).toBeNull();
     expect(document.querySelector('#connection-announcement')?.textContent)
@@ -148,7 +148,7 @@ describe('webhook control GUI runtime', () => {
 
     autoRefresh.click();
     await flush();
-    expect(autoRefresh.textContent).toBe('更新を一時停止');
+    expect(autoRefresh.textContent).toBe('自動更新');
     expect(autoRefresh.getAttribute('aria-pressed')).toBe('true');
     expect(document.querySelector('#connection-announcement')?.textContent)
       .toContain('接続できません');

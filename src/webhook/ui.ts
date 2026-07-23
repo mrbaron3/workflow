@@ -64,7 +64,7 @@ export function webhookControlHtml(): string {
 <main>
   <header><div><h1>Webhook Control</h1><p>複数repoのGitHubイベントを、耐久受信箱から安全に配送します。</p></div>
     <div><span class="badge" id="mode-badge">loopback only</span>
-      <button id="auto-refresh" class="secondary" type="button" aria-pressed="true">更新を一時停止</button></div></header>
+      <button id="auto-refresh" class="secondary" type="button" aria-pressed="true">自動更新</button></div></header>
   <div id="connection-status">
     <span id="connection-announcement" role="status" aria-live="polite">運用状態を読み込んでいます…</span>
     <span id="last-updated" aria-live="off"></span>
@@ -315,7 +315,6 @@ function startRefresh() {
 document.querySelector('#auto-refresh').addEventListener('click', event => {
   const active=event.currentTarget.getAttribute('aria-pressed')==='true';
   event.currentTarget.setAttribute('aria-pressed',String(!active));
-  event.currentTarget.textContent=active?'更新を再開':'更新を一時停止';
   if (active) { clearInterval(refreshTimer); setConnectionState('paused'); }
   else { startRefresh(); refresh().catch(reportDisconnect); }
 });

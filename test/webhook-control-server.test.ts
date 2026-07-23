@@ -107,15 +107,60 @@ describe('local webhook control server', () => {
 
   it('AC-WHUI-001 serves the self-contained GUI and public state', async () => {
     const { url } = await start();
+    expect((await addRepository(url)).status).toBe(201);
+    const hook = await request(`${url}/hook`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-github-event': 'pull_request',
+        'x-github-delivery': 'delivery-populated-state',
+      },
+      body: JSON.stringify({
+        action: 'synchronize',
+        repository: { full_name: 'acme/theme' },
+      }),
+    });
+    expect(hook.status).toBe(202);
+    await waitFor(async () => {
+      const state = await json(await request(`${url}/api/state`));
+      return (state.deliveries as Array<{ status: string }>)[0]?.status === 'processed';
+    });
 
     const page = await request(url);
     expect(page.status).toBe(200);
     expect(page.headers.get('content-type')).toContain('text/html');
-    expect(await page.text()).toContain('<h1>Webhook Control</h1>');
+    const html = await page.text();
+    expect(html).toContain('<h1>Webhook Control</h1>');
+    expect(html).toContain("api('/api/state')");
+    expect(html).toContain("reconcile(document.querySelector('#repositories'), state.repositories");
+    expect(html).toContain('const deliveries=state.deliveries');
 
     const response = await request(`${url}/api/state`);
     expect(response.status).toBe(200);
-    expect(await json(response)).toEqual({ repositories: [], deliveries: [] });
+    expect(await json(response)).toEqual({
+      repositories: [
+        expect.objectContaining({
+          id: 'WHREPO-0001',
+          repository: 'acme/theme',
+          enabled: true,
+          events: ['pull_request'],
+          consumers: ['agentops'],
+        }),
+      ],
+      deliveries: [
+        expect.objectContaining({
+          id: 'WHDEL-0001',
+          deliveryKey: 'delivery-populated-state',
+          repository: 'acme/theme',
+          event: 'pull_request',
+          action: 'synchronize',
+          status: 'processed',
+          attempts: 1,
+          lastError: null,
+          ignoredReason: null,
+        }),
+      ],
+    });
   });
 
   it('ISSUE-0024/PR-INTENT bootstraps a browser session and authenticates GUI API requests end to end', async () => {

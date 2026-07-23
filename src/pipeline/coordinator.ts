@@ -12,7 +12,7 @@
 import {
   PR,
   approvePR,
-  bindRevisionToPR,
+  bindApprovalRevisionToPR,
   transitionPR,
   updatePR,
   type Issue,
@@ -101,7 +101,7 @@ export async function runIssue(
           ? store.revisionForHead(pr.id, pr.headSha)
           : undefined;
         pr = currentRevision
-          ? store.replacePR(approvePR(pr, bindRevisionToPR(pr, currentRevision)))
+          ? store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, currentRevision)))
           : store.replacePR(transitionPR(pr, { status: 'open' }));
         log(`  ✓ ${tag}: approved (overall ${run.overall.toFixed(2)})`);
         break;

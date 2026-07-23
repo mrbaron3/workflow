@@ -12,7 +12,7 @@
 import {
   PR,
   approvePR,
-  bindRevisionToPR,
+  bindApprovalRevisionToPR,
   transitionPR,
   updatePR,
   type Issue,
@@ -218,7 +218,7 @@ export async function runBoundedRepairLoop(
       currentPr = currentRevision
         ? store.replacePR(approvePR(
           currentPr,
-          bindRevisionToPR(currentPr, currentRevision),
+          bindApprovalRevisionToPR(currentPr, currentRevision),
         ))
         : store.replacePR(transitionPR(currentPr, { status: 'open' }));
       break;
