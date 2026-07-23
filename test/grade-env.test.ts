@@ -39,6 +39,11 @@ function typecheckWith(command: string): boolean {
   return a.typecheckPasses;
 }
 
+function nestedSandboxUnavailable(output: string): boolean {
+  return output.includes('sandbox_apply: Operation not permitted')
+    || output.includes('terminated by signal: SIGABRT');
+}
+
 describe('grader command env prefixes (KEY=VAL …)', () => {
   it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT isolates a malicious head from operator credentials and network', async () => {
     const operatorHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-operator-home-'));
@@ -60,10 +65,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     });
     fs.rmSync(operatorHome, { recursive: true, force: true });
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (
-      result.output.includes('sandbox_apply: Operation not permitted')
-      || result.output.includes('terminated by signal: SIGABRT')
-    ) {
+    if (nestedSandboxUnavailable(result.output)) {
       // The outer CI sandbox forbids nesting sandbox-exec; production fails closed
       // in that case instead of falling back to credential-bearing host execution.
       expect(result.ok).toBe(false);
@@ -86,9 +88,28 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
       { isolated: true },
     );
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (!result.output.includes('terminated by signal: SIGABRT')) {
+    if (!nestedSandboxUnavailable(result.output)) {
       expect(result, result.output).toMatchObject({ ok: true });
       expect(result.output).toContain('Version');
+    }
+  });
+  it.runIf(process.platform === 'darwin')('PR-INTENT starts Vitest without granting DNS or cross-sandbox loopback access', () => {
+    const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-vitest-'));
+    fs.writeFileSync(
+      path.join(checkout, 'isolated.test.ts'),
+      "import { expect, it } from 'vitest'; it('runs', () => expect(1).toBe(1));\n",
+    );
+    fs.writeFileSync(path.join(checkout, 'tsconfig.json'), '{}\n');
+    const result = runGraderCommand(
+      `${path.resolve('node_modules/.bin/vitest')} run`,
+      checkout,
+      {},
+      { isolated: true },
+    );
+    fs.rmSync(checkout, { recursive: true, force: true });
+    if (!nestedSandboxUnavailable(result.output)) {
+      expect(result.output).not.toContain('getaddrinfo ENOTFOUND localhost');
+      expect(result, result.output).toMatchObject({ ok: true });
     }
   });
   it('a leading KEY=VAL lands in the child process env', () => {

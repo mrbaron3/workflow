@@ -193,6 +193,18 @@ describe('ISSUE-0024/PR-INTENT durable lifecycle invariants', () => {
     })).toThrow();
   });
 
+  it('treats GitHub CLI empty reviewDecision as no submitted review', () => {
+    expect(GhPrViewResponse.parse({
+      id: 'PR_node',
+      state: 'OPEN',
+      isDraft: true,
+      headRefOid: SHA_A,
+      mergeable: 'MERGEABLE',
+      reviewDecision: '',
+      statusCheckRollup: [],
+    }).reviewDecision).toBeNull();
+  });
+
   it('rejects lifecycle states missing completion evidence or carrying forbidden metadata', () => {
     expect(() => PrRevision.parse({
       id: 'PRREV-0001', prId: 'PR-0001', headSha: SHA_A, ordinal: 1,

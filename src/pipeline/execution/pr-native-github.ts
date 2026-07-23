@@ -22,7 +22,10 @@ export const GhPrViewResponse = z.object({
   isDraft: z.boolean(),
   headRefOid: GithubSha,
   mergeable: z.enum(['MERGEABLE', 'CONFLICTING', 'UNKNOWN']),
-  reviewDecision: z.enum(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']).nullable().optional(),
+  reviewDecision: z.preprocess(
+    (value) => value === '' ? null : value,
+    z.enum(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']).nullable().optional(),
+  ),
   statusCheckRollup: z.array(GithubCheck).optional(),
 });
 

@@ -46,13 +46,69 @@ function isolatedCommand(
   const isolatedCwd = fs.realpathSync(cwd);
   const rawSystemTmp = os.tmpdir();
   const systemTmp = fs.realpathSync(os.tmpdir());
+  const nodeExecutable = fs.realpathSync(process.execPath);
+  const sandboxPortBase = 30_000 + Math.floor(Math.random() * 20_000);
+  const sandboxPorts = Array.from({ length: 128 }, (_, index) => sandboxPortBase + index);
+  const portLockDir = path.join(safeTmp, 'ports');
+  const isolatedPath = [
+    path.dirname(nodeExecutable),
+    path.join(isolatedCwd, 'node_modules', '.bin'),
+    '/opt/homebrew/bin',
+    '/Library/Developer/CommandLineTools/usr/bin',
+    '/usr/bin',
+    '/bin',
+    '/usr/sbin',
+    '/sbin',
+  ].join(path.delimiter);
   const env: NodeJS.ProcessEnv = {
     HOME: safeHome,
-    PATH: process.env.PATH ?? '/usr/bin:/bin',
+    PATH: isolatedPath,
     TMPDIR: safeTmp,
     LANG: process.env.LANG ?? 'C',
   };
+  const localhostPreload = path.join(
+    isolatedCwd,
+    `.agentops-localhost-dns-${process.pid}-${Math.random().toString(16).slice(2)}.cjs`,
+  );
+  fs.writeFileSync(localhostPreload, [
+    "'use strict';",
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
+    "const dns = require('node:dns');",
+    "const net = require('node:net');",
+    'const original = dns.promises.lookup.bind(dns.promises);',
+    'dns.promises.lookup = async (hostname, options) => {',
+    "  if (hostname !== 'localhost') return original(hostname, options);",
+    "  if (options && options.all) return [{ address: '127.0.0.1', family: 4 }];",
+    "  return { address: '127.0.0.1', family: 4 };",
+    '};',
+    `const allowedPorts = ${JSON.stringify(sandboxPorts)};`,
+    `const lockDir = ${JSON.stringify(portLockDir)};`,
+    'fs.mkdirSync(lockDir, { recursive: true });',
+    'let portCursor = Math.abs(process.pid) % allowedPorts.length;',
+    'function claimPort() {',
+    '  for (let tried = 0; tried < allowedPorts.length; tried += 1) {',
+    '    const port = allowedPorts[portCursor++ % allowedPorts.length];',
+    "    try { fs.closeSync(fs.openSync(path.join(lockDir, String(port)), 'wx')); return port; } catch {}",
+    '  }',
+    "  throw new Error('isolated grader exhausted its local test port allowance');",
+    '}',
+    'const originalListen = net.Server.prototype.listen;',
+    'net.Server.prototype.listen = function isolatedListen(...args) {',
+    "  if (typeof args[0] === 'number' && args[0] === 0) args[0] = claimPort();",
+    "  else if (args[0] && typeof args[0] === 'object' && args[0].port === 0) {",
+    '    args[0] = { ...args[0], port: claimPort() };',
+    '  }',
+    '  return originalListen.apply(this, args);',
+    '};',
+    '',
+  ].join('\n'), { mode: 0o600, flag: 'wx' });
+  // Vite resolves localhost while starting Vitest even when no browser/API test
+  // needs network. Resolve only that literal in-process so the sandbox can keep
+  // denying every network syscall, including DNS and loopback connections.
+  env.NODE_OPTIONS = `--require=${localhostPreload}`;
   if (process.platform !== 'darwin') {
+    fs.rmSync(localhostPreload, { force: true });
     fs.rmSync(safeHome, { recursive: true, force: true });
     fs.rmSync(safeTmp, { recursive: true, force: true });
     throw new Error('untrusted grader isolation is unavailable on this platform');
@@ -71,7 +127,7 @@ function isolatedCommand(
     }
     return null;
   };
-  const nodeRuntimeRoot = path.dirname(path.dirname(fs.realpathSync(process.execPath)));
+  const nodeRuntimeRoot = path.dirname(path.dirname(nodeExecutable));
   const executable = resolveExecutable(command);
   const trustedReadRoots = new Set<string>([nodeRuntimeRoot]);
   if (executable && !executable.startsWith(`${isolatedCwd}${path.sep}`)) {
@@ -93,18 +149,28 @@ function isolatedCommand(
   const ancestorRules = accessibleRoots
     .map((root) => `(path-ancestors "${quoted(root)}")`)
     .join(' ');
+  const localTestPorts = sandboxPorts
+    .map((port) => `(local tcp "localhost:${port}")`)
+    .join(' ');
+  const remoteTestPorts = sandboxPorts
+    .map((port) => `(remote tcp "localhost:${port}")`)
+    .join(' ');
   const profile = [
     '(version 1)',
     '(deny default)',
     '(import "system.sb")',
     '(allow process*)',
+    '(allow signal (target children))',
     '(allow sysctl-read)',
     `(allow file-read-metadata file-test-existence ${ancestorRules})`,
     '(deny file-read* file-test-existence',
     `  (require-all (subpath "${quoted(systemTmp)}")`,
     `    (require-not (subpath "${quoted(isolatedCwd)}"))`,
     `    (require-not (subpath "${quoted(safeHome)}"))`,
-    `    (require-not (subpath "${quoted(safeTmp)}"))))`,
+    `    (require-not (subpath "${quoted(safeTmp)}"))`,
+    `    (require-not (path-ancestors "${quoted(isolatedCwd)}"))`,
+    `    (require-not (path-ancestors "${quoted(safeHome)}"))`,
+    `    (require-not (path-ancestors "${quoted(safeTmp)}"))))`,
     '(deny file-write*',
     `  (require-all (subpath "${quoted(systemTmp)}")`,
     `    (require-not (subpath "${quoted(isolatedCwd)}"))`,
@@ -118,20 +184,28 @@ function isolatedCommand(
       `  (require-all (subpath "${quoted(rawSystemTmp)}")`,
       `    (require-not (subpath "${quoted(isolatedCwd)}"))`,
       `    (require-not (subpath "${quoted(safeHome)}"))`,
-      `    (require-not (subpath "${quoted(safeTmp)}"))))`,
+      `    (require-not (subpath "${quoted(safeTmp)}"))`,
+      `    (require-not (path-ancestors "${quoted(isolatedCwd)}"))`,
+      `    (require-not (path-ancestors "${quoted(safeHome)}"))`,
+      `    (require-not (path-ancestors "${quoted(safeTmp)}"))))`,
       '(deny file-write*',
       `  (require-all (subpath "${quoted(rawSystemTmp)}")`,
       `    (require-not (subpath "${quoted(isolatedCwd)}"))`,
       `    (require-not (subpath "${quoted(safeHome)}"))`,
       `    (require-not (subpath "${quoted(safeTmp)}"))))`,
     ]),
-    '(deny network*)',
+    // Node's trusted preload rewrites ephemeral test listeners into this
+    // per-grader random set. Existing operator services and every external
+    // target remain unreachable.
+    `(allow network-bind network-inbound ${localTestPorts})`,
+    `(allow network-outbound ${remoteTestPorts})`,
   ].join('\n');
   return {
     command: '/usr/bin/sandbox-exec',
     args: ['-p', profile, command, ...args],
     env,
     cleanup: () => {
+      if (fs.existsSync(localhostPreload)) fs.rmSync(localhostPreload, { force: true });
       fs.rmSync(safeHome, { recursive: true, force: true });
       fs.rmSync(safeTmp, { recursive: true, force: true });
     },
