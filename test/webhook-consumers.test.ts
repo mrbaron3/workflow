@@ -23,17 +23,24 @@ afterEach(() => {
 });
 
 describe('allow-listed webhook consumer adapters', () => {
-  it('ISSUE-0024/PR-INTENT strips daemon credentials from both production consumer environments', () => {
+  it('ISSUE-0024/PR-INTENT preserves GitHub authentication but strips daemon credentials', () => {
     const env = sanitizedConsumerEnvironment({
       PATH: '/bin',
       HOME: '/safe/home',
+      GH_CONFIG_DIR: '/safe/gh',
+      GH_TOKEN: 'github-token',
+      SSH_AUTH_SOCK: '/safe/ssh-agent',
       AGENTOPS_WEBHOOK_CONTROL_TOKEN: 'control-secret',
       AGENTOPS_GITHUB_WEBHOOK_SECRET: 'webhook-secret',
     });
 
-    expect(env).toMatchObject({ PATH: '/bin' });
-    expect(env).not.toHaveProperty('HOME');
-    expect(env).not.toHaveProperty('SSH_AUTH_SOCK');
+    expect(env).toMatchObject({
+      PATH: '/bin',
+      HOME: '/safe/home',
+      GH_CONFIG_DIR: '/safe/gh',
+      GH_TOKEN: 'github-token',
+      SSH_AUTH_SOCK: '/safe/ssh-agent',
+    });
     expect(env).not.toHaveProperty('AGENTOPS_WEBHOOK_CONTROL_TOKEN');
     expect(env).not.toHaveProperty('AGENTOPS_GITHUB_WEBHOOK_SECRET');
   });

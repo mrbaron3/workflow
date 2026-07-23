@@ -17,8 +17,9 @@ export interface WebhookConsumerAdapterOptions {
 }
 
 const CONSUMER_ENV_ALLOWLIST = new Set([
-  'LANG', 'LC_ALL', 'LC_CTYPE', 'NODE_EXTRA_CA_CERTS', 'PATH', 'SHELL',
-  'TMPDIR', 'TMP', 'TEMP', 'USER',
+  'GH_CONFIG_DIR', 'GH_TOKEN', 'GITHUB_TOKEN', 'HOME', 'LANG', 'LC_ALL',
+  'LC_CTYPE', 'NODE_EXTRA_CA_CERTS', 'PATH', 'SHELL', 'SSH_AUTH_SOCK',
+  'TMPDIR', 'TMP', 'TEMP', 'USER', 'XDG_CONFIG_HOME',
 ]);
 
 export function sanitizedConsumerEnvironment(
