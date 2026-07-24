@@ -19,6 +19,7 @@ import {
   updatePR,
   validatePRTransition,
   validatePrRevisionTransition,
+  type RevisionGateReviewRunEvidence,
 } from '../src/domain/schema.js';
 import { Store, nowISO } from '../src/store/store.js';
 
@@ -73,6 +74,63 @@ afterEach(() => {
 });
 
 describe('PR lifecycle values', () => {
+  it('PR-INTENT cannot mint gate authority from a review bound to another revision', () => {
+    const pr = PR.parse({
+      id: 'PR-1',
+      issueId: 'ISSUE-1',
+      branch: 'feature',
+      generator: 'mock',
+      currentRevisionId: 'PRREV-1',
+      headSha: 'a'.repeat(40),
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    });
+    const revision = PrRevision.parse({
+      id: 'PRREV-1',
+      prId: pr.id,
+      headSha: pr.headSha,
+      ordinal: 1,
+      status: 'approved',
+      createdAt: nowISO(),
+    });
+    if (false) {
+      // @ts-expect-error every review run must carry exact revision coordinates
+      const unbound: RevisionGateReviewRunEvidence = {
+        prId: pr.id,
+        perspective: 'security',
+        verdict: 'approve',
+        findings: [],
+      };
+      void unbound;
+    }
+
+    expect(() => evaluateRevisionGateEvidence({
+      id: 'PRGATE-MISMATCH',
+      pr,
+      revision,
+      requiredPerspectives: ['security'],
+      reviewRuns: [{
+        prId: pr.id,
+        binding: RevisionBinding.parse({
+          revisionId: 'PRREV-OTHER',
+          headSha: 'b'.repeat(40),
+        }),
+        perspective: 'security',
+        verdict: 'approve',
+        findings: [],
+      }],
+      github: {
+        state: 'open',
+        headSha: revision.headSha,
+        isDraft: false,
+        mergeability: 'mergeable',
+        checks: [],
+        unresolvedBlockingThreadIds: [],
+      },
+      createdAt: nowISO(),
+    })).toThrow('review run evidence does not match');
+  });
+
   it('PR-INTENT makes PR and revision identity mutations compile-time invalid', () => {
     const open = PR.parse({
       id: 'PR-1', issueId: 'ISSUE-1', branch: 'feature', generator: 'mock',

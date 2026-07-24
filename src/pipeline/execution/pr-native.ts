@@ -5,6 +5,7 @@ import {
   PrHeadSha,
   ApprovedRevisionGateSnapshot,
   RevisionCheck,
+  RevisionBinding,
   RevisionReviewThread,
   approvePR,
   bindApprovalRevisionToPR,
@@ -157,7 +158,16 @@ export function evaluateRevisionGate(
     (run) => run.prId === input.revision.prId
       && run.revisionId === input.revision.id
       && run.headSha === input.revision.headSha,
-  );
+  ).map((run) => ({
+    prId: run.prId,
+    binding: RevisionBinding.parse({
+      revisionId: run.revisionId,
+      headSha: run.headSha,
+    }),
+    perspective: run.perspective,
+    verdict: run.verdict,
+    findings: run.findings,
+  }));
   const currentPr = store.getPR(input.pr.id) ?? input.pr;
   return evaluateRevisionGateEvidence({
     id: store.nextId('PRGATE'),

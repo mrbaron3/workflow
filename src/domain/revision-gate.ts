@@ -1,5 +1,6 @@
 import {
   ApprovedRevisionGateSnapshot,
+  RevisionBinding,
   RevisionGateSnapshot,
   type DeepReadonly,
   type PR,
@@ -22,6 +23,8 @@ export type EvaluatedApprovedRevisionGateSnapshot = Extract<
 >;
 
 export interface RevisionGateReviewRunEvidence {
+  prId: string;
+  binding: RevisionBinding;
   perspective: string | null;
   verdict: 'approve' | 'request_changes' | 'needs_human';
   findings: ReadonlyArray<{
@@ -90,6 +93,14 @@ export function evaluateRevisionGateEvidence(
     || input.pr.headSha !== input.revision.headSha
   ) {
     throw new Error(`gate evidence does not match current PR revision ${input.revision.id}`);
+  }
+  const mismatchedRun = input.reviewRuns.find(
+    (run) => run.prId !== input.pr.id
+      || run.binding.revisionId !== input.revision.id
+      || run.binding.headSha !== input.revision.headSha,
+  );
+  if (mismatchedRun) {
+    throw new Error('review run evidence does not match the current PR revision');
   }
   const perspectiveVerdicts: Record<
     string,
