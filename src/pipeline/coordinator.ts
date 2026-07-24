@@ -13,6 +13,7 @@ import {
   PR,
   approvePR,
   bindApprovalRevisionToPR,
+  requireMutablePR,
   transitionPR,
   updatePR,
   type Issue,
@@ -84,7 +85,7 @@ export async function runIssue(
 
     for (let attempt = 1; attempt <= config.maxRepairs + 1; attempt++) {
       attempts = attempt;
-      pr = store.replacePR(updatePR(pr, { attempts: attempt }));
+      pr = store.replacePR(updatePR(requireMutablePR(pr), { attempts: attempt }));
       const artifact = await runner.generate({
         issue,
         contract,
@@ -113,7 +114,7 @@ export async function runIssue(
       log(`  ✗ ${tag}: request_changes (${blockers} blocker(s)) → repair`);
     }
 
-    pr = store.replacePR(updatePR(pr, {}));
+    pr = store.replacePR(updatePR(requireMutablePR(pr), {}));
     samples.push({ sampleIndex: s, prId: pr.id, approved, attempts, finalVerdict });
     if (approved) approvedAny = true;
   }

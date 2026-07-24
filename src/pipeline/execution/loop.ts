@@ -13,6 +13,7 @@ import {
   PR,
   approvePR,
   bindApprovalRevisionToPR,
+  requireMutablePR,
   transitionPR,
   updatePR,
   type Issue,
@@ -185,7 +186,7 @@ export async function runBoundedRepairLoop(
     if (manage && attempt > startAttempt) {
       store.setStatus(issueId, 'generation-in-progress'); // changes-requested -> generation (repair)
     }
-    currentPr = store.replacePR(updatePR(currentPr, { attempts: attempt }));
+    currentPr = store.replacePR(updatePR(requireMutablePR(currentPr), { attempts: attempt }));
 
     const outcome = await produce(attempt, repairBrief);
 
@@ -238,7 +239,7 @@ export async function runBoundedRepairLoop(
     store.setStatus(issueId, 'needs-human-review');
   }
 
-  currentPr = store.replacePR(updatePR(currentPr, {}));
+  currentPr = store.replacePR(updatePR(requireMutablePR(currentPr), {}));
   return {
     verdict: lastVerdict,
     status: store.getIssue(issueId)!.status,

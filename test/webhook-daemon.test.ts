@@ -80,6 +80,20 @@ describe('webhook-daemon command boundary', () => {
     expect(await page.text()).toContain('Repositoryを追加');
     expect(output).toContain('GitHub forwarders disabled');
     expect(output).toContain('polling reconciliation disabled');
+    const browserLogin = output.match(/browser login \(single-use, 60s\): (http:\/\/127\.0\.0\.1:\d+\/launch\?token=[^\s]+)/);
+    const browserLoginUrl = browserLogin?.[1];
+    expect(browserLoginUrl).toBeTruthy();
+    if (!browserLoginUrl) throw new Error(`missing browser login URL\n${output}`);
+    expect(browserLoginUrl).not.toContain('control-token');
+    const launched = await fetch(browserLoginUrl, { redirect: 'manual' });
+    expect(launched.status).toBe(303);
+    const cookie = launched.headers.get('set-cookie');
+    expect(cookie).toContain('agentops_webhook_session=');
+    const browserPage = await fetch(`${url}/`, {
+      headers: { cookie: cookie!.split(';')[0]! },
+    });
+    expect(browserPage.status).toBe(200);
+    expect(await browserPage.text()).toContain('Repositoryを追加');
 
     child.kill('SIGTERM');
     const exit = await new Promise<number | null>((resolve) => child.once('exit', resolve));

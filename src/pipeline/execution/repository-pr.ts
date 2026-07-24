@@ -19,6 +19,7 @@ import {
   PR,
   approvePR,
   bindApprovalRevisionToPR,
+  requireMutablePR,
   transitionPR,
   transitionPrRevision,
   updatePR,
@@ -220,7 +221,7 @@ export function discoverRepositoryPullRequests(
 
     const issue = store.requireIssue(pr.issueId);
     if (pr.origin === 'repository-discovery') {
-      pr = store.replacePR(updatePR(pr, {
+      pr = store.replacePR(updatePR(requireMutablePR(pr), {
         branch: pullRequest.headRefName,
         baseBranch: pullRequest.baseRefName,
         externalRef: projection.externalRef,
@@ -330,7 +331,7 @@ export async function reviewRepositoryPullRequest(
   try {
     enterRepositoryPrEvaluation(store, issue);
     const attempt = attemptForRevision(store, pr, revision);
-    const reviewingPR = store.replacePR(updatePR(pr, {
+    const reviewingPR = store.replacePR(updatePR(requireMutablePR(pr), {
       attempts: Math.max(pr.attempts, attempt),
     }));
     const reviewingRevision = store.replacePrRevision(transitionPrRevision(revision, {

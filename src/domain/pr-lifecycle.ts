@@ -10,9 +10,10 @@ import {
 } from './pr-schema.js';
 
 /** State transitions and opaque approval/merge authorities for immutable PR revisions. */
+type MutablePR = Exclude<PR, { status: 'closed' | 'merged' }>;
 type PRPatch = Partial<Pick<
-  PR,
-  'branch' | 'baseBranch' | 'generator' | 'origin' | 'attempts' | 'externalRef'
+  MutablePR,
+  'branch' | 'baseBranch' | 'attempts' | 'externalRef'
 >>;
 type ActivePRDestinationFields =
   | { currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha?: null }
@@ -182,12 +183,23 @@ export function mergeApprovedPR(
   }));
 }
 
-/** Update non-variant metadata without changing the lifecycle discriminant. */
-export function updatePR<const P>(
-  pr: PR,
+/** Narrow an intentionally dynamic PR before applying non-terminal metadata changes. */
+export function requireMutablePR(pr: PR): MutablePR {
+  if (pr.status === 'closed' || pr.status === 'merged') {
+    throw new Error(`cannot update terminal PR ${pr.id} (${pr.status})`);
+  }
+  return pr;
+}
+
+/** Update explicitly mutable metadata on a non-terminal PR. */
+export function updatePR<const T extends MutablePR, const P>(
+  pr: T,
   patch: P & PRPatch & Record<Exclude<keyof P, keyof PRPatch>, never>,
-): PR {
-  return deepFreeze(PR.parse({ ...pr, ...patch, updatedAt: new Date().toISOString() }));
+): T {
+  requireMutablePR(pr as PR);
+  return deepFreeze(
+    PR.parse({ ...pr, ...patch, updatedAt: new Date().toISOString() }),
+  ) as T;
 }
 
 type ReviewingRevisionDestination =

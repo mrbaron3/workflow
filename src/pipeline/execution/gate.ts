@@ -18,7 +18,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { PR, EvalRun } from '../../domain/schema.js';
-import { PrExternalRef, transitionPR, updatePR } from '../../domain/schema.js';
+import {
+  PrExternalRef,
+  requireMutablePR,
+  transitionPR,
+  updatePR,
+} from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
 import { Store } from '../../store/store.js';
 import { recordHumanDecision, type HumanDecision } from './loop.js';
@@ -95,7 +100,7 @@ export function projectReviewRevision(
       title: input.title,
       body: renderReviewPrBody(store, input.pr.issueId),
     }));
-    projectedPr = store.replacePR(updatePR(projectedPr, { externalRef: ref }));
+    projectedPr = store.replacePR(updatePR(requireMutablePR(projectedPr), { externalRef: ref }));
     log(`  ⇪ ${input.pr.issueId}: opened review PR ${ref.url} @ ${input.headSha.slice(0, 12)}`);
   } else {
     log(
@@ -103,7 +108,7 @@ export function projectReviewRevision(
       + `${input.headSha.slice(0, 12)} to PR #${projectedPr.externalRef!.number}`,
     );
   }
-  store.replacePR(updatePR(projectedPr, {}));
+  store.replacePR(updatePR(requireMutablePR(projectedPr), {}));
   store.save();
   return revision;
 }
@@ -129,7 +134,7 @@ export function openGate(
   const body = renderGatePrBody(store, input.pr.issueId);
   runner.pushBranch(input.worktree, input.pr.branch);
   const ref = PrExternalRef.parse(runner.createPr(input.worktree, { base, head: input.pr.branch, title: input.title, body }));
-  store.replacePR(updatePR(currentPr, { externalRef: ref }));
+  store.replacePR(updatePR(requireMutablePR(currentPr), { externalRef: ref }));
   store.save();
   log(`  ⇪ ${input.pr.issueId}: opened gate PR ${ref.url}`);
   return ref;

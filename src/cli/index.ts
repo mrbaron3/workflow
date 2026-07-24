@@ -450,7 +450,13 @@ async function cmdWebhookDaemon(flags: Args['flags']): Promise<void> {
       ? '  polling reconciliation disabled (--no-reconcile)'
       : `  polling reconciliation every ${options.reconciliationIntervalMs} ms`,
   ));
-  if (options.open) openFile(control.createLaunchUrl(address.url));
+  const launchUrl = control.createLaunchUrl(address.url);
+  if (options.open) {
+    openFile(launchUrl);
+    log(c.dim('  opening authenticated GUI in browser…'));
+  } else {
+    log(`  browser login (single-use, 60s): ${c.dim(launchUrl)}`);
+  }
 
   await waitForWebhookDaemonShutdown({
     reconciliation,

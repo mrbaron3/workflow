@@ -142,6 +142,30 @@ describe('PR lifecycle values', () => {
       updatedAt: nowISO(),
     });
     if (merged.status !== 'merged') throw new Error('fixture must be merged');
+    const closed = PR.parse({
+      id: 'PR-2',
+      issueId: 'ISSUE-2',
+      branch: 'feature/closed',
+      generator: 'mock',
+      status: 'closed',
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    });
+    if (closed.status !== 'closed') throw new Error('fixture must be closed');
+    if (false) {
+      // @ts-expect-error merged PR metadata is terminal history
+      updatePR(merged, { attempts: 2 });
+      // @ts-expect-error closed PR metadata is terminal history
+      updatePR(closed, { externalRef: null });
+    }
+    const runtimeUpdate = updatePR as unknown as (
+      pr: PR,
+      patch: { attempts: number },
+    ) => PR;
+    expect(() => runtimeUpdate(merged, { attempts: 2 }))
+      .toThrow('cannot update terminal PR');
+    expect(() => runtimeUpdate(closed, { attempts: 2 }))
+      .toThrow('cannot update terminal PR');
     expect(() => validatePRTransition(merged, 'open')).toThrow('invalid PR transition');
 
     const failed = PrRevision.parse({
@@ -156,6 +180,29 @@ describe('PR lifecycle values', () => {
     if (failed.status !== 'failed') throw new Error('fixture must be failed');
     expect(() => validatePrRevisionTransition(failed, 'reviewing'))
       .toThrow('invalid PR revision transition');
+  });
+
+  it('PR-INTENT Store refuses to rewrite persisted terminal PR history', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-terminal-pr-'));
+    roots.push(root);
+    const store = new Store(root);
+    const merged = PR.parse({
+      id: 'PR-1',
+      issueId: 'ISSUE-1',
+      branch: 'feature',
+      generator: 'mock',
+      status: 'merged',
+      currentRevisionId: 'PRREV-1',
+      headSha: 'a'.repeat(40),
+      mergedHeadSha: 'a'.repeat(40),
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    });
+    if (merged.status !== 'merged') throw new Error('fixture must be merged');
+    store.addPR(merged);
+    expect(store.replacePR(merged)).toMatchObject({ status: 'merged', branch: 'feature' });
+    const rewritten = PR.parse({ ...merged, branch: 'rewritten' });
+    expect(() => store.replacePR(rewritten)).toThrow('cannot replace terminal PR');
   });
 
   it('PR-INTENT refuses stale, ineligible, or non-current revision approval authority', () => {

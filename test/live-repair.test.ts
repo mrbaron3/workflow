@@ -20,6 +20,7 @@ import {
   PR,
   PrHeadSha,
   Finding,
+  requireMutablePR,
   transitionPR,
   updatePR,
   type EvalRun,
@@ -200,7 +201,7 @@ describe('runBoundedRepairLoop: threads the repair brief across attempts', () =>
     store.setStatus('ISSUE-1', 'evaluation-in-progress');
     store.setStatus('ISSUE-1', 'changes-requested');
     const seededPr = addPR(store, 'ISSUE-1');
-    const pr = store.replacePR(updatePR(seededPr, { attempts: 2 }));
+    const pr = store.replacePR(updatePR(requireMutablePR(seededPr), { attempts: 2 }));
     store.setStatus('ISSUE-1', 'generation-in-progress');
     const initial: RepairBrief = {
       fromEvalRunId: 'revision-gate:PRGATE-1',

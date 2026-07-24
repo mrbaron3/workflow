@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import {
   DB,
   PR as PRSchema,
@@ -281,7 +282,14 @@ export class Store {
   replacePR(p: PR): PR {
     const index = this.db.prs.findIndex((row) => row.id === p.id);
     if (index < 0) throw new Error(`No such PR: ${p.id}`);
+    const existing = this.db.prs[index]!;
     const stored = PRSchema.parse(structuredClone(p));
+    if (
+      (existing.status === 'closed' || existing.status === 'merged')
+      && !isDeepStrictEqual(existing, stored)
+    ) {
+      throw new Error(`cannot replace terminal PR ${existing.id} (${existing.status})`);
+    }
     (this.db.prs as DB['prs'])[index] = stored;
     return this.lifecycleCopy(stored);
   }
