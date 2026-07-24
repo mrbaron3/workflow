@@ -597,4 +597,51 @@ describe('webhook control GUI runtime', () => {
     expect(window.document.querySelector('#deliveries [data-empty]')).not.toBeNull();
     expect(window.document.activeElement).toBe(deliveriesRegion);
   });
+
+  it('PR-INTENT moves focus to the repository region when polling removes its focused final row', async () => {
+    const window = new Window({
+      url: 'http://127.0.0.1:8377/',
+      settings: { disableJavaScriptEvaluation: false },
+    });
+    windows.push(window);
+    const initial = { ...state(0), repositories: [state(0).repositories[0]!] };
+    const empty = { ...state(1), repositories: [] };
+    const responses = [initial, empty];
+    Object.defineProperty(window, 'fetch', {
+      configurable: true,
+      value: vi.fn(async () => ({ ok: true, json: async () => responses.shift() })),
+    });
+    let intervalCallback: (() => unknown) | null = null;
+    Object.defineProperty(window, 'setInterval', {
+      configurable: true,
+      value: (callback: () => unknown) => {
+        intervalCallback = callback;
+        return 1;
+      },
+    });
+    Object.defineProperty(window, 'clearInterval', {
+      configurable: true,
+      value: () => {
+        intervalCallback = null;
+      },
+    });
+    const html = webhookControlHtml();
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('generated GUI has no executable script');
+    window.document.write(html.replace(/<script>[\s\S]*<\/script>/, ''));
+    window.document.close();
+    window.eval(script);
+    await flush();
+
+    const toggle = window.document.querySelector('#repositories .toggle') as HTMLButtonElement;
+    const repositoryRegion = window.document.querySelector('#repositories');
+    toggle.focus();
+    expect(window.document.activeElement).toBe(toggle);
+    if (!intervalCallback) throw new Error('polling interval is not active');
+    await (intervalCallback as unknown as () => unknown)();
+    await flush();
+
+    expect(window.document.querySelector('#repositories [data-empty]')).not.toBeNull();
+    expect(window.document.activeElement).toBe(repositoryRegion);
+  });
 });

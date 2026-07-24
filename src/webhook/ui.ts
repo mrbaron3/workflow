@@ -41,7 +41,7 @@ ${WEBHOOK_CONTROL_STYLES}
     </section>
     <div class="stack">
       <section class="panel" aria-labelledby="repos-title"><h2 id="repos-title">Repositories</h2>
-        <div id="repositories" class="stack" aria-busy="true"><p data-empty>読み込んでいます…</p></div></section>
+        <div id="repositories" class="stack" tabindex="-1" role="region" aria-labelledby="repos-title" aria-busy="true"><p data-empty>読み込んでいます…</p></div></section>
       <section class="panel" aria-labelledby="deliveries-title"><h2 id="deliveries-title">Recent deliveries</h2>
         <div class="table-wrap" tabindex="0" role="region" aria-labelledby="deliveries-title"><table><thead><tr><th scope="col">Repository</th><th scope="col">Event</th><th scope="col">Status</th><th scope="col">Attempts</th><th scope="col">Updated</th><th scope="col"><span class="visually-hidden">操作</span></th></tr></thead>
         <tbody id="deliveries"><tr data-empty><td colspan="6">読み込んでいます…</td></tr></tbody></table></div></section>
