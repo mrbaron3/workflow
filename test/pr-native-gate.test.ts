@@ -17,15 +17,16 @@ import { WebhookDelivery } from '../src/webhook/schema.js';
 import {
   autoMergeCurrentRevision,
   evaluateRevisionGate,
+  GithubPrRevisionState,
   GhPrListResponse,
   GhPrViewResponse,
+  githubCheckStatus,
   listOpenGithubPullRequests,
   MAX_REVIEW_THREAD_BODY_CHARS,
   MAX_REVIEW_THREAD_REASON_BODY_CHARS,
   observePrRevision,
   parseBlockingReviewThreads,
   reconcileSplitSourceClosures,
-  type GithubPrRevisionState,
   type PrNativeGithubRunner,
 } from '../src/pipeline/execution/pr-native.js';
 import { Store, nowISO } from '../src/store/store.js';
@@ -155,6 +156,7 @@ function greenGithub(headSha = SHA_A): GithubPrRevisionState {
   return {
     state: 'open',
     headSha,
+    isDraft: false,
     mergeability: 'mergeable',
     checks: [{ name: 'test', status: 'success' }],
     unresolvedBlockingThreadIds: [],
@@ -257,6 +259,23 @@ describe('ISSUE-0024/PR-INTENT durable lifecycle invariants', () => {
       reviewDecision: '',
       statusCheckRollup: [],
     }).reviewDecision).toBeNull();
+  });
+
+  it('PR-INTENT requires an explicit draft fact in every current-revision snapshot', () => {
+    expect(() => GithubPrRevisionState.parse({
+      state: 'open',
+      headSha: SHA_A,
+      mergeability: 'mergeable',
+      checks: [],
+      unresolvedBlockingThreadIds: [],
+    })).toThrow();
+    expect(GithubPrRevisionState.parse(greenGithub()).isDraft).toBe(false);
+  });
+
+  it('PR-INTENT does not treat skipped or neutral required checks as successful', () => {
+    expect(githubCheckStatus({ name: 'skipped-check', conclusion: 'SKIPPED' })).toBe('failure');
+    expect(githubCheckStatus({ name: 'neutral-check', conclusion: 'NEUTRAL' })).toBe('failure');
+    expect(githubCheckStatus({ name: 'successful-check', conclusion: 'SUCCESS' })).toBe('success');
   });
 
   it('rejects lifecycle states missing completion evidence or carrying forbidden metadata', () => {

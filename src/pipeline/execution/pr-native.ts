@@ -1,8 +1,11 @@
+import { z } from 'zod';
 import type { HarnessConfig } from '../../config.js';
 import {
   PrRevision,
   PrHeadSha,
   ApprovedRevisionGateSnapshot,
+  RevisionCheck,
+  RevisionReviewThread,
   RevisionGateSnapshot,
   approvePR,
   bindApprovalRevisionToPR,
@@ -13,8 +16,6 @@ import {
   transitionPrRevision,
   type EvalRun,
   type PR,
-  type RevisionCheck,
-  type RevisionReviewThread,
   type RevisionGateSnapshot as RevisionGateSnapshotType,
 } from '../../domain/schema.js';
 import { Store, nowISO } from '../../store/store.js';
@@ -23,6 +24,7 @@ export {
   GhPrListResponse,
   GhPrApiPagesResponse,
   GhPrViewResponse,
+  githubCheckStatus,
   listOpenGithubPullRequests,
   MAX_REVIEW_THREAD_BODY_CHARS,
   ReviewThreadsResponse,
@@ -30,15 +32,16 @@ export {
   realPrNativeGithubRunner,
 } from './pr-native-github.js';
 
-export interface GithubPrRevisionState {
-  state: 'open' | 'merged' | 'closed';
-  headSha: string;
-  isDraft?: boolean;
-  mergeability: 'mergeable' | 'conflicting' | 'unknown';
-  checks: RevisionCheck[];
-  unresolvedBlockingThreadIds: string[];
-  blockingReviewThreads?: RevisionReviewThread[];
-}
+export const GithubPrRevisionState = z.object({
+  state: z.enum(['open', 'merged', 'closed']),
+  headSha: z.string().regex(/^[0-9a-f]{40}$/i, 'expected a 40-character git SHA'),
+  isDraft: z.boolean(),
+  mergeability: z.enum(['mergeable', 'conflicting', 'unknown']),
+  checks: z.array(RevisionCheck),
+  unresolvedBlockingThreadIds: z.array(z.string()),
+  blockingReviewThreads: z.array(RevisionReviewThread).optional(),
+});
+export type GithubPrRevisionState = z.infer<typeof GithubPrRevisionState>;
 export interface GithubOpenPullRequest {
   number: number;
   url: string;
@@ -421,7 +424,9 @@ export function autoMergeCurrentRevision(
   if (pr.status === 'merged' || pr.status === 'closed') {
     throw new Error(`${pr.id} is terminal (${pr.status})`);
   }
-  const github = runner.viewRevision(cwd, externalRef.number);
+  const github = GithubPrRevisionState.parse(
+    runner.viewRevision(cwd, externalRef.number),
+  );
   let revision = observePrRevision(store, pr, github.headSha);
   // Observation atomically projects the exact revision coordinates onto the PR.
   // Continue from that stored value rather than the caller's potentially unbound snapshot.
@@ -596,7 +601,9 @@ export function autoMergeCurrentRevision(
     throw new Error('merge request did not preserve the approved revision');
   }
   store.save();
-  const afterMerge = runner.viewRevision(cwd, externalRef.number);
+  const afterMerge = GithubPrRevisionState.parse(
+    runner.viewRevision(cwd, externalRef.number),
+  );
   if (afterMerge.headSha !== revision.headSha) {
     observePrRevision(store, pr, afterMerge.headSha);
     store.save();

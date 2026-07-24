@@ -113,10 +113,19 @@ export const ReviewThreadsResponse = z.object({
 });
 type ReviewThreadsResponse = z.infer<typeof ReviewThreadsResponse>;
 
-function checkStatus(raw: z.infer<typeof GithubCheck>): RevisionCheck['status'] {
+export function githubCheckStatus(rawInput: unknown): RevisionCheck['status'] {
+  const raw = GithubCheck.parse(rawInput);
   const value = (raw.conclusion ?? raw.state ?? raw.status ?? '').toUpperCase();
-  if (['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(value)) return 'success';
-  if (['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED'].includes(value)) {
+  if (value === 'SUCCESS') return 'success';
+  if ([
+    'NEUTRAL',
+    'SKIPPED',
+    'FAILURE',
+    'ERROR',
+    'CANCELLED',
+    'TIMED_OUT',
+    'ACTION_REQUIRED',
+  ].includes(value)) {
     return 'failure';
   }
   return 'pending';
@@ -186,7 +195,7 @@ export function realPrNativeGithubRunner(
       ], cwd)));
       const checks = (raw.statusCheckRollup ?? []).map((check) => ({
         name: check.name ?? check.context!,
-        status: checkStatus(check),
+        status: githubCheckStatus(check),
       }));
       const blockingThreads = blockingReviewThreads(cwd, raw.id);
       if (raw.reviewDecision === 'CHANGES_REQUESTED') {

@@ -22,6 +22,7 @@ import {
   restrictedPerspectivePrompt,
   findingsPath,
   MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
+  STATIC_REVIEW_DIFF_CONTEXT_LINES,
   MAX_RESTRICTED_REVIEW_OUTPUT_BYTES,
   MAX_REVIEW_FINDINGS,
   MAX_REVIEW_FINDING_TEXT_CHARS,
@@ -336,6 +337,7 @@ describe('restricted repository-PR reviewers', () => {
 
     const material = staticUntrustedReviewMaterial(repo, 'HEAD^', 'HEAD');
 
+    expect(STATIC_REVIEW_DIFF_CONTEXT_LINES).toBe(3);
     expect(material).toContain('--- BEGIN UNTRUSTED DIFF ---');
     expect(material).toContain(`write ${marker}`);
     expect(fs.existsSync(marker)).toBe(false);

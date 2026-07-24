@@ -16,6 +16,7 @@ import {
 } from './review-output-limits.js';
 
 export const MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES = 1_500_000;
+export const STATIC_REVIEW_DIFF_CONTEXT_LINES = 3;
 const UNTRUSTED_REVIEW_MATERIAL_BUFFER_OVERHEAD_BYTES = 64 * 1024;
 
 /**
@@ -30,7 +31,14 @@ export function staticUntrustedReviewMaterial(
 ): string {
   const result = spawnSync(
     'git',
-    ['diff', '--no-ext-diff', '--no-color', '--unified=40', `${baseRef}...${buildRef}`, '--'],
+    [
+      'diff',
+      '--no-ext-diff',
+      '--no-color',
+      `--unified=${STATIC_REVIEW_DIFF_CONTEXT_LINES}`,
+      `${baseRef}...${buildRef}`,
+      '--',
+    ],
     {
       cwd: repo,
       encoding: 'utf8',

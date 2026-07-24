@@ -43,6 +43,7 @@ export { REVIEW_LIVENESS } from './review-liveness.js';
 export {
   appendRestrictedReviewOutput,
   MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
+  STATIC_REVIEW_DIFF_CONTEXT_LINES,
   prepareRestrictedReviewExecution,
   restrictedPerspectivePrompt,
   restrictedReviewLaunch,

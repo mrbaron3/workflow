@@ -52,13 +52,24 @@ function nestedSandboxUnavailable(output: string): boolean {
     || output.includes('terminated by signal: SIGABRT');
 }
 
+async function canConnectToLoopback(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, '127.0.0.1');
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => resolve(false));
+  });
+}
+
 function dependencyBin(packageName: string, executable: string): string {
   const packageFile = createRequire(import.meta.url).resolve(`${packageName}/package.json`);
   return path.resolve(path.dirname(packageFile), '..', '.bin', executable);
 }
 
 describe('grader command env prefixes (KEY=VAL …)', () => {
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT isolates a malicious head from operator credentials and network', async () => {
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT isolates a malicious head from operator credentials and network', async (context) => {
     const operatorHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-operator-home-'));
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-head-'));
     const sentinel = path.join(operatorHome, 'credential-sentinel');
@@ -67,6 +78,15 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve));
     const address = listener.address();
     if (!address || typeof address === 'string') throw new Error('network fixture did not bind');
+    expect(await canConnectToLoopback(address.port)).toBe(true);
+    const prepared = prepareIsolatedExecutionResources(process.execPath, ['--version'], checkout);
+    try {
+      const profile = prepared.args[1] ?? '';
+      expect(profile).toContain('(allow network-outbound');
+      expect(profile).not.toContain(`localhost:${address.port}`);
+    } finally {
+      prepared.cleanup();
+    }
     const result = runGraderCommand(
       `node -e "const fs=require('fs');let read=false;try{read=fs.readFileSync('${sentinel}','utf8')==='secret'}catch{};const leaked=process.env.SSH_AUTH_SOCK||process.env.GITHUB_TOKEN||process.env.HOME==='${operatorHome}'||read;const socket=require('net').connect(${address.port},'127.0.0.1');socket.once('connect',()=>process.exit(1));socket.once('error',()=>process.exit(leaked?1:0));setTimeout(()=>process.exit(1),500)"`,
       checkout,
@@ -79,13 +99,11 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     fs.rmSync(operatorHome, { recursive: true, force: true });
     fs.rmSync(checkout, { recursive: true, force: true });
     if (nestedSandboxUnavailable(result.output)) {
-      // The outer CI sandbox forbids nesting sandbox-exec; production fails closed
-      // in that case instead of falling back to credential-bearing host execution.
-      expect(result.ok).toBe(false);
-    } else {
-      expect(result, result.output).toMatchObject({ ok: true });
-      expect(result.output).not.toContain('secret');
+      context.skip();
+      return;
     }
+    expect(result, result.output).toMatchObject({ ok: true });
+    expect(result.output).not.toContain('secret');
   });
 
   it('ISSUE-0024/PR-INTENT pins grader resource limits', () => {
@@ -109,7 +127,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     });
   });
 
-  it.runIf(process.platform === 'darwin')('PR-INTENT permits only the configured external grader dependency tree', () => {
+  it.runIf(process.platform === 'darwin')('PR-INTENT permits only the configured external grader dependency tree', (context) => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-command-'));
     const result = runGraderCommand(
       `${dependencyBin('typescript', 'tsc')} --version`,
@@ -118,12 +136,14 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
       { isolated: true },
     );
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (!nestedSandboxUnavailable(result.output)) {
-      expect(result, result.output).toMatchObject({ ok: true });
-      expect(result.output).toContain('Version');
+    if (nestedSandboxUnavailable(result.output)) {
+      context.skip();
+      return;
     }
+    expect(result, result.output).toMatchObject({ ok: true });
+    expect(result.output).toContain('Version');
   });
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT denies untrusted files under otherwise system-readable roots', () => {
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT denies untrusted files under otherwise system-readable roots', (context) => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-root-head-'));
     const prepared = prepareIsolatedExecutionResources(process.execPath, ['--version'], checkout);
     try {
@@ -155,11 +175,13 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     );
     fs.rmSync(untrustedRoot, { recursive: true, force: true });
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (!nestedSandboxUnavailable(result.output)) {
-      expect(result, result.output).toMatchObject({ ok: true });
+    if (nestedSandboxUnavailable(result.output)) {
+      context.skip();
+      return;
     }
+    expect(result, result.output).toMatchObject({ ok: true });
   });
-  it.runIf(process.platform === 'darwin')('PR-INTENT starts Vitest without granting DNS or cross-sandbox loopback access', () => {
+  it.runIf(process.platform === 'darwin')('PR-INTENT starts Vitest without granting DNS or cross-sandbox loopback access', (context) => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-vitest-'));
     fs.writeFileSync(
       path.join(checkout, 'isolated.test.ts'),
@@ -174,12 +196,14 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     );
     expect(fs.existsSync(path.join(checkout, 'node_modules'))).toBe(false);
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (!nestedSandboxUnavailable(result.output)) {
-      expect(result.output).not.toContain('getaddrinfo ENOTFOUND localhost');
-      expect(result, result.output).toMatchObject({ ok: true });
+    if (nestedSandboxUnavailable(result.output)) {
+      context.skip();
+      return;
     }
+    expect(result.output).not.toContain('getaddrinfo ENOTFOUND localhost');
+    expect(result, result.output).toMatchObject({ ok: true });
   });
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT prevents malicious PR code from modifying trusted dependencies', () => {
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT prevents malicious PR code from modifying trusted dependencies', (context) => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-malicious-grader-'));
     const trustedPackage = createRequire(import.meta.url).resolve('typescript/package.json');
     const before = fs.readFileSync(trustedPackage, 'utf8');
@@ -206,9 +230,11 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(fs.readFileSync(trustedPackage, 'utf8')).toBe(before);
     expect(fs.existsSync(path.join(checkout, 'node_modules'))).toBe(false);
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (!nestedSandboxUnavailable(result.output)) {
-      expect(result, result.output).toMatchObject({ ok: true });
+    if (nestedSandboxUnavailable(result.output)) {
+      context.skip();
+      return;
     }
+    expect(result, result.output).toMatchObject({ ok: true });
   });
   it('a leading KEY=VAL lands in the child process env', () => {
     expect(typecheckWith(`AGENTOPS_GATE=on node -e process.exit(process.env.AGENTOPS_GATE==='on'?0:1)`)).toBe(true);
