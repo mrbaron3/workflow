@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   ApprovedRevisionGateSnapshot,
+  decodePersistedPR,
   emptyDB,
   PR,
   PrHeadSha,
@@ -186,6 +187,11 @@ describe('PR lifecycle values', () => {
       status: 'approved' as const, createdAt: nowISO(), updatedAt: nowISO(),
     };
     expect(() => PR.parse(base)).toThrow();
+    expect(PR.safeParse({
+      ...base,
+      currentRevisionId: 'PRREV-1',
+      headSha: 'a'.repeat(40),
+    }).success).toBe(false);
   });
 
   it('PR-INTENT transitions atomically to deeply readonly validated variants', () => {
@@ -210,7 +216,7 @@ describe('PR lifecycle values', () => {
     const merged = mergeApprovedPR(
       approved,
       bindMergeRevisionToPR(authorization),
-    );
+    ).pr;
     expect(merged.headSha).toBe(merged.mergedHeadSha);
     if (false) {
       const invalidApproval = {
@@ -235,7 +241,7 @@ describe('PR lifecycle values', () => {
       status: 'approved',
       createdAt: nowISO(),
     });
-    const approved = PR.parse({
+    const approved = decodePersistedPR({
       id: 'PR-1',
       issueId: 'ISSUE-1',
       branch: 'feature',
@@ -281,7 +287,7 @@ describe('PR lifecycle values', () => {
   });
 
   it('PR-INTENT makes terminal PR and revision resurrection type-invalid and runtime-invalid', () => {
-    const merged = PR.parse({
+    const merged = decodePersistedPR({
       id: 'PR-1',
       issueId: 'ISSUE-1',
       branch: 'feature',
@@ -334,11 +340,10 @@ describe('PR lifecycle values', () => {
       .toThrow('invalid PR revision transition');
   });
 
-  it('PR-INTENT Store refuses to rewrite persisted terminal PR history', () => {
+  it('PR-INTENT Store decodes persisted terminal PR history but refuses privileged general writes', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-terminal-pr-'));
     roots.push(root);
-    const store = new Store(root);
-    const merged = PR.parse({
+    const merged = decodePersistedPR({
       id: 'PR-1',
       issueId: 'ISSUE-1',
       branch: 'feature',
@@ -351,10 +356,25 @@ describe('PR lifecycle values', () => {
       updatedAt: nowISO(),
     });
     if (merged.status !== 'merged') throw new Error('fixture must be merged');
-    store.addPR(merged);
-    expect(store.replacePR(merged)).toMatchObject({ status: 'merged', branch: 'feature' });
-    const rewritten = PR.parse({ ...merged, branch: 'rewritten' });
-    expect(() => store.replacePR(rewritten)).toThrow('cannot replace terminal PR');
+    const persisted = emptyDB();
+    persisted.prs.push(merged);
+    fs.mkdirSync(path.join(root, '.harness'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.harness', 'db.json'),
+      `${JSON.stringify(persisted, null, 2)}\n`,
+    );
+    const store = new Store(root);
+    expect(store.getPR(merged.id)).toMatchObject({ status: 'merged', branch: 'feature' });
+    if (false) {
+      // @ts-expect-error privileged PR states cannot enter the general insertion API
+      store.addPR(merged);
+      // @ts-expect-error privileged PR states cannot enter the general replacement API
+      store.replacePR(merged);
+    }
+    expect(() => store.addPR(merged as never)).toThrow('privileged PR state');
+    expect(() => store.replacePR(merged as never)).toThrow('privileged PR state');
+    const rewritten = decodePersistedPR({ ...merged, branch: 'rewritten' });
+    expect(() => store.replacePR(rewritten as never)).toThrow('privileged PR state');
   });
 
   it.each(['merged', 'stale', 'failed'] as const)(

@@ -222,11 +222,6 @@ export function discoverRepositoryPullRequests(
 
     const issue = store.requireIssue(pr.issueId);
     if (pr.origin === 'repository-discovery') {
-      pr = store.replacePR(updatePR(requireMutablePR(pr), {
-        branch: pullRequest.headRefName,
-        baseBranch: pullRequest.baseRefName,
-        externalRef: projection.externalRef,
-      }));
       store.updateIssue(issue.id, {
         title: projection.title,
         assignedAgent: null,
@@ -236,6 +231,16 @@ export function discoverRepositoryPullRequests(
     }
     const revision = observePrRevision(store, pr, pullRequest.headSha);
     pr = store.getPR(pr.id)!;
+    // A same-head approved record is immutable privileged history. A new head
+    // is first observed above, which legally returns the PR to `open` before
+    // ordinary discovery metadata is refreshed.
+    if (pr.origin === 'repository-discovery' && pr.status !== 'approved') {
+      pr = store.replacePR(updatePR(requireMutablePR(pr), {
+        branch: pullRequest.headRefName,
+        baseBranch: pullRequest.baseRefName,
+        externalRef: projection.externalRef,
+      }));
+    }
     discoveries.push({
       pullRequest,
       pr,

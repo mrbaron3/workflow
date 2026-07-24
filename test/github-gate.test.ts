@@ -9,7 +9,17 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store, nowISO } from '../src/store/store.js';
-import { Issue, PR, EvalRun, IntakeRecord, transitionPrRevision } from '../src/domain/schema.js';
+import {
+  Issue,
+  PR,
+  EvalRun,
+  IntakeRecord,
+  PrRevision,
+  approvePR,
+  bindApprovalRevisionToPR,
+  evaluateRevisionGateEvidence,
+  transitionPrRevision,
+} from '../src/domain/schema.js';
 import type { IssueStatus } from '../src/domain/states.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import {
@@ -46,7 +56,7 @@ function seedGatedIssue(store: Store, id: string, prNumber: number | null): PR {
   store.addIssue(Issue.parse({ id, type: 'harness', title: `${id} title`, area: 'harness', status: 'contract-drafted', assignedAgent: 'mock', contract, createdAt: nowISO(), updatedAt: nowISO() }));
   for (const s of GATE_WALK) store.setStatus(id, s);
   const pr = store.addPR(PR.parse({
-    id: store.nextId('PR'), issueId: id, branch: `agent/${id.toLowerCase()}-s0`, baseBranch: 'main', generator: 'mock', attempts: 1, status: 'approved',
+    id: store.nextId('PR'), issueId: id, branch: `agent/${id.toLowerCase()}-s0`, baseBranch: 'main', generator: 'mock', attempts: 1, status: 'open',
     currentRevisionId: `PRREV-${id}`, headSha: 'a'.repeat(40),
     externalRef: prNumber === null ? null : { provider: 'github', number: prNumber, url: `https://github.com/o/r/pull/${prNumber}` },
     createdAt: nowISO(), updatedAt: nowISO(),
@@ -61,6 +71,40 @@ function addRun(store: Store, issueId: string, prId: string, perspective: string
     findings: perspective === 'codeQuality' ? [{ criterionId: 'codeQuality:AC-1', severity: 'minor', expected: 'e', observed: 'nit' }] : [],
     scores: { functionality: 1, codeQuality: 1, testQuality: 1, ux: 1, accessibility: 1 }, overall: 1, cost: {}, createdAt: nowISO(),
   }));
+}
+
+function approveSeededPR(store: Store, pr: PR): void {
+  if (!pr.currentRevisionId || !pr.headSha) throw new Error('fixture PR must be revision-bound');
+  const revision = store.upsertPrRevision(PrRevision.parse({
+    id: pr.currentRevisionId,
+    prId: pr.id,
+    headSha: pr.headSha,
+    ordinal: 1,
+    status: 'approved',
+    createdAt: nowISO(),
+  }));
+  if (revision.status !== 'approved') throw new Error('fixture revision must be approved');
+  const evaluated = evaluateRevisionGateEvidence({
+    id: `PRGATE-${pr.id}`,
+    pr,
+    revision,
+    requiredPerspectives: [],
+    reviewRuns: [],
+    github: {
+      state: 'open',
+      headSha: revision.headSha,
+      isDraft: false,
+      mergeability: 'mergeable',
+      checks: [],
+      unresolvedBlockingThreadIds: [],
+    },
+    createdAt: nowISO(),
+  });
+  if (evaluated.decision !== 'approved') throw new Error('fixture gate must approve');
+  store.approvePR(approvePR(
+    pr,
+    bindApprovalRevisionToPR(pr, revision, evaluated),
+  ));
 }
 
 function fakeRunner(state: GhPrState, prNumber = 42): { runner: GhGateRunner; calls: { push: number; create: number; view: number } } {
@@ -190,7 +234,8 @@ describe('pollGate: a merge/close becomes the human decision', () => {
 
   it('merged → released + humanVerdict=approve without fabricating revision coordinates', () => {
     const store = tmpStore('poll-merged');
-    seedGatedIssue(store, 'ISSUE-1', 1);
+    const pr = seedGatedIssue(store, 'ISSUE-1', 1);
+    approveSeededPR(store, pr);
     const res = pollGate(store, GITHUB, fakeRunner('merged').runner, '/repo')[0]!;
     expect(res.decision).toBe('approve');
     expect(res.changed).toBe(true);

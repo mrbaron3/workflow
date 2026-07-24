@@ -105,7 +105,7 @@ function setup(): { store: Store; pr: PR } {
     issueId: issue.id,
     branch: 'agent/issue-0001-s0',
     generator: 'codex',
-    status: 'approved',
+    status: 'open',
     currentRevisionId: 'PRREV-INITIAL',
     headSha: SHA_A,
     externalRef: {

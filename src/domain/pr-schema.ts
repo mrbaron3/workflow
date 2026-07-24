@@ -89,7 +89,7 @@ export const OpenPR = z.union([
   }),
 ]);
 export const ChangesRequestedPR = boundOrUnboundRevisionPR('changes-requested');
-export const ApprovedPR = PRCommon.extend({
+const ApprovedPRRecord = PRCommon.extend({
   status: z.literal('approved'),
   currentRevisionId: z.string().min(1),
   headSha: PrHeadSha,
@@ -105,19 +105,38 @@ const MergedPRRecord = PRCommon.extend({
   path: ['mergedHeadSha'],
   message: 'mergedHeadSha must equal headSha',
 });
-export const MergedPR = MergedPRRecord.brand<'ValidatedMergedPR'>();
-export type MergedPR = z.infer<typeof MergedPR>;
-export function createMergedPR(input: z.input<typeof MergedPRRecord>): MergedPR {
-  return MergedPR.parse(input);
-}
-export const PR = z.union([OpenPR, ChangesRequestedPR, ApprovedPR, ClosedPR, MergedPR]);
+const MergedPRRecordDecoder = MergedPRRecord.brand<'ValidatedMergedPR'>();
+/**
+ * Runtime constructor for ordinary lifecycle states. Approval and merge are
+ * deliberately absent: those states are minted only by pr-lifecycle capabilities.
+ */
+export const PR = z.union([OpenPR, ChangesRequestedPR, ClosedPR]);
+/**
+ * Decode-only schema for durable history. Unlike `PR`, this is never a lifecycle
+ * constructor; Store writes still require the transition-specific authority.
+ */
+export const PersistedPRDecoder = z.union([
+  OpenPR,
+  ChangesRequestedPR,
+  ApprovedPRRecord,
+  ClosedPR,
+  MergedPRRecordDecoder,
+]);
 export type DeepReadonly<T> =
   T extends string | number | boolean | bigint | symbol | null | undefined ? T :
   T extends (...args: never[]) => unknown ? T :
   T extends readonly (infer U)[] ? readonly DeepReadonly<U>[] :
   T extends object ? { readonly [K in keyof T]: DeepReadonly<T[K]> } :
   T;
-export type PR = DeepReadonly<z.infer<typeof PR>>;
+export type NonPrivilegedPR = DeepReadonly<z.infer<typeof PR>>;
+export type PR = DeepReadonly<z.infer<typeof PersistedPRDecoder>>;
+export type ApprovedPR = Extract<PR, { status: 'approved' }>;
+export type MergedPR = Extract<PR, { status: 'merged' }>;
+
+/** Decode trusted persisted history without exposing a privileged constructor. */
+export function decodePersistedPR(input: unknown): PR {
+  return PersistedPRDecoder.parse(input) as PR;
+}
 
 export const PrRevisionStatus = z.enum([
   'pending',

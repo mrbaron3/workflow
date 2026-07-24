@@ -1,11 +1,12 @@
 import {
   ApprovedRevisionGateSnapshot,
-  ApprovedPR,
   PR,
   PrRevision,
-  createMergedPR,
+  decodePersistedPR,
+  type ApprovedPR,
   type DeepReadonly,
   type MergedPR,
+  type NonPrivilegedPR,
   type PrHeadSha,
   type RevisionBinding,
 } from './pr-schema.js';
@@ -15,7 +16,7 @@ import {
 } from './revision-gate.js';
 
 /** State transitions and opaque approval/merge authorities for immutable PR revisions. */
-type MutablePR = Exclude<PR, { status: 'closed' | 'merged' }>;
+type MutablePR = Exclude<NonPrivilegedPR, { status: 'closed' }>;
 type PRPatch = Partial<Pick<
   MutablePR,
   'branch' | 'baseBranch' | 'attempts' | 'externalRef' | 'agentGeneratedHeadSha'
@@ -102,6 +103,11 @@ export type ApprovedPRAuthorization = Readonly<{
   gateSnapshotId: string;
   [approvedPrAuthorizationBrand]: true;
 }>;
+const mergedPrAuthorizationBrand: unique symbol = Symbol('MergedPRAuthorization');
+export type MergedPRAuthorization = Readonly<{
+  pr: MergedPR;
+  [mergedPrAuthorizationBrand]: true;
+}>;
 export type ApprovalEligiblePrRevision = Extract<
   PrRevision,
   { status: 'approved' }
@@ -169,14 +175,14 @@ export function approvePR(
   ) {
     throw new Error(`approval revision binding does not match current PR ${pr.id}`);
   }
-  const approved = deepFreeze(ApprovedPR.parse({
+  const approved = deepFreeze(decodePersistedPR({
     ...pr,
     status: 'approved',
     currentRevisionId: binding.revisionId,
     headSha: binding.headSha,
     mergedHeadSha: null,
     updatedAt: new Date().toISOString(),
-  }));
+  }) as ApprovedPR);
   const mergeBinding = Object.freeze({
     prId: pr.id,
     revisionId: binding.revisionId,
@@ -209,7 +215,7 @@ export function bindMergeRevisionToPR(
 export function mergeApprovedPR(
   pr: Extract<PR, { status: 'approved' }>,
   binding: MergeRevisionBinding,
-): MergedPR {
+): MergedPRAuthorization {
   if (
     binding[mergeRevisionBrand] !== true
     || binding.gateSnapshotId.length === 0
@@ -220,14 +226,18 @@ export function mergeApprovedPR(
   ) {
     throw new Error(`approved revision binding does not match PR ${pr.id}`);
   }
-  return deepFreeze(createMergedPR({
+  const merged = deepFreeze(decodePersistedPR({
     ...pr,
     status: 'merged',
     currentRevisionId: binding.revisionId,
     headSha: binding.headSha,
     mergedHeadSha: binding.headSha,
     updatedAt: new Date().toISOString(),
-  }));
+  }) as MergedPR);
+  return Object.freeze({
+    pr: merged,
+    [mergedPrAuthorizationBrand]: true as const,
+  });
 }
 
 /**
@@ -239,7 +249,7 @@ export function reconcileRequestedMerge(
   pr: Extract<PR, { status: 'approved' }>,
   revision: Extract<PrRevision, { status: 'approved' }>,
   snapshot: ApprovedRevisionGateSnapshot,
-): MergedPR {
+): MergedPRAuthorization {
   const validatedSnapshot = ApprovedRevisionGateSnapshot.parse(snapshot);
   if (!revision.mergeRequestedAt) {
     throw new Error('merge reconciliation requires a durable merge request marker');
@@ -254,18 +264,35 @@ export function reconcileRequestedMerge(
   ) {
     throw new Error(`merge reconciliation evidence does not match PR ${pr.id}`);
   }
-  return deepFreeze(createMergedPR({
+  const merged = deepFreeze(decodePersistedPR({
     ...pr,
     status: 'merged',
     currentRevisionId: revision.id,
     headSha: revision.headSha,
     mergedHeadSha: revision.headSha,
     updatedAt: new Date().toISOString(),
-  }));
+  }) as MergedPR);
+  return Object.freeze({
+    pr: merged,
+    [mergedPrAuthorizationBrand]: true as const,
+  });
+}
+
+/** Store-only verifier: schema-parsed merged records cannot recreate this token. */
+export function mergedPRFromAuthorization(
+  authorization: MergedPRAuthorization,
+): MergedPR {
+  if (authorization[mergedPrAuthorizationBrand] !== true) {
+    throw new Error('merged PR persistence requires merge authorization');
+  }
+  return authorization.pr;
 }
 
 /** Narrow an intentionally dynamic PR before applying non-terminal metadata changes. */
 export function requireMutablePR(pr: PR): MutablePR {
+  if (pr.status === 'approved') {
+    throw new Error(`cannot update privileged PR ${pr.id} (${pr.status})`);
+  }
   if (pr.status === 'closed' || pr.status === 'merged') {
     throw new Error(`cannot update terminal PR ${pr.id} (${pr.status})`);
   }

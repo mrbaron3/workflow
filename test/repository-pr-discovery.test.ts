@@ -10,6 +10,9 @@ import {
   Issue,
   PR,
   PrRevision,
+  approvePR,
+  bindApprovalRevisionToPR,
+  evaluateRevisionGateEvidence,
   transitionPrRevision,
 } from '../src/domain/schema.js';
 import { runGithubDevelopmentTurn } from '../src/intake/development-turn.js';
@@ -561,12 +564,11 @@ describe('repository-wide pull request discovery', () => {
       status: 'approved',
       createdAt: nowISO(),
     }));
-    env.store.addPR(PR.parse({
+    const open = env.store.addPR(PR.parse({
       id: oldRevision.prId,
       issueId: issue.id,
       branch: 'feature/discovery',
       generator: 'codex',
-      status: 'approved',
       currentRevisionId: oldRevision.id,
       headSha: oldRevision.headSha,
       agentGeneratedHeadSha: oldRevision.headSha,
@@ -579,6 +581,28 @@ describe('repository-wide pull request discovery', () => {
       createdAt: nowISO(),
       updatedAt: nowISO(),
     }));
+    if (oldRevision.status !== 'approved') throw new Error('fixture revision must be approved');
+    const evaluated = evaluateRevisionGateEvidence({
+      id: 'PRGATE-TRUSTED',
+      pr: open,
+      revision: oldRevision,
+      requiredPerspectives: [],
+      reviewRuns: [],
+      github: {
+        state: 'open',
+        headSha: oldRevision.headSha,
+        isDraft: false,
+        mergeability: 'mergeable',
+        checks: [],
+        unresolvedBlockingThreadIds: [],
+      },
+      createdAt: nowISO(),
+    });
+    if (evaluated.decision !== 'approved') throw new Error('fixture gate must approve');
+    env.store.approvePR(approvePR(
+      open,
+      bindApprovalRevisionToPR(open, oldRevision, evaluated),
+    ));
 
     const discovery = discoverRepositoryPullRequests(
       env.store,

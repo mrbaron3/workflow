@@ -245,7 +245,7 @@ function persistMergedRevision(
     status: 'merged',
     completedAt: nowISO(),
   }));
-  const storedMergedPr = store.replacePR(mergedPr);
+  const storedMergedPr = store.mergePR(mergedPr);
   if (store.getIssue(storedMergedPr.issueId)?.status !== 'released') {
     store.setStatus(storedMergedPr.issueId, 'released');
   }
@@ -475,7 +475,7 @@ export function autoMergeCurrentRevision(
   }
   const approval = bindApprovalRevisionToPR(pr, revision, snapshot);
   const authorization = approvePR(pr, approval);
-  pr = store.replacePR(authorization.pr);
+  pr = store.approvePR(authorization);
   if (revision.mergeRequestedAt) {
     store.save();
     return {

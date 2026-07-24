@@ -15,12 +15,14 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   DB,
   PR as PRSchema,
+  decodePersistedPR,
   PrRevision as PrRevisionSchema,
   RevisionGateSnapshot as RevisionGateSnapshotSchema,
   emptyDB,
 } from '../domain/schema.js';
 import type {
   AgentInvocation,
+  ApprovedPRAuthorization,
   Epic,
   EvalRun,
   EvalTask,
@@ -28,6 +30,9 @@ import type {
   Intervention,
   IntakeRecord,
   Issue,
+  MergedPR,
+  MergedPRAuthorization,
+  NonPrivilegedPR,
   PR,
   PrRevision,
   PromptRecord,
@@ -42,6 +47,10 @@ import {
   isEvaluatedRevisionGateSnapshot,
   type EvaluatedRevisionGateSnapshot,
 } from '../domain/revision-gate.js';
+import {
+  bindMergeRevisionToPR,
+  mergedPRFromAuthorization,
+} from '../domain/pr-lifecycle.js';
 import { assertTransition, TERMINAL_STATUSES, type IssueStatus } from '../domain/states.js';
 
 export function nowISO(): string {
@@ -268,10 +277,14 @@ export class Store {
 
   // --- PRs -----------------------------------------------------------------
 
-  addPR(p: PR): PR {
-    const stored = PRSchema.parse(structuredClone(p));
+  addPR(p: NonPrivilegedPR): NonPrivilegedPR {
+    const candidate = structuredClone(p) as PR;
+    if (candidate.status === 'approved' || candidate.status === 'merged') {
+      throw new Error(`cannot add privileged PR state ${candidate.status}`);
+    }
+    const stored = PRSchema.parse(candidate);
     (this.db.prs as DB['prs']).push(stored);
-    return structuredClone(stored);
+    return structuredClone(stored) as NonPrivilegedPR;
   }
 
   getPR(id: string): PR | undefined {
@@ -284,11 +297,15 @@ export class Store {
     return found ? this.lifecycleCopy(found) : undefined;
   }
 
-  replacePR(p: PR): PR {
+  replacePR(p: NonPrivilegedPR): NonPrivilegedPR {
     const index = this.db.prs.findIndex((row) => row.id === p.id);
     if (index < 0) throw new Error(`No such PR: ${p.id}`);
     const existing = this.db.prs[index]!;
-    const stored = PRSchema.parse(structuredClone(p));
+    const candidate = structuredClone(p) as PR;
+    if (candidate.status === 'approved' || candidate.status === 'merged') {
+      throw new Error(`cannot replace with privileged PR state ${candidate.status}`);
+    }
+    const stored = PRSchema.parse(candidate);
     if (
       (existing.status === 'closed' || existing.status === 'merged')
       && !isDeepStrictEqual(existing, stored)
@@ -296,7 +313,51 @@ export class Store {
       throw new Error(`cannot replace terminal PR ${existing.id} (${existing.status})`);
     }
     (this.db.prs as DB['prs'])[index] = stored;
-    return this.lifecycleCopy(stored);
+    return this.lifecycleCopy(stored) as NonPrivilegedPR;
+  }
+
+  approvePR(authorization: ApprovedPRAuthorization): Extract<PR, { status: 'approved' }> {
+    // Runtime-check the opaque authorization before reading its approved value.
+    bindMergeRevisionToPR(authorization);
+    const approved = authorization.pr;
+    const existing = this.db.prs.find((row) => row.id === approved.id);
+    if (!existing) throw new Error(`No such PR: ${approved.id}`);
+    if (existing.status === 'closed' || existing.status === 'merged') {
+      throw new Error(`cannot approve terminal PR ${existing.id} (${existing.status})`);
+    }
+    if (
+      existing.currentRevisionId !== approved.currentRevisionId
+      || existing.headSha !== approved.headSha
+    ) {
+      throw new Error(`approval authorization is stale for PR ${approved.id}`);
+    }
+    return this.persistPrivilegedPR(approved);
+  }
+
+  mergePR(authorization: MergedPRAuthorization): MergedPR {
+    const merged = mergedPRFromAuthorization(authorization);
+    const existing = this.db.prs.find((row) => row.id === merged.id);
+    if (!existing) throw new Error(`No such PR: ${merged.id}`);
+    if (existing.status !== 'approved') {
+      throw new Error(`cannot persist merged PR ${merged.id} from ${existing.status}`);
+    }
+    if (
+      existing.currentRevisionId !== merged.currentRevisionId
+      || existing.headSha !== merged.headSha
+    ) {
+      throw new Error(`merge authorization is stale for PR ${merged.id}`);
+    }
+    return this.persistPrivilegedPR(merged);
+  }
+
+  private persistPrivilegedPR<T extends Extract<PR, { status: 'approved' | 'merged' }>>(
+    pr: T,
+  ): T {
+    const index = this.db.prs.findIndex((row) => row.id === pr.id);
+    if (index < 0) throw new Error(`No such PR: ${pr.id}`);
+    const stored = decodePersistedPR(structuredClone(pr));
+    (this.db.prs as DB['prs'])[index] = stored;
+    return this.lifecycleCopy(stored) as T;
   }
 
   upsertPrRevision(revision: PrRevision): PrRevision {

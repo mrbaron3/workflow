@@ -19,7 +19,12 @@ import {
   InvocationRole,
   Verdict,
 } from './agent-runtime.js';
-import { NullableRevisionCoordinates, PR, PrRevision, RevisionGateSnapshot } from './pr-schema.js';
+import {
+  NullableRevisionCoordinates,
+  PersistedPRDecoder,
+  PrRevision,
+  RevisionGateSnapshot,
+} from './pr-schema.js';
 export * from './agent-runtime.js';
 export * from './pr-schema.js';
 export * from './revision-gate.js';
@@ -598,7 +603,7 @@ export const DB = z.object({
   epics: z.array(Epic).default([]),
   features: z.array(Feature).default([]),
   issues: z.array(Issue).default([]),
-  prs: z.array(PR).default([]),
+  prs: z.array(PersistedPRDecoder).default([]),
   prRevisions: z.array(PrRevision).default([]),
   revisionGateSnapshots: z.array(RevisionGateSnapshot).default([]),
   evalRuns: z.array(EvalRun).default([]),
