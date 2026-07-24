@@ -72,7 +72,7 @@ function dependencyBin(packageName: string, executable: string): string {
 }
 
 describe('grader command env prefixes (KEY=VAL …)', () => {
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT isolates a malicious head from operator credentials and network', async (context) => {
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT isolates a malicious head from operator credentials and network', async () => {
     const operatorHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-operator-home-'));
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-head-'));
     const sentinel = path.join(operatorHome, 'credential-sentinel');
@@ -101,10 +101,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     });
     fs.rmSync(operatorHome, { recursive: true, force: true });
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (nestedSandboxUnavailable(result.output)) {
-      context.skip();
-      return;
-    }
+    expect(nestedSandboxUnavailable(result.output), result.output).toBe(false);
     expect(result, result.output).toMatchObject({ ok: true });
     expect(result.output).not.toContain('secret');
   });
@@ -136,7 +133,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     });
   });
 
-  it.runIf(process.platform === 'darwin')('PR-INTENT permits only the configured external grader dependency tree', (context) => {
+  it.runIf(process.platform === 'darwin')('PR-INTENT permits only the configured external grader dependency tree', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-command-'));
     const result = runGraderCommand(
       `${dependencyBin('typescript', 'tsc')} --version`,
@@ -145,14 +142,11 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
       { isolated: true },
     );
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (nestedSandboxUnavailable(result.output)) {
-      context.skip();
-      return;
-    }
+    expect(nestedSandboxUnavailable(result.output), result.output).toBe(false);
     expect(result, result.output).toMatchObject({ ok: true });
     expect(result.output).toContain('Version');
   });
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT denies untrusted files under otherwise system-readable roots', (context) => {
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT denies untrusted files under otherwise system-readable roots', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-root-head-'));
     const prepared = prepareIsolatedExecutionResources(process.execPath, ['--version'], checkout);
     try {
@@ -184,13 +178,10 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     );
     fs.rmSync(untrustedRoot, { recursive: true, force: true });
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (nestedSandboxUnavailable(result.output)) {
-      context.skip();
-      return;
-    }
+    expect(nestedSandboxUnavailable(result.output), result.output).toBe(false);
     expect(result, result.output).toMatchObject({ ok: true });
   });
-  it.runIf(process.platform === 'darwin')('PR-INTENT starts Vitest without granting DNS or cross-sandbox loopback access', (context) => {
+  it.runIf(process.platform === 'darwin')('PR-INTENT starts Vitest without granting DNS or cross-sandbox loopback access', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-vitest-'));
     fs.writeFileSync(
       path.join(checkout, 'isolated.test.ts'),
@@ -205,14 +196,11 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     );
     expect(fs.existsSync(path.join(checkout, 'node_modules'))).toBe(false);
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (nestedSandboxUnavailable(result.output)) {
-      context.skip();
-      return;
-    }
+    expect(nestedSandboxUnavailable(result.output), result.output).toBe(false);
     expect(result.output).not.toContain('getaddrinfo ENOTFOUND localhost');
     expect(result, result.output).toMatchObject({ ok: true });
   });
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT prevents malicious PR code from modifying trusted dependencies', (context) => {
+  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT prevents malicious PR code from modifying trusted dependencies', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-malicious-grader-'));
     const trustedPackage = createRequire(import.meta.url).resolve('typescript/package.json');
     const before = fs.readFileSync(trustedPackage, 'utf8');
@@ -239,10 +227,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(fs.readFileSync(trustedPackage, 'utf8')).toBe(before);
     expect(fs.existsSync(path.join(checkout, 'node_modules'))).toBe(false);
     fs.rmSync(checkout, { recursive: true, force: true });
-    if (nestedSandboxUnavailable(result.output)) {
-      context.skip();
-      return;
-    }
+    expect(nestedSandboxUnavailable(result.output), result.output).toBe(false);
     expect(result, result.output).toMatchObject({ ok: true });
   });
   it('a leading KEY=VAL lands in the child process env', () => {

@@ -367,7 +367,7 @@ export async function driveIssueLive(
     if (winner) {
       store.setStatus(issue.id, 'ready-for-evaluation');
       store.setStatus(issue.id, 'evaluation-in-progress');
-      applyPanelVerdict(store, issue.id, 'approve'); // build-approved -> needs-human-review (gate)
+      applyPanelVerdict(store, issue.id, 'approve', config.gate?.backend ?? 'store');
     } else if (store.getIssue(issue.id)!.status !== 'needs-human-review') {
       store.setStatus(issue.id, 'needs-human-review'); // no sample converged -> escalate
     }

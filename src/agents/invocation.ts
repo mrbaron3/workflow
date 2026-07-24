@@ -11,7 +11,6 @@ import { Store, nowISO } from '../store/store.js';
 interface InvocationCoordinatesBase {
   subjectId: string;
   issueId?: string | null;
-  prId?: string | null;
   sampleIndex?: number | null;
   attempt: number;
   role: InvocationRole;
@@ -19,12 +18,14 @@ interface InvocationCoordinatesBase {
 }
 
 type UnboundInvocation = {
+  prId?: string | null;
   revisionId?: null;
   headSha?: null;
 };
 
 export type InvocationCoordinates =
-  InvocationCoordinatesBase & (RevisionBinding | UnboundInvocation);
+  | (InvocationCoordinatesBase & RevisionBinding & { prId: string })
+  | (InvocationCoordinatesBase & UnboundInvocation);
 
 export type InvocationProvenanceInput = InvocationCoordinates & {
   provider: AgentProvider;
@@ -82,6 +83,21 @@ const PROVENANCE_FIELDS = [
  * provenance fails closed before counters or the existing record are mutated.
  */
 export function recordAgentInvocation(store: Store, input: InvocationProvenanceInput): AgentInvocation {
+  const revisionBound = input.revisionId != null || input.headSha != null;
+  if (revisionBound) {
+    if (!input.prId || !input.revisionId || !input.headSha) {
+      throw new Error('revision-bound invocation requires prId, revisionId, and headSha');
+    }
+    const revision = store.db.prRevisions.find((row) => row.id === input.revisionId);
+    if (!revision) {
+      throw new Error(`No such PR revision: ${input.revisionId}`);
+    }
+    if (revision.prId !== input.prId || revision.headSha !== input.headSha) {
+      throw new Error(
+        `invocation revision ${input.revisionId} does not match PR ${input.prId} at ${input.headSha}`,
+      );
+    }
+  }
   const key = invocationKey(input);
   const candidate = {
     invocationKey: key,

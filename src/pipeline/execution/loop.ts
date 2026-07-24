@@ -28,15 +28,22 @@ import { buildPanelRepairBrief, toGenerateBrief } from '../repair.js';
 
 /**
  * Route a panel verdict into the state machine (DOM-execution-007). The one rule that
- * matters: a panel `approve` does NOT auto-release — it advances to build-approved then
- * stops at the human review gate (needs-human-review, AC-LOOP-005). request_changes goes
- * back to the repair lane; needs_human is already surfaced by the panel.
+ * matters: a panel `approve` does NOT auto-release. The store backend stops at
+ * needs-human-review; the GitHub backend stays build-approved while its daemon
+ * polls automatically recoverable current-head gate conditions.
  */
-export function applyPanelVerdict(store: Store, issueId: string, verdict: Verdict): IssueStatusResult {
+export function applyPanelVerdict(
+  store: Store,
+  issueId: string,
+  verdict: Verdict,
+  gateBackend: NonNullable<HarnessConfig['gate']>['backend'] = 'store',
+): IssueStatusResult {
   const cur = store.getIssue(issueId)?.status;
   if (verdict === 'approve') {
     store.setStatus(issueId, 'build-approved');
-    store.setStatus(issueId, 'needs-human-review'); // gate: wait for a human (G1)
+    if (gateBackend === 'store') {
+      store.setStatus(issueId, 'needs-human-review'); // legacy gate: wait for a human (G1)
+    }
   } else if (verdict === 'request_changes') {
     if (cur !== 'changes-requested') store.setStatus(issueId, 'changes-requested');
   } else if (cur !== 'needs-human-review') {
@@ -211,10 +218,12 @@ export async function runBoundedRepairLoop(
       break;
     }
     if (panel.verdict === 'approve') {
-      if (manage) applyPanelVerdict(store, issueId, 'approve'); // build-approved -> needs-human-review (gate)
+      if (manage) {
+        applyPanelVerdict(store, issueId, 'approve', config.gate?.backend ?? 'store');
+      }
       // A panel verdict alone is not approval authority. Only the issue advances
-      // to its human gate; the PR stays open until an immutable GitHub head also
-      // has a validated approved gate snapshot.
+      // to its backend-specific waiting state; the PR stays open until an
+      // immutable GitHub head also has a validated approved gate snapshot.
       currentPr = store.replacePR(transitionPR(currentPr, { status: 'open' }));
       break;
     }

@@ -96,7 +96,6 @@ function setup(): { store: Store; pr: PR } {
     'ready-for-evaluation',
     'evaluation-in-progress',
     'build-approved',
-    'needs-human-review',
   ] as const) {
     store.setStatus(issue.id, status);
   }
@@ -597,7 +596,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(result.decision).toBe('pending');
     expect(result.reasons).toContain('required check pending: test');
     expect(merges).toBe(0);
-    expect(store.getIssue(pr.issueId)?.status).toBe('needs-human-review');
+    expect(store.getIssue(pr.issueId)?.status).toBe('build-approved');
   });
 
   it('AC-PRAUTO-001 rejects a conflicting current head with a merge-conflicts reason', () => {
@@ -736,6 +735,35 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(snapshot.reasons).toContain('pull request is draft');
   });
 
+  it.each([
+    ['draft', { isDraft: true }, 'pull request is draft'],
+    ['unknown mergeability', { mergeability: 'unknown' as const }, 'mergeability is unknown'],
+  ])('PR-INTENT keeps %s in automatic build-approved waiting', (_name, githubPatch, reason) => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) {
+      addReview(store, pr, revision.id, SHA_A, perspective);
+    }
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => ({ ...greenGithub(), ...githubPatch }),
+      merge: () => { throw new Error('pending gate must not merge'); },
+      closeIssue: () => {},
+    };
+
+    const result = autoMergeCurrentRevision(
+      store,
+      CONFIG,
+      pr,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+    );
+
+    expect(result).toMatchObject({ decision: 'pending', merged: false });
+    expect(result.reasons).toContain(reason);
+    expect(store.getIssue(pr.issueId)?.status).toBe('build-approved');
+  });
+
   it('waits for confirmed merged state when GitHub accepts or queues a merge request', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
@@ -763,7 +791,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.getPR(pr.id)?.status).toBe('approved');
     expect(store.revisionForHead(pr.id, SHA_A)?.status).toBe('approved');
     expect(store.revisionForHead(pr.id, SHA_A)?.mergeRequestedAt).not.toBeNull();
-    expect(store.getIssue(pr.issueId)?.status).toBe('needs-human-review');
+    expect(store.getIssue(pr.issueId)?.status).toBe('build-approved');
     expect(store.db.revisionGateSnapshots).toHaveLength(1);
 
     const second = autoMergeCurrentRevision(

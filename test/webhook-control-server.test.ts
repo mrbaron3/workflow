@@ -184,6 +184,32 @@ describe('local webhook control server', () => {
     });
     expect(state.status).toBe(200);
     expect(await json(state)).toEqual({ repositories: [], deliveries: [] });
+
+    const cookieHeader = cookie!.split(';')[0]!;
+    const missingOrigin = await globalThis.fetch(`${url}/api/repositories`, {
+      method: 'POST',
+      headers: { cookie: cookieHeader, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        repository: 'acme/missing-origin',
+        events: ['pull_request'],
+        consumers: ['agentops'],
+      }),
+    });
+    expect(missingOrigin.status).toBe(403);
+    const sameOrigin = await globalThis.fetch(`${url}/api/repositories`, {
+      method: 'POST',
+      headers: {
+        cookie: cookieHeader,
+        'content-type': 'application/json',
+        origin: url,
+      },
+      body: JSON.stringify({
+        repository: 'acme/browser-session',
+        events: ['pull_request'],
+        consumers: ['agentops'],
+      }),
+    });
+    expect(sameOrigin.status).toBe(201);
     expect((await globalThis.fetch(launchUrl, { redirect: 'manual' })).status).toBe(401);
   });
 

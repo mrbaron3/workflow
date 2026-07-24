@@ -3,7 +3,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { AgentInvocation, DB, PrHeadSha, PromptRecord } from '../src/domain/schema.js';
+import {
+  AgentInvocation,
+  DB,
+  PrHeadSha,
+  PrRevision,
+  PromptRecord,
+} from '../src/domain/schema.js';
 import { Store } from '../src/store/store.js';
 import {
   InvocationProvenanceConflictError,
@@ -43,8 +49,52 @@ describe('Invocation Identity and recorder', () => {
       invocationKey({ ...coordinates, revisionId: 'PRREV-1' });
       // @ts-expect-error revisionId and headSha are a both-or-neither binding
       invocationKey({ ...coordinates, headSha: PrHeadSha.parse('a'.repeat(40)) });
+      const { prId: _prId, ...withoutPr } = coordinates;
+      // @ts-expect-error revision-bound invocations must identify their owning PR
+      invocationKey({
+        ...withoutPr,
+        revisionId: 'PRREV-1',
+        headSha: PrHeadSha.parse('a'.repeat(40)),
+      });
     }
     expect(invocationKey(coordinates)).toContain('invocation:v1');
+  });
+
+  it('AC-PRREV-003 rejects absent and mismatched PR ownership before persistence', () => {
+    const store = storeAt();
+    const revision = store.upsertPrRevision(PrRevision.parse({
+      id: 'PRREV-1',
+      prId: coordinates.prId,
+      headSha: 'a'.repeat(40),
+      ordinal: 1,
+      status: 'pending',
+      createdAt: '2026-07-14T00:00:00.000Z',
+    }));
+    const input = {
+      ...coordinates,
+      revisionId: revision.id,
+      headSha: revision.headSha,
+      provider: 'codex' as const,
+      prompt: 'review one immutable head',
+      outcome: 'completed' as const,
+    };
+    expect(recordAgentInvocation(store, input)).toMatchObject({
+      prId: coordinates.prId,
+      revisionId: revision.id,
+      headSha: revision.headSha,
+    });
+    const count = store.db.agentInvocations.length;
+    const runtimeRecord = recordAgentInvocation as unknown as (
+      store: Store,
+      input: Record<string, unknown>,
+    ) => AgentInvocation;
+    expect(() => runtimeRecord(store, { ...input, prId: null }))
+      .toThrow('requires prId');
+    expect(() => runtimeRecord(store, { ...input, prId: 'PR-OTHER' }))
+      .toThrow('does not match PR');
+    expect(() => runtimeRecord(store, { ...input, headSha: 'b'.repeat(40) }))
+      .toThrow('does not match PR');
+    expect(store.db.agentInvocations).toHaveLength(count);
   });
 
   it('AC-AGINV-001 is stable for the same coordinates and distinct across every execution dimension', () => {
@@ -216,5 +266,11 @@ describe('evaluation and metrics provenance linkage', () => {
     });
     expect(valid.model).toBeNull();
     expect(() => AgentInvocation.parse({ ...valid, provider: undefined })).toThrow();
+    expect(() => AgentInvocation.parse({
+      ...valid,
+      prId: null,
+      revisionId: 'PRREV-1',
+      headSha: 'a'.repeat(40),
+    })).toThrow();
   });
 });

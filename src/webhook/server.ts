@@ -94,6 +94,11 @@ function assertControlRequest(
   }
   const origin = request.headers.origin;
   const host = request.headers.host;
+  if (!bearerAuthenticated && browserAuthenticated && (!origin || !host)) {
+    const error = new Error('cookie-authenticated mutations require an Origin header');
+    error.name = 'Forbidden';
+    throw error;
+  }
   if (origin && host && origin !== `http://${host}` && origin !== `https://${host}`) {
     const error = new Error('cross-origin mutation rejected');
     error.name = 'Forbidden';

@@ -22,6 +22,7 @@ import {
 import {
   NullableRevisionCoordinates,
   PersistedPRDecoder,
+  PrHeadSha,
   PrRevision,
   RevisionGateSnapshot,
 } from './pr-schema.js';
@@ -479,7 +480,6 @@ const AgentInvocationRecord = z.object({
   invocationKey: z.string().min(1),
   subjectId: z.string().min(1),
   issueId: z.string().nullable().default(null),
-  prId: z.string().nullable().default(null),
   sampleIndex: z.number().int().nonnegative().nullable().default(null),
   attempt: z.number().int().positive(),
   role: InvocationRole,
@@ -490,8 +490,20 @@ const AgentInvocationRecord = z.object({
   outcome: InvocationOutcome,
   createdAt: z.string(),
 });
-export const AgentInvocation =
-  AgentInvocationRecord.and(NullableRevisionCoordinates);
+const UnboundAgentInvocation = AgentInvocationRecord.extend({
+  prId: z.string().nullable().default(null),
+  revisionId: z.null().default(null),
+  headSha: z.null().default(null),
+});
+const BoundAgentInvocation = AgentInvocationRecord.extend({
+  prId: z.string().min(1),
+  revisionId: z.string().min(1),
+  headSha: PrHeadSha,
+});
+export const AgentInvocation = z.union([
+  UnboundAgentInvocation,
+  BoundAgentInvocation,
+]);
 export type AgentInvocation = z.infer<typeof AgentInvocation>;
 
 /**
