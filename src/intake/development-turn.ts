@@ -61,6 +61,49 @@ export interface GithubDevelopmentTurnResult {
   driveResults: DriveResult[];
 }
 
+export interface GithubTurnRegistrationOverrides {
+  readyLabel?: string;
+  baseBranch?: string;
+}
+
+/**
+ * Repository registration values are invocation-scoped and take precedence over
+ * the workspace defaults. The workspace file is never rewritten by the daemon.
+ */
+export function applyGithubTurnRegistrationOverrides(
+  config: HarnessConfig,
+  overrides: GithubTurnRegistrationOverrides,
+): HarnessConfig {
+  const readyLabel = overrides.readyLabel?.trim();
+  const baseBranch = overrides.baseBranch?.trim();
+  if (overrides.readyLabel !== undefined && !readyLabel) {
+    throw new Error('github-turn ready label override must be non-empty');
+  }
+  if (overrides.baseBranch !== undefined && !baseBranch) {
+    throw new Error('github-turn base branch override must be non-empty');
+  }
+  return {
+    ...config,
+    ...(baseBranch ? { baseBranch } : {}),
+    ...(config.intake
+      ? {
+          intake: {
+            ...config.intake,
+            ...(readyLabel ? { readyLabel } : {}),
+          },
+        }
+      : {}),
+    ...(baseBranch
+      ? {
+          gate: {
+            ...(config.gate ?? { backend: 'store' as const }),
+            baseBranch,
+          },
+        }
+      : {}),
+  };
+}
+
 export async function runGithubDevelopmentTurn(
   store: Store,
   config: HarnessConfig,

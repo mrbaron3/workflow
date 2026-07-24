@@ -17,8 +17,6 @@ import {
   Issue,
   IssueContract,
   PR,
-  approvePR,
-  bindApprovalRevisionToPR,
   requireMutablePR,
   transitionPR,
   transitionPrRevision,
@@ -423,10 +421,11 @@ export async function reviewRepositoryPullRequest(
       if (reviewedRevision.status !== 'reviewing') {
         throw new Error('approved panel did not produce a reviewing revision');
       }
-      store.replacePR(approvePR(
-        reviewingPR,
-        bindApprovalRevisionToPR(reviewingPR, reviewedRevision),
-      ));
+      store.replacePR(transitionPR(reviewingPR, {
+        status: 'open',
+        currentRevisionId: reviewedRevision.id,
+        headSha: reviewedRevision.headSha,
+      }));
     } else {
       store.replacePR(transitionPR(reviewingPR, {
         status: 'changes-requested',

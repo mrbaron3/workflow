@@ -59,7 +59,11 @@ import {
   prepareStoreMutation,
 } from '../workspace/target-binding.js';
 import { pollAndClaimGithubIssues, realGithubIssueRunner } from '../intake/github-issues.js';
-import { runGithubDevelopmentTurn, watchGithubDevelopment } from '../intake/development-turn.js';
+import {
+  applyGithubTurnRegistrationOverrides,
+  runGithubDevelopmentTurn,
+  watchGithubDevelopment,
+} from '../intake/development-turn.js';
 import { createWebhookConsumerAdapters } from '../webhook/consumers.js';
 import {
   GithubWebhookForwarderSupervisor,
@@ -374,9 +378,20 @@ function cmdPollIntake(): void {
   }
 }
 
-async function cmdGithubTurn(watch: boolean): Promise<void> {
+async function cmdGithubTurn(watch: boolean, flags: Args['flags']): Promise<void> {
   const store = requireInit();
-  const config = loadConfig(ROOT);
+  const readyLabel = flags['ready-label'];
+  const baseBranch = flags['base-branch'];
+  if (readyLabel !== undefined && typeof readyLabel !== 'string') {
+    throw new Error('--ready-label requires a non-empty value');
+  }
+  if (baseBranch !== undefined && typeof baseBranch !== 'string') {
+    throw new Error('--base-branch requires a non-empty value');
+  }
+  const config = applyGithubTurnRegistrationOverrides(loadConfig(ROOT), {
+    ...(typeof readyLabel === 'string' ? { readyLabel } : {}),
+    ...(typeof baseBranch === 'string' ? { baseBranch } : {}),
+  });
   if (!config.intake) throw new Error('GitHub Issue intake is disabled — configure config.intake first.');
   if (!config.target) throw new Error('GitHub development requires config.target for planning/build worktrees.');
   const issueRunner = realGithubIssueRunner(resolveTargetRoot(config, ROOT));
@@ -761,7 +776,9 @@ ${c.b('Commands')}
   assign <ISSUE-ID>    delegate a contract-drafted spec issue to the AI backend (opt-in)
   poll-intake          poll configured GitHub ready Issues and claim them idempotently
   github-turn          one ready Issue → planning → live drive → configured PR gate turn
+       [--ready-label L] [--base-branch B]
   watch-github         continuously run github-turn (durable restart/idempotent inventory)
+       [--ready-label L] [--base-branch B]
   webhook-daemon       run the multi-repository webhook inbox + local control GUI
        [--host H] [--port N] [--open] [--no-forward]
        [--no-reconcile] [--reconcile-interval-ms N]
@@ -822,9 +839,9 @@ async function main(): Promise<void> {
     case 'poll-intake':
       return cmdPollIntake();
     case 'github-turn':
-      return cmdGithubTurn(false);
+      return cmdGithubTurn(false, flags);
     case 'watch-github':
-      return cmdGithubTurn(true);
+      return cmdGithubTurn(true, flags);
     case 'webhook-daemon':
       return cmdWebhookDaemon(flags);
     case 'plan-tree':

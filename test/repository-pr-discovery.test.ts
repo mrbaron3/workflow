@@ -257,7 +257,7 @@ describe('repository-wide pull request discovery', () => {
   });
 
   it.each([
-    ['approve', [], 'approved', 'reviewing', null],
+    ['approve', [], 'open', 'reviewing', null],
       ['request_changes', ['protected.txt'], 'changes-requested', 'changes-requested', null],
   ] as const)(
     'PR-INTENT projects the real reviewer %s verdict onto PR and revision state',

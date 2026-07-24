@@ -1,4 +1,5 @@
 import {
+  ApprovedRevisionGateSnapshot,
   ApprovedPR,
   PR,
   PrRevision,
@@ -81,6 +82,7 @@ export function validatePRTransition(pr: PR, destinationStatus: string): void {
 declare const approvalRevisionBrand: unique symbol;
 export type ApprovalRevisionBinding = RevisionBinding & {
   readonly prId: string;
+  readonly gateSnapshotId: string;
   readonly [approvalRevisionBrand]: true;
 };
 declare const mergeRevisionBrand: unique symbol;
@@ -90,21 +92,35 @@ export type MergeRevisionBinding = RevisionBinding & {
 };
 export type ApprovalEligiblePrRevision = Extract<
   PrRevision,
-  { status: 'reviewing' | 'approved' }
+  { status: 'approved' }
 >;
 /**
- * Approval authority is minted only for the exact current, review-eligible revision.
+ * Approval authority is minted only from a schema-validated successful gate for
+ * the exact current, approved revision. A panel verdict or revision status alone
+ * is deliberately insufficient.
  */
 export function bindApprovalRevisionToPR(
   pr: PR,
   revision: ApprovalEligiblePrRevision,
+  snapshot: ApprovedRevisionGateSnapshot,
 ): ApprovalRevisionBinding;
 export function bindApprovalRevisionToPR(
   pr: PR,
   revision: PrRevision,
+  snapshot: ApprovedRevisionGateSnapshot,
 ): ApprovalRevisionBinding {
-  if (revision.status !== 'reviewing' && revision.status !== 'approved') {
+  if (revision.status !== 'approved') {
     throw new Error(`revision ${revision.id} (${revision.status}) is not eligible for approval`);
+  }
+  const validatedSnapshot = ApprovedRevisionGateSnapshot.parse(snapshot);
+  if (
+    validatedSnapshot.prId !== pr.id
+    || validatedSnapshot.revisionId !== revision.id
+    || validatedSnapshot.headSha !== revision.headSha
+  ) {
+    throw new Error(
+      `approved gate snapshot ${validatedSnapshot.id} does not match PR revision ${revision.id}`,
+    );
   }
   if (revision.prId !== pr.id) {
     throw new Error(`revision ${revision.id} does not belong to PR ${pr.id}`);
@@ -116,6 +132,7 @@ export function bindApprovalRevisionToPR(
     prId: pr.id,
     revisionId: revision.id,
     headSha: revision.headSha,
+    gateSnapshotId: validatedSnapshot.id,
   }) as ApprovalRevisionBinding;
 }
 

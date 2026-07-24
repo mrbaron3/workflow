@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  ApprovedRevisionGateSnapshot,
   emptyDB,
   PR,
   PrHeadSha,
@@ -21,6 +22,30 @@ import {
 import { Store, nowISO } from '../src/store/store.js';
 
 const roots: string[] = [];
+function approvedGate(
+  prId: string,
+  revisionId: string,
+  headSha: string,
+) {
+  return ApprovedRevisionGateSnapshot.parse({
+    id: `PRGATE-${revisionId}`,
+    prId,
+    revisionId,
+    headSha,
+    requiredPerspectives: [],
+    perspectiveVerdicts: {},
+    checks: [],
+    unresolvedBlockingThreadIds: [],
+    blockingReviewThreads: [],
+    mergeability: 'mergeable',
+    decision: 'approved',
+    blockingReasons: [],
+    pendingReasons: [],
+    reasons: [],
+    createdAt: nowISO(),
+  });
+}
+
 afterEach(() => {
   while (roots.length) fs.rmSync(roots.pop()!, { recursive: true, force: true });
 });
@@ -50,7 +75,7 @@ describe('PR lifecycle values', () => {
       // @ts-expect-error revision destinations contain state and evidence only
       transitionPrRevision(pending, badRevisionTransition);
       // @ts-expect-error a pending revision cannot mint approval authority
-      bindApprovalRevisionToPR(open, pending);
+      bindApprovalRevisionToPR(open, pending, approvedGate(open.id, pending.id, pending.headSha));
     }
     expect(open.id).toBe('PR-1');
     expect(pending.id).toBe('PRREV-1');
@@ -94,7 +119,11 @@ describe('PR lifecycle values', () => {
       status: 'approved', createdAt: nowISO(),
     });
     if (revision.status !== 'approved') throw new Error('fixture must be approved');
-    const binding = bindApprovalRevisionToPR(open, revision);
+    const binding = bindApprovalRevisionToPR(
+      open,
+      revision,
+      approvedGate(open.id, revision.id, revision.headSha),
+    );
     const approved = approvePR(open, binding);
     expect(Object.isFrozen(approved)).toBe(true);
     const merged = mergeApprovedPR(approved, bindMergeRevisionToPR(approved, revision));
@@ -250,7 +279,11 @@ describe('PR lifecycle values', () => {
       status: 'approved', createdAt: nowISO(),
     });
     if (historical.status !== 'approved') throw new Error('fixture must be approved');
-    expect(() => bindApprovalRevisionToPR(pr, historical)).toThrow('not the current revision');
+    expect(() => bindApprovalRevisionToPR(
+      pr,
+      historical,
+      approvedGate(pr.id, historical.id, historical.headSha),
+    )).toThrow('not the current revision');
     const pending = PrRevision.parse({
       id: currentId, prId: pr.id, headSha: sha, ordinal: 2,
       status: 'pending', createdAt: nowISO(),
@@ -258,6 +291,7 @@ describe('PR lifecycle values', () => {
     expect(() => bindApprovalRevisionToPR(
       pr,
       pending as Parameters<typeof bindApprovalRevisionToPR>[1],
+      approvedGate(pr.id, pending.id, pending.headSha),
     )).toThrow('not eligible for approval');
     const rejected = PrRevision.parse({
       id: currentId, prId: pr.id, headSha: sha, ordinal: 2,
@@ -266,10 +300,11 @@ describe('PR lifecycle values', () => {
     expect(() => bindApprovalRevisionToPR(
       pr,
       rejected as Parameters<typeof bindApprovalRevisionToPR>[1],
+      approvedGate(pr.id, rejected.id, rejected.headSha),
     )).toThrow('not eligible for approval');
     if (false) {
       // @ts-expect-error a changes-requested revision cannot mint approval authority
-      bindApprovalRevisionToPR(pr, rejected);
+      bindApprovalRevisionToPR(pr, rejected, approvedGate(pr.id, rejected.id, rejected.headSha));
     }
 
     const current = PrRevision.parse({
@@ -277,7 +312,22 @@ describe('PR lifecycle values', () => {
       status: 'approved', createdAt: nowISO(),
     });
     if (current.status !== 'approved') throw new Error('fixture must be approved');
-    const staleBinding = bindApprovalRevisionToPR(pr, current);
+    const gate = approvedGate(pr.id, current.id, current.headSha);
+    const staleBinding = bindApprovalRevisionToPR(pr, current, gate);
+    const mismatchedGate = approvedGate(pr.id, 'PRREV-other', current.headSha);
+    expect(() => bindApprovalRevisionToPR(pr, current, mismatchedGate))
+      .toThrow('does not match PR revision');
+    expect(() => bindApprovalRevisionToPR(
+      pr,
+      current,
+      {
+        ...gate,
+        decision: 'pending',
+        mergeability: 'unknown',
+        pendingReasons: ['not ready'],
+        reasons: ['not ready'],
+      } as unknown as Parameters<typeof bindApprovalRevisionToPR>[2],
+    )).toThrow();
     const advanced = transitionPR(pr, {
       status: 'open',
       currentRevisionId: 'PRREV-next',

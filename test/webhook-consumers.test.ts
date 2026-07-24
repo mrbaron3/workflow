@@ -85,7 +85,14 @@ describe('allow-listed webhook consumer adapters', () => {
 
     expect(calls).toEqual([{
       executable: process.execPath,
-      args: ['/installed-agentops/bin/agentops.mjs', 'github-turn'],
+      args: [
+        '/installed-agentops/bin/agentops.mjs',
+        'github-turn',
+        '--ready-label',
+        'ready',
+        '--base-branch',
+        'main',
+      ],
       cwd: workspace,
       env: expect.not.objectContaining({
         AGENTOPS_WEBHOOK_CONTROL_TOKEN: expect.anything(),

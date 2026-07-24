@@ -11,8 +11,6 @@
 
 import {
   PR,
-  approvePR,
-  bindApprovalRevisionToPR,
   requireMutablePR,
   transitionPR,
   updatePR,
@@ -210,19 +208,10 @@ export async function runBoundedRepairLoop(
     }
     if (panel.verdict === 'approve') {
       if (manage) applyPanelVerdict(store, issueId, 'approve'); // build-approved -> needs-human-review (gate)
-      // Local/store gating has no immutable GitHub head to approve. Only the
-      // issue advances to its human gate; the PR remains open until revision
-      // identity exists.
-      const currentRevision = currentPr.headSha
-        ? store.revisionForHead(currentPr.id, currentPr.headSha)
-        : undefined;
-      currentPr = currentRevision
-        && (currentRevision.status === 'reviewing' || currentRevision.status === 'approved')
-        ? store.replacePR(approvePR(
-          currentPr,
-          bindApprovalRevisionToPR(currentPr, currentRevision),
-        ))
-        : store.replacePR(transitionPR(currentPr, { status: 'open' }));
+      // A panel verdict alone is not approval authority. Only the issue advances
+      // to its human gate; the PR stays open until an immutable GitHub head also
+      // has a validated approved gate snapshot.
+      currentPr = store.replacePR(transitionPR(currentPr, { status: 'open' }));
       break;
     }
     // request_changes: route back and carry this attempt's findings into the next generate.

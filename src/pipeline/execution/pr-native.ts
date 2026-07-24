@@ -124,14 +124,23 @@ export function observePrRevision(
   const parsedSha = PrHeadSha.parse(headSha);
   const existing = store.revisionForHead(pr.id, parsedSha);
   if (existing) {
-    store.replacePR(pr.status === 'approved' && existing.status === 'approved'
-      ? approvePR(pr, bindApprovalRevisionToPR(pr, existing))
-      : transitionPR(pr, {
-        status: pr.status === 'approved' ? 'open' : pr.status,
-        currentRevisionId: existing.id,
-        headSha: existing.headSha,
-        mergedHeadSha: null,
-      }));
+    const approvedSnapshot = store.db.revisionGateSnapshots
+      .filter((snapshot) =>
+        snapshot.prId === pr.id
+        && snapshot.revisionId === existing.id
+        && snapshot.headSha === existing.headSha)
+      .map((snapshot) => ApprovedRevisionGateSnapshot.safeParse(snapshot))
+      .find((result) => result.success);
+    store.replacePR(
+      pr.status === 'approved' && existing.status === 'approved' && approvedSnapshot?.success
+        ? approvePR(pr, bindApprovalRevisionToPR(pr, existing, approvedSnapshot.data))
+        : transitionPR(pr, {
+          status: pr.status === 'approved' ? 'open' : pr.status,
+          currentRevisionId: existing.id,
+          headSha: existing.headSha,
+          mergedHeadSha: null,
+        }),
+    );
     return existing;
   }
 
@@ -469,7 +478,10 @@ export function autoMergeCurrentRevision(
     }
     const approvedPr = pr.status === 'approved'
       ? pr
-      : store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, approvedRevision)));
+      : store.replacePR(approvePR(
+        pr,
+        bindApprovalRevisionToPR(pr, approvedRevision, validatedApproval.data),
+      ));
     if (approvedPr.status !== 'approved' || approvedRevision.status !== 'approved') {
       throw new Error('approved lifecycle transition did not produce approved variants');
     }
@@ -539,11 +551,15 @@ export function autoMergeCurrentRevision(
     };
   }
 
+  const validatedSnapshot = ApprovedRevisionGateSnapshot.parse(snapshot);
   revision = store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
   if (revision.status !== 'approved') {
     throw new Error('approved gate did not produce an approved revision');
   }
-  pr = store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, revision)));
+  pr = store.replacePR(approvePR(
+    pr,
+    bindApprovalRevisionToPR(pr, revision, validatedSnapshot),
+  ));
   if (revision.mergeRequestedAt) {
     store.save();
     return {
@@ -581,7 +597,10 @@ export function autoMergeCurrentRevision(
     };
   }
   if (afterMerge.state !== 'merged') {
-    pr = store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, revision)));
+    pr = store.replacePR(approvePR(
+      pr,
+      bindApprovalRevisionToPR(pr, revision, validatedSnapshot),
+    ));
     store.save();
     return {
       prId: pr.id,

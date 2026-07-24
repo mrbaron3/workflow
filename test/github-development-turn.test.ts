@@ -8,11 +8,13 @@ import { GithubIssueSnapshot, PR } from '../src/domain/schema.js';
 import { Store, nowISO } from '../src/store/store.js';
 import type { GithubIssueRunner } from '../src/intake/github-issues.js';
 import {
+  applyGithubTurnRegistrationOverrides,
   DEFAULT_GITHUB_WATCH_INTERVAL_MS,
   MAX_GITHUB_WATCH_INTERVAL_MS,
   runGithubDevelopmentTurn,
   watchGithubDevelopment,
 } from '../src/intake/development-turn.js';
+import type { PrNativeGithubRunner } from '../src/pipeline/execution/pr-native.js';
 import { pollable } from '../src/pipeline/execution/guard.js';
 
 const roots: string[] = [];
@@ -85,6 +87,58 @@ const validUiOutput = {
 };
 
 describe('GitHub development turn', () => {
+  it('PR-INTENT applies registration readyLabel/baseBranch to the subsequent AgentOps turn', async () => {
+    const env = setup();
+    const observed: { readyLabel?: string; baseBranch?: string } = {};
+    const config = applyGithubTurnRegistrationOverrides({
+      ...env.config,
+      target: { repo: '.' },
+      gate: { backend: 'github', baseBranch: 'workspace-main' },
+    }, {
+      readyLabel: 'dashboard-ready',
+      baseBranch: 'dashboard-base',
+    });
+    const issueRunner: GithubIssueRunner = {
+      listReadyIssues(_repository, readyLabel) {
+        observed.readyLabel = readyLabel;
+        return [];
+      },
+      claimIssue() {},
+    };
+    const prNativeRunner: PrNativeGithubRunner = {
+      listOpenPullRequests(_cwd, baseBranch) {
+        observed.baseBranch = baseBranch;
+        return [];
+      },
+      viewRevision() {
+        throw new Error('no discovered PR should be reconciled');
+      },
+      merge() {},
+      closeIssue() {},
+    };
+
+    await runGithubDevelopmentTurn(env.store, config, {
+      issueRunner,
+      prNativeRunner,
+      driveQueue: async () => [],
+    }, roots.at(-1));
+
+    expect(observed).toEqual({
+      readyLabel: 'dashboard-ready',
+      baseBranch: 'dashboard-base',
+    });
+    expect(env.config.intake!.readyLabel).toBe('ready');
+    expect(env.config.gate).toBeUndefined();
+  });
+
+  it('PR-INTENT rejects empty registration overrides instead of silently changing behavior', () => {
+    const env = setup();
+    expect(() => applyGithubTurnRegistrationOverrides(env.config, { readyLabel: '  ' }))
+      .toThrow('ready label override must be non-empty');
+    expect(() => applyGithubTurnRegistrationOverrides(env.config, { baseBranch: '\t' }))
+      .toThrow('base branch override must be non-empty');
+  });
+
   it('AC-GWATCH-001 uses the configured recurring poll interval', async () => {
     const env = setup();
     env.config.intake!.pollIntervalMs = 12_345;

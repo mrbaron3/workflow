@@ -11,8 +11,6 @@
 
 import {
   PR,
-  approvePR,
-  bindApprovalRevisionToPR,
   requireMutablePR,
   transitionPR,
   updatePR,
@@ -98,13 +96,7 @@ export async function runIssue(
       const tag = `${issue.id} s${s} a${attempt}`;
       if (run.verdict === 'approve') {
         approved = true;
-        const currentRevision = pr.headSha
-          ? store.revisionForHead(pr.id, pr.headSha)
-          : undefined;
-        pr = currentRevision
-          && (currentRevision.status === 'reviewing' || currentRevision.status === 'approved')
-          ? store.replacePR(approvePR(pr, bindApprovalRevisionToPR(pr, currentRevision)))
-          : store.replacePR(transitionPR(pr, { status: 'open' }));
+        pr = store.replacePR(transitionPR(pr, { status: 'open' }));
         log(`  ✓ ${tag}: approved (overall ${run.overall.toFixed(2)})`);
         break;
       }

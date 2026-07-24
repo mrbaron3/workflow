@@ -1,7 +1,11 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { loadConfig } from '../config.js';
-import type { WebhookConsumer, WebhookConsumerEvent } from './schema.js';
+import type {
+  WebhookConsumer,
+  WebhookConsumerEvent,
+  WebhookRepositoryRegistration,
+} from './schema.js';
 import type { WebhookConsumerHandlers } from './router.js';
 import { WebhookControlStore } from './store.js';
 
@@ -32,6 +36,19 @@ export function sanitizedConsumerEnvironment(
     Object.entries(source).filter(([name, value]) =>
       CONSUMER_ENV_ALLOWLIST.has(name) && value !== undefined),
   );
+}
+
+/** Fixed launcher command plus the registration values that override workspace defaults. */
+export function agentOpsGithubTurnArgs(
+  launcher: string,
+  registration: WebhookRepositoryRegistration,
+): string[] {
+  return [
+    launcher,
+    'github-turn',
+    ...(registration.readyLabel ? ['--ready-label', registration.readyLabel] : []),
+    ...(registration.baseBranch ? ['--base-branch', registration.baseBranch] : []),
+  ];
 }
 
 export function productionProcessRunner(
@@ -126,7 +143,7 @@ export function createWebhookConsumerAdapters(
               ? `agentops reconcile: ${event.repository}`
               : `agentops wake: ${event.repository} ${event.event}/${event.action ?? '-'}`,
           );
-          await runProcess(process.execPath, [launcher, 'github-turn'], {
+          await runProcess(process.execPath, agentOpsGithubTurnArgs(launcher, registration), {
             cwd: workspaceRoot,
             env: consumerEnv,
             ...(options.signal ? { signal: options.signal } : {}),

@@ -277,7 +277,11 @@ Eval DB. One `gh webhook forward` child is supervised per enabled repository; th
 The `agentops` consumer runs the fixed `github-turn` entry point—never a registration-supplied
 shell command. Each registration's `workspaceRoot` must contain a harness config whose
 `intake.repository` matches the registered `owner/name`; separate repositories may therefore use
-separate workspaces while sharing this daemon and GUI. The optional `orca-worktree-sync` adapter
+separate workspaces while sharing this daemon and GUI. When set in the registration,
+`readyLabel` and `baseBranch` are validated invocation-scoped overrides for that turn and take
+precedence over the workspace's `intake.readyLabel` and gate/base branch without rewriting its
+config file. Empty registration values defer to the workspace configuration. The optional
+`orca-worktree-sync` adapter
 uses `--orca-sync-script F` (or `AGENTOPS_ORCA_SYNC_SCRIPT`) and preserves the old merged-PR/push
 event mapping without hard-coding a macOS path.
 
