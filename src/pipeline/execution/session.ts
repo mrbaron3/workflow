@@ -23,10 +23,10 @@ import {
   buildChangedFiles,
   headCommit,
 } from './worktree.js';
-import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
-import { providerReadyPattern } from '../../agents/interactive-backend.js';
+import { launchSession, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
 import { resolveAgentRoute } from '../../agents/routing.js';
 import { contextFor, renderScopedContext } from './scoped-context.js';
+import { submitPromptWhenSessionReady } from './session-readiness.js';
 
 export interface GeneratorSessionInput {
   issue: Issue;
@@ -54,18 +54,6 @@ export interface SessionResult {
   /** The exact prompt written to PROMPT.md this attempt — returned so the orchestrator can persist
    *  it for audit (the file itself is overwritten next attempt and wiped with .harness/). */
   prompt: string;
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-/** Poll the pane until the interactive session is ready to accept input (footer marker). */
-async function waitForReady(session: string, provider: AgentProvider, timeoutMs: number): Promise<void> {
-  const ready = providerReadyPattern(provider);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (ready.test(capturePane(session))) return;
-    await sleep(500);
-  }
 }
 
 /**
@@ -162,15 +150,21 @@ export async function runGeneratorSession(
   // model override (config.models.generator): weaken the coder to exercise the repair loop, or
   // leave undefined to inherit the user's default model.
   launchSession({ provider, purpose: 'generator', session, cwd: wt, model: route.model ?? undefined });
-  await waitForReady(session, provider, 20_000);
-  const submitted = await sendPrompt(
+  const kickoff = await submitPromptWhenSessionReady(
     session,
+    provider,
     'Read .agentops/PROMPT.md and do exactly what it says, editing files directly. ' +
       'When finished, create .agentops/done.json containing {"done": true}.',
   );
-  if (!submitted) log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
+  if (kickoff.readiness === 'timeout') {
+    log(`  ⚠ ${session}: provider did not become ready — session + worktree kept alive`);
+  } else if (!kickoff.submitted) {
+    log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
+  }
 
-  const outcome = await monitorLiveness(session, sentinelPath, GENERATOR_LIVENESS);
+  const outcome = kickoff.readiness === 'timeout'
+    ? 'stuck'
+    : await monitorLiveness(session, sentinelPath, GENERATOR_LIVENESS);
   const paneTail = capturePane(session).split('\n').filter(Boolean).slice(-25).join('\n');
 
   // Only a clean completion tears the session down; a stuck/timed-out session is kept ALIVE

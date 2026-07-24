@@ -205,6 +205,38 @@ describe('PR lifecycle values', () => {
     expect(() => store.replacePR(rewritten)).toThrow('cannot replace terminal PR');
   });
 
+  it.each(['merged', 'stale', 'failed'] as const)(
+    'PR-INTENT Store permits idempotence but refuses to resurrect a persisted %s revision',
+    (status) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `agentops-terminal-revision-${status}-`));
+      roots.push(root);
+      const store = new Store(root);
+      const terminal = PrRevision.parse({
+        id: `PRREV-${status}`,
+        prId: 'PR-1',
+        headSha: 'a'.repeat(40),
+        ordinal: 1,
+        status,
+        completedAt: nowISO(),
+        createdAt: nowISO(),
+      });
+      store.upsertPrRevision(terminal);
+
+      expect(store.replacePrRevision(terminal)).toMatchObject({ status });
+      const resurrected = PrRevision.parse({
+        id: terminal.id,
+        prId: terminal.prId,
+        headSha: terminal.headSha,
+        ordinal: terminal.ordinal,
+        status: 'reviewing',
+        startedAt: nowISO(),
+        createdAt: terminal.createdAt,
+      });
+      expect(() => store.replacePrRevision(resurrected))
+        .toThrow('cannot replace terminal PR revision');
+    },
+  );
+
   it('PR-INTENT refuses stale, ineligible, or non-current revision approval authority', () => {
     const currentId = 'PRREV-current';
     const sha = PrHeadSha.parse('a'.repeat(40));

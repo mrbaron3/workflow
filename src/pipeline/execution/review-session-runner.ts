@@ -1,10 +1,9 @@
 import path from 'node:path';
-import type { AgentProvider } from '../../domain/schema.js';
-import { providerReadyPattern } from '../../agents/interactive-backend.js';
 import type { AgentRoute } from '../../agents/routing.js';
 import type { ReviewJob, ReviewStatus } from './perspective-session.js';
-import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness } from './tmux.js';
+import { launchSession, killSession, monitorLiveness } from './tmux.js';
 import { REVIEW_LIVENESS } from './review-liveness.js';
+import { submitPromptWhenSessionReady } from './session-readiness.js';
 
 /** Run one read-only review session in its prepared worktree; returns its status (no git bookkeeping). */
 export async function runReviewSession(
@@ -27,12 +26,16 @@ export async function runReviewSession(
     additionalDirs: [path.dirname(job.sentinel)],
     model: route.model ?? undefined,
   });
-  await waitForReady(session, provider);
-  const submitted = await sendPrompt(
+  const kickoff = await submitPromptWhenSessionReady(
     session,
+    provider,
     `Read the reviewer prompt at ${JSON.stringify(job.prompt)} and do exactly what it says.`,
   );
-  if (!submitted) {
+  if (kickoff.readiness === 'timeout') {
+    log(`  ⚠ ${session}: provider did not become ready — session + worktree kept alive`);
+    return 'stuck';
+  }
+  if (!kickoff.submitted) {
     log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
   }
   // No per-review soft cap: a review still visibly working (⑤ ran 1h26m past the old 10-min
@@ -48,18 +51,4 @@ export async function runReviewSession(
   // The read-only guard (AC-PANEL-008) runs in collectFindings, at collection time, so a
   // late-collected stuck/timeout review passes the SAME dirty-checkout gate as a completed one.
   return 'completed';
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-async function waitForReady(
-  session: string,
-  provider: AgentProvider,
-  timeoutMs = 20_000,
-): Promise<void> {
-  const ready = providerReadyPattern(provider);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (ready.test(capturePane(session))) return;
-    await sleep(500);
-  }
 }

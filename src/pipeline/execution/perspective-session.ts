@@ -325,6 +325,8 @@ export interface ReviewJob {
   prompt: string;
   sentinel: string; // findings.json in the review evidence sidecar, outside reviewWt
   restricted?: boolean;
+  /** Frozen repository diff passed only through the provider's low-trust user-input channel. */
+  untrustedMaterial?: string;
 }
 /** A review's recorded liveness verdict, preserved as-is (never collapsed) so late collection
  *  can tell the operator which failure mode — stuck or timeout — the review actually had. */
@@ -479,6 +481,7 @@ export async function runPerspectiveSessions(
     if (input.untrusted) {
       fs.mkdirSync(job.reviewWt, { recursive: true });
       job.restricted = true;
+      job.untrustedMaterial = restrictedMaterial ?? undefined;
     }
     const prompt = promptForLens(
       p.key,
@@ -491,13 +494,7 @@ export async function runPerspectiveSessions(
         ...(input.baseRef ? { baseRef: input.baseRef } : {}),
       },
     );
-    fs.writeFileSync(
-      job.prompt,
-      restrictedMaterial === null
-        ? prompt
-        : `${prompt}\n\n${restrictedMaterial}`,
-      'utf8',
-    );
+    fs.writeFileSync(job.prompt, prompt, 'utf8');
     return job;
   });
 

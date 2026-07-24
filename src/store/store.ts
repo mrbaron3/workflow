@@ -312,7 +312,14 @@ export class Store {
   replacePrRevision(revision: PrRevision): PrRevision {
     const index = this.db.prRevisions.findIndex((row) => row.id === revision.id);
     if (index < 0) throw new Error(`No such PR revision: ${revision.id}`);
+    const existing = this.db.prRevisions[index]!;
     const stored = PrRevisionSchema.parse(structuredClone(revision));
+    if (
+      (existing.status === 'merged' || existing.status === 'stale' || existing.status === 'failed')
+      && !isDeepStrictEqual(existing, stored)
+    ) {
+      throw new Error(`cannot replace terminal PR revision ${existing.id} (${existing.status})`);
+    }
     (this.db.prRevisions as DB['prRevisions'])[index] = stored;
     return this.lifecycleCopy(stored);
   }
