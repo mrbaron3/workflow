@@ -6,6 +6,14 @@ import type { AgentProvider } from '../../domain/schema.js';
 import type { AgentRoute } from '../../agents/routing.js';
 import type { ReviewJob, ReviewStatus } from './perspective-session.js';
 import { REVIEW_LIVENESS } from './review-liveness.js';
+import {
+  MAX_RESTRICTED_REVIEW_OUTPUT_BYTES,
+  MAX_REVIEW_CRITERION_ID_CHARS,
+  MAX_REVIEW_FINDINGS,
+  MAX_REVIEW_FINDING_TEXT_CHARS,
+  MAX_REVIEW_REQUIRED_FIX_CHARS,
+  MAX_REVIEW_REQUIRED_FIXES,
+} from './review-output-limits.js';
 
 export const MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES = 1_500_000;
 const UNTRUSTED_REVIEW_MATERIAL_BUFFER_OVERHEAD_BYTES = 64 * 1024;
@@ -69,11 +77,19 @@ const RESTRICTED_FINDINGS_JSON_SCHEMA = {
           'lineage',
         ],
         properties: {
-          criterionId: { type: 'string', minLength: 1 },
+          criterionId: {
+            type: 'string',
+            minLength: 1,
+            maxLength: MAX_REVIEW_CRITERION_ID_CHARS,
+          },
           severity: { type: 'string', enum: ['blocker', 'major', 'minor'] },
-          expected: { type: 'string' },
-          observed: { type: 'string' },
-          requiredFix: { type: 'array', items: { type: 'string' } },
+          expected: { type: 'string', maxLength: MAX_REVIEW_FINDING_TEXT_CHARS },
+          observed: { type: 'string', maxLength: MAX_REVIEW_FINDING_TEXT_CHARS },
+          requiredFix: {
+            type: 'array',
+            maxItems: MAX_REVIEW_REQUIRED_FIXES,
+            items: { type: 'string', maxLength: MAX_REVIEW_REQUIRED_FIX_CHARS },
+          },
           lineage: {
             anyOf: [
               { type: 'string', enum: ['persisted', 'new'] },
@@ -82,6 +98,7 @@ const RESTRICTED_FINDINGS_JSON_SCHEMA = {
           },
         },
       },
+      maxItems: MAX_REVIEW_FINDINGS,
     },
   },
 } as const;
@@ -104,6 +121,22 @@ export interface RestrictedReviewExecution {
 export interface RestrictedReviewExecutionOptions {
   operatorHome?: string;
   parentEnv?: NodeJS.ProcessEnv;
+}
+
+/** Append one provider chunk or fail before the daemon retains unbounded output. */
+export function appendRestrictedReviewOutput(
+  chunks: Buffer[],
+  retainedBytes: number,
+  chunk: Buffer,
+): number {
+  const nextBytes = retainedBytes + chunk.byteLength;
+  if (nextBytes > MAX_RESTRICTED_REVIEW_OUTPUT_BYTES) {
+    throw new Error(
+      `restricted review output exceeds ${MAX_RESTRICTED_REVIEW_OUTPUT_BYTES} bytes`,
+    );
+  }
+  chunks.push(chunk);
+  return nextBytes;
 }
 
 const RESTRICTED_REVIEW_CREDENTIALS: Partial<Record<AgentProvider, {
@@ -318,17 +351,27 @@ export async function runRestrictedReviewSession(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const stdout: Buffer[] = [];
-    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.resume();
     let settled = false;
+    let retainedBytes = 0;
+    let timer: NodeJS.Timeout | undefined;
     const finish = (status: ReviewStatus): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       execution.cleanup();
       resolve(status);
     };
-    const timer = setTimeout(() => {
+    child.stdout.on('data', (chunk: Buffer) => {
+      if (settled) return;
+      try {
+        retainedBytes = appendRestrictedReviewOutput(stdout, retainedBytes, chunk);
+      } catch {
+        child.kill('SIGTERM');
+        finish('stuck');
+      }
+    });
+    child.stderr.resume();
+    timer = setTimeout(() => {
       child.kill('SIGTERM');
       finish('timeout');
     }, REVIEW_LIVENESS.activeCapMs);
@@ -340,6 +383,9 @@ export async function runRestrictedReviewSession(
         fs.writeFileSync(job.sentinel, Buffer.concat(stdout), 'utf8');
       }
       try {
+        if (fs.statSync(job.sentinel).size > MAX_RESTRICTED_REVIEW_OUTPUT_BYTES) {
+          throw new Error('restricted review result exceeds output limit');
+        }
         validate(JSON.parse(fs.readFileSync(job.sentinel, 'utf8')));
         finish('completed');
       } catch {

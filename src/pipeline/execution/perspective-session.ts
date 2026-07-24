@@ -32,14 +32,30 @@ import { resolveAgentRoute, type AgentRoute } from '../../agents/routing.js';
 import { mapPool } from './pool.js';
 import { runRestrictedReviewSession, staticUntrustedReviewMaterial } from './restricted-review.js';
 import { runReviewSession } from './review-session-runner.js';
+import {
+  MAX_REVIEW_CRITERION_ID_CHARS,
+  MAX_REVIEW_FINDINGS,
+  MAX_REVIEW_FINDING_TEXT_CHARS,
+  MAX_REVIEW_REQUIRED_FIX_CHARS,
+  MAX_REVIEW_REQUIRED_FIXES,
+} from './review-output-limits.js';
 export { REVIEW_LIVENESS } from './review-liveness.js';
 export {
+  appendRestrictedReviewOutput,
   MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
   prepareRestrictedReviewExecution,
   restrictedPerspectivePrompt,
   restrictedReviewLaunch,
   staticUntrustedReviewMaterial,
 } from './restricted-review.js';
+export {
+  MAX_RESTRICTED_REVIEW_OUTPUT_BYTES,
+  MAX_REVIEW_CRITERION_ID_CHARS,
+  MAX_REVIEW_FINDINGS,
+  MAX_REVIEW_FINDING_TEXT_CHARS,
+  MAX_REVIEW_REQUIRED_FIX_CHARS,
+  MAX_REVIEW_REQUIRED_FIXES,
+} from './review-output-limits.js';
 
 /** The review focus each perspective session is briefed on (single source; no per-file personas). */
 export const PERSPECTIVE_LENS: Record<string, string> = {
@@ -80,18 +96,20 @@ export const PERSPECTIVE_RUBRIC: Record<string, string[]> = {
  * fills it) — normalised into the strict Finding schema by parsePerspectiveFindings.
  */
 const RawFinding = z.object({
-  criterionId: z.string().min(1),
+  criterionId: z.string().min(1).max(MAX_REVIEW_CRITERION_ID_CHARS),
   severity: Severity,
-  expected: z.string().default(''),
-  observed: z.string().default(''),
-  requiredFix: z.array(z.string()).default([]),
+  expected: z.string().max(MAX_REVIEW_FINDING_TEXT_CHARS).default(''),
+  observed: z.string().max(MAX_REVIEW_FINDING_TEXT_CHARS).default(''),
+  requiredFix: z.array(z.string().max(MAX_REVIEW_REQUIRED_FIX_CHARS))
+    .max(MAX_REVIEW_REQUIRED_FIXES)
+    .default([]),
   // Re-review attestation (ISSUE-0009): strictly 'persisted' | 'new' or absent. An invalid
   // value fails the whole parse (→ escalate) — never coerced, never defaulted.
   lineage: FindingLineage.nullable().optional(),
 });
 export const PerspectiveFindingsInput = z.object({
   verdict: Verdict,
-  findings: z.array(RawFinding).default([]),
+  findings: z.array(RawFinding).max(MAX_REVIEW_FINDINGS).default([]),
   /** Optional 0..1 quality score for this lens; defaults from the verdict when absent. */
   score: z.number().min(0).max(1).optional(),
 });

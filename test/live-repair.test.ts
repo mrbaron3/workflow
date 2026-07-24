@@ -6,8 +6,8 @@
  *   2. runBoundedRepairLoop (shared by driveIssueOnce and driveIssueLive) threads each attempt's
  *      cross-perspective findings into the next attempt's brief, and — the live-only branch the
  *      mock runner never hits — escalates a stuck generator to the human gate, session kept alive.
- * The live composition itself (real tmux + Claude) stays out of unit tests by design; here we test
- * the seams it plugs together.
+ * Real tmux/provider processes stay out of unit tests; injected live orchestration seams pin their
+ * ordering in addition to testing each deterministic component.
  */
 import { describe, it, expect } from 'vitest';
 import os from 'node:os';
@@ -34,8 +34,13 @@ import {
   type GeneratorSessionInput,
 } from '../src/pipeline/execution/session.js';
 import type { PanelResult } from '../src/pipeline/panel.js';
-import type { RepairBrief } from '../src/domain/artifact.js';
-import { revisionGateRepairBrief } from '../src/pipeline/execution/live.js';
+import type { BuildArtifact, RepairBrief } from '../src/domain/artifact.js';
+import {
+  driveIssueLive,
+  revisionGateRepairBrief,
+} from '../src/pipeline/execution/live.js';
+import { findingsPath } from '../src/pipeline/execution/perspective-session.js';
+import type { GhGateRunner } from '../src/pipeline/execution/gate.js';
 
 const CONFIG: HarnessConfig = { ...DEFAULT_CONFIG, generator: 'mock', samples: 1, maxRepairs: 2 }; // 3 attempts max
 
@@ -280,5 +285,129 @@ describe('runBoundedRepairLoop: manageIssueStatus=false leaves the issue status 
     expect(pr.status).toBe('open'); // no revision/head exists to support an approved PR variant
     expect(store.getIssue('ISSUE-1')!.status).toBe(before); // issue status untouched — caller owns it
     expect(store.getIssue('ISSUE-1')!.status).not.toBe('needs-human-review');
+  });
+});
+
+describe('driveIssueLive orchestration ordering', () => {
+  it('AC-PRLOOP-001 pushes/creates the same PR before every fresh Perspective review', async () => {
+    const store = tmpStore('live-pr-before-review');
+    const issue = addIssue(store, 'ISSUE-1');
+    const events: string[] = [];
+    const reviewHeads: string[] = [];
+    const worktree = path.join(store.root, 'generated-worktree');
+    fs.mkdirSync(worktree, { recursive: true });
+    let attemptCount = 0;
+    let reviewCount = 0;
+    const gateRunner: GhGateRunner = {
+      pushBranch() {
+        events.push(`push:${attemptCount}`);
+      },
+      createPr() {
+        events.push(`create:${attemptCount}`);
+        return {
+          provider: 'github',
+          number: 8,
+          url: 'https://github.com/acme/theme/pull/8',
+        };
+      },
+      viewPr: () => 'open',
+    };
+    const artifact: BuildArtifact = {
+      branch: 'agent/issue-1-s0',
+      summary: 'grounded fixture',
+      filesChanged: ['src/x.ts'],
+      satisfied: { 'AC-1': true },
+      buildPasses: true,
+      typecheckPasses: true,
+      unitTestsPass: true,
+      apiTestsPass: true,
+      hasTests: true,
+      secretsLeaked: false,
+      scopeViolations: [],
+      quality: {
+        codeQuality: 1,
+        testQuality: 1,
+        ux: 1,
+        accessibility: 1,
+      },
+      notes: [],
+    };
+
+    await driveIssueLive(
+      store,
+      {
+        ...CONFIG,
+        maxRepairs: 1,
+        gate: { backend: 'github', baseBranch: 'main' },
+        target: { repo: '.' },
+      },
+      issue,
+      store.root,
+      {
+        perspectives: [{ key: 'codeQuality', deterministic: false }],
+        gateRunner,
+        generatorSession: async (_config, input) => {
+          attemptCount = input.attempt;
+          events.push(`commit:${attemptCount}`);
+          return {
+            provider: 'mock',
+            model: null,
+            worktree,
+            branch: 'agent/issue-1-s0',
+            session: `generator-${attemptCount}`,
+            outcome: 'completed',
+            changed: ['src/x.ts'],
+            headSha: attemptCount === 1 ? 'a'.repeat(40) : 'b'.repeat(40),
+            paneTail: '',
+            prompt: `attempt ${attemptCount}`,
+          };
+        },
+        groundBuild: () => artifact,
+        perspectiveSessions: async (_config, input) => {
+          reviewCount += 1;
+          events.push(`review:${reviewCount}`);
+          reviewHeads.push(input.buildRef);
+          const evalRoot = path.join(input.worktree, '.agentops', 'eval');
+          const finding = findingsPath(evalRoot, 'codeQuality');
+          fs.mkdirSync(path.dirname(finding), { recursive: true });
+          fs.writeFileSync(finding, JSON.stringify({
+            verdict: 'request_changes',
+            score: 0.2,
+            findings: [{
+              criterionId: 'AC-1',
+              severity: 'major',
+              observed: `attempt ${reviewCount} still fails`,
+              requiredFix: ['repair it'],
+            }],
+          }));
+          return {
+            evalRoot,
+            completed: ['codeQuality'],
+            touchedCode: [],
+            environmentChanges: {},
+            invocations: [{
+              role: 'reviewer',
+              perspective: 'codeQuality',
+              provider: 'mock',
+              model: null,
+              prompt: `review ${reviewCount}`,
+              outcome: 'completed',
+            }],
+          };
+        },
+      },
+    );
+
+    expect(events).toEqual([
+      'commit:1',
+      'push:1',
+      'create:1',
+      'review:1',
+      'commit:2',
+      'push:2',
+      'review:2',
+    ]);
+    expect(reviewHeads).toEqual(['a'.repeat(40), 'b'.repeat(40)]);
+    expect(store.getPR('PR-0001')?.externalRef?.number).toBe(8);
   });
 });

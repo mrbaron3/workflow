@@ -47,6 +47,14 @@ export interface LiveOptions {
   gateRunner?: GhGateRunner;
   /** Current-head snapshot + expected-SHA merge adapter (github only). */
   prNativeRunner?: PrNativeGithubRunner;
+  /** Test/embedding seam for the real generator role session. */
+  generatorSession?: typeof runGeneratorSession;
+  /** Test/embedding seam for current-head push/PR projection. */
+  projectRevision?: typeof projectReviewRevision;
+  /** Test/embedding seam for grounded artifact construction. */
+  groundBuild?: typeof groundArtifact;
+  /** Test/embedding seam for the Perspective fan-out. */
+  perspectiveSessions?: typeof runPerspectiveSessions;
   /** Best-of-N: independent samples to drive per issue (default config.samples; real default = 1). */
   samples?: number;
   /** Measurement run: drive ALL samples to completion for pass@k / pass^k, not first-approve-stop (E5). */
@@ -81,7 +89,7 @@ export function priorFindingsByLens(store: Store, prId: string, attempt: number)
  * worktree/branch `agent/<issue>-s<n>`. `manageIssueStatus` is false under best-of-N (>1 sample)
  * so the issue's terminal status is applied once by the caller at the winner level, not per sample.
  */
-async function runLiveSample(
+export async function runLiveSample(
   store: Store, config: HarnessConfig, issue: Issue, sampleIndex: number,
   harnessRoot: string,
   opts: LiveOptions & { manageIssueStatus: boolean; resumePr?: PRType },
@@ -111,7 +119,7 @@ async function runLiveSample(
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
     log(`▶ ${issue.id} s${sampleIndex}: generator session (attempt ${attempt}/${maxAttempts})`);
-    const sess = await runGeneratorSession(
+    const sess = await (opts.generatorSession ?? runGeneratorSession)(
       config,
       {
         issue,
@@ -126,7 +134,7 @@ async function runLiveSample(
     );
     let revision: ReturnType<typeof projectReviewRevision> | null = null;
     if (sess.outcome === 'completed' && sess.headSha) {
-      revision = projectReviewRevision(
+      revision = (opts.projectRevision ?? projectReviewRevision)(
         store,
         config,
         {
@@ -164,14 +172,21 @@ async function runLiveSample(
     }
 
     // 2. ground the checkout with real graders (real tsc/vitest)
-    const artifact = groundArtifact({ contract, target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed, issueId: issue.id });
+    const artifact = (opts.groundBuild ?? groundArtifact)({
+      contract,
+      target,
+      worktree: sess.worktree,
+      branch: sess.branch,
+      changed: sess.changed,
+      issueId: issue.id,
+    });
 
     // 3. real read-only perspective sessions — each in its own detached worktree of the committed
     //    build (isolated + concurrent), collecting findings.json into the generator worktree's evalRoot.
     //    A re-review (attempt > 1) hands each lens its OWN previous-attempt findings so the reviewer
     //    attests lineage (persisted/new) per finding — never inferred downstream (ISSUE-0009).
     const priorFindings = priorFindingsByLens(store, pr.id, attempt);
-    const panelSessions = await runPerspectiveSessions(
+    const panelSessions = await (opts.perspectiveSessions ?? runPerspectiveSessions)(
       config,
       {
         worktree: sess.worktree,

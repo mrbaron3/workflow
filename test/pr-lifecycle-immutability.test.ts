@@ -124,9 +124,13 @@ describe('PR lifecycle values', () => {
       revision,
       approvedGate(open.id, revision.id, revision.headSha),
     );
-    const approved = approvePR(open, binding);
+    const authorization = approvePR(open, binding);
+    const approved = authorization.pr;
     expect(Object.isFrozen(approved)).toBe(true);
-    const merged = mergeApprovedPR(approved, bindMergeRevisionToPR(approved, revision));
+    const merged = mergeApprovedPR(
+      approved,
+      bindMergeRevisionToPR(authorization),
+    );
     expect(merged.headSha).toBe(merged.mergedHeadSha);
     if (false) {
       const invalidApproval = {
@@ -140,6 +144,37 @@ describe('PR lifecycle values', () => {
     // mergeApprovedPR exposes no second SHA input; both persisted fields are
     // derived from the opaque binding.
     expect(approved).toMatchObject({ status: 'approved', headSha: 'a'.repeat(40) });
+  });
+
+  it('PR-INTENT cannot mint merge authority from parsed approved records alone', () => {
+    const revision = PrRevision.parse({
+      id: 'PRREV-1',
+      prId: 'PR-1',
+      headSha: 'a'.repeat(40),
+      ordinal: 1,
+      status: 'approved',
+      createdAt: nowISO(),
+    });
+    const approved = PR.parse({
+      id: 'PR-1',
+      issueId: 'ISSUE-1',
+      branch: 'feature',
+      generator: 'mock',
+      status: 'approved',
+      currentRevisionId: revision.id,
+      headSha: revision.headSha,
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    });
+    if (approved.status !== 'approved' || revision.status !== 'approved') {
+      throw new Error('fixtures must be approved');
+    }
+    if (false) {
+      // @ts-expect-error parsed persistence records carry no snapshot-derived approval capability
+      bindMergeRevisionToPR(approved);
+    }
+    expect(() => (bindMergeRevisionToPR as unknown as (value: object) => unknown)(approved))
+      .toThrow('merge requires an approvePR authorization');
   });
 
   it('PR-INTENT revision transitions construct a new terminal value with completion evidence', () => {

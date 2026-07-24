@@ -22,6 +22,10 @@ import {
   restrictedPerspectivePrompt,
   findingsPath,
   MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
+  MAX_RESTRICTED_REVIEW_OUTPUT_BYTES,
+  MAX_REVIEW_FINDINGS,
+  MAX_REVIEW_FINDING_TEXT_CHARS,
+  appendRestrictedReviewOutput,
   prepareRestrictedReviewExecution,
   restrictedReviewLaunch,
   staticUntrustedReviewMaterial,
@@ -359,6 +363,51 @@ describe('restricted repository-PR reviewers', () => {
 
     expect(() => staticUntrustedReviewMaterial(repo, 'HEAD^', 'HEAD'))
       .toThrow(`untrusted review diff exceeds ${MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES} bytes`);
+  });
+
+  it('PR-INTENT bounds streamed reviewer output before retaining an oversized chunk', () => {
+    expect(MAX_RESTRICTED_REVIEW_OUTPUT_BYTES).toBe(256 * 1024);
+    const chunks: Buffer[] = [];
+    const first = Buffer.alloc(MAX_RESTRICTED_REVIEW_OUTPUT_BYTES - 1);
+    const retained = appendRestrictedReviewOutput(chunks, 0, first);
+
+    expect(retained).toBe(first.byteLength);
+    expect(() => appendRestrictedReviewOutput(chunks, retained, Buffer.alloc(2)))
+      .toThrow(`restricted review output exceeds ${MAX_RESTRICTED_REVIEW_OUTPUT_BYTES} bytes`);
+    expect(chunks).toEqual([first]);
+  });
+
+  it('PR-INTENT bounds reviewer finding count and text in both schema and validation', () => {
+    expect(MAX_REVIEW_FINDINGS).toBe(100);
+    const job = restrictedJob('codex');
+    const launch = restrictedReviewLaunch(job, { provider: 'codex', model: null });
+    const schemaPath = launch.args[launch.args.indexOf('--output-schema') + 1]!;
+    const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8')) as {
+      properties: {
+        findings: {
+          maxItems: number;
+          items: { properties: { observed: { maxLength: number } } };
+        };
+      };
+    };
+    expect(schema.properties.findings.maxItems).toBe(MAX_REVIEW_FINDINGS);
+    expect(schema.properties.findings.items.properties.observed.maxLength)
+      .toBe(MAX_REVIEW_FINDING_TEXT_CHARS);
+    expect(() => parsePerspectiveFindings({
+      verdict: 'request_changes',
+      findings: Array.from({ length: MAX_REVIEW_FINDINGS + 1 }, () => ({
+        criterionId: 'PR-INTENT',
+        severity: 'major',
+      })),
+    })).toThrow();
+    expect(() => parsePerspectiveFindings({
+      verdict: 'request_changes',
+      findings: [{
+        criterionId: 'PR-INTENT',
+        severity: 'major',
+        observed: 'x'.repeat(MAX_REVIEW_FINDING_TEXT_CHARS + 1),
+      }],
+    })).toThrow();
   });
 });
 

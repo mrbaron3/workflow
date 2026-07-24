@@ -133,7 +133,10 @@ export function observePrRevision(
       .find((result) => result.success);
     store.replacePR(
       pr.status === 'approved' && existing.status === 'approved' && approvedSnapshot?.success
-        ? approvePR(pr, bindApprovalRevisionToPR(pr, existing, approvedSnapshot.data))
+        ? approvePR(
+          pr,
+          bindApprovalRevisionToPR(pr, existing, approvedSnapshot.data),
+        ).pr
         : transitionPR(pr, {
           status: pr.status === 'approved' ? 'open' : pr.status,
           currentRevisionId: existing.id,
@@ -311,10 +314,11 @@ function finalizeMergedRevision(
   store: Store,
   pr: Extract<PR, { status: 'approved' }>,
   revision: Extract<PrRevision, { status: 'approved' }>,
+  authorization: ReturnType<typeof approvePR>,
   runner: PrNativeGithubRunner,
   cwd: string,
 ): AutoMergeResult {
-  const mergeBinding = bindMergeRevisionToPR(pr, revision);
+  const mergeBinding = bindMergeRevisionToPR(authorization);
   const mergedRevision = store.replacePrRevision(transitionPrRevision(revision, {
     status: 'merged',
     completedAt: nowISO(),
@@ -476,16 +480,26 @@ export function autoMergeCurrentRevision(
     if (approvedRevision.status !== 'approved') {
       throw new Error('approved lifecycle transition did not produce an approved revision');
     }
+    const approval = bindApprovalRevisionToPR(
+      pr,
+      approvedRevision,
+      validatedApproval.data,
+    );
+    const authorization = approvePR(pr, approval);
     const approvedPr = pr.status === 'approved'
       ? pr
-      : store.replacePR(approvePR(
-        pr,
-        bindApprovalRevisionToPR(pr, approvedRevision, validatedApproval.data),
-      ));
+      : store.replacePR(authorization.pr);
     if (approvedPr.status !== 'approved' || approvedRevision.status !== 'approved') {
       throw new Error('approved lifecycle transition did not produce approved variants');
     }
-    return finalizeMergedRevision(store, approvedPr, approvedRevision, runner, cwd);
+    return finalizeMergedRevision(
+      store,
+      approvedPr,
+      approvedRevision,
+      authorization,
+      runner,
+      cwd,
+    );
   }
   if (github.state === 'closed') {
     revision = store.replacePrRevision(transitionPrRevision(revision, {
@@ -556,10 +570,9 @@ export function autoMergeCurrentRevision(
   if (revision.status !== 'approved') {
     throw new Error('approved gate did not produce an approved revision');
   }
-  pr = store.replacePR(approvePR(
-    pr,
-    bindApprovalRevisionToPR(pr, revision, validatedSnapshot),
-  ));
+  const approval = bindApprovalRevisionToPR(pr, revision, validatedSnapshot);
+  const authorization = approvePR(pr, approval);
+  pr = store.replacePR(authorization.pr);
   if (revision.mergeRequestedAt) {
     store.save();
     return {
@@ -597,10 +610,6 @@ export function autoMergeCurrentRevision(
     };
   }
   if (afterMerge.state !== 'merged') {
-    pr = store.replacePR(approvePR(
-      pr,
-      bindApprovalRevisionToPR(pr, revision, validatedSnapshot),
-    ));
     store.save();
     return {
       prId: pr.id,
@@ -614,5 +623,5 @@ export function autoMergeCurrentRevision(
   if (pr.status !== 'approved' || revision.status !== 'approved') {
     throw new Error('merge finalization requires approved PR and revision variants');
   }
-  return finalizeMergedRevision(store, pr, revision, runner, cwd);
+  return finalizeMergedRevision(store, pr, revision, authorization, runner, cwd);
 }

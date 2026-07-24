@@ -187,6 +187,10 @@ export async function runBoundedRepairLoop(
     currentPr = store.replacePR(updatePR(requireMutablePR(currentPr), { attempts: attempt }));
 
     const outcome = await produce(attempt, repairBrief);
+    // `produce` may project the current head and attach an external PR. Continue
+    // from that durable value so the following verdict transition cannot overwrite
+    // fresh revision coordinates or externalRef with this loop's older snapshot.
+    currentPr = store.getPR(currentPr.id) ?? currentPr;
 
     if (outcome.stuck || !outcome.panel) {
       // Liveness surfacing (ARCH-execution-014): keep the session alive, escalate, stop the loop.

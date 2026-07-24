@@ -79,17 +79,25 @@ export function validatePRTransition(pr: PR, destinationStatus: string): void {
   }
 }
 
-declare const approvalRevisionBrand: unique symbol;
+const approvalRevisionBrand: unique symbol = Symbol('ApprovalRevisionBinding');
 export type ApprovalRevisionBinding = RevisionBinding & {
   readonly prId: string;
   readonly gateSnapshotId: string;
   readonly [approvalRevisionBrand]: true;
 };
-declare const mergeRevisionBrand: unique symbol;
+const mergeRevisionBrand: unique symbol = Symbol('MergeRevisionBinding');
 export type MergeRevisionBinding = RevisionBinding & {
   readonly prId: string;
+  readonly gateSnapshotId: string;
   readonly [mergeRevisionBrand]: true;
 };
+const approvedPrAuthorizationBrand: unique symbol = Symbol('ApprovedPRAuthorization');
+export type ApprovedPRAuthorization = Readonly<{
+  pr: Extract<PR, { status: 'approved' }>;
+  mergeBinding: MergeRevisionBinding;
+  gateSnapshotId: string;
+  [approvedPrAuthorizationBrand]: true;
+}>;
 export type ApprovalEligiblePrRevision = Extract<
   PrRevision,
   { status: 'approved' }
@@ -133,32 +141,17 @@ export function bindApprovalRevisionToPR(
     revisionId: revision.id,
     headSha: revision.headSha,
     gateSnapshotId: validatedSnapshot.id,
+    [approvalRevisionBrand]: true,
   }) as ApprovalRevisionBinding;
-}
-
-/** Merge authority is deliberately distinct from review approval authority. */
-export function bindMergeRevisionToPR(
-  pr: Extract<PR, { status: 'approved' }>,
-  revision: Extract<PrRevision, { status: 'approved' }>,
-): MergeRevisionBinding {
-  if (
-    revision.prId !== pr.id
-    || revision.id !== pr.currentRevisionId
-    || revision.headSha !== pr.headSha
-  ) {
-    throw new Error(`approved revision ${revision.id} is not current for PR ${pr.id}`);
-  }
-  return Object.freeze({
-    prId: pr.id,
-    revisionId: revision.id,
-    headSha: revision.headSha,
-  }) as MergeRevisionBinding;
 }
 
 export function approvePR(
   pr: PR,
   binding: ApprovalRevisionBinding,
-): Extract<PR, { status: 'approved' }> {
+): ApprovedPRAuthorization {
+  if (binding[approvalRevisionBrand] !== true) {
+    throw new Error('approval requires a validated gate-derived capability');
+  }
   if (pr.status === 'closed' || pr.status === 'merged') {
     throw new Error(`cannot approve terminal PR ${pr.id} (${pr.status})`);
   }
@@ -169,7 +162,7 @@ export function approvePR(
   ) {
     throw new Error(`approval revision binding does not match current PR ${pr.id}`);
   }
-  return deepFreeze(ApprovedPR.parse({
+  const approved = deepFreeze(ApprovedPR.parse({
     ...pr,
     status: 'approved',
     currentRevisionId: binding.revisionId,
@@ -177,6 +170,33 @@ export function approvePR(
     mergedHeadSha: null,
     updatedAt: new Date().toISOString(),
   }));
+  const mergeBinding = Object.freeze({
+    prId: pr.id,
+    revisionId: binding.revisionId,
+    headSha: binding.headSha,
+    gateSnapshotId: binding.gateSnapshotId,
+    [mergeRevisionBrand]: true,
+  }) as MergeRevisionBinding;
+  return Object.freeze({
+    pr: approved,
+    mergeBinding,
+    gateSnapshotId: binding.gateSnapshotId,
+    [approvedPrAuthorizationBrand]: true as const,
+  });
+}
+
+/** Merge authority exists only inside the authorization returned by approvePR. */
+export function bindMergeRevisionToPR(
+  authorization: ApprovedPRAuthorization,
+): MergeRevisionBinding {
+  if (
+    authorization[approvedPrAuthorizationBrand] !== true
+    || authorization.mergeBinding[mergeRevisionBrand] !== true
+    || authorization.gateSnapshotId !== authorization.mergeBinding.gateSnapshotId
+  ) {
+    throw new Error('merge requires an approvePR authorization');
+  }
+  return authorization.mergeBinding;
 }
 
 export function mergeApprovedPR(
@@ -184,6 +204,9 @@ export function mergeApprovedPR(
   binding: MergeRevisionBinding,
 ): MergedPR {
   if (
+    binding[mergeRevisionBrand] !== true
+    || binding.gateSnapshotId.length === 0
+    ||
     binding.prId !== pr.id
     || binding.revisionId !== pr.currentRevisionId
     || binding.headSha !== pr.headSha
