@@ -37,6 +37,10 @@ const contract: IssueContract = {
   ],
   redLines: [],
 };
+const RUN_OPERATIONAL_CONTAINMENT =
+  process.platform === 'darwin' && !process.env.AGENTOPS_ISOLATED_GRADER_PORTS;
+const RUN_NESTED_FAIL_CLOSED =
+  process.platform === 'darwin' && Boolean(process.env.AGENTOPS_ISOLATED_GRADER_PORTS);
 
 /** Ground with only a typecheck grader — its exit code is the whole signal. */
 function typecheckWith(command: string): boolean {
@@ -72,7 +76,7 @@ function dependencyBin(packageName: string, executable: string): string {
 }
 
 describe('grader command env prefixes (KEY=VAL …)', () => {
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT isolates a malicious head from operator credentials and network', async () => {
+  it.runIf(RUN_OPERATIONAL_CONTAINMENT)('ISSUE-0024/PR-INTENT isolates a malicious head from operator credentials and network', async () => {
     const operatorHome = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-operator-home-'));
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-head-'));
     const sentinel = path.join(operatorHome, 'credential-sentinel');
@@ -133,7 +137,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     });
   });
 
-  it.runIf(process.platform === 'darwin')('PR-INTENT permits only the configured external grader dependency tree', () => {
+  it.runIf(RUN_OPERATIONAL_CONTAINMENT)('PR-INTENT permits only the configured external grader dependency tree', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-command-'));
     const result = runGraderCommand(
       `${dependencyBin('typescript', 'tsc')} --version`,
@@ -146,7 +150,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(result, result.output).toMatchObject({ ok: true });
     expect(result.output).toContain('Version');
   });
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT denies untrusted files under otherwise system-readable roots', () => {
+  it.runIf(RUN_OPERATIONAL_CONTAINMENT)('ISSUE-0024/PR-INTENT denies untrusted files under otherwise system-readable roots', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-untrusted-root-head-'));
     const prepared = prepareIsolatedExecutionResources(process.execPath, ['--version'], checkout);
     try {
@@ -181,7 +185,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(nestedSandboxUnavailable(result.output), result.output).toBe(false);
     expect(result, result.output).toMatchObject({ ok: true });
   });
-  it.runIf(process.platform === 'darwin')('PR-INTENT starts Vitest without granting DNS or cross-sandbox loopback access', () => {
+  it.runIf(RUN_OPERATIONAL_CONTAINMENT)('PR-INTENT starts Vitest without granting DNS or cross-sandbox loopback access', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-grader-vitest-'));
     fs.writeFileSync(
       path.join(checkout, 'isolated.test.ts'),
@@ -200,7 +204,7 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(result.output).not.toContain('getaddrinfo ENOTFOUND localhost');
     expect(result, result.output).toMatchObject({ ok: true });
   });
-  it.runIf(process.platform === 'darwin')('ISSUE-0024/PR-INTENT prevents malicious PR code from modifying trusted dependencies', () => {
+  it.runIf(RUN_OPERATIONAL_CONTAINMENT)('ISSUE-0024/PR-INTENT prevents malicious PR code from modifying trusted dependencies', () => {
     const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-malicious-grader-'));
     const trustedPackage = createRequire(import.meta.url).resolve('typescript/package.json');
     const before = fs.readFileSync(trustedPackage, 'utf8');
@@ -230,6 +234,21 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(nestedSandboxUnavailable(result.output), result.output).toBe(false);
     expect(result, result.output).toMatchObject({ ok: true });
   });
+  it.runIf(RUN_NESTED_FAIL_CLOSED)(
+    'PR-INTENT fails closed when an already-isolated grader cannot create a nested sandbox',
+    () => {
+      const checkout = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-nested-grader-'));
+      const result = runGraderCommand(
+        `${process.execPath} --version`,
+        checkout,
+        {},
+        { isolated: true },
+      );
+      fs.rmSync(checkout, { recursive: true, force: true });
+      expect(result.ok).toBe(false);
+      expect(nestedSandboxUnavailable(result.output), result.output).toBe(true);
+    },
+  );
   it('a leading KEY=VAL lands in the child process env', () => {
     expect(typecheckWith(`AGENTOPS_GATE=on node -e process.exit(process.env.AGENTOPS_GATE==='on'?0:1)`)).toBe(true);
   });
