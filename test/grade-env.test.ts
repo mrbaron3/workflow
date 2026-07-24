@@ -17,6 +17,7 @@ import {
   runGraderCommand,
 } from '../src/pipeline/execution/grade.js';
 import {
+  ISOLATED_DEPENDENCY_COPY_TIMEOUT_MS,
   ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS,
   ISOLATED_GRADER_MIN_PORT,
   NESTED_ISOLATED_GRADER_PORT_COUNT,
@@ -121,6 +122,8 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(NESTED_ISOLATED_GRADER_PORT_COUNT).toBeLessThanOrEqual(
       ISOLATED_GRADER_PORT_COUNT,
     );
+    expect(ISOLATED_DEPENDENCY_COPY_TIMEOUT_MS).toBe(60_000);
+    expect(ISOLATED_DEPENDENCY_COPY_TIMEOUT_MS).toBeGreaterThanOrEqual(60_000);
     expect(ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS).toBe(64);
     expect(ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS).toBeGreaterThan(0);
     expect(ISOLATED_GRADER_PORT_PROBE_DEADLINE_MS).toBe(1_500);

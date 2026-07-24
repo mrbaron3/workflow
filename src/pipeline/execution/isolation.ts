@@ -10,6 +10,7 @@ export const ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS = 64;
 export const ISOLATED_GRADER_PORT_PROBE_DEADLINE_MS = 1_500;
 export const ISOLATED_GRADER_PORT_PROBE_PROCESS_TIMEOUT_MS = 2_000;
 export const NESTED_ISOLATED_GRADER_PORT_COUNT = 16;
+export const ISOLATED_DEPENDENCY_COPY_TIMEOUT_MS = 60_000;
 const INHERITED_ISOLATED_GRADER_PORTS = 'AGENTOPS_ISOLATED_GRADER_PORTS';
 const MACOS_GIT_SUPPORT_ROOTS = [
   '/Library/Developer/CommandLineTools/usr/libexec/git-core',
@@ -65,7 +66,7 @@ function copyDependencyTree(source: string, destination: string): void {
   // without paying for a full node_modules byte copy on every gate.
   const clone = spawnSync('/bin/cp', ['-cRLp', source, destination], {
     stdio: 'ignore',
-    timeout: 60_000,
+    timeout: ISOLATED_DEPENDENCY_COPY_TIMEOUT_MS,
   });
   if (clone.status === 0) return;
   fs.cpSync(source, destination, {

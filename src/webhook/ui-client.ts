@@ -60,8 +60,20 @@ async function api(path, options={}) {
   if (!response.ok) throw new Error(data.error || 'request failed');
   return data;
 }
+let refreshGeneration=0;
+let latestSettledRefreshGeneration=0;
 async function refresh() {
-  const state = await api('/api/state');
+  const generation=++refreshGeneration;
+  let state;
+  try {
+    state=await api('/api/state');
+  } catch (error) {
+    if (generation<latestSettledRefreshGeneration) return false;
+    latestSettledRefreshGeneration=generation;
+    throw error;
+  }
+  if (generation<latestSettledRefreshGeneration) return false;
+  latestSettledRefreshGeneration=generation;
   setConnectionState('connected');
   document.querySelector('#mode-badge').textContent = 'loopback only';
   const forwarders = new Map((state.runtime?.forwarders || []).map(row => [row.registrationId,row]));
@@ -85,6 +97,7 @@ async function refresh() {
     return node;
   }, 'まだ配送がありません。', 6);
   pruneActionStates('delivery',deliveries.map(row => row.id));
+  return true;
 }
 function reconcile(root, rows, key, render, empty, colspan) {
   const existing=new Map([...root.children].filter(node => node.dataset.key).map(node => [node.dataset.key,node]));

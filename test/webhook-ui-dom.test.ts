@@ -539,6 +539,71 @@ describe('webhook control GUI runtime', () => {
       .toContain('完了しました');
   });
 
+  it('AC-WHUI-001 PR-INTENT discards an older state response that resolves after a newer one', async () => {
+    const window = new Window({
+      url: 'http://127.0.0.1:8377/',
+      settings: { disableJavaScriptEvaluation: false },
+    });
+    windows.push(window);
+    let resolveOlder!: (value: UiState) => void;
+    let resolveNewer!: (value: UiState) => void;
+    const olderResponse = new Promise<UiState>((resolve) => { resolveOlder = resolve; });
+    const newerResponse = new Promise<UiState>((resolve) => { resolveNewer = resolve; });
+    let stateRequest = 0;
+    Object.defineProperty(window, 'fetch', {
+      configurable: true,
+      value: vi.fn(async () => {
+        const request = stateRequest++;
+        const payload = request === 0
+          ? state(0)
+          : request === 1
+            ? await olderResponse
+            : await newerResponse;
+        return { ok: true, json: async () => payload };
+      }),
+    });
+    let intervalCallback: (() => unknown) | null = null;
+    Object.defineProperty(window, 'setInterval', {
+      configurable: true,
+      value: (callback: () => unknown) => {
+        intervalCallback = callback;
+        return 1;
+      },
+    });
+    Object.defineProperty(window, 'clearInterval', {
+      configurable: true,
+      value: () => {
+        intervalCallback = null;
+      },
+    });
+    const html = webhookControlHtml();
+    const script = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    if (!script) throw new Error('generated GUI has no executable script');
+    window.document.write(html.replace(/<script>[\s\S]*<\/script>/, ''));
+    window.document.close();
+    window.eval(script);
+    await flush();
+    if (!intervalCallback) throw new Error('polling interval is not active');
+
+    const older = (intervalCallback as unknown as () => Promise<unknown>)();
+    const newer = (intervalCallback as unknown as () => Promise<unknown>)();
+    const newerState = state(2);
+    newerState.repositories[0]!.repository = 'acme/newer';
+    resolveNewer(newerState);
+    await newer;
+    await flush();
+    expect(window.document.querySelector('[data-key="WHREPO-1"] strong')?.textContent)
+      .toBe('acme/newer');
+
+    const olderState = state(1);
+    olderState.repositories[0]!.repository = 'acme/older';
+    resolveOlder(olderState);
+    await older;
+    await flush();
+    expect(window.document.querySelector('[data-key="WHREPO-1"] strong')?.textContent)
+      .toBe('acme/newer');
+  });
+
   it('PR-INTENT moves focus to the deliveries region when passive polling removes the focused retry row', async () => {
     const window = new Window({
       url: 'http://127.0.0.1:8377/',

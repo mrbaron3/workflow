@@ -1,6 +1,5 @@
 import {
   NormalizedGithubEvent,
-  type NormalizedGithubEvent as NormalizedGithubEventType,
   type WebhookConsumerEvent,
   type WebhookConsumer,
   type WebhookDelivery,
