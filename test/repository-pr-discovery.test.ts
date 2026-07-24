@@ -4,7 +4,14 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
-import { AgentInvocation, EvalRun, Issue, PR, transitionPrRevision } from '../src/domain/schema.js';
+import {
+  AgentInvocation,
+  EvalRun,
+  Issue,
+  PR,
+  PrRevision,
+  transitionPrRevision,
+} from '../src/domain/schema.js';
 import { runGithubDevelopmentTurn } from '../src/intake/development-turn.js';
 import {
   attemptForRevision,
@@ -519,6 +526,85 @@ describe('repository-wide pull request discovery', () => {
     });
     expect(env.store.db.issues).toHaveLength(1);
     expect(env.store.db.prs).toHaveLength(1);
+  });
+
+  it('AC-PRLOOP-007 PR-INTENT blocks an externally advanced Issue-pipeline head from privileged repair', async () => {
+    const env = setup();
+    const trustedHead = SHA_B;
+    const issue = env.store.addIssue(Issue.parse({
+      id: 'ISSUE-TRUSTED',
+      type: 'feature',
+      title: 'AgentOps-created pull request',
+      area: 'backend',
+      status: 'needs-human-review',
+      assignedAgent: 'codex',
+      contract: {
+        productGoal: 'ship safely',
+        userStory: 'review only trusted generated repairs',
+        scope: { include: [], exclude: [] },
+        acceptanceCriteria: [{
+          id: 'AC-1',
+          severity: 'blocker',
+          behavior: 'works',
+          verification: { method: 'scope_check', expected: ['works'] },
+        }],
+        redLines: [],
+      },
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    }));
+    const oldRevision = env.store.upsertPrRevision(PrRevision.parse({
+      id: 'PRREV-TRUSTED',
+      prId: 'PR-TRUSTED',
+      headSha: trustedHead,
+      ordinal: 1,
+      status: 'approved',
+      createdAt: nowISO(),
+    }));
+    env.store.addPR(PR.parse({
+      id: oldRevision.prId,
+      issueId: issue.id,
+      branch: 'feature/discovery',
+      generator: 'codex',
+      status: 'approved',
+      currentRevisionId: oldRevision.id,
+      headSha: oldRevision.headSha,
+      agentGeneratedHeadSha: oldRevision.headSha,
+      externalRef: {
+        provider: 'github',
+        repository: 'acme/theme',
+        number: 9,
+        url: 'https://github.com/acme/theme/pull/9',
+      },
+      createdAt: nowISO(),
+      updatedAt: nowISO(),
+    }));
+
+    const discovery = discoverRepositoryPullRequests(
+      env.store,
+      env.config,
+      env.runner,
+      env.root,
+    )[0]!;
+    expect(discovery.pr).toMatchObject({
+      origin: 'issue-pipeline',
+      headSha: SHA_A,
+      agentGeneratedHeadSha: trustedHead,
+    });
+    enterRepositoryPrEvaluation(env.store, discovery.issue);
+    env.store.setStatus(issue.id, 'changes-requested');
+    let privilegedRepairInvocations = 0;
+
+    const results = await runLoopLive(env.store, env.config, env.root, {
+      driveIssue: async () => {
+        privilegedRepairInvocations += 1;
+        throw new Error('externally advanced head must not enter the generator');
+      },
+    });
+
+    expect(results).toEqual([]);
+    expect(privilegedRepairInvocations).toBe(0);
+    expect(env.store.getIssue(issue.id)?.status).toBe('changes-requested');
   });
 
   it('PR-INTENT keeps repository-local PR numbers distinct', () => {

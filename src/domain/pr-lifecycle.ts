@@ -18,7 +18,7 @@ import {
 type MutablePR = Exclude<PR, { status: 'closed' | 'merged' }>;
 type PRPatch = Partial<Pick<
   MutablePR,
-  'branch' | 'baseBranch' | 'attempts' | 'externalRef'
+  'branch' | 'baseBranch' | 'attempts' | 'externalRef' | 'agentGeneratedHeadSha'
 >>;
 type RevisionCoordinateDestinationFields =
   | { currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha?: null }

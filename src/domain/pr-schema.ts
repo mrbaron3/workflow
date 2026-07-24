@@ -49,6 +49,12 @@ const PRCommon = z.object({
    * registered by an operator.
    */
   origin: z.enum(['issue-pipeline', 'repository-discovery']).default('issue-pipeline'),
+  /**
+   * Last current-head SHA produced and pushed by the trusted AgentOps generator
+   * lane. A different observed GitHub head is externally advanced and must not
+   * enter the credential-bearing repair lane.
+   */
+  agentGeneratedHeadSha: PrHeadSha.nullable().default(null),
   attempts: z.number().int().nonnegative().default(0), // generation attempts incl. repairs
   // ADR-0006 G1: set when an approved build is projected to a GitHub PR gate. null = no
   // projection (store-direct gate / local sandbox). Additive — absent on older records.

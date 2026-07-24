@@ -91,12 +91,12 @@ function genInput(repairBrief: RepairBrief | null, attempt: number): GeneratorSe
 }
 
 describe('buildGeneratorPrompt: a repair attempt carries the reviewers required fixes', () => {
-  it('AC-PRLOOP-007 starts a repository-discovered repair from its observed PR head', () => {
+  it('AC-PRLOOP-003 starts a trusted repair from its observed PR head', () => {
     expect(generatorStartRef('abc1234', 'main')).toBe('abc1234');
     expect(generatorStartRef(null, 'main')).toBe('main');
   });
 
-  it('AC-PRLOOP-007 recreates a stale repair worktree before it can overwrite the PR head', () => {
+  it('AC-PRLOOP-003 recreates a stale trusted repair worktree before it can overwrite the PR head', () => {
     expect(generatorWorktreeRequiresReset(26, true, 'old-head', 'current-head')).toBe(true);
     expect(generatorWorktreeRequiresReset(27, true, 'current-head', 'current-head')).toBe(false);
     expect(generatorWorktreeRequiresReset(1, true, 'current-head', 'current-head')).toBe(true);

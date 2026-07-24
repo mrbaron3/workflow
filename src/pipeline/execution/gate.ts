@@ -108,7 +108,9 @@ export function projectReviewRevision(
       + `${input.headSha.slice(0, 12)} to PR #${projectedPr.externalRef!.number}`,
     );
   }
-  store.replacePR(updatePR(requireMutablePR(projectedPr), {}));
+  store.replacePR(updatePR(requireMutablePR(projectedPr), {
+    agentGeneratedHeadSha: revision.headSha,
+  }));
   store.save();
   return revision;
 }
@@ -253,9 +255,8 @@ function latestAttemptRuns(runs: EvalRun[]): EvalRun[] {
 export function realGhGateRunner(): GhGateRunner {
   return {
     pushBranch(worktree, branch) {
-      // Push the reviewed worktree HEAD to the PR's remote branch. Repository-discovered
-      // PRs use an AgentOps-local repair branch, while their GitHub head branch keeps its
-      // original name; HEAD:<branch> preserves that stable external PR identity.
+      // Push an AgentOps-generated worktree HEAD to its stable remote PR branch.
+      // Repository-discovered heads never reach this credential-bearing adapter.
       run('git', [
         '-C',
         worktree,

@@ -293,9 +293,9 @@ export function attemptForRevision(
 
 /**
  * Review one current head discovered through a repository registration without
- * regenerating it first. A request_changes result places its existing or synthetic
- * work unit on the ordinary repair queue; that queue then amends the same remote
- * PR branch.
+ * regenerating it first. A request_changes result remains durable but does not
+ * enter the credential-bearing generator queue; an externally pushed new head
+ * is discovered and reviewed as a fresh immutable revision.
  */
 export async function reviewRepositoryPullRequest(
   store: Store,

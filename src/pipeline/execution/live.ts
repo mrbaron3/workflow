@@ -411,7 +411,16 @@ export async function runLoopLive(
       (issue) => issue.status === 'changes-requested'
         && issue.assignedAgent === resolvedGeneratorProvider(config)
         && !store.db.prs.some(
-          (pr) => pr.issueId === issue.id && pr.origin === 'repository-discovery',
+          (pr) => pr.issueId === issue.id && (
+            pr.origin === 'repository-discovery'
+            || (
+              pr.externalRef !== null
+              && (
+                pr.headSha === null
+                || pr.agentGeneratedHeadSha !== pr.headSha
+              )
+            )
+          ),
         ),
     );
   const queue = [...pollable(store, config), ...repairQueue]

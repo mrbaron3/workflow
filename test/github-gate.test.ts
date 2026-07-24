@@ -81,8 +81,8 @@ describe('prStateToDecision: the pure heart of the gate', () => {
   });
 });
 
-describe('repository-discovered PR repair projection', () => {
-  it('AC-PRLOOP-007 pushes the local repair HEAD to the original GitHub PR branch', () => {
+describe('trusted AgentOps PR repair projection', () => {
+  it('AC-PRLOOP-003 pushes a generated repair HEAD to its stable GitHub PR branch', () => {
     expect(prHeadRefspec('feature/existing-pr')).toBe(
       'HEAD:refs/heads/feature/existing-pr',
     );
@@ -165,6 +165,7 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     expect(bodies[0]).toContain('current-head');
     expect(bodies[0]).not.toContain('自動評価パネルはこのビルドを**承認**');
     expect(store.getPR(pr.id)?.externalRef?.number).toBe(8);
+    expect(store.getPR(pr.id)?.agentGeneratedHeadSha).toBe(secondSha);
     expect(store.revisionForHead(pr.id, firstSha)?.status).toBe('stale');
     expect(second).toMatchObject({ headSha: secondSha, ordinal: 2 });
   });

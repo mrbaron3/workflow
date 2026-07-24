@@ -38,10 +38,10 @@
   - When全Perspectiveとchecksがapproveする
   - Thenreview evidenceは保存するがRevision Gateはpendingを維持し、ready event/poll後に再評価する
 
-- **[AC-PRLOOP-007] 外部PRを権限付きGeneratorへ渡さない**
-  - Givenrepository discoveryで取り込んだPRがrequest_changes
+- **[AC-PRLOOP-007] 外部更新headを権限付きGeneratorへ渡さない**
+  - Givenrepository discovery由来、またはAgentOps作成PRを外部から更新したheadがrequest_changes
   - When次のlive queueを組み立てる
-  - Thensynthetic Issueは通常のGenerator repair laneへ入らず、外部でpushされた新headだけをfresh reviewする
+  - Thencurrent headがdurableなAgentOps生成SHAと一致しないPRは通常のGenerator repair laneへ入らず、外部でpushされた新headだけをfresh reviewする
 
 ## レッドライン
 

@@ -347,7 +347,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.getPR(pr.id)).toMatchObject({ currentRevisionId: current.id, headSha: SHA_B });
   });
 
-  it('AC-PRREV-003 requires every perspective to approve the same revision and current SHA', () => {
+  it('AC-PRREV-003 AC-PRAUTO-001 refuses merge when a required perspective is missing on the current SHA', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     addReview(store, pr, revision.id, SHA_A, 'functionality');
@@ -355,16 +355,24 @@ describe('PR revision identity and automatic current-head gate', () => {
     // A security approval for another SHA must not count.
     addReview(store, pr, revision.id, SHA_B, 'security');
 
-    const snapshot = evaluateRevisionGate(store, {
+    let merges = 0;
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => { merges += 1; },
+      closeIssue: () => {},
+    };
+    const snapshot = autoMergeCurrentRevision(
+      store,
+      CONFIG,
       pr,
-      revision,
-      requiredPerspectives: PERSPECTIVES,
-      github: greenGithub(),
-      requiredChecks: ['test'],
-    });
+      runner,
+      '/repo',
+      PERSPECTIVES,
+    );
 
     expect(snapshot.decision).toBe('pending');
     expect(snapshot.reasons).toContain('missing review: security');
+    expect(merges).toBe(0);
   });
 
   it('AC-PRLOOP-002 blocks an approved review that still contains a P1-equivalent major finding', () => {

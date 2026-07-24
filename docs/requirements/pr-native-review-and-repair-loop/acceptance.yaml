@@ -39,4 +39,4 @@ verifications:
     severity: blocker
     method: unit_test
     expected:
-      - "repository-discovered PRは通常の権限付きGenerator queueへ入らず、外部push後の新headだけを再reviewする"
+      - "repository-discoveredまたは外部更新されたPR headは通常の権限付きGenerator queueへ入らず、AgentOps生成SHAと一致するheadだけがrepair対象になる"
