@@ -409,7 +409,10 @@ export async function runLoopLive(
   const repairQueue = store.db.issues
     .filter(
       (issue) => issue.status === 'changes-requested'
-        && issue.assignedAgent === resolvedGeneratorProvider(config),
+        && issue.assignedAgent === resolvedGeneratorProvider(config)
+        && !store.db.prs.some(
+          (pr) => pr.issueId === issue.id && pr.origin === 'repository-discovery',
+        ),
     );
   const queue = [...pollable(store, config), ...repairQueue]
     .sort((a, b) => a.id.localeCompare(b.id));

@@ -9,6 +9,10 @@ import {
   type PrHeadSha,
   type RevisionBinding,
 } from './pr-schema.js';
+import {
+  isEvaluatedRevisionGateSnapshot,
+  type EvaluatedApprovedRevisionGateSnapshot,
+} from './revision-gate.js';
 
 /** State transitions and opaque approval/merge authorities for immutable PR revisions. */
 type MutablePR = Exclude<PR, { status: 'closed' | 'merged' }>;
@@ -110,15 +114,18 @@ export type ApprovalEligiblePrRevision = Extract<
 export function bindApprovalRevisionToPR(
   pr: PR,
   revision: ApprovalEligiblePrRevision,
-  snapshot: ApprovedRevisionGateSnapshot,
+  snapshot: EvaluatedApprovedRevisionGateSnapshot,
 ): ApprovalRevisionBinding;
 export function bindApprovalRevisionToPR(
   pr: PR,
   revision: PrRevision,
-  snapshot: ApprovedRevisionGateSnapshot,
+  snapshot: EvaluatedApprovedRevisionGateSnapshot,
 ): ApprovalRevisionBinding {
   if (revision.status !== 'approved') {
     throw new Error(`revision ${revision.id} (${revision.status}) is not eligible for approval`);
+  }
+  if (!isEvaluatedRevisionGateSnapshot(snapshot)) {
+    throw new Error('approval requires a fresh gate-evaluation capability');
   }
   const validatedSnapshot = ApprovedRevisionGateSnapshot.parse(snapshot);
   if (
@@ -219,6 +226,40 @@ export function mergeApprovedPR(
     currentRevisionId: binding.revisionId,
     headSha: binding.headSha,
     mergedHeadSha: binding.headSha,
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
+/**
+ * Reconcile local lifecycle state after GitHub confirms a merge that this
+ * process already requested. This never authorizes an external merge: it
+ * requires the durable pre-merge request marker and only records completion.
+ */
+export function reconcileRequestedMerge(
+  pr: Extract<PR, { status: 'approved' }>,
+  revision: Extract<PrRevision, { status: 'approved' }>,
+  snapshot: ApprovedRevisionGateSnapshot,
+): MergedPR {
+  const validatedSnapshot = ApprovedRevisionGateSnapshot.parse(snapshot);
+  if (!revision.mergeRequestedAt) {
+    throw new Error('merge reconciliation requires a durable merge request marker');
+  }
+  if (
+    revision.prId !== pr.id
+    || revision.id !== pr.currentRevisionId
+    || revision.headSha !== pr.headSha
+    || validatedSnapshot.prId !== pr.id
+    || validatedSnapshot.revisionId !== revision.id
+    || validatedSnapshot.headSha !== revision.headSha
+  ) {
+    throw new Error(`merge reconciliation evidence does not match PR ${pr.id}`);
+  }
+  return deepFreeze(createMergedPR({
+    ...pr,
+    status: 'merged',
+    currentRevisionId: revision.id,
+    headSha: revision.headSha,
+    mergedHeadSha: revision.headSha,
     updatedAt: new Date().toISOString(),
   }));
 }

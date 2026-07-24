@@ -521,6 +521,46 @@ describe('PR revision identity and automatic current-head gate', () => {
     )).toThrow('merge temporarily unavailable');
   });
 
+  it('PR-INTENT reconciles a confirmed merge after restart only when the durable request marker exists', () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) {
+      addReview(store, pr, revision.id, SHA_A, perspective);
+    }
+    let githubState: GithubPrRevisionState['state'] = 'open';
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => ({ ...greenGithub(), state: githubState }),
+      merge: () => {},
+      closeIssue: () => {},
+    };
+
+    const requested = autoMergeCurrentRevision(
+      store,
+      CONFIG,
+      pr,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+    );
+    expect(requested).toMatchObject({ decision: 'pending', merged: false });
+    expect(store.revisionForHead(pr.id, SHA_A)?.mergeRequestedAt).not.toBeNull();
+    githubState = 'merged';
+
+    const restarted = new Store(store.root);
+    const reconciled = autoMergeCurrentRevision(
+      restarted,
+      CONFIG,
+      restarted.getPR(pr.id)!,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+    );
+
+    expect(reconciled).toMatchObject({ decision: 'merged', merged: true });
+    expect(restarted.getPR(pr.id)?.status).toBe('merged');
+    expect(restarted.getIssue(pr.issueId)?.status).toBe('released');
+  });
+
   it('AC-PRAUTO-001 does not merge while a required check is pending', () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);

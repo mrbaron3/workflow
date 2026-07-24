@@ -39,4 +39,4 @@ verifications:
     severity: blocker
     method: unit_test
     expected:
-      - "repairは観測済みPR headから開始し、HEADを元GitHub head branchへpushする"
+      - "repository-discovered PRは通常の権限付きGenerator queueへ入らず、外部push後の新headだけを再reviewする"

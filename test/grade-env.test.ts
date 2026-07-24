@@ -17,8 +17,11 @@ import {
   runGraderCommand,
 } from '../src/pipeline/execution/grade.js';
 import {
+  ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS,
   ISOLATED_GRADER_MIN_PORT,
   ISOLATED_GRADER_PORT_COUNT,
+  ISOLATED_GRADER_PORT_PROBE_DEADLINE_MS,
+  ISOLATED_GRADER_PORT_PROBE_PROCESS_TIMEOUT_MS,
   ISOLATED_GRADER_PORT_WINDOW,
   isIsolatedPortRangeAvailable,
   prepareIsolatedExecutionResources,
@@ -112,6 +115,12 @@ describe('grader command env prefixes (KEY=VAL …)', () => {
     expect(ISOLATED_GRADER_MIN_PORT).toBe(30_000);
     expect(ISOLATED_GRADER_PORT_WINDOW).toBe(20_000);
     expect(ISOLATED_GRADER_PORT_COUNT).toBe(128);
+    expect(ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS).toBe(64);
+    expect(ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS).toBeGreaterThan(0);
+    expect(ISOLATED_GRADER_PORT_PROBE_DEADLINE_MS).toBe(1_500);
+    expect(ISOLATED_GRADER_PORT_PROBE_PROCESS_TIMEOUT_MS).toBe(2_000);
+    expect(ISOLATED_GRADER_PORT_PROBE_PROCESS_TIMEOUT_MS)
+      .toBeGreaterThan(ISOLATED_GRADER_PORT_PROBE_DEADLINE_MS);
   });
 
   it('ISSUE-0024/PR-INTENT excludes a range containing a pre-existing operator listener', async () => {

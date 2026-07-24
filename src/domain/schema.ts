@@ -22,6 +22,7 @@ import {
 import { NullableRevisionCoordinates, PR, PrRevision, RevisionGateSnapshot } from './pr-schema.js';
 export * from './agent-runtime.js';
 export * from './pr-schema.js';
+export * from './revision-gate.js';
 export * from './pr-lifecycle.js';
 
 // --- small vocabularies ----------------------------------------------------

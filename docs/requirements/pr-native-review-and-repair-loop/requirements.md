@@ -23,10 +23,10 @@
   - Whenrepair attemptを実行する
   - Then既存worktree/branchを修正し、新headをpushして新revisionへ全Perspective runを保存する
 
-- **[AC-PRLOOP-004] 外部P0/P1 threadを次turnでrepairへ戻す**
+- **[AC-PRLOOP-004] 外部P0/P1 threadを次turnでblocking状態へ戻す**
   - GivenGitHub current headに未解決P0/P1 thread
   - WhenWebhookまたはpoll reconciliationが実行される
-  - Then本文/path/lineをdurable gate snapshotへ保存し、同PRのfresh attempt用Repair Briefにする
+  - Then本文/path/lineをdurable gate snapshotへ保存し、対象headをmerge不可にする
 
 - **[AC-PRLOOP-005] Repository登録だけで既存・新規Open PRを取り込む**
   - Givenenabled repository registrationと対象base branch
@@ -38,10 +38,10 @@
   - When全Perspectiveとchecksがapproveする
   - Thenreview evidenceは保存するがRevision Gateはpendingを維持し、ready event/poll後に再評価する
 
-- **[AC-PRLOOP-007] 既存PRの修正を同じGitHub head branchへpushする**
+- **[AC-PRLOOP-007] 外部PRを権限付きGeneratorへ渡さない**
   - Givenrepository discoveryで取り込んだPRがrequest_changes
-  - WhenGeneratorがRepair Briefを処理する
-  - Then観測済みheadから修正を開始し、local repair HEADを元PRのhead branchへpushする
+  - When次のlive queueを組み立てる
+  - Thensynthetic Issueは通常のGenerator repair laneへ入らず、外部でpushされた新headだけをfresh reviewする
 
 ## レッドライン
 
@@ -50,3 +50,4 @@
 - approve tokenでP0/P1相当findingを隠さない。
 - repository registrationとは別にPR/Issue単位の手動登録を要求しない。
 - fork headへ書込み権限を推測して自動修正・mergeしない。
+- attacker-controlled headをoperator credentialとpush権限を持つ通常Generatorへ渡さない。

@@ -38,15 +38,20 @@ import type {
   SpecState,
   TurnRecord,
 } from '../domain/schema.js';
+import {
+  isEvaluatedRevisionGateSnapshot,
+  type EvaluatedRevisionGateSnapshot,
+} from '../domain/revision-gate.js';
 import { assertTransition, TERMINAL_STATUSES, type IssueStatus } from '../domain/states.js';
 
 export function nowISO(): string {
   return new Date().toISOString();
 }
 
-export type StoreView = Omit<DB, 'prs' | 'prRevisions'> & {
+export type StoreView = Omit<DB, 'prs' | 'prRevisions' | 'revisionGateSnapshots'> & {
   readonly prs: readonly PR[];
   readonly prRevisions: readonly PrRevision[];
+  readonly revisionGateSnapshots: readonly RevisionGateSnapshot[];
 };
 
 /**
@@ -335,10 +340,13 @@ export class Store {
     return copy;
   }
 
-  addRevisionGateSnapshot(snapshot: RevisionGateSnapshot): RevisionGateSnapshot {
+  addRevisionGateSnapshot(snapshot: EvaluatedRevisionGateSnapshot): EvaluatedRevisionGateSnapshot {
+    if (!isEvaluatedRevisionGateSnapshot(snapshot)) {
+      throw new Error('revision gate persistence requires evaluated gate evidence');
+    }
     const stored = RevisionGateSnapshotSchema.parse(structuredClone(snapshot));
-    this.db.revisionGateSnapshots.push(stored);
-    return this.lifecycleCopy(stored);
+    (this.db.revisionGateSnapshots as DB['revisionGateSnapshots']).push(stored);
+    return snapshot;
   }
 
   // --- spec states (M20 signing) -------------------------------------------

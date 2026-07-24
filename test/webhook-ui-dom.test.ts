@@ -357,7 +357,9 @@ describe('webhook control GUI runtime', () => {
     await flush();
 
     const repository = window.document.querySelector('[data-key="WHREPO-1"]')!;
-    (repository.querySelector('.edit') as HTMLButtonElement).click();
+    const edit = repository.querySelector('.edit') as HTMLButtonElement;
+    expect(edit.getAttribute('aria-label')).toBe('acme/one を編集');
+    edit.click();
     const form = repository.querySelector('.edit-form') as HTMLFormElement;
     expect(form.hidden).toBe(false);
     expect(form.querySelectorAll('input[name="events"]')).toHaveLength(8);

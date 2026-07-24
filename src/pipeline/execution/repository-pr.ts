@@ -139,7 +139,10 @@ function createRepositoryReviewIssue(
     title: projection.title,
     area: 'fullstack',
     status: 'ready-for-evaluation',
-    assignedAgent: resolvedGeneratorProvider(config),
+    // Repository-authored heads are attacker-controlled. Review them through the
+    // restricted no-tool path, but do not place them on the ordinary generator
+    // repair queue, whose provider process intentionally retains push authority.
+    assignedAgent: null,
     contract: projection.contract,
     implementationNotes: projection.implementationNotes,
     createdAt: timestamp,
@@ -226,6 +229,7 @@ export function discoverRepositoryPullRequests(
       }));
       store.updateIssue(issue.id, {
         title: projection.title,
+        assignedAgent: null,
         contract: projection.contract,
         implementationNotes: projection.implementationNotes,
       });

@@ -12,6 +12,7 @@ import {
   approvePR,
   bindApprovalRevisionToPR,
   bindMergeRevisionToPR,
+  evaluateRevisionGateEvidence,
   mergeApprovedPR,
   transitionPR,
   transitionPrRevision,
@@ -27,23 +28,44 @@ function approvedGate(
   revisionId: string,
   headSha: string,
 ) {
-  return ApprovedRevisionGateSnapshot.parse({
-    id: `PRGATE-${revisionId}`,
-    prId,
-    revisionId,
+  const pr = PR.parse({
+    id: prId,
+    issueId: 'ISSUE-GATE',
+    branch: 'feature/gate',
+    generator: 'mock',
+    currentRevisionId: revisionId,
     headSha,
-    requiredPerspectives: [],
-    perspectiveVerdicts: {},
-    checks: [],
-    unresolvedBlockingThreadIds: [],
-    blockingReviewThreads: [],
-    mergeability: 'mergeable',
-    decision: 'approved',
-    blockingReasons: [],
-    pendingReasons: [],
-    reasons: [],
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  });
+  const revision = PrRevision.parse({
+    id: revisionId,
+    prId,
+    headSha,
+    ordinal: 1,
+    status: 'approved',
     createdAt: nowISO(),
   });
+  const evaluated = evaluateRevisionGateEvidence({
+    id: `PRGATE-${revisionId}`,
+    pr,
+    revision,
+    requiredPerspectives: [],
+    reviewRuns: [],
+    github: {
+      state: 'open',
+      headSha,
+      isDraft: false,
+      mergeability: 'mergeable',
+      checks: [],
+      unresolvedBlockingThreadIds: [],
+    },
+    createdAt: nowISO(),
+  });
+  if (evaluated.decision !== 'approved') {
+    throw new Error(`approved gate fixture evaluated as ${evaluated.decision}`);
+  }
+  return evaluated;
 }
 
 afterEach(() => {
@@ -175,6 +197,14 @@ describe('PR lifecycle values', () => {
     }
     expect(() => (bindMergeRevisionToPR as unknown as (value: object) => unknown)(approved))
       .toThrow('merge requires an approvePR authorization');
+    const persistedShape = ApprovedRevisionGateSnapshot.parse({
+      ...approvedGate(approved.id, revision.id, revision.headSha),
+    });
+    expect(() => bindApprovalRevisionToPR(
+      approved,
+      revision,
+      persistedShape as Parameters<typeof bindApprovalRevisionToPR>[2],
+    )).toThrow('fresh gate-evaluation capability');
   });
 
   it('PR-INTENT revision transitions construct a new terminal value with completion evidence', () => {
@@ -387,9 +417,17 @@ describe('PR lifecycle values', () => {
     expect(pr).not.toBe(store.db.prs[0]);
     expect(store.getPR('PR-1')).not.toBe(store.db.prs[0]);
     expect(Object.isFrozen(store.getPR('PR-1'))).toBe(true);
+    const parsedOnly = ApprovedRevisionGateSnapshot.parse({
+      ...approvedGate('PR-1', 'PRREV-1', 'a'.repeat(40)),
+    });
+    expect(() => store.addRevisionGateSnapshot(
+      parsedOnly as Parameters<Store['addRevisionGateSnapshot']>[0],
+    )).toThrow('evaluated gate evidence');
     if (false) {
       // @ts-expect-error lifecycle collections are readonly outside Store methods
       store.db.prs.push(pr);
+      // @ts-expect-error gate snapshots are readonly outside evaluated Store insertion
+      store.db.revisionGateSnapshots.push(approvedGate('PR-1', 'PRREV-1', 'a'.repeat(40)));
     }
   });
 

@@ -6,6 +6,9 @@ import { spawnSync } from 'node:child_process';
 export const ISOLATED_GRADER_PORT_COUNT = 128;
 export const ISOLATED_GRADER_MIN_PORT = 30_000;
 export const ISOLATED_GRADER_PORT_WINDOW = 20_000;
+export const ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS = 64;
+export const ISOLATED_GRADER_PORT_PROBE_DEADLINE_MS = 1_500;
+export const ISOLATED_GRADER_PORT_PROBE_PROCESS_TIMEOUT_MS = 2_000;
 const NESTED_ISOLATED_GRADER_PORT_COUNT = 16;
 const INHERITED_ISOLATED_GRADER_PORTS = 'AGENTOPS_ISOLATED_GRADER_PORTS';
 const MACOS_GIT_SUPPORT_ROOTS = [
@@ -139,11 +142,11 @@ export function isIsolatedPortRangeAvailable(
     "  server.once('error',()=>finish(1));",
     "  server.listen(base+offset,'127.0.0.1',()=>{listening+=1;if(listening===count)finish(0)});",
     '}',
-    'setTimeout(()=>finish(1),1500);',
+    `setTimeout(()=>finish(1),${ISOLATED_GRADER_PORT_PROBE_DEADLINE_MS});`,
   ].join('');
   const result = spawnSync(nodeExecutable, ['-e', probe, String(base), String(count)], {
     stdio: 'ignore',
-    timeout: 2_000,
+    timeout: ISOLATED_GRADER_PORT_PROBE_PROCESS_TIMEOUT_MS,
   });
   return result.status === 0;
 }
@@ -178,7 +181,7 @@ function createPortPolicy(tmp: string): PortPolicy {
     throw new Error('could not allocate a nested isolated grader port range');
   }
 
-  for (let attempt = 0; attempt < 64; attempt += 1) {
+  for (let attempt = 0; attempt < ISOLATED_GRADER_PORT_ALLOCATION_ATTEMPTS; attempt += 1) {
     const base = ISOLATED_GRADER_MIN_PORT
       + Math.floor(Math.random() * ISOLATED_GRADER_PORT_WINDOW);
     if (!isIsolatedPortRangeAvailable(base, ISOLATED_GRADER_PORT_COUNT)) continue;

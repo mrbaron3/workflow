@@ -6,15 +6,17 @@ import {
   ApprovedRevisionGateSnapshot,
   RevisionCheck,
   RevisionReviewThread,
-  RevisionGateSnapshot,
   approvePR,
   bindApprovalRevisionToPR,
   bindMergeRevisionToPR,
   mergeApprovedPR,
+  reconcileRequestedMerge,
   stalePrRevision,
   transitionPR,
   transitionPrRevision,
-  type EvalRun,
+  evaluateRevisionGateEvidence,
+  MAX_REVIEW_THREAD_REASON_BODY_CHARS,
+  type EvaluatedRevisionGateSnapshot,
   type PR,
   type RevisionGateSnapshot as RevisionGateSnapshotType,
 } from '../../domain/schema.js';
@@ -83,33 +85,7 @@ export interface RevisionGateInput {
   requiredChecks?: string[];
 }
 
-export const MAX_REVIEW_THREAD_REASON_BODY_CHARS = 500;
-
-function currentRevisionRuns(
-  store: Store,
-  revision: PrRevision,
-): EvalRun[] {
-  return store.db.evalRuns.filter(
-    (run) => run.prId === revision.prId
-      && run.revisionId === revision.id
-      && run.headSha === revision.headSha,
-  );
-}
-
-function selectedChecks(
-  observed: RevisionCheck[],
-  required: string[] | undefined,
-): RevisionCheck[] {
-  if (!required || required.length === 0) return observed;
-  return [...new Set(required)].map((name) => {
-    const matches = observed.filter((check) => check.name === name);
-    if (matches.some((check) => check.status === 'failure')) return { name, status: 'failure' };
-    if (matches.length === 0 || matches.some((check) => check.status === 'pending')) {
-      return { name, status: 'pending' };
-    }
-    return { name, status: 'success' };
-  });
-}
+export { MAX_REVIEW_THREAD_REASON_BODY_CHARS };
 
 /**
  * Observe one immutable PR head. A changed head immediately makes every older
@@ -127,26 +103,18 @@ export function observePrRevision(
   const parsedSha = PrHeadSha.parse(headSha);
   const existing = store.revisionForHead(pr.id, parsedSha);
   if (existing) {
-    const approvedSnapshot = store.db.revisionGateSnapshots
-      .filter((snapshot) =>
-        snapshot.prId === pr.id
-        && snapshot.revisionId === existing.id
-        && snapshot.headSha === existing.headSha)
-      .map((snapshot) => ApprovedRevisionGateSnapshot.safeParse(snapshot))
-      .find((result) => result.success);
-    store.replacePR(
-      pr.status === 'approved' && existing.status === 'approved' && approvedSnapshot?.success
-        ? approvePR(
-          pr,
-          bindApprovalRevisionToPR(pr, existing, approvedSnapshot.data),
-        ).pr
-        : transitionPR(pr, {
-          status: pr.status === 'approved' ? 'open' : pr.status,
-          currentRevisionId: existing.id,
-          headSha: existing.headSha,
-          mergedHeadSha: null,
-        }),
-    );
+    const alreadyBoundApproval = pr.status === 'approved'
+      && existing.status === 'approved'
+      && pr.currentRevisionId === existing.id
+      && pr.headSha === existing.headSha;
+    if (!alreadyBoundApproval) {
+      store.replacePR(transitionPR(pr, {
+        status: pr.status === 'approved' ? 'open' : pr.status,
+        currentRevisionId: existing.id,
+        headSha: existing.headSha,
+        mergedHeadSha: null,
+      }));
+    }
     return existing;
   }
 
@@ -184,99 +152,29 @@ export function observePrRevision(
 export function evaluateRevisionGate(
   store: Store,
   input: RevisionGateInput,
-): RevisionGateSnapshotType {
-  const runs = currentRevisionRuns(store, input.revision);
-  const perspectiveVerdicts: Record<string, EvalRun['verdict']> = {};
-  const blockingReasons: string[] = [];
-  const pendingReasons: string[] = [];
-
-  if (input.revision.status === 'stale') {
-    blockingReasons.push('revision was invalidated by a later head');
-  }
-
-  for (const perspective of new Set(input.requiredPerspectives)) {
-    const perspectiveRuns = runs.filter((candidate) => candidate.perspective === perspective);
-    if (perspectiveRuns.length === 0) {
-      pendingReasons.push(`missing review: ${perspective}`);
-      continue;
-    }
-    const verdict = perspectiveRuns.some((run) => run.verdict === 'needs_human')
-      ? 'needs_human'
-      : perspectiveRuns.some((run) => run.verdict === 'request_changes')
-        ? 'request_changes'
-        : 'approve';
-    perspectiveVerdicts[perspective] = verdict;
-    if (verdict !== 'approve') {
-      blockingReasons.push(`${perspective} verdict is ${verdict}`);
-    }
-    for (const run of perspectiveRuns) {
-      for (const finding of run.findings) {
-        if (finding.severity === 'blocker' || finding.severity === 'major') {
-          blockingReasons.push(
-            `${perspective} has unresolved ${finding.severity} finding ${finding.criterionId}`,
-          );
-        }
-      }
-    }
-  }
-
-  const checks = selectedChecks(input.github.checks, input.requiredChecks);
-  for (const check of checks) {
-    if (check.status === 'failure') blockingReasons.push(`required check failed: ${check.name}`);
-    if (check.status === 'pending') pendingReasons.push(`required check pending: ${check.name}`);
-  }
-  for (const threadId of input.github.unresolvedBlockingThreadIds) {
-    const thread = input.github.blockingReviewThreads?.find((candidate) => candidate.id === threadId);
-    blockingReasons.push(
-      `unresolved blocking review thread: ${threadId}`
-      + (thread ? ` — ${thread.body.slice(0, MAX_REVIEW_THREAD_REASON_BODY_CHARS)}` : ''),
-    );
-  }
-  if (input.github.mergeability === 'conflicting') {
-    blockingReasons.push('pull request has merge conflicts');
-  } else if (input.github.mergeability === 'unknown') {
-    pendingReasons.push('mergeability is unknown');
-  }
-  if (input.github.isDraft) {
-    pendingReasons.push('pull request is draft');
-  }
-  if (input.github.state !== 'open') {
-    blockingReasons.push(`pull request state is ${input.github.state}`);
-  }
-  if (input.github.headSha !== input.revision.headSha) {
-    blockingReasons.push(
-      `head changed from ${input.revision.headSha} to ${input.github.headSha}`,
-    );
-  }
-
-  const decision = blockingReasons.length > 0
-    ? 'changes-requested'
-    : pendingReasons.length > 0
-      ? 'pending'
-      : 'approved';
-  return RevisionGateSnapshot.parse({
+): EvaluatedRevisionGateSnapshot {
+  const reviewRuns = store.db.evalRuns.filter(
+    (run) => run.prId === input.revision.prId
+      && run.revisionId === input.revision.id
+      && run.headSha === input.revision.headSha,
+  );
+  const currentPr = store.getPR(input.pr.id) ?? input.pr;
+  return evaluateRevisionGateEvidence({
     id: store.nextId('PRGATE'),
-    prId: input.pr.id,
-    revisionId: input.revision.id,
-    headSha: input.revision.headSha,
+    pr: currentPr,
+    revision: input.revision,
     requiredPerspectives: input.requiredPerspectives,
-    perspectiveVerdicts,
-    checks,
-    unresolvedBlockingThreadIds: input.github.unresolvedBlockingThreadIds,
-    blockingReviewThreads: input.github.blockingReviewThreads ?? [],
-    mergeability: input.github.mergeability,
-    decision,
-    blockingReasons,
-    pendingReasons,
-    reasons: [...blockingReasons, ...pendingReasons],
+    reviewRuns,
+    github: input.github,
+    requiredChecks: input.requiredChecks,
     createdAt: nowISO(),
   });
 }
 
 function persistRevisionGateSnapshot(
   store: Store,
-  candidate: RevisionGateSnapshotType,
-): RevisionGateSnapshotType {
+  candidate: EvaluatedRevisionGateSnapshot,
+): EvaluatedRevisionGateSnapshot {
   const latest = store.db.revisionGateSnapshots
     .filter((snapshot) => snapshot.revisionId === candidate.revisionId)
     .at(-1);
@@ -294,7 +192,7 @@ function persistRevisionGateSnapshot(
     reasons: snapshot.reasons,
   });
   if (latest && JSON.stringify(comparable(latest)) === JSON.stringify(comparable(candidate))) {
-    return latest;
+    return candidate;
   }
   return store.addRevisionGateSnapshot(candidate);
 }
@@ -322,21 +220,29 @@ function finalizeMergedRevision(
   cwd: string,
 ): AutoMergeResult {
   const mergeBinding = bindMergeRevisionToPR(authorization);
+  const mergedPr = mergeApprovedPR(pr, mergeBinding);
+  return persistMergedRevision(store, mergedPr, revision, runner, cwd);
+}
+
+function persistMergedRevision(
+  store: Store,
+  mergedPr: ReturnType<typeof mergeApprovedPR>,
+  revision: Extract<PrRevision, { status: 'approved' }>,
+  runner: PrNativeGithubRunner,
+  cwd: string,
+): AutoMergeResult {
   const mergedRevision = store.replacePrRevision(transitionPrRevision(revision, {
     status: 'merged',
     completedAt: nowISO(),
   }));
-  const mergedPr = store.replacePR(mergeApprovedPR(
-    pr,
-    mergeBinding,
-  ));
-  if (store.getIssue(mergedPr.issueId)?.status !== 'released') {
-    store.setStatus(mergedPr.issueId, 'released');
+  const storedMergedPr = store.replacePR(mergedPr);
+  if (store.getIssue(storedMergedPr.issueId)?.status !== 'released') {
+    store.setStatus(storedMergedPr.issueId, 'released');
   }
   store.save();
   reconcileSplitSourceClosures(store, runner, cwd);
   return {
-    prId: mergedPr.id,
+    prId: storedMergedPr.id,
     revisionId: mergedRevision.id,
     headSha: mergedRevision.headSha,
     decision: 'merged',
@@ -444,11 +350,16 @@ export function autoMergeCurrentRevision(
         && snapshot.decision === 'approved',
     );
     const validatedApproval = ApprovedRevisionGateSnapshot.safeParse(approvedBeforeMerge);
-    const revisionCanComplete = revision.status !== 'merged'
-      && revision.status !== 'stale'
-      && revision.status !== 'failed';
-    if (!validatedApproval.success || !revisionCanComplete) {
-      if (revisionCanComplete) {
+    if (
+      !validatedApproval.success
+      || pr.status !== 'approved'
+      || revision.status !== 'approved'
+      || revision.mergeRequestedAt === null
+    ) {
+      const revisionCanFail = revision.status !== 'merged'
+        && revision.status !== 'stale'
+        && revision.status !== 'failed';
+      if (revisionCanFail) {
         revision = store.replacePrRevision(transitionPrRevision(revision, {
           status: 'failed', completedAt: nowISO(),
         }));
@@ -472,36 +383,14 @@ export function autoMergeCurrentRevision(
         reasons: [
           !validatedApproval.success
             ? 'GitHub reports merged but no approved gate snapshot exists for this head'
-            : `GitHub reports merged but local revision is terminal (${revision.status})`,
+            : 'GitHub reports merged without a matching durable merge request',
         ],
       };
     }
-    // Reconciliation consumes the validated approved variant, not a decision string.
-    const approvedHeadSha = validatedApproval.data.headSha;
-    if (approvedHeadSha !== revision.headSha) throw new Error('approved head changed during reconciliation');
-    const approvedRevision = revision.status === 'approved'
-      ? revision
-      : store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
-    if (approvedRevision.status !== 'approved') {
-      throw new Error('approved lifecycle transition did not produce an approved revision');
-    }
-    const approval = bindApprovalRevisionToPR(
-      pr,
-      approvedRevision,
-      validatedApproval.data,
-    );
-    const authorization = approvePR(pr, approval);
-    const approvedPr = pr.status === 'approved'
-      ? pr
-      : store.replacePR(authorization.pr);
-    if (approvedPr.status !== 'approved' || approvedRevision.status !== 'approved') {
-      throw new Error('approved lifecycle transition did not produce approved variants');
-    }
-    return finalizeMergedRevision(
+    return persistMergedRevision(
       store,
-      approvedPr,
-      approvedRevision,
-      authorization,
+      reconcileRequestedMerge(pr, revision, validatedApproval.data),
+      revision,
       runner,
       cwd,
     );
@@ -570,12 +459,11 @@ export function autoMergeCurrentRevision(
     };
   }
 
-  const validatedSnapshot = ApprovedRevisionGateSnapshot.parse(snapshot);
   revision = store.replacePrRevision(transitionPrRevision(revision, { status: 'approved' }));
   if (revision.status !== 'approved') {
     throw new Error('approved gate did not produce an approved revision');
   }
-  const approval = bindApprovalRevisionToPR(pr, revision, validatedSnapshot);
+  const approval = bindApprovalRevisionToPR(pr, revision, snapshot);
   const authorization = approvePR(pr, approval);
   pr = store.replacePR(authorization.pr);
   if (revision.mergeRequestedAt) {
