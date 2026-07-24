@@ -21,7 +21,9 @@ import { Store, nowISO } from '../../store/store.js';
 export {
   BLOCKING_REVIEW_COMMENT,
   GhPrListResponse,
+  GhPrApiPagesResponse,
   GhPrViewResponse,
+  listOpenGithubPullRequests,
   MAX_REVIEW_THREAD_BODY_CHARS,
   ReviewThreadsResponse,
   parseBlockingReviewThreads,

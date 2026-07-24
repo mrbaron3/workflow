@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { HarnessConfig } from '../../config.js';
 import type { RevisionCheck, RevisionReviewThread } from '../../domain/schema.js';
 import { runCommand as run } from './command.js';
-import type { PrNativeGithubRunner } from './pr-native.js';
+import type { GithubOpenPullRequest, PrNativeGithubRunner } from './pr-native.js';
 
 export const MAX_REVIEW_THREAD_BODY_CHARS = 8_000;
 export const BLOCKING_REVIEW_COMMENT = /\[(?:P0|P1)\]|\bblocker\b|\brequest_changes\b/i;
@@ -40,6 +40,61 @@ export const GhPrListResponse = z.array(z.object({
   isDraft: z.boolean(),
   isCrossRepository: z.boolean(),
 }));
+
+const GithubApiRepository = z.object({
+  full_name: z.string().min(1),
+});
+const GithubApiPullRequest = z.object({
+  number: z.number().int().positive(),
+  html_url: z.string().url(),
+  title: z.string(),
+  body: z.string().nullable(),
+  draft: z.boolean(),
+  head: z.object({
+    ref: z.string().min(1),
+    sha: GithubSha,
+    repo: GithubApiRepository,
+  }),
+  base: z.object({
+    ref: z.string().min(1),
+    repo: GithubApiRepository,
+  }),
+});
+export const GhPrApiPagesResponse = z.array(z.array(GithubApiPullRequest));
+export type GithubCommandRunner = (
+  command: string,
+  args: string[],
+  cwd: string,
+) => string;
+
+/** Retrieve every open PR page; `gh pr list --limit` silently truncates large repositories. */
+export function listOpenGithubPullRequests(
+  commandRunner: GithubCommandRunner,
+  cwd: string,
+  baseBranch: string,
+): GithubOpenPullRequest[] {
+  const pages = GhPrApiPagesResponse.parse(JSON.parse(commandRunner('gh', [
+    'api',
+    '--method', 'GET',
+    '--paginate',
+    '--slurp',
+    '-f', 'state=open',
+    '-f', `base=${baseBranch}`,
+    '-f', 'per_page=100',
+    'repos/{owner}/{repo}/pulls',
+  ], cwd)));
+  return pages.flatMap((page) => page.map((row) => ({
+    number: row.number,
+    url: row.html_url,
+    title: row.title,
+    body: row.body ?? '',
+    headRefName: row.head.ref,
+    headSha: row.head.sha,
+    baseRefName: row.base.ref,
+    isDraft: row.draft,
+    isCrossRepository: row.head.repo.full_name !== row.base.repo.full_name,
+  })));
+}
 
 export const ReviewThreadsResponse = z.object({
   data: z.object({ node: z.object({ reviewThreads: z.object({
@@ -155,14 +210,7 @@ export function realPrNativeGithubRunner(
       };
     },
     listOpenPullRequests(cwd, baseBranch) {
-      const rows = GhPrListResponse.parse(JSON.parse(run('gh', [
-        'pr', 'list', '--state', 'open', '--base', baseBranch, '--limit', '100', '--json',
-        'number,url,title,body,headRefName,headRefOid,baseRefName,isDraft,isCrossRepository',
-      ], cwd)));
-      return rows.map((row) => ({
-        ...row,
-        headSha: row.headRefOid,
-      }));
+      return listOpenGithubPullRequests(run, cwd, baseBranch);
     },
     fetchPullRequestHead(cwd, prNumber, expectedHeadSha, headRefName, baseRefName) {
       const localRef = `refs/agentops/pull/${prNumber}`;

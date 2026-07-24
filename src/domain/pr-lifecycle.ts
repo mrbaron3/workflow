@@ -15,15 +15,15 @@ type PRPatch = Partial<Pick<
   MutablePR,
   'branch' | 'baseBranch' | 'attempts' | 'externalRef'
 >>;
-type ActivePRDestinationFields =
+type RevisionCoordinateDestinationFields =
   | { currentRevisionId: string; headSha: PrHeadSha; mergedHeadSha?: null }
   | { currentRevisionId?: null; headSha?: null; mergedHeadSha?: null };
 type OpenPRDestination =
-  PRPatch & ActivePRDestinationFields & { status: 'open' };
+  PRPatch & RevisionCoordinateDestinationFields & { status: 'open' };
 type ChangesRequestedPRDestination =
-  PRPatch & ActivePRDestinationFields & { status: 'changes-requested' };
+  PRPatch & RevisionCoordinateDestinationFields & { status: 'changes-requested' };
 type ClosedPRDestination =
-  PRPatch & ActivePRDestinationFields & { status: 'closed' };
+  PRPatch & RevisionCoordinateDestinationFields & { status: 'closed' };
 export type PRTransitionDestination =
   | OpenPRDestination
   | ChangesRequestedPRDestination

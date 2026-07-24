@@ -19,6 +19,7 @@ import {
   evaluateRevisionGate,
   GhPrListResponse,
   GhPrViewResponse,
+  listOpenGithubPullRequests,
   MAX_REVIEW_THREAD_BODY_CHARS,
   MAX_REVIEW_THREAD_REASON_BODY_CHARS,
   observePrRevision,
@@ -33,6 +34,25 @@ import { pollable } from '../src/pipeline/execution/guard.js';
 const roots: string[] = [];
 const SHA_A = 'a'.repeat(40);
 const SHA_B = 'b'.repeat(40);
+
+function githubApiPull(number: number) {
+  return {
+    number,
+    html_url: `https://github.com/acme/theme/pull/${number}`,
+    title: `Change ${number}`,
+    body: '',
+    draft: false,
+    head: {
+      ref: `feature/${number}`,
+      sha: number.toString(16).padStart(40, '0'),
+      repo: { full_name: 'acme/theme' },
+    },
+    base: {
+      ref: 'main',
+      repo: { full_name: 'acme/theme' },
+    },
+  };
+}
 const PERSPECTIVES = ['functionality', 'codeQuality', 'security'];
 const CONFIG: HarnessConfig = {
   ...DEFAULT_CONFIG,
@@ -196,6 +216,35 @@ describe('ISSUE-0024/PR-INTENT durable lifecycle invariants', () => {
       mergeable: 'MERGEABLE',
       statusCheckRollup: [{ name: '', status: 'COMPLETED' }],
     })).toThrow();
+  });
+
+  it('AC-PRLOOP-005 paginates the complete open-PR inventory beyond 100 rows', () => {
+    const commandArgs: string[][] = [];
+    const pages = [
+      Array.from({ length: 100 }, (_, index) => githubApiPull(index + 1)),
+      [githubApiPull(101)],
+    ];
+    const pulls = listOpenGithubPullRequests(
+      (_command, args) => {
+        commandArgs.push(args);
+        return JSON.stringify(pages);
+      },
+      '/repo',
+      'main',
+    );
+
+    expect(commandArgs).toEqual([expect.arrayContaining([
+      'api', '--method', 'GET', '--paginate', '--slurp',
+    ])]);
+    expect(commandArgs[0]).toContain('base=main');
+    expect(pulls).toHaveLength(101);
+    expect(new Set(pulls.map((pull) => pull.number)).size).toBe(101);
+    expect(pulls.at(-1)).toMatchObject({
+      number: 101,
+      headRefName: 'feature/101',
+      baseRefName: 'main',
+      isCrossRepository: false,
+    });
   });
 
   it('treats GitHub CLI empty reviewDecision as no submitted review', () => {

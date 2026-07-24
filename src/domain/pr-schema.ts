@@ -67,7 +67,7 @@ const UnboundCurrentRevisionFields = {
   headSha: z.null().default(null),
   mergedHeadSha: z.null().default(null),
 };
-const activePR = <S extends 'changes-requested' | 'closed'>(status: S) =>
+const boundOrUnboundRevisionPR = <S extends 'changes-requested' | 'closed'>(status: S) =>
   z.union([
     PRCommon.extend({ status: z.literal(status), ...BoundCurrentRevisionFields }),
     PRCommon.extend({ status: z.literal(status), ...UnboundCurrentRevisionFields }),
@@ -82,14 +82,14 @@ export const OpenPR = z.union([
     ...UnboundCurrentRevisionFields,
   }),
 ]);
-export const ChangesRequestedPR = activePR('changes-requested');
+export const ChangesRequestedPR = boundOrUnboundRevisionPR('changes-requested');
 export const ApprovedPR = PRCommon.extend({
   status: z.literal('approved'),
   currentRevisionId: z.string().min(1),
   headSha: PrHeadSha,
   mergedHeadSha: z.null().default(null),
 });
-export const ClosedPR = activePR('closed');
+export const ClosedPR = boundOrUnboundRevisionPR('closed');
 const MergedPRRecord = PRCommon.extend({
   status: z.literal('merged'),
   currentRevisionId: z.string().min(1),
