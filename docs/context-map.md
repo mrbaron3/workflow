@@ -6,11 +6,11 @@
 > （per-context の `ubiquitous-language.md` ＋ ここでの翻訳点）。
 
 - 種別: system（macro 索引）
-- 状態: ドラフト（planning・execution・workspace・agent-runtime・intake は4ビュー実体化済み・他は移行待ち）
+- 状態: ドラフト（planning・execution・workspace・agent-runtime・intake・container-runtime は4ビュー実体化済み・他は移行待ち）
 
 ## 境界コンテキスト一覧
 
-ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると9つ。技術レイヤー（Product/…）ではなく
+ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると10。技術レイヤー（Product/…）ではなく
 **言語の境界**で分ける。**execution は旧 ARCHITECTURE の技術層「Execution」ではない**——orchestration /
 session / panel / sentinel という固有のユビキタス言語を持つ境界として立てる（[ADR-0005](decisions/ADR-0005-execution-layer-tmux-orchestration.md)）。
 evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
@@ -26,6 +26,7 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
 | **agent-runtime** | planning/UI-design/generation/reviewのAI呼出しを共通identityで監査し、provider/model固有差をadapterとrouteへ閉じる | `src/agents/`・`src/pipeline/execution/` | `_system/agent-runtime/` ✅ | Agent Invocation・Provider・Model・Role・Perspective Route・Provider Adapter |
 | **intake** | target GitHub Issueをclaimし、planningと条件付きUI著述をtrace/provenance gate経由でIssueへ投影する | `src/intake/` | `_system/intake/` ✅ | Source Issue・Acceptance Trace・UI Design Artifact・Claim・Enrichment |
 | **webhook** | GitHub deliveryをdurable inboxへ受け、複数repoをtransport非依存eventとしてconsumerへrouteし、pollで照合する | `src/webhook/` | `_system/webhook/` ✅ | Delivery Envelope・Durable Inbox・Repository Registration・Normalized Event・Reconciliation |
+| **container-runtime** | 標準OCIアプリイメージをbuildし、Apple Container等の**コンテナ**runtime操作をadapter境界へ隔離、network/volume/port/capabilityを起動前にfail-closed検査する（AC-CISO-011） | `src/runtime/`・`deploy/Containerfile` | `_system/container-runtime/` ✅ | Container Runtime Adapter・Standard OCI Image・Runtime Preflight・Publish Invariant・Container-Neutral Path |
 
 **共有カーネル（Shared Kernel）**: `src/domain/`（`schema.ts` の zod 契約 ＋ `states.ts` の状態機械）と
 `src/store/`（Eval Result DB）は各状態コンテキストが共有する。これがコンテキスト間の **Published Language**
@@ -67,6 +68,7 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
   ui-designer sessionへ渡し、AC-traceableなUI Design Artifactを検証する。不在・曖昧・不正はqueueへ投影せず、
   accepted artifactはIssueのPublished Languageとしてgeneratorと各reviewerへ渡す。
 - **evaluation → planning**（改善フィードバック・Customer-Supplier）: Harness Analyst が `type:harness`/`type:eval` の改善 issue を計画の木へ戻し、Curator が失敗を回帰として育てる。北極星の「改善」軸の閉路。
+- **全稼働コンテキスト → container-runtime**（Customer-Supplier・OS非依存port）: 稼働コンテキストは role／topology／container-neutral path 契約を供給し、container-runtime が標準 OCI イメージと Apple Container 等の runtime 操作へ翻訳する。core は Provider CLI 形や macOS 詳細を知らず、Apple Container 固有は adapter 配下のみ（AC-CISO-011）。CISO epic #10 の #12 以降はこの port 越しに runtime を使う。**agent-runtime（AI呼出し）とは別境界**で、共有語は "runtime" のみ。
 - **Shared Kernel**: 各状態コンテキストは `domain`（契約・状態機械）と `store`（Eval DB）を共有する。契約が Published Language として境界を跨ぐ唯一の語彙。
 
 ## GLOSSARY.md / ARCHITECTURE.md 移行マップ
