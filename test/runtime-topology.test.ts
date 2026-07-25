@@ -15,6 +15,7 @@ function baseTopology(): TopologySpec {
     appImage: 'agentops-app:smoke',
     controlHostPort: 17600,
     controlContainerPort: 8080,
+    postgresPassword: 'pw',
     namePrefix: 'agentops-smoke',
   });
 }
@@ -61,6 +62,22 @@ describe('publish invariant — static (desired topology)', () => {
     expect(inspection.violations.some((v) => v.includes('not the internal network'))).toBe(true);
   });
 
+  it('AC-CISO-011 rejects a host bind mount source (no /Users mount past the invariant)', () => {
+    const topology = baseTopology();
+    topology.containers[2]!.volumes = [{ volume: '/Users/alice/Company', mountPath: '/workspace', readOnly: false }];
+    const inspection = inspectPublishInvariant(topology);
+    expect(inspection.ok).toBe(false);
+    expect(inspection.violations.some((v) => v.includes('host bind mount is not allowed'))).toBe(true);
+  });
+
+  it('rejects a volume source not declared in the topology volumes', () => {
+    const topology = baseTopology();
+    topology.containers[2]!.volumes = [{ volume: 'undeclared-vol', mountPath: '/var/lib/postgresql/data', readOnly: false }];
+    const inspection = inspectPublishInvariant(topology);
+    expect(inspection.ok).toBe(false);
+    expect(inspection.violations.some((v) => v.includes('not declared in'))).toBe(true);
+  });
+
   it('assertPublishInvariant throws PublishInvariantError on violation', () => {
     const topology = baseTopology();
     topology.containers[1]!.publish = [{ hostIp: '127.0.0.1', hostPort: 9, containerPort: 9 }];
@@ -70,14 +87,36 @@ describe('publish invariant — static (desired topology)', () => {
 });
 
 describe('publish invariant — grounded (running host surface)', () => {
-  it('derives reachable=control-publish and unreachable=internal ports from the topology', () => {
+  it('derives reachable=control-publish, unreachable=internal, refused-off-loopback=control', () => {
     const expectation = hostExpectationForTopology(baseTopology(), [5432, 8080]);
-    expect(expectation).toEqual({ mustBeReachable: [17600], mustNotBeReachable: [5432, 8080] });
+    expect(expectation).toEqual({
+      mustBeReachable: [17600],
+      mustNotBeReachable: [5432, 8080],
+      mustBeRefusedOffLoopback: [17600],
+    });
   });
 
   it('AC-CISO-011 passes when control is reachable and internal ports are refused on the Mac', async () => {
     const expectation = hostExpectationForTopology(baseTopology(), [5432, 8080]);
     const inspection = await verifyHostPublishSurface(expectation, probeReachable([17600]));
+    expect(inspection).toEqual({ ok: true, violations: [] });
+  });
+
+  it('AC-CISO-011 fails when the control port is reachable OFF the loopback interface (0.0.0.0/LAN)', async () => {
+    const expectation = hostExpectationForTopology(baseTopology(), [5432]);
+    // control (17600) reachable on loopback AND off-loopback → published to 0.0.0.0, a violation.
+    const inspection = await verifyHostPublishSurface(
+      expectation, probeReachable([17600]), probeReachable([17600]),
+    );
+    expect(inspection.ok).toBe(false);
+    expect(inspection.violations[0]).toContain('off the loopback interface');
+  });
+
+  it('passes off-loopback when the control port is refused on the non-loopback interface', async () => {
+    const expectation = hostExpectationForTopology(baseTopology(), [5432]);
+    const inspection = await verifyHostPublishSurface(
+      expectation, probeReachable([17600]), probeReachable([]),
+    );
     expect(inspection).toEqual({ ok: true, violations: [] });
   });
 

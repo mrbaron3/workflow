@@ -68,7 +68,34 @@ export interface ContainerRuntime {
   execInContainer(name: string, command: readonly string[]): CommandResult;
 }
 
-/** A failed CLI invocation, carrying both streams for a deterministic, debuggable failure. */
+/** argv flags whose following `KEY=VALUE` token may carry a credential and must be redacted in errors/logs. */
+const SECRET_VALUE_FLAGS = new Set(['--env', '-e', '--build-arg']);
+
+/**
+ * Redacts credential-bearing values so a failed command never leaks a secret into an exception,
+ * a log line, or the smoke evidence JSON (parent #10 レッドライン: control/runner の資格情報を漏らさない).
+ * `--env GITHUB_TOKEN=ghs-…` becomes `--env GITHUB_TOKEN=***`; a bare secret value becomes `***`.
+ */
+export function redactArgs(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i] as string;
+    out.push(arg);
+    if (SECRET_VALUE_FLAGS.has(arg) && i + 1 < args.length) {
+      const next = args[i + 1] as string;
+      const eq = next.indexOf('=');
+      out.push(eq >= 0 ? `${next.slice(0, eq)}=***` : '***');
+      i += 1;
+    }
+  }
+  return out;
+}
+
+/**
+ * A failed CLI invocation, carrying the streams for a deterministic, debuggable failure. The
+ * rendered message uses `redactArgs`, so an `--env`/`--build-arg` secret is never exposed even
+ * though the raw `args` remain available on the object for trusted, non-logging inspection.
+ */
 export class RuntimeCommandError extends Error {
   constructor(
     readonly command: string,
@@ -76,7 +103,7 @@ export class RuntimeCommandError extends Error {
     readonly result: CommandResult,
   ) {
     super(
-      `${command} ${args.join(' ')} failed (status=${result.status ?? 'null'}): `
+      `${command} ${redactArgs(args).join(' ')} failed (status=${result.status ?? 'null'}): `
       + `${result.stdout}${result.stderr}`.trim(),
     );
     this.name = 'RuntimeCommandError';

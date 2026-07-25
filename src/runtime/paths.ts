@@ -58,8 +58,20 @@ export class HostPathDependencyError extends Error {
   }
 }
 
-/** Fails closed if `value` is a macOS home path; otherwise returns it unchanged. */
+/**
+ * Fails closed unless `value` is a container-absolute, host-neutral path. A relative override is
+ * rejected (it would resolve differently depending on the caller's cwd, breaking determinism), as is
+ * a NUL byte or a macOS home path. Returns the value unchanged when it is safe.
+ */
 export function assertContainerNeutralPath(value: string, label: string): string {
+  if (value.includes('\0')) {
+    throw new HostPathDependencyError(`${label} contains a NUL character`);
+  }
+  if (!value.startsWith('/')) {
+    throw new HostPathDependencyError(
+      `${label} (${value}) must be a container-absolute path, not a relative one`,
+    );
+  }
   if (isHostAbsolutePath(value)) {
     throw new HostPathDependencyError(
       `${label} resolves to a macOS home path (${value}); container paths must be host-neutral`,
@@ -93,15 +105,15 @@ export interface HostPathFinding {
   text: string;
 }
 
-/** Recursively collects `.ts` files under `dir`, returning paths relative to `root`. */
-function collectTsFiles(root: string, dir: string): string[] {
+/** Recursively collects files with one of `exts` under `dir`, returning paths relative to `root`. */
+function collectSourceFiles(root: string, dir: string, exts: string[]): string[] {
   if (!fs.existsSync(dir)) return [];
   const out: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const abs = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      out.push(...collectTsFiles(root, abs));
-    } else if (entry.isFile() && entry.name.endsWith('.ts')) {
+      out.push(...collectSourceFiles(root, abs, exts));
+    } else if (entry.isFile() && exts.some((ext) => entry.name.endsWith(ext))) {
       out.push(path.relative(root, abs));
     }
   }
@@ -109,12 +121,17 @@ function collectTsFiles(root: string, dir: string): string[] {
 }
 
 /**
- * The build/runtime surface scanned by default: everything under `src/` plus the build config that
- * shapes the image. Docs and tests are intentionally excluded — they legitimately cite host-specific
- * example paths (e.g. an ADR quoting an operator's daemon path) and never enter the running container.
+ * The build/runtime surface scanned by default: the executable code that actually ships into the
+ * image (`COPY . .`) — everything under `src/`, `scripts/`, and `bin/` — plus the build config that
+ * shapes the image. Docs and tests are intentionally excluded: they legitimately cite host-specific
+ * example paths (e.g. an ADR quoting an operator's daemon path) and never execute in the container.
  */
 export function defaultScanTargets(root: string): string[] {
-  const targets = collectTsFiles(root, path.join(root, 'src'));
+  const targets = [
+    ...collectSourceFiles(root, path.join(root, 'src'), ['.ts']),
+    ...collectSourceFiles(root, path.join(root, 'scripts'), ['.ts']),
+    ...collectSourceFiles(root, path.join(root, 'bin'), ['.ts', '.mjs']),
+  ];
   for (const config of ['deploy/Containerfile', 'package.json', 'tsconfig.json']) {
     if (fs.existsSync(path.join(root, config))) targets.push(config);
   }

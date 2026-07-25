@@ -12,8 +12,10 @@
  */
 
 import net from 'node:net';
+import os from 'node:os';
 import {
   LOOPBACK_HOST_IP,
+  NAMED_RESOURCE_PATTERN,
   OFFICIAL_POSTGRES_IMAGE,
   type PublishInspection,
   type TopologySpec,
@@ -22,13 +24,15 @@ import {
 // --- static invariant (desired topology) -----------------------------------
 
 /**
- * Checks a desired topology against the publish invariant. Returns a fail-closed inspection:
+ * Checks a desired topology against the Mac-exposure invariant. Returns a fail-closed inspection:
  * `ok` is false with concrete `violations` if any non-control container publishes, any control
- * publish targets a non-loopback host IP, control publishes nothing, or a container is off the
- * declared internal network.
+ * publish targets a non-loopback host IP, control publishes nothing, a container is off the declared
+ * internal network, or a container mounts a source that is not a declared named volume (which would
+ * let a `/Users/...` host bind mount slip past — parent #10 レッドライン).
  */
 export function inspectPublishInvariant(topology: TopologySpec): PublishInspection {
   const violations: string[] = [];
+  const declaredVolumes = new Set(topology.volumes.map((volume) => volume.name));
   let controlPublishCount = 0;
 
   for (const container of topology.containers) {
@@ -37,6 +41,19 @@ export function inspectPublishInvariant(topology: TopologySpec): PublishInspecti
         `container "${container.name}" is on network "${container.network}", not the internal `
         + `network "${topology.network.name}"`,
       );
+    }
+    for (const mount of container.volumes) {
+      if (!NAMED_RESOURCE_PATTERN.test(mount.volume)) {
+        violations.push(
+          `container "${container.name}" mounts source "${mount.volume}", which is not a named `
+          + 'volume — a host bind mount is not allowed',
+        );
+      } else if (!declaredVolumes.has(mount.volume)) {
+        violations.push(
+          `container "${container.name}" mounts volume "${mount.volume}", which is not declared in `
+          + "the topology's volumes",
+        );
+      }
     }
     if (container.role === 'control') {
       controlPublishCount += container.publish.length;
@@ -83,20 +100,28 @@ export function assertPublishInvariant(topology: TopologySpec): void {
 
 // --- grounded invariant (running host surface) -----------------------------
 
-/** Probes whether a TCP port accepts a connection on the Mac loopback. Injected for testability. */
-export type LoopbackProbe = (port: number) => Promise<boolean>;
+/** Probes whether a TCP port accepts a connection on a given host. Injected for testability. */
+export type PortProbe = (port: number) => Promise<boolean>;
+/** @deprecated name kept for readability at call sites; a loopback probe is just a PortProbe. */
+export type LoopbackProbe = PortProbe;
 
 export interface HostPublishExpectation {
   /** Loopback ports that MUST accept a connection (the control plane's published ports). */
   mustBeReachable: number[];
   /** Loopback ports that MUST be refused (internal-only services — postgres 5432, runner). */
   mustNotBeReachable: number[];
+  /**
+   * Control ports that MUST be refused on a non-loopback interface. This grounds "published ONLY to
+   * 127.0.0.1": a loopback-reachable port that is ALSO reachable on the LAN was bound to 0.0.0.0.
+   * Only checked when an off-loopback probe is supplied to `verifyHostPublishSurface`.
+   */
+  mustBeRefusedOffLoopback?: number[];
 }
 
 /**
  * Derives the host expectation from a desired topology plus the set of internal service ports that
- * must never leak to the Mac. Reachable = every control publish host port; unreachable = the caller's
- * internal ports (which the topology deliberately does not publish).
+ * must never leak to the Mac. Reachable-on-loopback = every control publish host port; refused-on-loopback
+ * = the caller's internal ports; refused-off-loopback = the control ports (they must be loopback-only).
  */
 export function hostExpectationForTopology(
   topology: TopologySpec,
@@ -105,16 +130,22 @@ export function hostExpectationForTopology(
   const mustBeReachable = topology.containers
     .filter((container) => container.role === 'control')
     .flatMap((container) => container.publish.map((publication) => publication.hostPort));
-  return { mustBeReachable, mustNotBeReachable: internalPortsThatMustNotLeak };
+  return {
+    mustBeReachable,
+    mustNotBeReachable: internalPortsThatMustNotLeak,
+    mustBeRefusedOffLoopback: mustBeReachable,
+  };
 }
 
 /**
- * Grounds the publish invariant against a running topology by probing the Mac loopback. Fail-closed:
- * a control port that is unreachable, or an internal port that IS reachable, is a violation.
+ * Grounds the invariant against a running topology by probing the Mac. Fail-closed: a control port
+ * that is unreachable on loopback, an internal port that IS reachable on loopback, or (when an
+ * off-loopback probe is given) a control port reachable off the loopback interface, is a violation.
  */
 export async function verifyHostPublishSurface(
   expectation: HostPublishExpectation,
-  probe: LoopbackProbe,
+  probe: PortProbe,
+  offLoopbackProbe?: PortProbe,
 ): Promise<PublishInspection> {
   const violations: string[] = [];
   for (const port of expectation.mustBeReachable) {
@@ -131,13 +162,23 @@ export async function verifyHostPublishSurface(
       );
     }
   }
+  if (offLoopbackProbe && expectation.mustBeRefusedOffLoopback) {
+    for (const port of expectation.mustBeRefusedOffLoopback) {
+      if (await offLoopbackProbe(port)) {
+        violations.push(
+          `control port ${port} is reachable off the loopback interface — it must be published only `
+          + `to ${LOOPBACK_HOST_IP}, never 0.0.0.0/LAN`,
+        );
+      }
+    }
+  }
   return { ok: violations.length === 0, violations };
 }
 
-/** A real loopback probe using a short-lived TCP connect. `true` iff the port accepts a connection. */
-export function tcpLoopbackProbe(timeoutMs: number = 500): LoopbackProbe {
+/** A real TCP probe against `host`. `true` iff the port accepts a connection within `timeoutMs`. */
+export function tcpProbe(host: string, timeoutMs: number = 500): PortProbe {
   return (port) => new Promise<boolean>((resolve) => {
-    const socket = net.connect({ host: LOOPBACK_HOST_IP, port });
+    const socket = net.connect({ host, port });
     let settled = false;
     const finish = (reachable: boolean): void => {
       if (settled) return;
@@ -150,6 +191,21 @@ export function tcpLoopbackProbe(timeoutMs: number = 500): LoopbackProbe {
     socket.once('timeout', () => finish(false));
     socket.once('error', () => finish(false));
   });
+}
+
+/** A loopback TCP probe (127.0.0.1). */
+export function tcpLoopbackProbe(timeoutMs: number = 500): PortProbe {
+  return tcpProbe(LOOPBACK_HOST_IP, timeoutMs);
+}
+
+/** The Mac's primary non-loopback IPv4 address, or null if the host has only loopback. */
+export function primaryNonLoopbackAddress(): string | null {
+  for (const addresses of Object.values(os.networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === 'IPv4' && !address.internal) return address.address;
+    }
+  }
+  return null;
 }
 
 // --- default topology builder ----------------------------------------------
@@ -167,7 +223,8 @@ export interface AgentopsTopologyOptions {
   namePrefix?: string;
   postgresImage?: string;
   postgresVolume?: string;
-  postgresPassword?: string;
+  /** Required: this reusable builder must not inject a hardcoded default credential (#12/#13 reuse it). */
+  postgresPassword: string;
   /** Control container command; defaults to a tiny node HTTP listener on the control port. */
   controlCommand?: string[];
   /** Runner container command; defaults to a node keep-alive so the container stays up. */
@@ -235,7 +292,7 @@ export function agentopsTopology(options: AgentopsTopologyOptions): TopologySpec
         publish: [],
         volumes: [{ volume: postgresVolume, mountPath: '/var/lib/postgresql/data', readOnly: false }],
         env: {
-          POSTGRES_PASSWORD: options.postgresPassword ?? 'agentops-smoke',
+          POSTGRES_PASSWORD: options.postgresPassword,
           POSTGRES_DB: 'agentops',
           PGPORT: String(postgresPort),
         },

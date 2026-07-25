@@ -51,6 +51,13 @@ describe('container-neutral path resolution', () => {
     expect(isHostAbsolutePath(`${HOST_PATH}/ws`)).toBe(true);
     expect(isHostAbsolutePath('/workspace')).toBe(false);
   });
+
+  it('fails closed on a relative override (non-deterministic, cwd-dependent) — container paths must be absolute', () => {
+    expect(() => resolveContainerPaths({ AGENTOPS_WORKSPACE_ROOT: 'relative/workspace' }))
+      .toThrow(HostPathDependencyError);
+    expect(() => resolveContainerPaths({ AGENTOPS_STORE_ROOT: 'data' }))
+      .toThrow(HostPathDependencyError);
+  });
 });
 
 describe('host-path dependency scanner', () => {

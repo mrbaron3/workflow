@@ -3,11 +3,13 @@ import {
   AppleContainerRuntime,
   OciCliRuntime,
   RuntimeCommandError,
+  VolumeMount,
   buildBuildArgs,
   buildRunArgs,
   hostArchitecture,
   normalizeOciArchitecture,
   parseContainerVersion,
+  redactArgs,
   renderPublishFlag,
   renderVolumeFlag,
   type CommandResult,
@@ -117,6 +119,38 @@ describe('container-runtime adapter — runtime-specific dialect isolation', () 
     } catch (error) {
       expect((error as RuntimeCommandError).message).toContain('no such file');
     }
+  });
+
+  it('AC-CISO-011 redacts --env/--build-arg secrets so a failed command never leaks a credential', () => {
+    expect(redactArgs(['run', '--env', 'GITHUB_TOKEN=ghs-super-secret', 'img']))
+      .toEqual(['run', '--env', 'GITHUB_TOKEN=***', 'img']);
+    expect(redactArgs(['build', '--build-arg', 'NPM_TOKEN=abc', '.']))
+      .toEqual(['build', '--build-arg', 'NPM_TOKEN=***', '.']);
+
+    const { runner } = fakeRunner((_cmd, args) => args[0] === 'run' ? { status: 1, stderr: 'boom' } : {});
+    const apple = new AppleContainerRuntime(runner);
+    try {
+      apple.runContainer({
+        role: 'runner', name: 'r', image: 'app:dev', network: 'net', publish: [], volumes: [],
+        env: { GITHUB_TOKEN: 'ghs-super-secret' },
+      });
+      expect.unreachable('runContainer should have thrown');
+    } catch (error) {
+      const message = (error as RuntimeCommandError).message;
+      expect(message).toContain('GITHUB_TOKEN=***');
+      expect(message).not.toContain('ghs-super-secret');
+    }
+  });
+});
+
+describe('container-runtime contracts — mount-source red line', () => {
+  it('AC-CISO-011 rejects a host path as a volume source (no /Users bind mount is representable)', () => {
+    expect(() => VolumeMount.parse({ volume: '/Users/alice/Company', mountPath: '/workspace' }))
+      .toThrow();
+    expect(() => VolumeMount.parse({ volume: 'agentops-data', mountPath: 'relative/path' }))
+      .toThrow();
+    expect(VolumeMount.parse({ volume: 'agentops-data', mountPath: '/var/lib/postgresql/data' }))
+      .toMatchObject({ volume: 'agentops-data', mountPath: '/var/lib/postgresql/data', readOnly: false });
   });
 });
 

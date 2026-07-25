@@ -1,6 +1,7 @@
 # ADR-0011: 標準OCIイメージとcontainer runtime adapter境界でApple Container/macOS依存をcoreから隔離する
 
-- 状態: 採択・吸収・構造実装済み（grounded Apple Container smoke 実施）
+- 状態: 採択・吸収・構造実装済み（**Apple Container 上の grounded smoke は未接地＝ユーザー承認待ち**。docker 上の
+  同一 topology smoke は全検査 pass 済みだが代替にはしない — 完了条件は Apple Container 実機接地）
 - 親: #10（CISO tracking epic）／所有Issue: #11（CISO-01）／所有AC: **AC-CISO-011**
 - preserves:
   - 親#10 セキュリティレッドライン（PostgreSQL 5432 を Mac へ publish しない・HOME/開発 root を mount しない・

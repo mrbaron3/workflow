@@ -22,18 +22,25 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# --- build: bring in the source and prove typecheck runs in-container from container-relative paths -
+# --- build: bring in the source and prove build+typecheck run in-container from container-relative paths -
 FROM deps AS build
 WORKDIR /app
 COPY . .
 # Grounds "build/typecheck grader runs inside the container with no Mac absolute path" (issue #11 AC).
-RUN npm run typecheck
+RUN npm run typecheck && npm run build
 
 # --- runtime: the application image ------------------------------------------------------------
 # Runs the harness via the tsx launcher (bin/agentops.mjs). Retains the toolchain so the in-container
 # graders (typecheck / unit tests) run against container-relative paths; a leaner prod-only split is a
 # later concern (#14) and does not change this image's standard-OCI shape.
 FROM node:22-bookworm-slim AS runtime
+# git is part of the harness grader/runner toolchain (it shells out to git); install it reproducibly.
+RUN apt-get update && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+# The AGENTOPS_* values are the DECLARED container-neutral roots (DATA-container-runtime-004), consumed
+# by any code path that adopts resolveContainerPaths (src/runtime/paths.ts). The current TypeScript
+# bootstrap is already container-neutral via process.cwd()=/app; consumers relocate workspace/store onto
+# these roots as the DB/volume wiring lands (#12/#14). None of them carries a macOS dependency.
 ENV NODE_ENV=production \
     AGENTOPS_APP_ROOT=/app \
     AGENTOPS_WORKSPACE_ROOT=/workspace \

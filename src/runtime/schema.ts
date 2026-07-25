@@ -50,26 +50,39 @@ export const PortPublication = z.object({
 export type PortPublication = z.infer<typeof PortPublication>;
 
 /**
- * A named persistent volume mounted at a container-absolute path. `mountPath` is a path
- * *inside* the container (e.g. /var/lib/postgresql/data) and must never be a Mac host path
- * — the whole point of the epic is that the container carries no `/Users/...` dependency.
+ * A named-resource identifier (volume / network / container name). It must NOT be a host path:
+ * rejecting path separators and colons is precisely what prevents a macOS-home `--volume src:/target`
+ * host bind mount from ever being representable (parent #10 レッドライン: MacのHOME/開発rootをmountしない).
+ * The shape matches docker / Apple Container's own name rules.
+ */
+export const NAMED_RESOURCE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+export const ContainerResourceName = z.string().regex(
+  NAMED_RESOURCE_PATTERN,
+  'must be a named identifier (no path separators or colons) — a host bind mount source is not allowed',
+);
+export type ContainerResourceName = z.infer<typeof ContainerResourceName>;
+
+/**
+ * A named persistent volume mounted at a container-absolute path. `volume` is a named-volume id
+ * (never a host path — see ContainerResourceName), and `mountPath` is a container-absolute path
+ * *inside* the container (e.g. /var/lib/postgresql/data), never a Mac host path.
  */
 export const VolumeMount = z.object({
-  volume: z.string().min(1),
-  mountPath: z.string().min(1),
+  volume: ContainerResourceName,
+  mountPath: z.string().min(1).regex(/^\//, 'mountPath must be a container-absolute path'),
   readOnly: z.boolean().default(false),
 });
 export type VolumeMount = z.infer<typeof VolumeMount>;
 
 /** A private internal network. Containers on it reach each other; the Mac does not route to it. */
 export const NetworkSpec = z.object({
-  name: z.string().min(1),
+  name: ContainerResourceName,
 });
 export type NetworkSpec = z.infer<typeof NetworkSpec>;
 
 /** A named persistent volume declaration. */
 export const VolumeSpec = z.object({
-  name: z.string().min(1),
+  name: ContainerResourceName,
 });
 export type VolumeSpec = z.infer<typeof VolumeSpec>;
 
@@ -79,9 +92,9 @@ export type VolumeSpec = z.infer<typeof VolumeSpec>;
  */
 export const ContainerSpec = z.object({
   role: RuntimeRole,
-  name: z.string().min(1),
+  name: ContainerResourceName,
   image: z.string().min(1),
-  network: z.string().min(1),
+  network: ContainerResourceName,
   publish: z.array(PortPublication).default([]),
   volumes: z.array(VolumeMount).default([]),
   env: z.record(z.string()).default({}),

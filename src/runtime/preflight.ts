@@ -79,12 +79,7 @@ function capabilityChecks(
   capability: CapabilityReport,
   requirements: PreflightRequirements,
 ): PreflightCheck[] {
-  const present = check(
-    'cli_present',
-    true,
-    capability.available,
-    capability.available ? capability.detail : capability.detail,
-  );
+  const present = check('cli_present', true, capability.available, capability.detail);
   if (!capability.available) {
     return [
       present,
