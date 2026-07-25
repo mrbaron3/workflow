@@ -44,3 +44,21 @@ npx tsx scripts/runtime-smoke.ts --keep           # 調査用に topology を残
 postgres 公式 image（内部・volume）／control（loopback publish）／runner（内部）起動 → host publish surface 接地
 （control は到達可・5432 と control container port は Mac で拒否）→ コンテナ内 `npm run typecheck`（`/app` 相対・
 Mac 絶対 path 非依存）→ drain/stop。
+
+## PostgreSQL control store（CISO-02）
+
+明示的なschema migration:
+
+```sh
+AGENTOPS_DATABASE_URL='postgresql://…' npm run control-store:migrate
+```
+
+通常consumer/runner起動はDDLを変更せずexact version/checksumをverifyしてfail closedにする。Apple Container実機で
+transaction/競合/lease/reclaim/LISTEN+reconciliationとpersistent-volume recoveryを再現するには:
+
+```sh
+npm run smoke:postgres:apple
+```
+
+Apple Containerのext4 named volumeには`lost+found`があるため、volumeは`/var/lib/postgresql`へmountし、
+`PGDATA=/var/lib/postgresql/data`を指定する。PostgreSQLとrunnerにhost publishはない。

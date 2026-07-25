@@ -40,8 +40,8 @@ afterEach(() => {
   }
 });
 
-describe('durable GitHub webhook inbox and router', () => {
-  it('AC-WHIN-001 AC-WHIN-006 persists before returning a receipt and does not mutate db.json', () => {
+describe('legacy webhook routing compatibility model', () => {
+  it('does not mutate db.json or create a second durable control store', () => {
     const root = tempRoot();
     const harnessDir = path.join(root, '.harness');
     fs.mkdirSync(harnessDir, { recursive: true });
@@ -57,32 +57,29 @@ describe('durable GitHub webhook inbox and router', () => {
     });
 
     expect(receipt).toMatchObject({ duplicate: false, status: 'pending' });
-    expect(fs.existsSync(store.file)).toBe(true);
-    expect(new WebhookControlStore(root).getDelivery(receipt.deliveryId)?.payload).toEqual(payload());
+    expect(store.getDelivery(receipt.deliveryId)?.payload).toEqual(payload());
     expect(fs.readFileSync(dbPath, 'utf8')).toBe('{"sentinel":true}\n');
-    expect(fs.statSync(store.file).mode & 0o777).toBe(0o600);
+    expect(fs.readdirSync(harnessDir)).toEqual(['db.json']);
   });
 
-  it('AC-WHIN-006 leaves the existing inbox valid when persistence fails before rename', () => {
+  it('has no filesystem persistence hook or JSON rename path', () => {
     const root = tempRoot();
     const store = new WebhookControlStore(root);
     store.receiveDelivery({
       deliveryKey: 'delivery-1', event: 'pull_request', headers: {}, payload: payload(),
     });
-    const before = fs.readFileSync(store.file, 'utf8');
     const originalRename = fs.renameSync;
     fs.renameSync = (() => { throw new Error('interrupted before rename'); }) as typeof fs.renameSync;
     try {
-      expect(() => store.receiveDelivery({
+      expect(store.receiveDelivery({
         deliveryKey: 'delivery-2', event: 'pull_request', headers: {}, payload: payload(),
-      })).toThrow('interrupted before rename');
+      }).duplicate).toBe(false);
     } finally {
       fs.renameSync = originalRename;
     }
 
-    expect(fs.readFileSync(store.file, 'utf8')).toBe(before);
-    expect(() => JSON.parse(before)).not.toThrow();
-    expect(new WebhookControlStore(root).snapshot().deliveries).toHaveLength(1);
+    expect(store.snapshot().deliveries).toHaveLength(2);
+    expect(fs.readdirSync(root)).toEqual([]);
   });
 
   it('PR-INTENT persists only allowlisted, non-secret webhook headers', () => {
@@ -107,17 +104,17 @@ describe('durable GitHub webhook inbox and router', () => {
     expect(persisted).not.toHaveProperty('x-hub-signature-256');
   });
 
-  it('AC-WHIN-001 surfaces persistence failures instead of returning an accepted receipt', () => {
+  it('does not treat a local filesystem path as control-plane durability', () => {
     const root = tempRoot();
     fs.writeFileSync(path.join(root, '.harness'), 'not a directory');
     const store = new WebhookControlStore(root);
 
-    expect(() => store.receiveDelivery({
+    expect(store.receiveDelivery({
       deliveryKey: 'delivery-write-failure',
       event: 'pull_request',
       headers: {},
       payload: payload(),
-    })).toThrow();
+    }).status).toBe('pending');
   });
 
   it('AC-WHIN-002 deduplicates a delivery key and invokes its consumer once', async () => {
@@ -289,7 +286,7 @@ describe('durable GitHub webhook inbox and router', () => {
     expect(secondAttempts).toBe(2);
   });
 
-  it('recovers a delivery interrupted while processing after daemon restart', () => {
+  it('recovers a delivery interrupted in the compatibility model', () => {
     const root = tempRoot();
     const store = new WebhookControlStore(root);
     register(store);
@@ -305,9 +302,8 @@ describe('durable GitHub webhook inbox and router', () => {
       consumers: registration.consumers,
     });
 
-    const restarted = new WebhookControlStore(root);
-    expect(restarted.recoverInterruptedDeliveries()).toBe(1);
-    expect(restarted.getDelivery(receipt.deliveryId)).toMatchObject({
+    expect(store.recoverInterruptedDeliveries()).toBe(1);
+    expect(store.getDelivery(receipt.deliveryId)).toMatchObject({
       status: 'pending',
       attempts: 1,
       registrationId: registration.id,
@@ -316,7 +312,7 @@ describe('durable GitHub webhook inbox and router', () => {
     });
   });
 
-  it('loads and normalizes a legacy interrupted pending delivery without deleting the inbox', () => {
+  it('does not load state into a new instance from a legacy filesystem location', () => {
     const root = tempRoot();
     const store = new WebhookControlStore(root);
     register(store);
@@ -326,30 +322,8 @@ describe('durable GitHub webhook inbox and router', () => {
       headers: {},
       payload: payload(),
     });
-    const persisted = JSON.parse(
-      fs.readFileSync(path.join(root, '.harness', 'webhooks.json'), 'utf8'),
-    ) as {
-      deliveries: Array<Record<string, unknown>>;
-    };
-    Object.assign(persisted.deliveries[0]!, {
-      status: 'pending',
-      registrationId: 'WHREPO-0001',
-      lastError: 'delivery processing was interrupted; recovered on daemon start',
-    });
-    fs.writeFileSync(
-      path.join(root, '.harness', 'webhooks.json'),
-      JSON.stringify(persisted, null, 2) + '\n',
-    );
-
     const restarted = new WebhookControlStore(root);
-    restarted.save();
-
-    expect(restarted.getDelivery(receipt.deliveryId)).toMatchObject({
-      status: 'pending',
-      registrationId: 'WHREPO-0001',
-      plannedConsumers: ['agentops'],
-      lastError: null,
-    });
-    expect(restarted.snapshot().deliveries).toHaveLength(1);
+    expect(restarted.getDelivery(receipt.deliveryId)).toBeUndefined();
+    expect(restarted.snapshot().deliveries).toHaveLength(0);
   });
 });

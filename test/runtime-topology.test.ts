@@ -145,7 +145,8 @@ describe('default topology builder', () => {
     const postgres = topology.containers.find((c) => c.role === 'postgres');
     expect(postgres?.image).toBe('postgres:16');
     expect(postgres?.publish).toEqual([]);
-    expect(postgres?.volumes[0]?.mountPath).toBe('/var/lib/postgresql/data');
+    expect(postgres?.volumes[0]?.mountPath).toBe('/var/lib/postgresql');
+    expect(postgres?.env.PGDATA).toBe('/var/lib/postgresql/data');
     expect(topology.volumes.map((v) => v.name)).toContain('agentops-smoke-postgres-data');
   });
 

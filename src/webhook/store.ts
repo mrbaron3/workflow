@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import {
   WebhookControlDB,
   WebhookDelivery,
@@ -72,110 +70,29 @@ function actionFrom(payload: Record<string, unknown>): string | null {
 }
 
 /**
- * Early daemon builds recovered interrupted deliveries by changing only their
- * status to `pending`, leaving processing-only fields behind. Normalize that
- * persisted shape before strict validation so upgrades do not require deleting
- * the durable inbox.
+ * Non-durable compatibility model for the legacy webhook unit boundary.
+ *
+ * CISO-02 deliberately removed its filesystem persistence. Production control
+ * state is owned only by PostgresControlStore; the legacy daemon entry point
+ * fails closed until the PostgreSQL-driven control process in #13 replaces it.
  */
-function normalizeLegacyControlDB(input: unknown): unknown {
-  if (!input || typeof input !== 'object') return input;
-  const record = input as Record<string, unknown>;
-  if (!Array.isArray(record.deliveries)) return input;
-  const repositories = Array.isArray(record.repositories)
-    ? record.repositories.filter(
-      (registration): registration is Record<string, unknown> =>
-        Boolean(registration) && typeof registration === 'object',
-    )
-    : [];
-  return {
-    ...record,
-    deliveries: record.deliveries.map((delivery) => {
-      if (!delivery || typeof delivery !== 'object') return delivery;
-      const row = delivery as Record<string, unknown>;
-      const registration = repositories.find(
-        (candidate) => candidate.id === row.registrationId,
-      );
-      const completedConsumers = Array.isArray(row.completedConsumers)
-        ? row.completedConsumers
-        : [];
-      const inferredPlan = Array.isArray(row.plannedConsumers)
-        && row.plannedConsumers.length > 0
-        ? row.plannedConsumers
-        : Array.isArray(registration?.consumers)
-          ? registration.consumers
-          : completedConsumers;
-      if (row.status === 'pending' && typeof row.registrationId !== 'string') {
-        return {
-          ...row,
-          registrationId: null,
-          plannedConsumers: [],
-          completedConsumers: [],
-          lastError: null,
-          ignoredReason: null,
-        };
-      }
-      if (['pending', 'processing', 'processed', 'failed'].includes(String(row.status))) {
-        return {
-          ...row,
-          plannedConsumers: inferredPlan,
-          completedConsumers,
-          ...(row.status === 'pending' ? { lastError: null, ignoredReason: null } : {}),
-        };
-      }
-      if (row.status === 'ignored') {
-        return {
-          ...row,
-          plannedConsumers: [],
-          completedConsumers: [],
-        };
-      }
-      return delivery;
-    }),
-  };
-}
-
 export class WebhookControlStore {
   readonly root: string;
-  readonly dir: string;
-  readonly file: string;
   private db: MutableWebhookControlDB;
 
   constructor(root: string = process.cwd()) {
     this.root = root;
-    this.dir = path.join(root, '.harness');
-    this.file = path.join(this.dir, 'webhooks.json');
-    this.db = this.read();
-  }
-
-  private read(): MutableWebhookControlDB {
-    const parsed = fs.existsSync(this.file)
-      ? WebhookControlDB.parse(normalizeLegacyControlDB(
-        JSON.parse(fs.readFileSync(this.file, 'utf8')),
-      ))
-      : emptyWebhookControlDB();
-    return { ...parsed, deliveries: [...parsed.deliveries] };
+    const empty = emptyWebhookControlDB();
+    this.db = { ...empty, deliveries: [...empty.deliveries] };
   }
 
   private reload(): MutableWebhookControlDB {
-    this.db = this.read();
     return this.db;
   }
 
+  /** Compatibility no-op: this model must never become a second durable SoT. */
   save(): void {
-    fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(this.dir, 0o700);
-    const valid = WebhookControlDB.parse(this.db);
-    const temp = path.join(
-      this.dir,
-      `.webhooks.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
-    );
-    try {
-      fs.writeFileSync(temp, JSON.stringify(valid, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 });
-      fs.renameSync(temp, this.file);
-      fs.chmodSync(this.file, 0o600);
-    } finally {
-      if (fs.existsSync(temp)) fs.rmSync(temp, { force: true });
-    }
+    WebhookControlDB.parse(this.db);
   }
 
   snapshot(): WebhookControlDBType {

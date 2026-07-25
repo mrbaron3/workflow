@@ -111,6 +111,7 @@ seed/              sample-roadmap.yaml — drives the demo
 src/
   domain/          zod contracts (schema.ts) + state machine (states.ts) + artifact types
   store/           the JSON-backed Eval Result DB (store.ts)
+  control-store/   PostgreSQL control-plane repositories, migrations, queue and lease contract
   agents/          AgentRunner: mock.ts (default) + cli.ts (real CLI adapter)
   graders/         hard gates + composite score (index.ts)
   pipeline/        evaluate · repair · coordinator · curator · analyst
@@ -251,8 +252,10 @@ values fall back to `DEFAULT_GITHUB_WATCH_INTERVAL_MS` (30000 ms).
 
 ### Multi-repository webhook control
 
-Webhook is the immediate trigger; the same daemon also runs polling reconciliation, so a missed,
-late, or out-of-order delivery cannot become the source of truth. Start the loopback control plane:
+Webhook remains an immediate trigger and polling remains the truth-recovery path. CISO-02 moved
+Registration/delivery/job/lease control state to PostgreSQL and disabled the legacy local daemon
+rather than allowing its former JSON store to become a second SoT. The command below now fails
+closed until CISO-03 supplies the PostgreSQL-driven control process:
 
 ```bash
 export AGENTOPS_WEBHOOK_CONTROL_TOKEN='<random local bearer token>'
@@ -260,19 +263,10 @@ export AGENTOPS_GITHUB_WEBHOOK_SECRET='<GitHub webhook secret>'
 npm run harness -- webhook-daemon --open
 ```
 
-Both credentials are mandatory and must be non-empty; the daemon refuses to listen if either is
-missing. Without `--open`, startup prints a short-lived, single-use browser login URL; with
-`--open`, it opens one automatically. The launch establishes an HttpOnly same-site browser session
-and immediately redirects to the clean GUI URL; subsequent GUI API calls authenticate through that
-session automatically. Scripts may instead send the control token as `Authorization: Bearer …`.
-The supervised `gh webhook forward` process receives the same webhook secret used by `/hook` to
-verify `X-Hub-Signature-256` before persistence.
-
-The GUI at `http://127.0.0.1:8377` adds/toggles repositories, selects allow-listed events and
-consumers, shows each forwarder state and recent durable deliveries, and retries failures.
-Registrations and payloads are stored atomically in `.harness/webhooks.json`, separately from the
-Eval DB. One `gh webhook forward` child is supervised per enabled repository; this requires the
-`gh webhook` extension. Use `--no-forward` when another ingress sends to `/hook`.
+Both credentials are still validated before the explicit migration refusal so unsafe historical
+invocations do not silently change behavior. The old GUI/router types remain as a non-durable unit
+compatibility oracle for CISO-03; no production entry point reads or writes a JSON control store.
+Apply the PostgreSQL schema with `AGENTOPS_DATABASE_URL=… npm run control-store:migrate`.
 
 The `agentops` consumer runs the fixed `github-turn` entry point—never a registration-supplied
 shell command. Each registration's `workspaceRoot` must contain a harness config whose

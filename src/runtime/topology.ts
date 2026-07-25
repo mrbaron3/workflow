@@ -312,11 +312,15 @@ export function agentopsTopology(options: AgentopsTopologyOptions): TopologySpec
         image: options.postgresImage ?? OFFICIAL_POSTGRES_IMAGE,
         network: networkName,
         publish: [],
-        volumes: [{ volume: postgresVolume, mountPath: '/var/lib/postgresql/data', readOnly: false }],
+        // Apple Container formats named volumes with a lost+found entry. Mount
+        // the parent and point PGDATA at a child so initdb receives an empty
+        // directory while Docker/Podman retain identical OCI semantics.
+        volumes: [{ volume: postgresVolume, mountPath: '/var/lib/postgresql', readOnly: false }],
         env: {
           POSTGRES_PASSWORD: options.postgresPassword,
           POSTGRES_DB: 'agentops',
           PGPORT: String(postgresPort),
+          PGDATA: '/var/lib/postgresql/data',
         },
       },
     ],

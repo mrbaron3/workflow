@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mrbaron3/workflow/contracts/control-store/v1/job-envelope.schema.json",
+  "title": "AgentOps control-store job envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contractVersion",
+    "id",
+    "registrationId",
+    "registrationVersion",
+    "source",
+    "idempotencyKey",
+    "jobType",
+    "payload",
+    "status",
+    "createdAt"
+  ],
+  "properties": {
+    "contractVersion": { "const": 1 },
+    "id": { "type": "string", "format": "uuid" },
+    "registrationId": { "type": "string", "format": "uuid" },
+    "registrationVersion": { "type": "integer", "minimum": 1 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "enum": ["webhook", "poll", "manual", "recovery"] },
+        "key": { "type": "string", "minLength": 1 }
+      }
+    },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "jobType": { "type": "string", "minLength": 1 },
+    "payload": { "type": "object" },
+    "status": {
+      "enum": ["queued", "leased", "succeeded", "failed", "cancelled", "rejected"]
+    },
+    "createdAt": { "type": "string", "format": "date-time" }
+  }
+}
