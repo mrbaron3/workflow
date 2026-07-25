@@ -1,6 +1,7 @@
 /**
- * The GitHub PR gate backend (ADR-0006 G1-G3): the seam that turns a human's merge/close of a
- * projected PR into the deterministic recordHumanDecision the review gate already consumes.
+ * GitHub PR projection seams. projectReviewRevision is the production PR-native
+ * path: it binds every review cycle to a pushed head SHA. openGate/pollGate are
+ * retained for the legacy human-gate workflow and its compatibility tests.
  *
  * Same shape as the other execution seams — a non-deterministic producer feeding a deterministic
  * sink (ARCH-execution-011). The store is SoT (ADR-0001 / ARCH-execution-009); a GitHub PR is only
@@ -13,15 +14,21 @@
  * unit-testable with a fake runner (no network); only the real runner shells out (grounded only).
  */
 
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { PR, EvalRun } from '../../domain/schema.js';
-import { PrExternalRef } from '../../domain/schema.js';
+import {
+  PrExternalRef,
+  requireMutablePR,
+  transitionPR,
+  updatePR,
+} from '../../domain/schema.js';
 import type { HarnessConfig } from '../../config.js';
-import { Store, nowISO } from '../../store/store.js';
+import { Store } from '../../store/store.js';
 import { recordHumanDecision, type HumanDecision } from './loop.js';
+import { runCommand as run } from './command.js';
+import { observePrRevision } from './pr-native.js';
 
 /** A GitHub PR's lifecycle state, normalised from `gh pr view --json state`. */
 export type GhPrState = 'open' | 'merged' | 'closed';
@@ -52,11 +59,60 @@ export interface GhGateRunner {
   viewPr(cwd: string, prNumber: number): GhPrState;
 }
 
+/** Stable PR identity: any local repair branch publishes its HEAD to the original GitHub head. */
+export function prHeadRefspec(branch: string): string {
+  return `HEAD:refs/heads/${branch}`;
+}
+
 export interface OpenGateInput {
   pr: PR;
   /** The checkout whose branch is pushed and from which the PR is opened. */
   worktree: string;
   title: string;
+}
+
+export interface ProjectReviewRevisionInput extends OpenGateInput {
+  headSha: string;
+}
+
+/**
+ * PR-first projection: push the new build revision before any LLM perspective
+ * reviews it. Repair attempts reuse the same external PR and only advance its head.
+ */
+export function projectReviewRevision(
+  store: Store,
+  config: HarnessConfig,
+  input: ProjectReviewRevisionInput,
+  runner: GhGateRunner,
+  log: (m: string) => void = () => {},
+) {
+  let projectedPr = store.getPR(input.pr.id) ?? input.pr;
+  const revision = observePrRevision(store, projectedPr, input.headSha);
+  if ((config.gate?.backend ?? 'store') !== 'github') return revision;
+
+  runner.pushBranch(input.worktree, input.pr.branch);
+  projectedPr = store.getPR(input.pr.id) ?? projectedPr;
+  if (!projectedPr.externalRef) {
+    const base = config.gate?.baseBranch ?? config.baseBranch;
+    const ref = PrExternalRef.parse(runner.createPr(input.worktree, {
+      base,
+      head: input.pr.branch,
+      title: input.title,
+      body: renderReviewPrBody(store, input.pr.issueId),
+    }));
+    projectedPr = store.replacePR(updatePR(requireMutablePR(projectedPr), { externalRef: ref }));
+    log(`  ⇪ ${input.pr.issueId}: opened review PR ${ref.url} @ ${input.headSha.slice(0, 12)}`);
+  } else {
+    log(
+      `  ⇪ ${input.pr.issueId}: pushed repair revision `
+      + `${input.headSha.slice(0, 12)} to PR #${projectedPr.externalRef!.number}`,
+    );
+  }
+  store.replacePR(updatePR(requireMutablePR(projectedPr), {
+    agentGeneratedHeadSha: revision.headSha,
+  }));
+  store.save();
+  return revision;
 }
 
 /**
@@ -73,14 +129,14 @@ export function openGate(
   log: (m: string) => void = () => {},
 ): PrExternalRef | null {
   if ((config.gate?.backend ?? 'store') !== 'github') return null; // store-direct gate: nothing to project
-  if (input.pr.externalRef) return input.pr.externalRef; // already projected (idempotent)
+  const currentPr = store.getPR(input.pr.id) ?? input.pr;
+  if (currentPr.externalRef) return currentPr.externalRef; // already projected (idempotent)
 
   const base = config.gate?.baseBranch ?? config.baseBranch;
   const body = renderGatePrBody(store, input.pr.issueId);
   runner.pushBranch(input.worktree, input.pr.branch);
   const ref = PrExternalRef.parse(runner.createPr(input.worktree, { base, head: input.pr.branch, title: input.title, body }));
-  input.pr.externalRef = ref;
-  input.pr.updatedAt = nowISO();
+  store.replacePR(updatePR(requireMutablePR(currentPr), { externalRef: ref }));
   store.save();
   log(`  ⇪ ${input.pr.issueId}: opened gate PR ${ref.url}`);
   return ref;
@@ -126,8 +182,13 @@ export function pollGate(
     }
 
     const rec = recordHumanDecision(store, issue.id, decision);
-    pr.status = decision === 'approve' ? 'merged' : 'changes-requested';
-    pr.updatedAt = nowISO();
+    if (decision === 'approve') {
+      // Legacy state-only runners cannot prove a commit identity. Release the
+      // legacy work unit but do not fabricate revision evidence or a merged PR
+      // variant; the PR-native path records the real full SHA before merging.
+    } else {
+      store.replacePR(transitionPR(pr, { status: 'changes-requested' }));
+    }
     log(`  ⇩ ${issue.id}: PR #${pr.externalRef.number} ${state} → ${decision} → ${rec.status}`);
     results.push({ issueId: issue.id, prId: pr.id, state, decision, status: rec.status, changed: rec.changed });
   }
@@ -166,6 +227,21 @@ export function renderGatePrBody(store: Store, issueId: string): string {
   return lines.join('\n');
 }
 
+/** Initial body for a PR created before its first perspective review. */
+export function renderReviewPrBody(store: Store, issueId: string): string {
+  const lines = [
+    `このPRはAgentOpsのcurrent-headレビュー・修正ループで処理されます。`,
+    `各head SHAについて全必須観点・checks・未解決blocking threadを再評価し、`,
+    `ゲート通過時だけexpected SHA付きで自動mergeします。`,
+  ];
+  const source = store.db.intakeRecords.find((record) => record.storeIssueIds.includes(issueId));
+  if (source) {
+    const relation = source.storeIssueIds.length === 1 ? 'Closes' : 'Refs';
+    lines.push('', `${relation} ${source.snapshot.repository}#${source.snapshot.number}`);
+  }
+  return lines.join('\n');
+}
+
 /** The EvalRuns of the highest attempt (the build actually at the gate). */
 function latestAttemptRuns(runs: EvalRun[]): EvalRun[] {
   if (runs.length === 0) return [];
@@ -175,18 +251,21 @@ function latestAttemptRuns(runs: EvalRun[]): EvalRun[] {
 
 // --- real backend (shells out; grounded only, never exercised in unit tests) ----------------
 
-function run(cmd: string, args: string[], cwd: string): string {
-  const res = spawnSync(cmd, args, { cwd, encoding: 'utf8' });
-  if (res.status !== 0) throw new Error(`${cmd} ${args.join(' ')} failed: ${res.stdout ?? ''}${res.stderr ?? ''}`);
-  return res.stdout ?? '';
-}
-
 /** The production GhGateRunner: real `git push` + `gh` against the target repo's remote. */
 export function realGhGateRunner(): GhGateRunner {
   return {
     pushBranch(worktree, branch) {
-      // force-with-lease so a repaired branch (rewritten history across attempts) re-pushes safely
-      run('git', ['-C', worktree, 'push', '--force-with-lease', '-u', 'origin', branch], worktree);
+      // Push an AgentOps-generated worktree HEAD to its stable remote PR branch.
+      // Repository-discovered heads never reach this credential-bearing adapter.
+      run('git', [
+        '-C',
+        worktree,
+        'push',
+        '--force-with-lease',
+        '-u',
+        'origin',
+        prHeadRefspec(branch),
+      ], worktree);
     },
     createPr(cwd, args) {
       const bodyFile = path.join(os.tmpdir(), `ao-gate-body-${args.head.replace(/\W+/g, '-')}.md`);

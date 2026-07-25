@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store } from '../src/store/store.js';
-import { Issue, PR, type IssueContract } from '../src/domain/schema.js';
+import { Issue, PR, PrHeadSha, type IssueContract } from '../src/domain/schema.js';
 import type { BuildArtifact } from '../src/domain/artifact.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import {
@@ -83,6 +83,20 @@ function panelInput(issueId: string, prId: string, artifact: BuildArtifact, atte
 }
 
 describe('AC-PANEL-001: completed sample graded across all perspectives', () => {
+  it('PR-INTENT rejects partial panel revision coordinates at compile time', () => {
+    const store = tmpStore('panel-partial-revision-binding');
+    const { issueId, prId } = seed(store);
+    const partial = {
+      ...panelInput(issueId, prId, goodArtifact()),
+      revisionId: 'PRREV-0001',
+    };
+    if (false) {
+      // @ts-expect-error panel evidence must bind revisionId and headSha together
+      runPanel(store, CONFIG, partial);
+    }
+    expect(partial.revisionId).toBe('PRREV-0001');
+  });
+
   it('leaves exactly one perspective-tagged EvalRun per perspective, each with findings-shaped evidence', () => {
     const store = tmpStore('panel-001');
     const { issueId, prId } = seed(store);
@@ -93,6 +107,22 @@ describe('AC-PANEL-001: completed sample graded across all perspectives', () => 
     expect(new Set(runs.map((r) => r.perspective))).toEqual(new Set(PERSPECTIVES.map((p) => p.key)));
     for (const r of runs) expect(r.perspective).not.toBeNull();
     expect(res.verdict).toBe('approve');
+  });
+
+  it('binds every perspective result to the reviewed PR head revision', () => {
+    const store = tmpStore('panel-revision-binding');
+    const { issueId, prId } = seed(store);
+    const headSha = PrHeadSha.parse('a'.repeat(40));
+    runPanel(store, CONFIG, {
+      ...panelInput(issueId, prId, goodArtifact()),
+      revisionId: 'PRREV-0001',
+      headSha,
+    });
+
+    expect(store.runsForIssue(issueId)).not.toHaveLength(0);
+    expect(store.runsForIssue(issueId).every(
+      (run) => run.revisionId === 'PRREV-0001' && run.headSha === headSha,
+    )).toBe(true);
   });
 });
 
@@ -138,6 +168,44 @@ describe('AC-PANEL-003 / 004: aggregation is blocker-first and never averages', 
     expect(aggregatePanelVerdict([{ verdict: 'approve' }, { verdict: 'request_changes' }])).toBe('request_changes');
     expect(aggregatePanelVerdict([{ verdict: 'approve' }, { verdict: 'needs_human' }])).toBe('needs_human');
     expect(aggregatePanelVerdict([])).toBe('needs_human');
+  });
+
+  it('an approve token cannot mask a P1-equivalent major finding', () => {
+    const store = tmpStore('panel-p1-veto');
+    const { issueId, prId } = seed(store);
+    const grader: PerspectiveGrader = (perspective) => perspective === 'security'
+      ? {
+          verdict: 'approve',
+          findings: [{
+            criterionId: 'P1-auth',
+            severity: 'major',
+            expected: 'authorization enforced',
+            observed: 'bypass remains',
+            reproductionSteps: [],
+            evidence: {},
+            requiredFix: ['enforce authorization'],
+          }],
+          scores: ones(),
+          overall: 1,
+        }
+      : {
+          verdict: 'approve',
+          findings: [],
+          scores: ones(),
+          overall: 1,
+        };
+
+    const result = runPanel(
+      store,
+      CONFIG,
+      panelInput(issueId, prId, goodArtifact()),
+      { grader },
+    );
+
+    expect(result.verdict).toBe('request_changes');
+    expect(
+      store.runsForIssue(issueId).find((run) => run.perspective === 'security')?.verdict,
+    ).toBe('request_changes');
   });
 });
 

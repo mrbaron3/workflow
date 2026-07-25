@@ -14,8 +14,9 @@
  */
 
 import path from 'node:path';
-import type { Issue } from '../../domain/schema.js';
+import type { Issue, PR as PRType } from '../../domain/schema.js';
 import { resolveConcurrentIssueCap, type HarnessConfig } from '../../config.js';
+import type { RepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
 import { PR, TurnRecord } from '../../domain/schema.js';
 import { recordAgentInvocation } from '../../agents/invocation.js';
@@ -27,7 +28,16 @@ import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader, type PriorFinding } from './perspective-session.js';
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
 import { runBoundedRepairLoop, runBestOfN, applyPanelVerdict, type DriveResult, type SampleOutcome } from './loop.js';
-import { openGate, realGhGateRunner, type GhGateRunner } from './gate.js';
+import {
+  projectReviewRevision,
+  realGhGateRunner,
+  type GhGateRunner,
+} from './gate.js';
+import {
+  autoMergeCurrentRevision,
+  realPrNativeGithubRunner,
+  type PrNativeGithubRunner,
+} from './pr-native.js';
 import { improveTick } from '../improve.js';
 
 export interface LiveOptions {
@@ -35,6 +45,16 @@ export interface LiveOptions {
   perspectives?: PerspectiveSpec[];
   /** Gate backend runner (github only). Injectable for tests; defaults to the real `gh` runner. */
   gateRunner?: GhGateRunner;
+  /** Current-head snapshot + expected-SHA merge adapter (github only). */
+  prNativeRunner?: PrNativeGithubRunner;
+  /** Test/embedding seam for the real generator role session. */
+  generatorSession?: typeof runGeneratorSession;
+  /** Test/embedding seam for current-head push/PR projection. */
+  projectRevision?: typeof projectReviewRevision;
+  /** Test/embedding seam for grounded artifact construction. */
+  groundBuild?: typeof groundArtifact;
+  /** Test/embedding seam for the Perspective fan-out. */
+  perspectiveSessions?: typeof runPerspectiveSessions;
   /** Best-of-N: independent samples to drive per issue (default config.samples; real default = 1). */
   samples?: number;
   /** Measurement run: drive ALL samples to completion for pass@k / pass^k, not first-approve-stop (E5). */
@@ -69,40 +89,80 @@ export function priorFindingsByLens(store: Store, prId: string, attempt: number)
  * worktree/branch `agent/<issue>-s<n>`. `manageIssueStatus` is false under best-of-N (>1 sample)
  * so the issue's terminal status is applied once by the caller at the winner level, not per sample.
  */
-async function runLiveSample(
+export async function runLiveSample(
   store: Store, config: HarnessConfig, issue: Issue, sampleIndex: number,
-  harnessRoot: string, opts: LiveOptions & { manageIssueStatus: boolean }, log: (m: string) => void,
+  harnessRoot: string,
+  opts: LiveOptions & { manageIssueStatus: boolean; resumePr?: PRType },
+  log: (m: string) => void,
 ): Promise<SampleOutcome> {
   const contract = issue.contract!;
   const target = config.target!;
   const perspectives = opts.perspectives ?? PERSPECTIVES;
   const issueKey = sampleKey(issue.id, sampleIndex);
-  const maxAttempts = config.maxRepairs + 1;
+  const startAttempt = opts.resumePr ? opts.resumePr.attempts + 1 : 1;
+  const maxAttempts = startAttempt + config.maxRepairs;
   const manageIssueStatus = opts.manageIssueStatus;
   const generatorRoute = resolveAgentRoute(config, 'generator');
 
-  const pr = store.addPR(
+  const returnedPr = opts.resumePr ?? store.addPR(
     PR.parse({
       id: store.nextId('PR'), issueId: issue.id, branch: `agent/${issueKey}`,
       baseBranch: config.baseBranch, generator: generatorRoute.provider, attempts: 0, status: 'open',
       createdAt: nowISO(), updatedAt: nowISO(),
     }),
   );
+  const pr = opts.resumePr
+    ? returnedPr
+    : store.db.prs.find((candidate) => candidate.id === returnedPr.id)!;
   let worktree: string | null = null; // the last completed attempt's checkout = the build at the gate
 
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
     log(`▶ ${issue.id} s${sampleIndex}: generator session (attempt ${attempt}/${maxAttempts})`);
-    const sess = await runGeneratorSession(config, { issue, contract, sampleIndex, attempt, repairBrief }, harnessRoot, log);
+    const sess = await (opts.generatorSession ?? runGeneratorSession)(
+      config,
+      {
+        issue,
+        contract,
+        sampleIndex,
+        attempt,
+        repairBrief,
+        resumeRef: store.getPR(pr.id)?.headSha ?? pr.headSha,
+      },
+      harnessRoot,
+      log,
+    );
+    let revision: ReturnType<typeof projectReviewRevision> | null = null;
+    if (sess.outcome === 'completed' && sess.headSha) {
+      revision = (opts.projectRevision ?? projectReviewRevision)(
+        store,
+        config,
+        {
+          pr,
+          worktree: sess.worktree,
+          title: `${issue.id}: ${issue.title}`,
+          headSha: sess.headSha,
+        },
+        opts.gateRunner ?? realGhGateRunner(),
+        log,
+      );
+    }
     // Persist the actual runtime provider separately from its model/routing intent. This replaces
     // new PromptRecord writes; legacy promptRecords remain readable but are never dual-written.
     recordAgentInvocation(store, {
       subjectId: issue.id, issueId: issue.id, prId: pr.id, sampleIndex, attempt,
       role: 'generator', perspective: null, provider: sess.provider,
       model: sess.model, outcome: sess.outcome, prompt: sess.prompt,
+      ...(revision
+        ? { revisionId: revision.id, headSha: revision.headSha }
+        : { revisionId: null, headSha: null }),
     });
     if (sess.outcome !== 'completed') {
       log(`  ⚠ ${issue.id} s${sampleIndex}: generator ${sess.outcome} — escalating, session kept alive`);
+      return { stuck: true };
+    }
+    if (!sess.headSha || !revision) {
+      log(`  ⚠ ${issue.id} s${sampleIndex}: no committed build revision — escalating`);
       return { stuck: true };
     }
     worktree = sess.worktree;
@@ -112,14 +172,21 @@ async function runLiveSample(
     }
 
     // 2. ground the checkout with real graders (real tsc/vitest)
-    const artifact = groundArtifact({ contract, target, worktree: sess.worktree, branch: sess.branch, changed: sess.changed, issueId: issue.id });
+    const artifact = (opts.groundBuild ?? groundArtifact)({
+      contract,
+      target,
+      worktree: sess.worktree,
+      branch: sess.branch,
+      changed: sess.changed,
+      issueId: issue.id,
+    });
 
     // 3. real read-only perspective sessions — each in its own detached worktree of the committed
     //    build (isolated + concurrent), collecting findings.json into the generator worktree's evalRoot.
     //    A re-review (attempt > 1) hands each lens its OWN previous-attempt findings so the reviewer
     //    attests lineage (persisted/new) per finding — never inferred downstream (ISSUE-0009).
     const priorFindings = priorFindingsByLens(store, pr.id, attempt);
-    const panelSessions = await runPerspectiveSessions(
+    const panelSessions = await (opts.perspectiveSessions ?? runPerspectiveSessions)(
       config,
       {
         worktree: sess.worktree,
@@ -127,7 +194,8 @@ async function runLiveSample(
         perspectives,
         issueKey,
         repo: path.resolve(harnessRoot, target.repo),
-        buildRef: sess.branch,
+        buildRef: sess.headSha,
+        baseRef: target.baseRef,
         priorFindings,
         uiDesign: issue.uiDesign,
       },
@@ -138,6 +206,8 @@ async function runLiveSample(
         const record = recordAgentInvocation(store, {
           subjectId: issue.id, issueId: issue.id, prId: pr.id, sampleIndex, attempt,
           ...invocation,
+          revisionId: revision.id,
+          headSha: revision.headSha,
         });
         return [invocation.perspective, record.invocationKey];
       }),
@@ -148,14 +218,95 @@ async function runLiveSample(
       store, config,
       {
         issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex, attempt,
-        agent: sess.provider, invocationKeys, featureArea: issue.area,
+        agent: sess.provider,
+        invocationKeys,
+        revisionId: revision.id,
+        headSha: revision.headSha,
+        featureArea: issue.area,
       },
       { perspectives, grader: sessionBackedGrader(panelSessions.evalRoot) },
     );
     return { panel };
-  }, { log, manageIssueStatus });
+  }, {
+    log,
+    manageIssueStatus,
+    startAttempt,
+    initialRepairBrief: opts.resumePr ? revisionGateRepairBrief(store, pr) : null,
+  });
 
   return { ...loop, sampleIndex, prId: pr.id, approved: loop.verdict === 'approve', worktree };
+}
+
+export function revisionGateRepairBrief(store: Store, pr: PRType): RepairBrief | null {
+  const currentRuns = store.db.evalRuns.filter((run) =>
+    run.prId === pr.id
+    && run.revisionId === pr.currentRevisionId
+    && run.headSha === pr.headSha);
+  const latestByPerspective = new Map<string, (typeof currentRuns)[number]>();
+  for (const run of currentRuns) {
+    const perspective = run.perspective ?? 'functionality';
+    const previous = latestByPerspective.get(perspective);
+    if (
+      !previous
+      || run.attempt > previous.attempt
+      || (run.attempt === previous.attempt && run.createdAt > previous.createdAt)
+    ) {
+      latestByPerspective.set(perspective, run);
+    }
+  }
+  const reviewFindings = [...latestByPerspective].flatMap(([perspective, run]) =>
+    run.findings.map((finding) => ({
+      ...finding,
+      criterionId: `${perspective}:${finding.criterionId}`,
+    })));
+  if (reviewFindings.length > 0) {
+    const sourceRun = [...latestByPerspective.values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0]!;
+    const instructions = reviewFindings.flatMap((finding) =>
+      finding.requiredFix.length > 0
+        ? finding.requiredFix.map((fix) => `[${finding.criterionId}] ${fix}`)
+        : [`[${finding.criterionId}] ${finding.observed}`]);
+    return {
+      fromEvalRunId: sourceRun.id,
+      findings: reviewFindings,
+      instructions,
+    };
+  }
+
+  const snapshot = store.db.revisionGateSnapshots
+    .filter((row) => row.prId === pr.id && row.decision === 'changes-requested')
+    .at(-1);
+  if (!snapshot) return null;
+  const classifiedBlockingReasons = snapshot.blockingReasons.length > 0
+    ? snapshot.blockingReasons
+    // Migration shim for snapshots persisted before blockingReasons/pendingReasons
+    // were separated. These strings are rendered by evaluateRevisionGate.
+    : snapshot.reasons.filter((reason) =>
+      !reason.startsWith('required check pending:')
+      && !reason.startsWith('missing review:')
+      && reason !== 'mergeability is unknown'
+      && reason !== 'pull request is draft');
+  if (classifiedBlockingReasons.length === 0) return null;
+  const threadInstructions = snapshot.blockingReviewThreads.map((thread) =>
+    `${thread.path ?? 'PR'}${thread.line ? `:${thread.line}` : ''}: ${thread.body}`);
+  const otherInstructions = classifiedBlockingReasons.filter(
+    (reason) => !reason.startsWith('unresolved blocking review thread:'),
+  );
+  const instructions = [...threadInstructions, ...otherInstructions];
+  if (instructions.length === 0) return null;
+  return {
+    fromEvalRunId: `revision-gate:${snapshot.id}`,
+    instructions,
+    findings: instructions.map((reason, index) => ({
+      criterionId: `PR-GATE-${index + 1}`,
+      severity: 'major',
+      expected: 'current PR revision passes every merge gate',
+      observed: reason,
+      reproductionSteps: [`Inspect PR revision ${snapshot.headSha}`],
+      evidence: {},
+      requiredFix: [reason],
+    })),
+  };
 }
 
 /**
@@ -177,15 +328,38 @@ export async function driveIssueLive(
 ): Promise<DriveResult> {
   if (!issue.contract) throw new Error(`${issue.id} has no contract`);
   if (!config.target) throw new Error('driveIssueLive requires config.target (a real repo)');
-  const n = Math.max(1, opts.samples ?? config.samples);
+  const resumePr = issue.status === 'changes-requested'
+    ? [...store.db.prs].reverse().find((pr) =>
+      pr.issueId === issue.id && pr.status !== 'merged' && pr.status !== 'closed')
+    : undefined;
+  if (issue.status === 'changes-requested' && !resumePr) {
+    throw new Error(`${issue.id} is changes-requested but has no resumable PR`);
+  }
+  // PR-native delivery owns one stable PR branch per work unit. Independent best-of-N
+  // candidates remain available for store-local measurement, where they do not leak
+  // losing candidate PRs into GitHub.
+  const n = resumePr || (config.gate?.backend ?? 'store') === 'github'
+    ? 1
+    : Math.max(1, opts.samples ?? config.samples);
   const measure = opts.measure ?? false;
   const single = n === 1; // single sample keeps the loop's own status management (unchanged behaviour)
+  const resumeSampleIndex = resumePr
+    ? store.db.evalRuns.find((run) => run.prId === resumePr.id)?.sampleIndex ?? 0
+    : 0;
 
-  store.setStatus(issue.id, 'ready-for-generation');
+  if (issue.status === 'contract-drafted') store.setStatus(issue.id, 'ready-for-generation');
   store.setStatus(issue.id, 'generation-in-progress');
 
   const { samples, winner } = await runBestOfN(n, measure, (s) =>
-    runLiveSample(store, config, issue, s, harnessRoot, { ...opts, manageIssueStatus: single }, log));
+    runLiveSample(
+      store,
+      config,
+      issue,
+      resumePr ? resumeSampleIndex : s,
+      harnessRoot,
+      { ...opts, manageIssueStatus: single, ...(resumePr ? { resumePr } : {}) },
+      log,
+    ));
 
   // Terminal issue status. Single-sample already had it managed inside the loop; best-of-N applies
   // it once here so the resting state reflects the WINNER, not whichever sample happened to run last.
@@ -193,16 +367,28 @@ export async function driveIssueLive(
     if (winner) {
       store.setStatus(issue.id, 'ready-for-evaluation');
       store.setStatus(issue.id, 'evaluation-in-progress');
-      applyPanelVerdict(store, issue.id, 'approve'); // build-approved -> needs-human-review (gate)
+      applyPanelVerdict(store, issue.id, 'approve', config.gate?.backend ?? 'store');
     } else if (store.getIssue(issue.id)!.status !== 'needs-human-review') {
       store.setStatus(issue.id, 'needs-human-review'); // no sample converged -> escalate
     }
   }
 
-  // Project the winning build to the gate UI (ADR-0006 G1). No-op for the store backend.
+  // The PR was projected before its first review. Once all internal perspectives approve,
+  // consume only current-head evidence and use an expected-SHA merge.
   if (winner?.worktree && (config.gate?.backend ?? 'store') === 'github') {
     const pr = store.getPR(winner.prId)!;
-    openGate(store, config, { pr, worktree: winner.worktree, title: `${issue.id}: ${issue.title}` }, opts.gateRunner ?? realGhGateRunner(), log);
+    const result = autoMergeCurrentRevision(
+      store,
+      config,
+      pr,
+      opts.prNativeRunner ?? realPrNativeGithubRunner(config.gate?.mergeMethod),
+      path.resolve(harnessRoot, config.target.repo),
+      (opts.perspectives ?? PERSPECTIVES).map((perspective) => perspective.key),
+    );
+    log(
+      `  ⇩ ${issue.id}: revision ${result.headSha?.slice(0, 12) ?? 'unobserved'} `
+      + `→ ${result.decision}${result.reasons.length ? ` (${result.reasons.join('; ')})` : ''}`,
+    );
   }
 
   const status = store.getIssue(issue.id)!.status;
@@ -220,7 +406,25 @@ export async function runLoopLive(
   store: Store, config: HarnessConfig, harnessRoot: string = process.cwd(),
   opts: LiveOptions = {}, log: (m: string) => void = () => {},
 ): Promise<DriveResult[]> {
-  const queue = pollable(store, config);
+  const repairQueue = store.db.issues
+    .filter(
+      (issue) => issue.status === 'changes-requested'
+        && issue.assignedAgent === resolvedGeneratorProvider(config)
+        && !store.db.prs.some(
+          (pr) => pr.issueId === issue.id && (
+            pr.origin === 'repository-discovery'
+            || (
+              pr.externalRef !== null
+              && (
+                pr.headSha === null
+                || pr.agentGeneratedHeadSha !== pr.headSha
+              )
+            )
+          ),
+        ),
+    );
+  const queue = [...pollable(store, config), ...repairQueue]
+    .sort((a, b) => a.id.localeCompare(b.id));
   const cap = resolveConcurrentIssueCap(config);
   log(`queue: ${queue.length} ai-managed issue(s) [generator=${resolvedGeneratorProvider(config)}, cap=${cap}]`);
   // Dependency blocks are surfaced every turn (AC-DAG-001): an issue held back by the

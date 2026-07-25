@@ -20,6 +20,17 @@ import {
 } from './planning-enrichment.js';
 import { runPlanningSession, type PlanningSessionResult } from './planning-session.js';
 import { runUiDesignSession, type UiDesignSessionResult } from './ui-design-session.js';
+import { PERSPECTIVES } from '../pipeline/panel.js';
+import {
+  realPrNativeGithubRunner,
+  reconcilePrNativeGates,
+  type PrNativeGithubRunner,
+} from '../pipeline/execution/pr-native.js';
+import {
+  discoverRepositoryPullRequests,
+  reviewRepositoryPullRequest,
+  type RepositoryPullRequestReviewer,
+} from '../pipeline/execution/repository-pr.js';
 
 export interface PlanningRunnerInput {
   intake: IntakeRecord;
@@ -40,12 +51,57 @@ export interface GithubDevelopmentTurnDeps {
   planningRunner?: PlanningRunner;
   uiDesignRunner?: UiDesignRunner;
   driveQueue?: QueueDriver;
+  prNativeRunner?: PrNativeGithubRunner;
+  repositoryPullRequestReviewer?: RepositoryPullRequestReviewer;
 }
 
 export interface GithubDevelopmentTurnResult {
   intake: IntakePollResult[];
   enrichmentIds: string[];
   driveResults: DriveResult[];
+}
+
+export interface GithubTurnRegistrationOverrides {
+  readyLabel?: string;
+  baseBranch?: string;
+}
+
+/**
+ * Repository registration values are invocation-scoped and take precedence over
+ * the workspace defaults. The workspace file is never rewritten by the daemon.
+ */
+export function applyGithubTurnRegistrationOverrides(
+  config: HarnessConfig,
+  overrides: GithubTurnRegistrationOverrides,
+): HarnessConfig {
+  const readyLabel = overrides.readyLabel?.trim();
+  const baseBranch = overrides.baseBranch?.trim();
+  if (overrides.readyLabel !== undefined && !readyLabel) {
+    throw new Error('github-turn ready label override must be non-empty');
+  }
+  if (overrides.baseBranch !== undefined && !baseBranch) {
+    throw new Error('github-turn base branch override must be non-empty');
+  }
+  return {
+    ...config,
+    ...(baseBranch ? { baseBranch } : {}),
+    ...(config.intake
+      ? {
+          intake: {
+            ...config.intake,
+            ...(readyLabel ? { readyLabel } : {}),
+          },
+        }
+      : {}),
+    ...(baseBranch
+      ? {
+          gate: {
+            ...(config.gate ?? { backend: 'store' as const }),
+            baseBranch,
+          },
+        }
+      : {}),
+  };
 }
 
 export async function runGithubDevelopmentTurn(
@@ -55,6 +111,48 @@ export async function runGithubDevelopmentTurn(
   harnessRoot: string = process.cwd(),
   log: (message: string) => void = () => {},
 ): Promise<GithubDevelopmentTurnResult> {
+  const prNativeRunner = deps.prNativeRunner
+    ?? realPrNativeGithubRunner(config.gate?.mergeMethod);
+  if ((config.gate?.backend ?? 'store') === 'github' && config.target) {
+    const targetRoot = path.resolve(harnessRoot, config.target.repo);
+    const discoveries = discoverRepositoryPullRequests(
+      store,
+      config,
+      prNativeRunner,
+      targetRoot,
+    );
+    const review = deps.repositoryPullRequestReviewer
+      ?? ((discovery) => reviewRepositoryPullRequest(
+        store,
+        config,
+        discovery,
+        prNativeRunner,
+        harnessRoot,
+        log,
+      ));
+    for (const discovery of discoveries) {
+      if (discovery.imported) {
+        log(
+          `⇩ discovered ${discovery.pr.id} from repository PR `
+          + `#${discovery.pullRequest.number}@${discovery.revision.headSha.slice(0, 12)}`,
+        );
+      }
+      if (discovery.reviewRequired) await review(discovery);
+    }
+    const results = reconcilePrNativeGates(
+      store,
+      config,
+      prNativeRunner,
+      targetRoot,
+      PERSPECTIVES.map((perspective) => perspective.key),
+    );
+    for (const result of results) {
+      log(
+        `⇩ reconciled ${result.prId}@${result.headSha?.slice(0, 12) ?? 'unobserved'} → ${result.decision}`
+        + (result.reasons.length ? ` (${result.reasons.join('; ')})` : ''),
+      );
+    }
+  }
   const intakeResults = pollAndClaimGithubIssues(store, config, deps.issueRunner);
   const systemDir = config.target?.systemDir
     ? path.resolve(harnessRoot, config.target.systemDir)
@@ -134,7 +232,8 @@ export async function runGithubDevelopmentTurn(
   }
 
   // The downstream is the existing queue driver — no intake-specific implementation pipeline.
-  const driveQueue = deps.driveQueue ?? (() => runLoopLive(store, config, harnessRoot, {}, log));
+  const driveQueue = deps.driveQueue
+    ?? (() => runLoopLive(store, config, harnessRoot, { prNativeRunner }, log));
   const driveResults = await driveQueue();
   return { intake: intakeResults, enrichmentIds, driveResults };
 }

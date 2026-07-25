@@ -18,7 +18,7 @@
 | LANG-execution-008 | Sentinel（完了印） | セッション完了時に worktree へ書かれる印（`.agentops/done.json`）。orchestrator が polling で検知して grade へハンドオフする。tmux の生存は状態ではない。 |
 | LANG-execution-009 | Evaluator Panel（観点パネル） | 単一 Evaluator（`LANG-evaluation-005`）でなく、**観点ごとに独立した Evaluator セッション群**。各自 Verdict（`LANG-evaluation-007`）を出し、集約する。 |
 | LANG-execution-010 | Perspective（観点） | レビューの独立した lens。**7観点**＝functionality / codeQuality / testQuality / ux / accessibility（grader 5次元）＋ security ＋ type-design。 |
-| LANG-execution-011 | Human Review Gate（人間審査ゲート） | パネル approve 後・`released` 前の人間判断点。`needs-human-review` で停止し、人間承認で `released` へ（`LANG-evaluation-010`/`016` の延長）。 |
+| LANG-execution-011 | Human Review Gate（人間審査ゲート） | legacy/store 手動経路と自動処理不能時の昇格先。GitHub PR-native 通常経路の merge 条件ではなく、通常判定は `LANG-execution-021` Revision Gate が担う。 |
 | LANG-execution-012 | Scoping Guard / ai-managed | 実装層が触ってよい issue の **opt-in 指定**。`assignedAgent` が担当 AI に設定された issue のみ。未指定／他人が作った issue は決して触らない（デフォルト非処理）。 |
 | LANG-execution-013 | Execution Backend | セッションを実行する基盤の pluggable な差し替え（自前 tmux／将来 Hermes）。evaluation の AgentRunner seam（`ARCH-evaluation-002`）の裏に位置する。 |
 | LANG-execution-014 | Liveness / stuck | sentinel を出さないままセッションが進捗を止めた状態（入力待ち・質問・ハング）。正常完了（sentinel）に対する**異常停止**。auto-mode 起動でも起こり得るため、検知して顕在化する対象。 |
@@ -27,3 +27,7 @@
 | LANG-execution-017 | Environment Artifact Mutation | reviewer の依存確認・test 実行が disposable checkout に残した lockfile 等の、source/config 変更ではない明示分類済み副作用。観測・帰属してから checkout と共に破棄し、健全な findings を無効化しない。 |
 | LANG-execution-018 | Verification Method Command | Acceptance Criterionの`verification.method`へtarget固有の実行commandを対応付ける設定。`typecheck`/`unit_tests`は互換aliasで、正規形はmethod-keyed registry。別methodへのfallbackをしない。 |
 | LANG-execution-019 | Criterion Verification Evidence | 1つのACについて、宣言method・実command・pass/fail・境界を切った出力を保持するgrounded証拠。command未設定も`command:null`の失敗証拠として残る。 |
+| LANG-execution-020 | PR Revision | 1つのGitHub PRの特定head SHA。レビュー・check・finding・承認が束縛される最小の配送単位。head更新で旧revisionの承認はstaleになる。 |
+| LANG-execution-021 | Revision Gate | current PR Revisionについて、必須Perspective・hard gates・GitHub checks・blocking thread・mergeabilityを集約する決定論ゲート。 |
+| LANG-execution-022 | Blocking Review Finding | P0/P1、blocker、`request_changes`、missing evidence等、current revisionのmerge資格を単独で拒否する指摘。 |
+| LANG-execution-023 | Repository-discovered PR | Repository RegistrationからGitHub current snapshotをpollして取り込んだOpen PR。個別登録を持たず、外部PR番号で冪等化し、same-repository headだけを自動修正対象にする。 |

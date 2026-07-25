@@ -1,0 +1,27 @@
+dependsOn:
+  - ARCH-webhook-004
+  - ARCH-webhook-005
+  - DOM-webhook-002
+  - DOM-webhook-003
+
+verifications:
+  AC-WHRT-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "enabled repoごとに1 child、変更/disable時に旧childをSIGTERMする"
+  AC-WHRT-002:
+    severity: major
+    method: unit_test
+    expected:
+      - "unexpected exit後のnext reconcileでchildを再生成する"
+  AC-WHRT-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "一致workspaceへ固定agentops github-turnだけを起動する"
+  AC-WHRT-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "merged PR/pushがallow-listed Orca引数へ変換される"

@@ -7,8 +7,7 @@
 import fs from 'node:fs';
 import type { HarnessConfig } from '../config.js';
 import { resolveTargetRoot } from '../config.js';
-import type { DB } from '../domain/schema.js';
-import type { Store } from '../store/store.js';
+import type { Store, StoreView } from '../store/store.js';
 import { nowISO } from '../store/store.js';
 
 export class BindingMismatchError extends Error {
@@ -46,7 +45,7 @@ export function resolveTargetIdentity(config: HarnessConfig, harnessRoot: string
 }
 
 /** True when binding the requested target cannot claim pre-existing organisation state. */
-export function isEmptyOrganisationStore(db: DB): boolean {
+export function isEmptyOrganisationStore(db: StoreView): boolean {
   return (
     db.roadmap === null &&
     db.epics.length === 0 &&

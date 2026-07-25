@@ -1,0 +1,26 @@
+dependsOn:
+  - ARCH-execution-022
+  - DOM-execution-014
+  - DATA-execution-011
+
+verifications:
+  AC-PRAUTO-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "missing perspective、P1 thread、pending check、conflictの各々がmergeを拒否する"
+  AC-PRAUTO-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "merge adapterへcurrent head SHAをexpected valueとして渡す"
+  AC-PRAUTO-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "merge成功時だけPR merged・Issue releasedになる"
+  AC-PRAUTO-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "全子released前はclose 0、後はidempotentにclose 1"

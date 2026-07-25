@@ -4,33 +4,44 @@ import {
   type AgentProvider,
   type InvocationOutcome,
   type InvocationRole,
+  type RevisionBinding,
 } from '../domain/schema.js';
 import { Store, nowISO } from '../store/store.js';
 
-export interface InvocationCoordinates {
+interface InvocationCoordinatesBase {
   subjectId: string;
   issueId?: string | null;
-  prId?: string | null;
   sampleIndex?: number | null;
   attempt: number;
   role: InvocationRole;
   perspective?: string | null;
 }
 
-export interface InvocationProvenanceInput extends InvocationCoordinates {
+type UnboundInvocation = {
+  prId?: string | null;
+  revisionId?: null;
+  headSha?: null;
+};
+
+export type InvocationCoordinates =
+  | (InvocationCoordinatesBase & RevisionBinding & { prId: string })
+  | (InvocationCoordinatesBase & UnboundInvocation);
+
+export type InvocationProvenanceInput = InvocationCoordinates & {
   provider: AgentProvider;
   model?: string | null;
   prompt: string;
   outcome: InvocationOutcome;
   createdAt?: string;
-}
+};
 
 /** Stable, inspectable logical key. Encoding keeps separators in user/remote ids unambiguous. */
 export function invocationKey(coordinates: InvocationCoordinates): string {
   const segment = (value: string | number | null | undefined): string =>
     value === null || value === undefined ? '-' : encodeURIComponent(String(value));
+  const revisionBound = coordinates.revisionId != null || coordinates.headSha != null;
   return [
-    'invocation:v1',
+    revisionBound ? 'invocation:v2' : 'invocation:v1',
     segment(coordinates.subjectId),
     segment(coordinates.issueId),
     segment(coordinates.prId),
@@ -38,6 +49,9 @@ export function invocationKey(coordinates: InvocationCoordinates): string {
     segment(coordinates.attempt),
     segment(coordinates.role),
     segment(coordinates.perspective),
+    ...(revisionBound
+      ? [segment(coordinates.revisionId), segment(coordinates.headSha)]
+      : []),
   ].join(':');
 }
 
@@ -60,6 +74,8 @@ const PROVENANCE_FIELDS = [
   'model',
   'prompt',
   'outcome',
+  'revisionId',
+  'headSha',
 ] as const satisfies readonly (keyof AgentInvocation)[];
 
 /**
@@ -67,6 +83,21 @@ const PROVENANCE_FIELDS = [
  * provenance fails closed before counters or the existing record are mutated.
  */
 export function recordAgentInvocation(store: Store, input: InvocationProvenanceInput): AgentInvocation {
+  const revisionBound = input.revisionId != null || input.headSha != null;
+  if (revisionBound) {
+    if (!input.prId || !input.revisionId || !input.headSha) {
+      throw new Error('revision-bound invocation requires prId, revisionId, and headSha');
+    }
+    const revision = store.db.prRevisions.find((row) => row.id === input.revisionId);
+    if (!revision) {
+      throw new Error(`No such PR revision: ${input.revisionId}`);
+    }
+    if (revision.prId !== input.prId || revision.headSha !== input.headSha) {
+      throw new Error(
+        `invocation revision ${input.revisionId} does not match PR ${input.prId} at ${input.headSha}`,
+      );
+    }
+  }
   const key = invocationKey(input);
   const candidate = {
     invocationKey: key,
@@ -81,6 +112,8 @@ export function recordAgentInvocation(store: Store, input: InvocationProvenanceI
     model: input.model ?? null,
     prompt: input.prompt,
     outcome: input.outcome,
+    revisionId: input.revisionId ?? null,
+    headSha: input.headSha ?? null,
   };
   const existing = store.invocationByKey(key);
   if (existing) {

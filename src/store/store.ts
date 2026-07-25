@@ -11,9 +11,18 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { DB, emptyDB } from '../domain/schema.js';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  DB,
+  PR as PRSchema,
+  decodePersistedPR,
+  PrRevision as PrRevisionSchema,
+  RevisionGateSnapshot as RevisionGateSnapshotSchema,
+  emptyDB,
+} from '../domain/schema.js';
 import type {
   AgentInvocation,
+  ApprovedPRAuthorization,
   Epic,
   EvalRun,
   EvalTask,
@@ -21,18 +30,123 @@ import type {
   Intervention,
   IntakeRecord,
   Issue,
+  MergedPR,
+  MergedPRAuthorization,
+  NonPrivilegedPR,
   PR,
+  PrRevision,
   PromptRecord,
+  RevisionGateSnapshot,
   PlanningEnrichmentRecord,
   RegressionRun,
   Roadmap,
   SpecState,
   TurnRecord,
 } from '../domain/schema.js';
+import {
+  isEvaluatedRevisionGateSnapshot,
+  type EvaluatedRevisionGateSnapshot,
+} from '../domain/revision-gate.js';
+import {
+  bindMergeRevisionToPR,
+  mergedPRFromAuthorization,
+} from '../domain/pr-lifecycle.js';
 import { assertTransition, TERMINAL_STATUSES, type IssueStatus } from '../domain/states.js';
 
 export function nowISO(): string {
   return new Date().toISOString();
+}
+
+export type StoreView = Omit<DB, 'prs' | 'prRevisions' | 'revisionGateSnapshots'> & {
+  readonly prs: readonly PR[];
+  readonly prRevisions: readonly PrRevision[];
+  readonly revisionGateSnapshots: readonly RevisionGateSnapshot[];
+};
+
+/**
+ * Normalize persisted records created before PR revisions became mandatory.
+ * Legacy approvals cannot prove which head they approved, so migration fails
+ * closed to `open`. Legacy gate reasons are retained as classified reasons.
+ */
+function normalizeLegacyDB(input: unknown): unknown {
+  if (!input || typeof input !== 'object') return input;
+  const record = input as Record<string, unknown>;
+  const normalizeRevisionCoordinates = (value: unknown): unknown => {
+    if (!value || typeof value !== 'object') return value;
+    const row = value as Record<string, unknown>;
+    const bound = typeof row.revisionId === 'string'
+      && typeof row.headSha === 'string'
+      && /^[0-9a-f]{40}$/i.test(row.headSha);
+    if (bound) return value;
+    return { ...row, revisionId: null, headSha: null };
+  };
+  return {
+    ...record,
+    ...(Array.isArray(record.prs) ? {
+      prs: record.prs.map((value) => {
+        if (!value || typeof value !== 'object') return value;
+        const pr = value as Record<string, unknown>;
+        const bound = typeof pr.currentRevisionId === 'string'
+          && typeof pr.headSha === 'string'
+          && /^[0-9a-f]{40}$/i.test(pr.headSha);
+        if (bound) return value;
+        if (pr.status !== 'approved' && pr.status !== 'merged') {
+          return {
+            ...pr,
+            currentRevisionId: null,
+            headSha: null,
+            mergedHeadSha: null,
+          };
+        }
+        return {
+          ...pr,
+          status: 'open',
+          currentRevisionId: null,
+          headSha: null,
+          mergedHeadSha: null,
+        };
+      }),
+    } : {}),
+    ...(Array.isArray(record.evalRuns) ? {
+      evalRuns: record.evalRuns.map(normalizeRevisionCoordinates),
+    } : {}),
+    ...(Array.isArray(record.agentInvocations) ? {
+      agentInvocations: record.agentInvocations.map(normalizeRevisionCoordinates),
+    } : {}),
+    ...(Array.isArray(record.revisionGateSnapshots) ? {
+      revisionGateSnapshots: record.revisionGateSnapshots.map((value) => {
+        if (!value || typeof value !== 'object') return value;
+        const snapshot = value as Record<string, unknown>;
+        const reasons = Array.isArray(snapshot.reasons)
+          ? snapshot.reasons.filter((reason): reason is string => typeof reason === 'string')
+          : [];
+        if (snapshot.decision === 'changes-requested') {
+          return {
+            ...snapshot,
+            blockingReasons: Array.isArray(snapshot.blockingReasons)
+              && snapshot.blockingReasons.length > 0
+              ? snapshot.blockingReasons
+              : reasons.length > 0
+                ? reasons
+                : ['legacy changes-requested snapshot'],
+            pendingReasons: Array.isArray(snapshot.pendingReasons)
+              ? snapshot.pendingReasons
+              : [],
+          };
+        }
+        if (snapshot.decision === 'pending') {
+          return {
+            ...snapshot,
+            blockingReasons: [],
+            pendingReasons: Array.isArray(snapshot.pendingReasons)
+              ? snapshot.pendingReasons
+              : reasons,
+          };
+        }
+        return value;
+      }),
+    } : {}),
+  };
 }
 
 export class Store {
@@ -40,7 +154,12 @@ export class Store {
   readonly dir: string;
   readonly dbPath: string;
   readonly evidenceRoot: string;
-  db: DB;
+  /**
+   * Public query view. PR lifecycle collections are readonly so callers cannot
+   * bypass replacePR/replacePrRevision; other legacy collections retain their
+   * existing mutable adapter surface until they receive dedicated repositories.
+   */
+  db: StoreView;
 
   constructor(root: string = process.cwd()) {
     this.root = root;
@@ -57,7 +176,7 @@ export class Store {
   read(): DB {
     if (!fs.existsSync(this.dbPath)) return emptyDB();
     const raw = JSON.parse(fs.readFileSync(this.dbPath, 'utf8'));
-    return DB.parse(raw); // validate on load — a corrupt db fails loudly
+    return DB.parse(normalizeLegacyDB(raw)); // migrate known history, reject real corruption
   }
 
   save(): void {
@@ -158,17 +277,137 @@ export class Store {
 
   // --- PRs -----------------------------------------------------------------
 
-  addPR(p: PR): PR {
-    this.db.prs.push(p);
-    return p;
+  addPR(p: NonPrivilegedPR): NonPrivilegedPR {
+    const candidate = structuredClone(p) as PR;
+    if (candidate.status === 'approved' || candidate.status === 'merged') {
+      throw new Error(`cannot add privileged PR state ${candidate.status}`);
+    }
+    const stored = PRSchema.parse(candidate);
+    (this.db.prs as DB['prs']).push(stored);
+    return structuredClone(stored) as NonPrivilegedPR;
   }
 
   getPR(id: string): PR | undefined {
-    return this.db.prs.find((p) => p.id === id);
+    const found = this.db.prs.find((p) => p.id === id);
+    return found ? this.lifecycleCopy(found) : undefined;
   }
 
   prForIssue(issueId: string): PR | undefined {
-    return this.db.prs.find((p) => p.issueId === issueId);
+    const found = this.db.prs.find((p) => p.issueId === issueId);
+    return found ? this.lifecycleCopy(found) : undefined;
+  }
+
+  replacePR(p: NonPrivilegedPR): NonPrivilegedPR {
+    const index = this.db.prs.findIndex((row) => row.id === p.id);
+    if (index < 0) throw new Error(`No such PR: ${p.id}`);
+    const existing = this.db.prs[index]!;
+    const candidate = structuredClone(p) as PR;
+    if (candidate.status === 'approved' || candidate.status === 'merged') {
+      throw new Error(`cannot replace with privileged PR state ${candidate.status}`);
+    }
+    const stored = PRSchema.parse(candidate);
+    if (
+      (existing.status === 'closed' || existing.status === 'merged')
+      && !isDeepStrictEqual(existing, stored)
+    ) {
+      throw new Error(`cannot replace terminal PR ${existing.id} (${existing.status})`);
+    }
+    (this.db.prs as DB['prs'])[index] = stored;
+    return this.lifecycleCopy(stored) as NonPrivilegedPR;
+  }
+
+  approvePR(authorization: ApprovedPRAuthorization): Extract<PR, { status: 'approved' }> {
+    // Runtime-check the opaque authorization before reading its approved value.
+    bindMergeRevisionToPR(authorization);
+    const approved = authorization.pr;
+    const existing = this.db.prs.find((row) => row.id === approved.id);
+    if (!existing) throw new Error(`No such PR: ${approved.id}`);
+    if (existing.status === 'closed' || existing.status === 'merged') {
+      throw new Error(`cannot approve terminal PR ${existing.id} (${existing.status})`);
+    }
+    if (
+      existing.currentRevisionId !== approved.currentRevisionId
+      || existing.headSha !== approved.headSha
+    ) {
+      throw new Error(`approval authorization is stale for PR ${approved.id}`);
+    }
+    return this.persistPrivilegedPR(approved);
+  }
+
+  mergePR(authorization: MergedPRAuthorization): MergedPR {
+    const merged = mergedPRFromAuthorization(authorization);
+    const existing = this.db.prs.find((row) => row.id === merged.id);
+    if (!existing) throw new Error(`No such PR: ${merged.id}`);
+    if (existing.status !== 'approved') {
+      throw new Error(`cannot persist merged PR ${merged.id} from ${existing.status}`);
+    }
+    if (
+      existing.currentRevisionId !== merged.currentRevisionId
+      || existing.headSha !== merged.headSha
+    ) {
+      throw new Error(`merge authorization is stale for PR ${merged.id}`);
+    }
+    return this.persistPrivilegedPR(merged);
+  }
+
+  private persistPrivilegedPR<T extends Extract<PR, { status: 'approved' | 'merged' }>>(
+    pr: T,
+  ): T {
+    const index = this.db.prs.findIndex((row) => row.id === pr.id);
+    if (index < 0) throw new Error(`No such PR: ${pr.id}`);
+    const stored = decodePersistedPR(structuredClone(pr));
+    (this.db.prs as DB['prs'])[index] = stored;
+    return this.lifecycleCopy(stored) as T;
+  }
+
+  upsertPrRevision(revision: PrRevision): PrRevision {
+    const existing = this.db.prRevisions.find(
+      (row) => row.prId === revision.prId && row.headSha === revision.headSha,
+    );
+    if (existing) return this.lifecycleCopy(existing);
+    const stored = PrRevisionSchema.parse(structuredClone(revision));
+    (this.db.prRevisions as DB['prRevisions']).push(stored);
+    return this.lifecycleCopy(stored);
+  }
+
+  revisionForHead(prId: string, headSha: string): PrRevision | undefined {
+    const found = this.db.prRevisions.find((row) => row.prId === prId && row.headSha === headSha);
+    return found ? this.lifecycleCopy(found) : undefined;
+  }
+
+  replacePrRevision(revision: PrRevision): PrRevision {
+    const index = this.db.prRevisions.findIndex((row) => row.id === revision.id);
+    if (index < 0) throw new Error(`No such PR revision: ${revision.id}`);
+    const existing = this.db.prRevisions[index]!;
+    const stored = PrRevisionSchema.parse(structuredClone(revision));
+    if (
+      (existing.status === 'merged' || existing.status === 'stale' || existing.status === 'failed')
+      && !isDeepStrictEqual(existing, stored)
+    ) {
+      throw new Error(`cannot replace terminal PR revision ${existing.id} (${existing.status})`);
+    }
+    (this.db.prRevisions as DB['prRevisions'])[index] = stored;
+    return this.lifecycleCopy(stored);
+  }
+
+  private lifecycleCopy<T>(value: T): T {
+    const copy = structuredClone(value);
+    const freeze = (item: unknown): void => {
+      if (!item || typeof item !== 'object' || Object.isFrozen(item)) return;
+      for (const nested of Object.values(item)) freeze(nested);
+      Object.freeze(item);
+    };
+    freeze(copy);
+    return copy;
+  }
+
+  addRevisionGateSnapshot(snapshot: EvaluatedRevisionGateSnapshot): EvaluatedRevisionGateSnapshot {
+    if (!isEvaluatedRevisionGateSnapshot(snapshot)) {
+      throw new Error('revision gate persistence requires evaluated gate evidence');
+    }
+    const stored = RevisionGateSnapshotSchema.parse(structuredClone(snapshot));
+    (this.db.revisionGateSnapshots as DB['revisionGateSnapshots']).push(stored);
+    return snapshot;
   }
 
   // --- spec states (M20 signing) -------------------------------------------

@@ -6,20 +6,41 @@
  *   2. runBoundedRepairLoop (shared by driveIssueOnce and driveIssueLive) threads each attempt's
  *      cross-perspective findings into the next attempt's brief, and — the live-only branch the
  *      mock runner never hits — escalates a stuck generator to the human gate, session kept alive.
- * The live composition itself (real tmux + Claude) stays out of unit tests by design; here we test
- * the seams it plugs together.
+ * Real tmux/provider processes stay out of unit tests; injected live orchestration seams pin their
+ * ordering in addition to testing each deterministic component.
  */
 import { describe, it, expect } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store, nowISO } from '../src/store/store.js';
-import { Issue, PR, Finding, type EvalRun } from '../src/domain/schema.js';
+import {
+  EvalRun as EvalRunSchema,
+  Issue,
+  PR,
+  PrHeadSha,
+  Finding,
+  requireMutablePR,
+  transitionPR,
+  updatePR,
+  type EvalRun,
+} from '../src/domain/schema.js';
 import { DEFAULT_CONFIG, type HarnessConfig, type TargetRepoConfig } from '../src/config.js';
 import { runBoundedRepairLoop, type AttemptOutcome } from '../src/pipeline/execution/loop.js';
-import { buildGeneratorPrompt, type GeneratorSessionInput } from '../src/pipeline/execution/session.js';
+import {
+  buildGeneratorPrompt,
+  generatorWorktreeRequiresReset,
+  generatorStartRef,
+  type GeneratorSessionInput,
+} from '../src/pipeline/execution/session.js';
 import type { PanelResult } from '../src/pipeline/panel.js';
-import type { RepairBrief } from '../src/domain/artifact.js';
+import type { BuildArtifact, RepairBrief } from '../src/domain/artifact.js';
+import {
+  driveIssueLive,
+  revisionGateRepairBrief,
+} from '../src/pipeline/execution/live.js';
+import { findingsPath } from '../src/pipeline/execution/perspective-session.js';
+import type { GhGateRunner } from '../src/pipeline/execution/gate.js';
 
 const CONFIG: HarnessConfig = { ...DEFAULT_CONFIG, generator: 'mock', samples: 1, maxRepairs: 2 }; // 3 attempts max
 
@@ -70,6 +91,17 @@ function genInput(repairBrief: RepairBrief | null, attempt: number): GeneratorSe
 }
 
 describe('buildGeneratorPrompt: a repair attempt carries the reviewers required fixes', () => {
+  it('AC-PRLOOP-003 starts a trusted repair from its observed PR head', () => {
+    expect(generatorStartRef('abc1234', 'main')).toBe('abc1234');
+    expect(generatorStartRef(null, 'main')).toBe('main');
+  });
+
+  it('AC-PRLOOP-003 recreates a stale trusted repair worktree before it can overwrite the PR head', () => {
+    expect(generatorWorktreeRequiresReset(26, true, 'old-head', 'current-head')).toBe(true);
+    expect(generatorWorktreeRequiresReset(27, true, 'current-head', 'current-head')).toBe(false);
+    expect(generatorWorktreeRequiresReset(1, true, 'current-head', 'current-head')).toBe(true);
+  });
+
   it('attempt 1 (no brief) has no repair section', () => {
     const prompt = buildGeneratorPrompt(genInput(null, 1), target);
     expect(prompt).not.toContain('## Repair');
@@ -93,12 +125,55 @@ describe('buildGeneratorPrompt: a repair attempt carries the reviewers required 
     const empty: RepairBrief = { fromEvalRunId: '', findings: [], instructions: [] };
     expect(buildGeneratorPrompt(genInput(empty, 2), target)).not.toContain('## Repair');
   });
+
+  it('PR-INTENT resumes from the current revision detailed review findings before gate summaries', () => {
+    const store = tmpStore('current-review-brief');
+    addIssue(store, 'ISSUE-1');
+    const created = addPR(store, 'ISSUE-1');
+    const headSha = PrHeadSha.parse('a'.repeat(40));
+    const pr = store.replacePR(transitionPR(created, {
+      status: 'changes-requested',
+      currentRevisionId: 'PRREV-1',
+      headSha,
+    }));
+    store.addEvalRun(EvalRunSchema.parse({
+      id: 'EVAL-SECURITY',
+      issueId: 'ISSUE-1',
+      prId: pr.id,
+      revisionId: 'PRREV-1',
+      headSha,
+      attempt: 4,
+      sampleIndex: 0,
+      agent: 'codex',
+      perspective: 'security',
+      verdict: 'request_changes',
+      findings: [Finding.parse({
+        criterionId: 'PR-INTENT',
+        severity: 'blocker',
+        expected: 'no credential access',
+        observed: 'reviewer can run host commands',
+        requiredFix: ['disable reviewer tools'],
+      })],
+      scores: { functionality: 0, codeQuality: 0, testQuality: 0, ux: 0, accessibility: 0 },
+      overall: 0,
+      cost: {},
+      createdAt: nowISO(),
+    }));
+
+    const brief = revisionGateRepairBrief(store, pr);
+
+    expect(brief?.fromEvalRunId).toBe('EVAL-SECURITY');
+    expect(brief?.instructions).toEqual([
+      '[security:PR-INTENT] disable reviewer tools',
+    ]);
+    expect(brief?.findings[0]?.observed).toContain('host commands');
+  });
 });
 
 // --- seam 2: the shared loop threads briefs and escalates a stuck generator -----------------
 
 describe('runBoundedRepairLoop: threads the repair brief across attempts', () => {
-  it('the second attempt receives a brief derived from the first attempt findings, then converges', async () => {
+  it('AC-PRLOOP-003 the second attempt receives a brief derived from the first attempt findings, then converges', async () => {
     const store = tmpStore('live-thread');
     const issue = addIssue(store, 'ISSUE-1');
     store.setStatus('ISSUE-1', 'ready-for-generation');
@@ -120,6 +195,52 @@ describe('runBoundedRepairLoop: threads the repair brief across attempts', () =>
     expect(res.attempts).toBe(2);
     expect(res.status).toBe('needs-human-review'); // gate, never auto-released
     expect(res.escalated).toBe(false);
+  });
+
+  it('AC-PRLOOP-003 resumes an existing PR at a fresh attempt with an external gate repair brief', async () => {
+    const store = tmpStore('live-resume');
+    addIssue(store, 'ISSUE-1');
+    store.setStatus('ISSUE-1', 'ready-for-generation');
+    store.setStatus('ISSUE-1', 'generation-in-progress');
+    store.setStatus('ISSUE-1', 'ready-for-evaluation');
+    store.setStatus('ISSUE-1', 'evaluation-in-progress');
+    store.setStatus('ISSUE-1', 'changes-requested');
+    const seededPr = addPR(store, 'ISSUE-1');
+    const pr = store.replacePR(updatePR(requireMutablePR(seededPr), { attempts: 2 }));
+    store.setStatus('ISSUE-1', 'generation-in-progress');
+    const initial: RepairBrief = {
+      fromEvalRunId: 'revision-gate:PRGATE-1',
+      findings: [Finding.parse({
+        criterionId: 'PR-GATE-1',
+        severity: 'major',
+        expected: 'no P1',
+        observed: 'P1 remains',
+        requiredFix: ['resolve P1'],
+      })],
+      instructions: ['resolve P1'],
+    };
+    const attempts: number[] = [];
+    const briefs: Array<RepairBrief | null> = [];
+
+    const result = await runBoundedRepairLoop(
+      store,
+      { ...CONFIG, maxRepairs: 0 },
+      'ISSUE-1',
+      pr,
+      async (attempt, brief) => {
+        attempts.push(attempt);
+        briefs.push(brief);
+        store.setStatus('ISSUE-1', 'ready-for-evaluation');
+        store.setStatus('ISSUE-1', 'evaluation-in-progress');
+        return { panel: approvingPanel };
+      },
+      { startAttempt: 3, initialRepairBrief: initial },
+    );
+
+    expect(attempts).toEqual([3]);
+    expect(briefs[0]?.instructions).toEqual(['resolve P1']);
+    expect(result.attempts).toBe(3);
+    expect(result.verdict).toBe('approve');
   });
 });
 
@@ -143,7 +264,7 @@ describe('runBoundedRepairLoop: a stuck generator escalates without a silent gra
     expect(res.attempts).toBe(1);
     expect(res.status).toBe('needs-human-review');
     expect(res.verdict).toBe('needs_human'); // no panel ran — needs a human, never a silent pass
-    expect(pr.status).toBe('changes-requested');
+    expect(store.getPR(pr.id)?.status).toBe('changes-requested');
   });
 });
 
@@ -161,8 +282,132 @@ describe('runBoundedRepairLoop: manageIssueStatus=false leaves the issue status 
       { manageIssueStatus: false });
 
     expect(res.verdict).toBe('approve');
-    expect(pr.status).toBe('approved'); // PR status still set (per-PR, not per-issue)
+    expect(pr.status).toBe('open'); // no revision/head exists to support an approved PR variant
     expect(store.getIssue('ISSUE-1')!.status).toBe(before); // issue status untouched — caller owns it
     expect(store.getIssue('ISSUE-1')!.status).not.toBe('needs-human-review');
+  });
+});
+
+describe('driveIssueLive orchestration ordering', () => {
+  it('AC-PRLOOP-001 pushes/creates the same PR before every fresh Perspective review', async () => {
+    const store = tmpStore('live-pr-before-review');
+    const issue = addIssue(store, 'ISSUE-1');
+    const events: string[] = [];
+    const reviewHeads: string[] = [];
+    const worktree = path.join(store.root, 'generated-worktree');
+    fs.mkdirSync(worktree, { recursive: true });
+    let attemptCount = 0;
+    let reviewCount = 0;
+    const gateRunner: GhGateRunner = {
+      pushBranch() {
+        events.push(`push:${attemptCount}`);
+      },
+      createPr() {
+        events.push(`create:${attemptCount}`);
+        return {
+          provider: 'github',
+          number: 8,
+          url: 'https://github.com/acme/theme/pull/8',
+        };
+      },
+      viewPr: () => 'open',
+    };
+    const artifact: BuildArtifact = {
+      branch: 'agent/issue-1-s0',
+      summary: 'grounded fixture',
+      filesChanged: ['src/x.ts'],
+      satisfied: { 'AC-1': true },
+      buildPasses: true,
+      typecheckPasses: true,
+      unitTestsPass: true,
+      apiTestsPass: true,
+      hasTests: true,
+      secretsLeaked: false,
+      scopeViolations: [],
+      quality: {
+        codeQuality: 1,
+        testQuality: 1,
+        ux: 1,
+        accessibility: 1,
+      },
+      notes: [],
+    };
+
+    await driveIssueLive(
+      store,
+      {
+        ...CONFIG,
+        maxRepairs: 1,
+        gate: { backend: 'github', baseBranch: 'main' },
+        target: { repo: '.' },
+      },
+      issue,
+      store.root,
+      {
+        perspectives: [{ key: 'codeQuality', deterministic: false }],
+        gateRunner,
+        generatorSession: async (_config, input) => {
+          attemptCount = input.attempt;
+          events.push(`commit:${attemptCount}`);
+          return {
+            provider: 'mock',
+            model: null,
+            worktree,
+            branch: 'agent/issue-1-s0',
+            session: `generator-${attemptCount}`,
+            outcome: 'completed',
+            changed: ['src/x.ts'],
+            headSha: attemptCount === 1 ? 'a'.repeat(40) : 'b'.repeat(40),
+            paneTail: '',
+            prompt: `attempt ${attemptCount}`,
+          };
+        },
+        groundBuild: () => artifact,
+        perspectiveSessions: async (_config, input) => {
+          reviewCount += 1;
+          events.push(`review:${reviewCount}`);
+          reviewHeads.push(input.buildRef);
+          const evalRoot = path.join(input.worktree, '.agentops', 'eval');
+          const finding = findingsPath(evalRoot, 'codeQuality');
+          fs.mkdirSync(path.dirname(finding), { recursive: true });
+          fs.writeFileSync(finding, JSON.stringify({
+            verdict: 'request_changes',
+            score: 0.2,
+            findings: [{
+              criterionId: 'AC-1',
+              severity: 'major',
+              observed: `attempt ${reviewCount} still fails`,
+              requiredFix: ['repair it'],
+            }],
+          }));
+          return {
+            evalRoot,
+            completed: ['codeQuality'],
+            touchedCode: [],
+            environmentChanges: {},
+            invocations: [{
+              role: 'reviewer',
+              perspective: 'codeQuality',
+              provider: 'mock',
+              model: null,
+              prompt: `review ${reviewCount}`,
+              outcome: 'completed',
+            }],
+          };
+        },
+      },
+    );
+
+    expect(events).toEqual([
+      'commit:1',
+      'push:1',
+      'create:1',
+      'review:1',
+      'commit:2',
+      'push:2',
+      'review:2',
+    ]);
+    expect(reviewHeads).toEqual(['a'.repeat(40), 'b'.repeat(40)]);
+    expect(store.getPR('PR-0001')?.externalRef?.number).toBe(8);
   });
 });

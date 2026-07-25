@@ -18,15 +18,27 @@ import type { BuildArtifact, VerificationEvidence } from '../../domain/artifact.
 import type { AcceptanceCriterion, IssueContract, VerificationMethod } from '../../domain/schema.js';
 import { configuredGraderCommand, type TargetRepoConfig } from '../../config.js';
 import { scopedAcceptEnv } from './accept.js';
+import { prepareIsolatedExecutionResources } from './isolation.js';
 
 let reportSeq = 0;
+export const GRADER_TIMEOUT_MS = 10 * 60 * 1_000;
+export const GRADER_MAX_BUFFER_BYTES = 64 * 1024 * 1_024;
 
 export interface CmdResult {
   ok: boolean;
   output: string;
 }
 
-export function runGraderCommand(command: string, cwd: string, extraEnv: Record<string, string> = {}): CmdResult {
+export interface GraderExecutionOptions {
+  isolated?: boolean;
+}
+
+export function runGraderCommand(
+  command: string,
+  cwd: string,
+  extraEnv: Record<string, string> = {},
+  options: GraderExecutionOptions = {},
+): CmdResult {
   const tokens = tokenize(command);
   // sh-style leading KEY=VAL assignments (ADR-0007 I3): spawnSync uses no shell, so peel
   // them into the child env explicitly — grader commands in config can then gate
@@ -38,14 +50,37 @@ export function runGraderCommand(command: string, cwd: string, extraEnv: Record<
     env[key!] = rest.join('=');
   }
   const [cmd, ...args] = tokens;
-  const res = spawnSync(cmd!, args, {
+  const execution = options.isolated
+    ? prepareIsolatedExecutionResources(cmd!, args, cwd)
+    : { command: cmd!, args, env: process.env, cleanup: () => {} };
+  const childEnv = options.isolated
+    ? {
+      ...execution.env,
+      ...Object.fromEntries(Object.entries(env).filter(([name]) =>
+        name === 'ACCEPT_HARNESS' || name === 'AGENTOPS_ACTIVE_ISSUE')),
+    }
+    : { ...execution.env, ...env };
+  const res = spawnSync(execution.command, execution.args, {
     cwd,
     encoding: 'utf8',
-    timeout: 1000 * 60 * 10,
-    maxBuffer: 64 * 1024 * 1024,
-    ...(Object.keys(env).length ? { env: { ...process.env, ...env } } : {}),
+    timeout: GRADER_TIMEOUT_MS,
+    maxBuffer: GRADER_MAX_BUFFER_BYTES,
+    env: childEnv,
   });
-  return { ok: res.status === 0, output: `${res.stdout ?? ''}\n${res.stderr ?? ''}` };
+  execution.cleanup();
+  const diagnostic = res.error
+    ? `\nspawn error: ${res.error.message}`
+    : res.signal
+      ? `\nterminated by signal: ${res.signal}`
+      : res.status === null
+        ? '\nprocess exited without a status'
+        : res.status === 0
+          ? ''
+          : `\nexit status: ${res.status}`;
+  return {
+    ok: res.status === 0,
+    output: `${res.stdout ?? ''}\n${res.stderr ?? ''}${diagnostic}`,
+  };
 }
 
 export interface VitestReport {
@@ -58,9 +93,25 @@ export interface VitestReport {
 }
 
 /** Run a vitest command and parse its JSON report. Exported for the regression executor. */
-export function runVitest(command: string, cwd: string, extraEnv?: Record<string, string>): VitestReport {
-  const out = path.join(os.tmpdir(), `agentops-vitest-${process.pid}-${reportSeq++}.json`);
-  runGraderCommand(`${command} --reporter=json --outputFile=${out}`, cwd, extraEnv);
+export function runVitest(
+  command: string,
+  cwd: string,
+  extraEnv?: Record<string, string>,
+  options?: GraderExecutionOptions,
+): VitestReport {
+  const out = path.join(
+    options?.isolated ? cwd : os.tmpdir(),
+    `.agentops-vitest-${process.pid}-${reportSeq++}.json`,
+  );
+  const configLoader = options?.isolated && !command.includes('--configLoader')
+    ? ' --configLoader=runner'
+    : '';
+  runGraderCommand(
+    `${command}${configLoader} --reporter=json --outputFile=${out}`,
+    cwd,
+    extraEnv,
+    options,
+  );
   let json: unknown = null;
   try {
     if (fs.existsSync(out)) json = JSON.parse(fs.readFileSync(out, 'utf8'));
@@ -113,6 +164,8 @@ export interface GroundOpts {
    * and activates only ITS pre-placed acceptance guards (scopedAcceptEnv → grader child env).
    */
   issueId?: string;
+  /** Repository-discovered heads are attacker-controlled until review completes. */
+  untrusted?: boolean;
 }
 
 export interface SatisfiedResult {
@@ -218,7 +271,8 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
   }
 
   const typecheckCommand = configuredGraderCommand(opts.target, 'typecheck');
-  const tc = typecheckCommand ? runGraderCommand(typecheckCommand, opts.worktree) : null;
+  const execution = { isolated: opts.untrusted === true };
+  const tc = typecheckCommand ? runGraderCommand(typecheckCommand, opts.worktree, {}, execution) : null;
 
   // Issue-scoped activation (AC-SCOPED-001): a driven issue's grading activates only ITS
   // pre-placed guards — the scoped env is injected here so other in-flight issues'
@@ -226,7 +280,12 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
   // a command's own full-activation prefix still wins inside `run` (spelling unchanged).
   const unitTestCommand = configuredGraderCommand(opts.target, 'unit_test');
   const report = unitTestCommand
-    ? runVitest(unitTestCommand, opts.worktree, opts.issueId ? scopedAcceptEnv(opts.issueId) : undefined)
+    ? runVitest(
+      unitTestCommand,
+      opts.worktree,
+      opts.issueId ? scopedAcceptEnv(opts.issueId) : undefined,
+      execution,
+    )
     : null;
 
   const inScope = (f: string) =>

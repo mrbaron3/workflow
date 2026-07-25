@@ -27,10 +27,36 @@ import {
 import { resolvePanelMaxConcurrent, type HarnessConfig } from '../../config.js';
 import { PerspectiveResult, deterministicPerspectiveGrade, type PerspectiveGrader, type PerspectiveSpec } from '../panel.js';
 import { changedFiles, createDetachedWorktree, removeWorktree } from './worktree.js';
-import { launchSession, sendPrompt, capturePane, killSession, monitorLiveness, type LivenessOutcome } from './tmux.js';
-import { providerReadyPattern } from '../../agents/interactive-backend.js';
+import type { LivenessOutcome } from './tmux.js';
 import { resolveAgentRoute, type AgentRoute } from '../../agents/routing.js';
 import { mapPool } from './pool.js';
+import { runRestrictedReviewSession, staticUntrustedReviewMaterial } from './restricted-review.js';
+import { runReviewSession } from './review-session-runner.js';
+import {
+  MAX_REVIEW_CRITERION_ID_CHARS,
+  MAX_REVIEW_FINDINGS,
+  MAX_REVIEW_FINDING_TEXT_CHARS,
+  MAX_REVIEW_REQUIRED_FIX_CHARS,
+  MAX_REVIEW_REQUIRED_FIXES,
+} from './review-output-limits.js';
+export { REVIEW_LIVENESS } from './review-liveness.js';
+export {
+  appendRestrictedReviewOutput,
+  MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
+  STATIC_REVIEW_DIFF_CONTEXT_LINES,
+  prepareRestrictedReviewExecution,
+  restrictedPerspectivePrompt,
+  restrictedReviewLaunch,
+  staticUntrustedReviewMaterial,
+} from './restricted-review.js';
+export {
+  MAX_RESTRICTED_REVIEW_OUTPUT_BYTES,
+  MAX_REVIEW_CRITERION_ID_CHARS,
+  MAX_REVIEW_FINDINGS,
+  MAX_REVIEW_FINDING_TEXT_CHARS,
+  MAX_REVIEW_REQUIRED_FIX_CHARS,
+  MAX_REVIEW_REQUIRED_FIXES,
+} from './review-output-limits.js';
 
 /** The review focus each perspective session is briefed on (single source; no per-file personas). */
 export const PERSPECTIVE_LENS: Record<string, string> = {
@@ -71,18 +97,20 @@ export const PERSPECTIVE_RUBRIC: Record<string, string[]> = {
  * fills it) — normalised into the strict Finding schema by parsePerspectiveFindings.
  */
 const RawFinding = z.object({
-  criterionId: z.string().min(1),
+  criterionId: z.string().min(1).max(MAX_REVIEW_CRITERION_ID_CHARS),
   severity: Severity,
-  expected: z.string().default(''),
-  observed: z.string().default(''),
-  requiredFix: z.array(z.string()).default([]),
+  expected: z.string().max(MAX_REVIEW_FINDING_TEXT_CHARS).default(''),
+  observed: z.string().max(MAX_REVIEW_FINDING_TEXT_CHARS).default(''),
+  requiredFix: z.array(z.string().max(MAX_REVIEW_REQUIRED_FIX_CHARS))
+    .max(MAX_REVIEW_REQUIRED_FIXES)
+    .default([]),
   // Re-review attestation (ISSUE-0009): strictly 'persisted' | 'new' or absent. An invalid
   // value fails the whole parse (→ escalate) — never coerced, never defaulted.
-  lineage: FindingLineage.optional(),
+  lineage: FindingLineage.nullable().optional(),
 });
 export const PerspectiveFindingsInput = z.object({
   verdict: Verdict,
-  findings: z.array(RawFinding).default([]),
+  findings: z.array(RawFinding).max(MAX_REVIEW_FINDINGS).default([]),
   /** Optional 0..1 quality score for this lens; defaults from the verdict when absent. */
   score: z.number().min(0).max(1).optional(),
 });
@@ -147,6 +175,11 @@ export function sessionBackedGrader(evalRoot: string): PerspectiveGrader {
 /** What a re-review prompt shows of a prior finding — enough to recognise the problem. */
 export type PriorFinding = Pick<Finding, 'criterionId' | 'observed'>;
 
+export interface ImmutableReviewTarget {
+  headSha: string;
+  baseRef?: string;
+}
+
 /**
  * The read-only briefing a perspective session runs on (it writes only its sidecar findings.json).
  * On a re-review (ISSUE-0009), `priorFindings` — the SAME lens's previous-attempt findings —
@@ -159,6 +192,7 @@ export function perspectivePrompt(
   evalRelDir: string,
   priorFindings: readonly PriorFinding[] = [],
   uiDesign: UiDesignArtifact | null = null,
+  reviewTarget: ImmutableReviewTarget | null = null,
 ): string {
   const lens = PERSPECTIVE_LENS[perspective] ?? 'correctness and quality for this lens';
   const rubric = PERSPECTIVE_RUBRIC[perspective] ?? [];
@@ -171,6 +205,16 @@ export function perspectivePrompt(
     ``,
     `## Acceptance criteria`,
     ...contract.acceptanceCriteria.map((a) => `- [${a.id}] (${a.severity}) ${a.behavior}`),
+    ...(reviewTarget
+      ? [
+          ``,
+          `## Immutable review target`,
+          `- Head SHA: ${reviewTarget.headSha}`,
+          ...(reviewTarget.baseRef ? [`- Base ref: ${reviewTarget.baseRef}`] : []),
+          `Review only this committed head${reviewTarget.baseRef ? ` and the complete ${reviewTarget.baseRef}...${reviewTarget.headSha} diff` : ''}.`,
+          `If any carried contract or prior finding names another SHA, it is stale evidence and must be ignored.`,
+        ]
+      : []),
     ...(uiDesign
       ? [
           ``,
@@ -200,7 +244,9 @@ export function perspectivePrompt(
     ...(reReview
       ? [`   "observed": "...", "expected": "...", "requiredFix": ["..."],`, `   "lineage": "persisted" | "new"}]}`]
       : [`   "observed": "...", "expected": "...", "requiredFix": ["..."]}]}`]),
-    `Approve only if nothing in your lens needs changing. Do not edit code — only write findings.json.`,
+    `Use request_changes only for a concrete blocker or major defect. Minor suggestions may be`,
+    `reported with approve and must never be promoted solely because of function length, style,`,
+    `or an unproven hypothetical. Do not edit code — only write findings.json.`,
   ].join('\n');
 }
 
@@ -215,8 +261,16 @@ export function promptForLens(
   evalRelDir: string,
   priorFindings?: Record<string, readonly PriorFinding[]>,
   uiDesign: UiDesignArtifact | null = null,
+  reviewTarget: ImmutableReviewTarget | null = null,
 ): string {
-  return perspectivePrompt(perspective, contract, evalRelDir, priorFindings?.[perspective] ?? [], uiDesign);
+  return perspectivePrompt(
+    perspective,
+    contract,
+    evalRelDir,
+    priorFindings?.[perspective] ?? [],
+    uiDesign,
+    reviewTarget,
+  );
 }
 
 export interface PerspectiveSessionsInput {
@@ -229,6 +283,13 @@ export interface PerspectiveSessionsInput {
   repo: string;
   /** The committed build to review — the generator's branch (or its commit SHA). */
   buildRef: string;
+  /** Base ref used to materialize a static diff for an untrusted repository PR. */
+  baseRef?: string;
+  /**
+   * Repository-discovered PRs are attacker-controlled. Their reviewers receive a
+   * static diff in a no-tool process instead of filesystem/tool access.
+   */
+  untrusted?: boolean;
   /** Re-review (attempt > 1): each lens's findings from the previous attempt, keyed by lens.
    *  Absent/empty per lens = first review, that lens's prompt is unchanged (ISSUE-0009). */
   priorFindings?: Record<string, readonly PriorFinding[]>;
@@ -282,6 +343,9 @@ export interface ReviewJob {
   reviewWt: string;
   prompt: string;
   sentinel: string; // findings.json in the review evidence sidecar, outside reviewWt
+  restricted?: boolean;
+  /** Frozen repository diff passed only through the provider's low-trust user-input channel. */
+  untrustedMaterial?: string;
 }
 /** A review's recorded liveness verdict, preserved as-is (never collapsed) so late collection
  *  can tell the operator which failure mode — stuck or timeout — the review actually had. */
@@ -376,7 +440,9 @@ export function collectFindings(
   const environmentChanges: Record<string, string[]> = {};
   jobs.forEach((job, i) => {
     if (!fs.existsSync(job.sentinel)) return; // nothing to collect, even late
-    const edited = partitionReviewChanges(changed(job.reviewWt));
+    const edited = job.restricted
+      ? { environmentArtifacts: [], sourceChanges: [] }
+      : partitionReviewChanges(changed(job.reviewWt));
     if (edited.sourceChanges.length > 0) {
       log(`  ⚠ ${job.key}: edited its checkout (${edited.sourceChanges.join(', ')}) — review discarded`);
       touchedCode.push(job.key);
@@ -420,26 +486,43 @@ export async function runPerspectiveSessions(
   const lenses = input.perspectives.filter((p) => !p.deterministic); // functionality is graded by code
   const maxConcurrent = resolvePanelMaxConcurrent(config);
   log(`  panel: ${lenses.length} live lenses, maxConcurrent=${maxConcurrent}`);
+  const restrictedMaterial = input.untrusted
+    ? staticUntrustedReviewMaterial(input.repo, input.baseRef ?? 'main', input.buildRef)
+    : null;
 
   // phase 1 (sequential): one isolated detached checkout of the build per review + its prompt
   const jobs: ReviewJob[] = lenses.map((p) => {
     const job = reviewJobPaths(reviewRoot, evidenceRoot, input.issueKey, p.key);
-    createDetachedWorktree(input.repo, input.buildRef, job.reviewWt);
+    if (!input.untrusted) createDetachedWorktree(input.repo, input.buildRef, job.reviewWt);
     const evidenceDir = path.dirname(job.sentinel);
     fs.rmSync(evidenceDir, { recursive: true, force: true }); // never accept stale evidence on resume
     fs.mkdirSync(evidenceDir, { recursive: true });
-    fs.writeFileSync(
-      job.prompt,
-      promptForLens(p.key, input.contract, evidenceDir, input.priorFindings, input.uiDesign),
-      'utf8',
+    if (input.untrusted) {
+      fs.mkdirSync(job.reviewWt, { recursive: true });
+      job.restricted = true;
+      job.untrustedMaterial = restrictedMaterial ?? undefined;
+    }
+    const prompt = promptForLens(
+      p.key,
+      input.contract,
+      evidenceDir,
+      input.priorFindings,
+      input.uiDesign,
+      {
+        headSha: input.buildRef,
+        ...(input.baseRef ? { baseRef: input.baseRef } : {}),
+      },
     );
+    fs.writeFileSync(job.prompt, prompt, 'utf8');
     return job;
   });
 
   // phase 2 (concurrent): the read-only review sessions — the only slow, non-deterministic part
   const routes = Object.fromEntries(jobs.map((job) => [job.key, resolveAgentRoute(config, 'reviewer', job.key)]));
   const statuses = await mapPool(jobs, maxConcurrent, (job) =>
-    runReviewSession(input.issueKey, job, log, routes[job.key]!));
+    job.restricted
+      ? runRestrictedReviewSession(input.issueKey, job, log, routes[job.key]!, parsePerspectiveFindings)
+      : runReviewSession(input.issueKey, job, log, routes[job.key]!));
 
   // phase 3 (sequential): collect findings — by sentinel existence at collection time, so a
   // stuck/timeout review whose findings landed after the verdict still contributes (AC-LIVE-003)
@@ -447,66 +530,11 @@ export async function runPerspectiveSessions(
   // for a human (ARCH-execution-014) even when its findings were collected late.
   const { completed, touchedCode, environmentChanges } = collectFindings(jobs, statuses, evalRoot, { log });
   jobs.forEach((job, i) => {
-    if (statuses[i] === 'completed') removeWorktree(input.repo, job.reviewWt);
+    if (statuses[i] !== 'completed') return;
+    if (job.restricted) fs.rmSync(job.reviewWt, { recursive: true, force: true });
+    else removeWorktree(input.repo, job.reviewWt);
   });
 
   const invocations = reviewerSessionInvocations(jobs, statuses, routes);
   return { evalRoot, completed, touchedCode, environmentChanges, invocations };
-}
-
-/**
- * Review-session liveness wiring (ISSUE-0007). Exported so the permanent guard
- * (test/acceptance-harness/active-liveness.acceptance.test.ts) can pin it: the released
- * panel's surviving major finding was that these were untested inline literals — a mutation
- * re-tightening the cap to 10 minutes (the exact ⑤ failure) survived every test.
- */
-export const REVIEW_LIVENESS = { idleMs: 90_000, activeCapMs: 1000 * 60 * 60 * 2, pollMs: 3000 } as const;
-
-/** Run one read-only review session in its prepared worktree; returns its status (no git bookkeeping). */
-async function runReviewSession(
-  issueKey: string,
-  job: ReviewJob,
-  log: (m: string) => void,
-  route: AgentRoute,
-): Promise<ReviewStatus> {
-  const { provider } = route;
-  const session = `ao-eval-${issueKey}-${job.key}`;
-  log(`  ▸ ${session}: read-only review`);
-  // acceptEdits + Bash lets the review run tests and write ONLY its intended evidence without
-  // approval stalls. The checkout is a disposable detached snapshot; prompt/findings live in an
-  // explicitly added sidecar directory, and phase-3 rejects source/config changes fail-closed.
-  launchSession({
-    provider,
-    purpose: 'reviewer',
-    session,
-    cwd: job.reviewWt,
-    additionalDirs: [path.dirname(job.sentinel)],
-    model: route.model ?? undefined,
-  });
-  await waitForReady(session, provider);
-  const submitted = await sendPrompt(session, `Read the reviewer prompt at ${JSON.stringify(job.prompt)} and do exactly what it says.`);
-  if (!submitted) log(`  ⚠ ${session}: prompt may not have submitted — liveness monitor will surface it if stuck`);
-  // No per-review soft cap: a review still visibly working (⑤ ran 1h26m past the old 10-min
-  // cap and its findings were lost) is kept alive up to the finite REVIEW_LIVENESS ceiling;
-  // going idle on the way still surfaces as stuck via idleMs.
-  const outcome = await monitorLiveness(session, job.sentinel, REVIEW_LIVENESS);
-
-  if (outcome !== 'completed') {
-    log(`  ⚠ ${session}: ${outcome} — session + worktree kept alive; inspect: tmux attach -t ${session}`);
-    return outcome;
-  }
-  killSession(session);
-  // The read-only guard (AC-PANEL-008) runs in collectFindings, at collection time, so a
-  // late-collected stuck/timeout review passes the SAME dirty-checkout gate as a completed one.
-  return 'completed';
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-async function waitForReady(session: string, provider: AgentProvider, timeoutMs = 20_000): Promise<void> {
-  const ready = providerReadyPattern(provider);
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (ready.test(capturePane(session))) return;
-    await sleep(500);
-  }
 }

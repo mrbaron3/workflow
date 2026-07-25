@@ -1,0 +1,21 @@
+dependsOn:
+  - ARCH-execution-020
+  - DOM-execution-013
+  - DATA-execution-010
+
+verifications:
+  AC-PRREV-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "同じprId/headShaの再観測が1 revision rowを再利用する"
+  AC-PRREV-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "新head観測で旧approved revisionがstaleになる"
+  AC-PRREV-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "別headShaのPerspective approveはcurrent gateでmissing扱いになる"

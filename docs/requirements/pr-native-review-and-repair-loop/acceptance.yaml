@@ -1,0 +1,42 @@
+dependsOn:
+  - ARCH-execution-020
+  - ARCH-execution-021
+  - DOM-execution-013
+  - DOM-execution-014
+
+verifications:
+  AC-PRLOOP-001:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "初回headでPR create後にreview revisionを返し、repairは同PRへpushだけ行う"
+  AC-PRLOOP-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "approveとmajor findingの同居がrequest_changesになる"
+  AC-PRLOOP-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "resume attemptが既存attempt+1と外部Repair Briefから開始する"
+  AC-PRLOOP-004:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "未解決P1 threadがgateを拒否し、本文をsnapshotへ残す"
+  AC-PRLOOP-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "repository pollが既存Open PRを1回だけStoreへ取り込み、head更新ごとにfresh revisionをreview対象にする"
+  AC-PRLOOP-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "Draft current headはreviewできるがRevision Gateがpendingを返してmergeしない"
+  AC-PRLOOP-007:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "repository-discoveredまたは外部更新されたPR headは通常の権限付きGenerator queueへ入らず、AgentOps生成SHAと一致するheadだけがrepair対象になる"

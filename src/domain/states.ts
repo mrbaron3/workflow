@@ -18,9 +18,9 @@ export const ISSUE_STATUSES = [
   'generation-in-progress',
   'ready-for-evaluation',
   'evaluation-in-progress',
-  // The evaluator panel approved the build (LANG-evaluation-016). Distinct from `approved`
-  // (the legacy single-grader path): a panel-approved build stops at the human review gate
-  // (DOM-execution-007) rather than auto-releasing.
+  // The evaluator panel approved the build (LANG-evaluation-016). The legacy store
+  // gate advances this to human review; the GitHub gate keeps it here while polling
+  // automatically recoverable checks, draft state, and mergeability.
   'build-approved',
   'changes-requested',
   'approved',
@@ -53,7 +53,7 @@ export const TRANSITIONS: Record<IssueStatus, IssueStatus[]> = {
   'ready-for-evaluation': ['evaluation-in-progress'],
   // Panel path adds build-approved; the legacy `approved` path is kept intact.
   'evaluation-in-progress': ['changes-requested', 'approved', 'build-approved'],
-  // Panel approval never auto-releases (ADR-0006 G1): it stops at the human review gate.
+  // Store-gate approval stops at human review; GitHub-gate approval waits here.
   'build-approved': ['needs-human-review'],
   // Repair loop: a changes-requested issue goes back to generation.
   'changes-requested': ['generation-in-progress'],

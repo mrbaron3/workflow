@@ -12,6 +12,24 @@
 import { z } from 'zod';
 import { ISSUE_STATUSES } from './states.js';
 import { VERIFICATION_METHODS } from '../authoring/lint.js';
+import {
+  AgentProvider,
+  GeneratorAgent,
+  InvocationOutcome,
+  InvocationRole,
+  Verdict,
+} from './agent-runtime.js';
+import {
+  NullableRevisionCoordinates,
+  PersistedPRDecoder,
+  PrHeadSha,
+  PrRevision,
+  RevisionGateSnapshot,
+} from './pr-schema.js';
+export * from './agent-runtime.js';
+export * from './pr-schema.js';
+export * from './revision-gate.js';
+export * from './pr-lifecycle.js';
 
 // --- small vocabularies ----------------------------------------------------
 
@@ -37,44 +55,6 @@ export const Area = z.enum(['frontend', 'backend', 'fullstack', 'infra', 'docs',
 export type Area = z.infer<typeof Area>;
 
 export const IssueStatus = z.enum(ISSUE_STATUSES);
-
-/** Tool/provider family that executes an agent invocation; model is a separate dimension. */
-export const AgentProvider = z.enum(['claude', 'codex', 'gemini', 'mock']);
-export type AgentProvider = z.infer<typeof AgentProvider>;
-
-/** Which coding agent backend produced an artifact (legacy generator-facing name). */
-export const GeneratorAgent = AgentProvider;
-export type GeneratorAgent = z.infer<typeof GeneratorAgent>;
-
-export const AgentRole = z.enum([
-  'roadmap-planner',
-  'issue-planner',
-  'coordinator',
-  'generator',
-  'evaluator',
-  'repair-router',
-  'eval-curator',
-  'release-manager',
-  'harness-analyst',
-  // system-layer view modelers — dispatched per-view by the to-system-design skill.
-  'language-modeler',
-  'domain-modeler',
-  'architecture-modeler',
-  'data-modeler',
-  'context-mapper',
-  'ui-designer',
-]);
-export type AgentRole = z.infer<typeof AgentRole>;
-
-/** Roles that can own a runtime invocation. `reviewer` preserves the panel's current role name. */
-export const InvocationRole = z.union([AgentRole, z.literal('reviewer')]);
-export type InvocationRole = z.infer<typeof InvocationRole>;
-
-export const InvocationOutcome = z.enum(['completed', 'stuck', 'timeout', 'failed']);
-export type InvocationOutcome = z.infer<typeof InvocationOutcome>;
-
-export const Verdict = z.enum(['approve', 'request_changes', 'needs_human']);
-export type Verdict = z.infer<typeof Verdict>;
 
 export const GateResult = z.enum(['pass', 'fail', 'skip']);
 export type GateResult = z.infer<typeof GateResult>;
@@ -237,19 +217,7 @@ export const Feature = z.object({
 });
 export type Feature = z.infer<typeof Feature>;
 
-// --- PR & evaluation -------------------------------------------------------
-
-/**
- * The human review gate's external projection, when it has one (ADR-0006 G1). The store is
- * SoT (ADR-0001 / ARCH-execution-009); a GitHub PR is only the UI of the human decision point,
- * so this is a back-reference used to poll that PR's state — never a second source of truth.
- */
-export const PrExternalRef = z.object({
-  provider: z.literal('github'),
-  number: z.number().int().positive(), // the PR number in the target repo
-  url: z.string(),
-});
-export type PrExternalRef = z.infer<typeof PrExternalRef>;
+// --- Intake & evaluation ---------------------------------------------------
 
 /** Immutable first-seen projection of one external GitHub Issue (FEAT-016). */
 export const GithubIssueSnapshot = z.object({
@@ -284,6 +252,9 @@ export const IntakeRecord = z.object({
   status: IntakeStatus.default('claim-pending'),
   claimedAt: z.string().nullable().default(null),
   storeIssueIds: z.array(z.string()).default([]),
+  /** Split-source aggregation close result (single-child sources use the PR's Closes relation). */
+  sourceClosedAt: z.string().nullable().default(null),
+  sourceCloseError: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -340,22 +311,6 @@ export const PlanningEnrichmentRecord = z.object({
 });
 export type PlanningEnrichmentRecord = z.infer<typeof PlanningEnrichmentRecord>;
 
-export const PR = z.object({
-  id: z.string(), // PR-0001
-  issueId: z.string(),
-  branch: z.string(),
-  baseBranch: z.string().default('main'),
-  generator: GeneratorAgent,
-  attempts: z.number().int().nonnegative().default(0), // generation attempts incl. repairs
-  status: z.enum(['open', 'changes-requested', 'approved', 'merged']).default('open'),
-  // ADR-0006 G1: set when an approved build is projected to a GitHub PR gate. null = no
-  // projection (store-direct gate / local sandbox). Additive — absent on older records.
-  externalRef: PrExternalRef.nullable().default(null),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
-export type PR = z.infer<typeof PR>;
-
 /**
  * ISSUE-0009: on a re-review (attempt > 1) the reviewer ATTESTS each finding's lineage —
  * 'persisted' = the same problem survived the repair, 'new' = first seen this review.
@@ -398,7 +353,7 @@ export type Cost = z.infer<typeof Cost>;
  * "Eval Result DB" the spec keeps returning to: re-runnable, comparable, the basis
  * for pass@k / pass^k and every dashboard number.
  */
-export const EvalRun = z.object({
+const EvalRunRecord = z.object({
   id: z.string(), // EVAL-...
   issueId: z.string(),
   prId: z.string(),
@@ -425,6 +380,9 @@ export const EvalRun = z.object({
   invocationKey: z.string().nullable().default(null),
   createdAt: z.string(),
 });
+// ADR-0009: null only for legacy pre-PR-revision scorecards. The union keeps
+// revisionId and headSha correlated in both the runtime schema and inferred type.
+export const EvalRun = EvalRunRecord.and(NullableRevisionCoordinates);
 export type EvalRun = z.infer<typeof EvalRun>;
 
 /** A row in the Eval Task Registry (lightweight v0). */
@@ -517,12 +475,11 @@ export type PromptRecord = z.infer<typeof PromptRecord>;
  * generator-only PromptRecord, this records generator, planning and each reviewer perspective
  * through one identity and keeps provider separate from model.
  */
-export const AgentInvocation = z.object({
+const AgentInvocationRecord = z.object({
   id: z.string(), // INVOKE-0001
   invocationKey: z.string().min(1),
   subjectId: z.string().min(1),
   issueId: z.string().nullable().default(null),
-  prId: z.string().nullable().default(null),
   sampleIndex: z.number().int().nonnegative().nullable().default(null),
   attempt: z.number().int().positive(),
   role: InvocationRole,
@@ -533,6 +490,20 @@ export const AgentInvocation = z.object({
   outcome: InvocationOutcome,
   createdAt: z.string(),
 });
+const UnboundAgentInvocation = AgentInvocationRecord.extend({
+  prId: z.string().nullable().default(null),
+  revisionId: z.null().default(null),
+  headSha: z.null().default(null),
+});
+const BoundAgentInvocation = AgentInvocationRecord.extend({
+  prId: z.string().min(1),
+  revisionId: z.string().min(1),
+  headSha: PrHeadSha,
+});
+export const AgentInvocation = z.union([
+  UnboundAgentInvocation,
+  BoundAgentInvocation,
+]);
 export type AgentInvocation = z.infer<typeof AgentInvocation>;
 
 /**
@@ -644,7 +615,9 @@ export const DB = z.object({
   epics: z.array(Epic).default([]),
   features: z.array(Feature).default([]),
   issues: z.array(Issue).default([]),
-  prs: z.array(PR).default([]),
+  prs: z.array(PersistedPRDecoder).default([]),
+  prRevisions: z.array(PrRevision).default([]),
+  revisionGateSnapshots: z.array(RevisionGateSnapshot).default([]),
   evalRuns: z.array(EvalRun).default([]),
   evalTasks: z.array(EvalTask).default([]),
   regressionRuns: z.array(RegressionRun).default([]), // ③ regression executions (additive)

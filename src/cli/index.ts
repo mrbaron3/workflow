@@ -16,6 +16,7 @@
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Verdict, emptyDB } from '../domain/schema.js';
 import { Store } from '../store/store.js';
 import { signRequirementDir } from '../authoring/sign-dir.js';
@@ -58,7 +59,23 @@ import {
   prepareStoreMutation,
 } from '../workspace/target-binding.js';
 import { pollAndClaimGithubIssues, realGithubIssueRunner } from '../intake/github-issues.js';
-import { runGithubDevelopmentTurn, watchGithubDevelopment } from '../intake/development-turn.js';
+import {
+  applyGithubTurnRegistrationOverrides,
+  runGithubDevelopmentTurn,
+  watchGithubDevelopment,
+} from '../intake/development-turn.js';
+import { createWebhookConsumerAdapters } from '../webhook/consumers.js';
+import {
+  GithubWebhookForwarderSupervisor,
+  GithubWebhookSigningRelay,
+} from '../webhook/forwarder.js';
+import { createWebhookControlServer } from '../webhook/server.js';
+import { WebhookControlStore } from '../webhook/store.js';
+import { WebhookReconciliationScheduler } from '../webhook/reconciliation.js';
+import {
+  parseWebhookDaemonOptions,
+  waitForWebhookDaemonShutdown,
+} from '../webhook/daemon.js';
 
 const useColor = !process.env.NO_COLOR;
 const c = {
@@ -70,6 +87,7 @@ const c = {
   blue: (s: string) => (useColor ? `\x1b[34m${s}\x1b[0m` : s),
 };
 const log = (s = '') => console.log(s);
+const INSTALL_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 interface Args {
   cmd: string;
@@ -360,9 +378,20 @@ function cmdPollIntake(): void {
   }
 }
 
-async function cmdGithubTurn(watch: boolean): Promise<void> {
+async function cmdGithubTurn(watch: boolean, flags: Args['flags']): Promise<void> {
   const store = requireInit();
-  const config = loadConfig(ROOT);
+  const readyLabel = flags['ready-label'];
+  const baseBranch = flags['base-branch'];
+  if (readyLabel !== undefined && typeof readyLabel !== 'string') {
+    throw new Error('--ready-label requires a non-empty value');
+  }
+  if (baseBranch !== undefined && typeof baseBranch !== 'string') {
+    throw new Error('--base-branch requires a non-empty value');
+  }
+  const config = applyGithubTurnRegistrationOverrides(loadConfig(ROOT), {
+    ...(typeof readyLabel === 'string' ? { readyLabel } : {}),
+    ...(typeof baseBranch === 'string' ? { baseBranch } : {}),
+  });
   if (!config.intake) throw new Error('GitHub Issue intake is disabled — configure config.intake first.');
   if (!config.target) throw new Error('GitHub development requires config.target for planning/build worktrees.');
   const issueRunner = realGithubIssueRunner(resolveTargetRoot(config, ROOT));
@@ -375,6 +404,82 @@ async function cmdGithubTurn(watch: boolean): Promise<void> {
     c.green('✓ GitHub development turn') +
       ` ${result.intake.length} intake result(s), ${result.enrichmentIds.length} enrichment(s), ${result.driveResults.length} drive result(s)`,
   );
+}
+
+async function cmdWebhookDaemon(flags: Args['flags']): Promise<void> {
+  const options = parseWebhookDaemonOptions(flags, process.env);
+  delete process.env.AGENTOPS_WEBHOOK_CONTROL_TOKEN;
+  delete process.env.AGENTOPS_GITHUB_WEBHOOK_SECRET;
+
+  const webhookStore = new WebhookControlStore(ROOT);
+  webhookStore.save();
+  const orcaSyncScript = options.orcaSyncScript
+    ? path.resolve(ROOT, options.orcaSyncScript)
+    : undefined;
+  const consumerAbort = new AbortController();
+  const consumers = createWebhookConsumerAdapters(webhookStore, {
+    harnessRoot: ROOT,
+    launcher: path.join(INSTALL_ROOT, 'bin', 'agentops.mjs'),
+    signal: consumerAbort.signal,
+    ...(orcaSyncScript ? { orcaSyncScript } : {}),
+    log,
+  });
+  let forwarders: GithubWebhookForwarderSupervisor | null = null;
+  const control = createWebhookControlServer({
+    store: webhookStore,
+    host: options.host,
+    port: options.port,
+    consumers,
+    controlToken: options.controlToken,
+    webhookSecret: options.webhookSecret,
+    runtimeState: () => ({ forwarders: forwarders?.status() ?? [] }),
+    log,
+  });
+  const address = await control.listen();
+  const signingRelay = new GithubWebhookSigningRelay(
+    `${address.url}/hook`,
+    options.webhookSecret,
+  );
+  forwarders = new GithubWebhookForwarderSupervisor(webhookStore, {
+    forwardEvent: (event) => signingRelay.forwardTrustedEvent(event).then(() => undefined),
+    log,
+  });
+  if (options.forward) forwarders.start();
+  const reconciliation = new WebhookReconciliationScheduler(
+    webhookStore,
+    consumers.agentops,
+    { intervalMs: options.reconciliationIntervalMs, log },
+  );
+  if (options.reconcile) reconciliation.start();
+
+  log(c.green('✓ webhook control listening') + ` ${c.b(address.url)}`);
+  log(`  hook: ${c.dim(`${address.url}/hook`)}`);
+  log(`  registry: ${c.dim(path.relative(ROOT, webhookStore.file))}`);
+  log(c.dim(
+    !options.forward
+      ? '  GitHub forwarders disabled (--no-forward)'
+      : '  enabled repositories are reconciled into one gh webhook forward process each',
+  ));
+  log(c.dim(
+    !options.reconcile
+      ? '  polling reconciliation disabled (--no-reconcile)'
+      : `  polling reconciliation every ${options.reconciliationIntervalMs} ms`,
+  ));
+  const launchUrl = control.createLaunchUrl(address.url);
+  if (options.open) {
+    openFile(launchUrl);
+    log(c.dim('  opening authenticated GUI in browser…'));
+  } else {
+    log(`  browser login (single-use, 60s): ${c.dim(launchUrl)}`);
+  }
+
+  await waitForWebhookDaemonShutdown({
+    reconciliation,
+    forwarders,
+    consumers: consumerAbort,
+    signingRelay,
+    control,
+  });
 }
 
 function cmdPlanTree(): void {
@@ -671,7 +776,13 @@ ${c.b('Commands')}
   assign <ISSUE-ID>    delegate a contract-drafted spec issue to the AI backend (opt-in)
   poll-intake          poll configured GitHub ready Issues and claim them idempotently
   github-turn          one ready Issue → planning → live drive → configured PR gate turn
+       [--ready-label L] [--base-branch B]
   watch-github         continuously run github-turn (durable restart/idempotent inventory)
+       [--ready-label L] [--base-branch B]
+  webhook-daemon       run the multi-repository webhook inbox + local control GUI
+       [--host H] [--port N] [--open] [--no-forward]
+       [--no-reconcile] [--reconcile-interval-ms N]
+       [--orca-sync-script F]
   plan-tree            print the planning tree (roadmap → epic → feature → spec)
   plan [--seed F]      LEGACY: ingest a seed roadmap into epics + Issue Contracts (demo)
   run  [--issue ID]    drive issues: Generate → Evaluate → Repair → Release
@@ -728,9 +839,11 @@ async function main(): Promise<void> {
     case 'poll-intake':
       return cmdPollIntake();
     case 'github-turn':
-      return cmdGithubTurn(false);
+      return cmdGithubTurn(false, flags);
     case 'watch-github':
-      return cmdGithubTurn(true);
+      return cmdGithubTurn(true, flags);
+    case 'webhook-daemon':
+      return cmdWebhookDaemon(flags);
     case 'plan-tree':
       return cmdPlanTree();
     case 'run':

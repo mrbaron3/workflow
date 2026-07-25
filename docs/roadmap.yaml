@@ -144,3 +144,35 @@ epics:
       - id: FEAT-021
         title: "Dedicated UI design authoring agent"
         outcome: "frontend/fullstack candidateごとに独立route/contextのUI designerがdesign principles・tokens・components・states/interactions・accessibilityをACへtraceしたartifactとして著述する。provenance検証後だけIssueへ投影し、generatorとreviewerが同じ契約を参照する。"
+
+  # D8「PRを実際の自動レビュー・修正・配送ループにする」
+  - id: EPIC-11
+    title: "PR-native autonomous review and delivery"
+    theme: "platform"
+    outcome: "PRのcurrent head revisionを複数観点で評価し、blocking findingを同branchへ修正pushして再レビューし、全ゲート通過時だけ自動mergeして次taskへ進む。"
+    features:
+      - id: FEAT-022
+        title: "PR revision identity and stale-approval invalidation"
+        outcome: "PR head SHAをrevision identityとしてEvalRun・Invocation・review/checkへ束縛し、head更新で旧承認をmerge資格から除外する。"
+      - id: FEAT-023
+        title: "PR-native review and repair loop"
+        outcome: "PR作成後のcurrent headを独立Perspective sessionがレビューし、P0/P1/blocker/request_changesをRepair Briefへ集約して同branchを修正、fresh headを全観点で再評価する。"
+      - id: FEAT-024
+        title: "Atomic automatic merge and queue continuation"
+        outcome: "current headの全観点・checks・threads・mergeabilityをmerge直前に再検証し、expected SHA付きで自動merge、released・Source Issue集約close・依存解除・次taskを同一watch loopで進める。"
+
+  # D9「Webhook即時trigger＋poll reconciliation＋複数repo GUI」
+  - id: EPIC-12
+    title: "Event-driven multi-repository control plane"
+    theme: "platform"
+    outcome: "Issue/PR/review/checkイベントがdurable inboxから複数repoへ安全にrouteされ、GUIでrepo・consumer・deliveryを管理でき、pollが取りこぼしを回収する。"
+    features:
+      - id: FEAT-025
+        title: "Durable GitHub webhook inbox and normalized routing"
+        outcome: "deliveryをACK前に耐久保存・delivery IDでdedupし、registered repoの許可eventだけをtransport非依存eventとしてconsumerへrouteする。"
+      - id: FEAT-026
+        title: "Multi-repository local forwarder and runtime adapters"
+        outcome: "複数repoのgh webhook forwarderをregistrationから監督し、Octolink固有Orca同期とAgentOpsを列挙consumer adapterとしてOS非依存coreへ接続する。"
+      - id: FEAT-027
+        title: "Local webhook control GUI"
+        outcome: "loopback GUIでrepository追加・events/consumer設定・forwarder health・delivery履歴/失敗理由/再実行を管理でき、任意command実行面を作らない。"

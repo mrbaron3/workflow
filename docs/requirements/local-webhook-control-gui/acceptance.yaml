@@ -1,0 +1,41 @@
+# Local webhook control GUI — 受け入れ検証
+
+dependsOn:
+  - ARCH-webhook-006
+  - DOM-webhook-002
+  - DOM-webhook-005
+  - DATA-webhook-001
+  - DATA-webhook-003
+  - DATA-webhook-004
+
+verifications:
+  AC-WHUI-001:
+    severity: major
+    method: unit_test
+    expected:
+      - "GET /とGET /api/stateがregistrationとdelivery summaryを返す"
+  AC-WHUI-002:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "valid JSON POSTでregistrationを保存しresponseへ返す"
+  AC-WHUI-003:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "duplicate/invalid repositoryとunknown consumerを4xxで拒否する"
+  AC-WHUI-004:
+    severity: major
+    method: unit_test
+    expected:
+      - "failed deliveryがAPIに現れretry endpointでpendingへ戻る"
+  AC-WHUI-005:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "server default hostが127.0.0.1でmutationがorigin/content-typeを検証する"
+  AC-WHUI-006:
+    severity: blocker
+    method: unit_test
+    expected:
+      - "registration schema/API/HTMLに任意command fieldが存在しない"

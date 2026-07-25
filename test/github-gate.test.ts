@@ -9,10 +9,30 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store, nowISO } from '../src/store/store.js';
-import { Issue, PR, EvalRun, IntakeRecord } from '../src/domain/schema.js';
+import {
+  Issue,
+  PR,
+  EvalRun,
+  IntakeRecord,
+  PrRevision,
+  approvePR,
+  bindApprovalRevisionToPR,
+  evaluateRevisionGateEvidence,
+  transitionPrRevision,
+} from '../src/domain/schema.js';
 import type { IssueStatus } from '../src/domain/states.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
-import { prStateToDecision, openGate, pollGate, renderGatePrBody, type GhGateRunner, type GhPrState } from '../src/pipeline/execution/gate.js';
+import {
+  prStateToDecision,
+  openGate,
+  pollGate,
+  prHeadRefspec,
+  projectReviewRevision,
+  renderGatePrBody,
+  renderReviewPrBody,
+  type GhGateRunner,
+  type GhPrState,
+} from '../src/pipeline/execution/gate.js';
 
 const STORE: HarnessConfig = { ...DEFAULT_CONFIG }; // gate absent = store-direct (default)
 const GITHUB: HarnessConfig = { ...DEFAULT_CONFIG, gate: { backend: 'github' } };
@@ -36,7 +56,8 @@ function seedGatedIssue(store: Store, id: string, prNumber: number | null): PR {
   store.addIssue(Issue.parse({ id, type: 'harness', title: `${id} title`, area: 'harness', status: 'contract-drafted', assignedAgent: 'mock', contract, createdAt: nowISO(), updatedAt: nowISO() }));
   for (const s of GATE_WALK) store.setStatus(id, s);
   const pr = store.addPR(PR.parse({
-    id: store.nextId('PR'), issueId: id, branch: `agent/${id.toLowerCase()}-s0`, baseBranch: 'main', generator: 'mock', attempts: 1, status: 'approved',
+    id: store.nextId('PR'), issueId: id, branch: `agent/${id.toLowerCase()}-s0`, baseBranch: 'main', generator: 'mock', attempts: 1, status: 'open',
+    currentRevisionId: `PRREV-${id}`, headSha: 'a'.repeat(40),
     externalRef: prNumber === null ? null : { provider: 'github', number: prNumber, url: `https://github.com/o/r/pull/${prNumber}` },
     createdAt: nowISO(), updatedAt: nowISO(),
   }));
@@ -50,6 +71,40 @@ function addRun(store: Store, issueId: string, prId: string, perspective: string
     findings: perspective === 'codeQuality' ? [{ criterionId: 'codeQuality:AC-1', severity: 'minor', expected: 'e', observed: 'nit' }] : [],
     scores: { functionality: 1, codeQuality: 1, testQuality: 1, ux: 1, accessibility: 1 }, overall: 1, cost: {}, createdAt: nowISO(),
   }));
+}
+
+function approveSeededPR(store: Store, pr: PR): void {
+  if (!pr.currentRevisionId || !pr.headSha) throw new Error('fixture PR must be revision-bound');
+  const revision = store.upsertPrRevision(PrRevision.parse({
+    id: pr.currentRevisionId,
+    prId: pr.id,
+    headSha: pr.headSha,
+    ordinal: 1,
+    status: 'approved',
+    createdAt: nowISO(),
+  }));
+  if (revision.status !== 'approved') throw new Error('fixture revision must be approved');
+  const evaluated = evaluateRevisionGateEvidence({
+    id: `PRGATE-${pr.id}`,
+    pr,
+    revision,
+    requiredPerspectives: [],
+    reviewRuns: [],
+    github: {
+      state: 'open',
+      headSha: revision.headSha,
+      isDraft: false,
+      mergeability: 'mergeable',
+      checks: [],
+      unresolvedBlockingThreadIds: [],
+    },
+    createdAt: nowISO(),
+  });
+  if (evaluated.decision !== 'approved') throw new Error('fixture gate must approve');
+  store.approvePR(approvePR(
+    pr,
+    bindApprovalRevisionToPR(pr, revision, evaluated),
+  ));
 }
 
 function fakeRunner(state: GhPrState, prNumber = 42): { runner: GhGateRunner; calls: { push: number; create: number; view: number } } {
@@ -67,6 +122,14 @@ describe('prStateToDecision: the pure heart of the gate', () => {
     expect(prStateToDecision('merged')).toBe('approve');
     expect(prStateToDecision('closed')).toBe('reject');
     expect(prStateToDecision('open')).toBeNull();
+  });
+});
+
+describe('trusted AgentOps PR repair projection', () => {
+  it('AC-PRLOOP-003 pushes a generated repair HEAD to its stable GitHub PR branch', () => {
+    expect(prHeadRefspec('feature/existing-pr')).toBe(
+      'HEAD:refs/heads/feature/existing-pr',
+    );
   });
 });
 
@@ -89,8 +152,8 @@ describe('openGate: project an approved build to the gate UI', () => {
     expect(calls.push).toBe(1);
     expect(calls.create).toBe(1);
     expect(ref?.number).toBe(7);
-    expect(pr.externalRef?.number).toBe(7);
-    expect(pr.externalRef?.provider).toBe('github');
+    expect(store.getPR(pr.id)?.externalRef?.number).toBe(7);
+    expect(store.getPR(pr.id)?.externalRef?.provider).toBe('github');
   });
 
   it('is idempotent: a PR that already has an externalRef is not re-created', () => {
@@ -103,6 +166,65 @@ describe('openGate: project an approved build to the gate UI', () => {
   });
 });
 
+describe('projectReviewRevision: PR exists before perspective review', () => {
+  it('AC-PRLOOP-001 creates the PR on the first head, then pushes repairs to the same PR', () => {
+    const store = tmpStore('review-revisions');
+    const pr = seedGatedIssue(store, 'ISSUE-1', null);
+    const pushes: string[] = [];
+    const bodies: string[] = [];
+    const runner: GhGateRunner = {
+      pushBranch: (_worktree, branch) => { pushes.push(branch); },
+      createPr: (_cwd, args) => {
+        bodies.push(args.body);
+        return {
+          provider: 'github',
+          number: 8,
+          url: 'https://github.com/o/r/pull/8',
+        };
+      },
+      viewPr: () => 'open',
+    };
+    const firstSha = 'a'.repeat(40);
+    const secondSha = 'b'.repeat(40);
+
+    const first = projectReviewRevision(
+      store,
+      GITHUB,
+      { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: firstSha },
+      runner,
+    );
+    const reviewingFirst = store.replacePrRevision(transitionPrRevision(first, {
+      status: 'reviewing',
+    }));
+    store.replacePrRevision(transitionPrRevision(reviewingFirst, { status: 'approved' }));
+    const second = projectReviewRevision(
+      store,
+      GITHUB,
+      { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: secondSha },
+      runner,
+    );
+
+    expect(pushes).toEqual([pr.branch, pr.branch]);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain('current-head');
+    expect(bodies[0]).not.toContain('自動評価パネルはこのビルドを**承認**');
+    expect(store.getPR(pr.id)?.externalRef?.number).toBe(8);
+    expect(store.getPR(pr.id)?.agentGeneratedHeadSha).toBe(secondSha);
+    expect(store.revisionForHead(pr.id, firstSha)?.status).toBe('stale');
+    expect(second).toMatchObject({ headSha: secondSha, ordinal: 2 });
+  });
+
+  it('uses Refs, not Closes, while a split source still has sibling work', () => {
+    const store = tmpStore('review-body-split');
+    seedGatedIssue(store, 'ISSUE-1', 1);
+    seedGatedIssue(store, 'ISSUE-2', 2);
+    seedIntake(store, ['ISSUE-1', 'ISSUE-2'], 9);
+
+    expect(renderReviewPrBody(store, 'ISSUE-1')).toContain('Refs o/r#9');
+    expect(renderReviewPrBody(store, 'ISSUE-1')).not.toContain('Closes o/r#9');
+  });
+});
+
 describe('pollGate: a merge/close becomes the human decision', () => {
   it('store backend is a no-op (nothing to poll)', () => {
     const store = tmpStore('poll-store');
@@ -110,15 +232,20 @@ describe('pollGate: a merge/close becomes the human decision', () => {
     expect(pollGate(store, STORE, fakeRunner('merged').runner, '/repo')).toEqual([]);
   });
 
-  it('merged → released + humanVerdict=approve on the winning runs (true-pass harvest)', () => {
+  it('merged → released + humanVerdict=approve without fabricating revision coordinates', () => {
     const store = tmpStore('poll-merged');
-    seedGatedIssue(store, 'ISSUE-1', 1);
+    const pr = seedGatedIssue(store, 'ISSUE-1', 1);
+    approveSeededPR(store, pr);
     const res = pollGate(store, GITHUB, fakeRunner('merged').runner, '/repo')[0]!;
     expect(res.decision).toBe('approve');
     expect(res.changed).toBe(true);
     expect(store.getIssue('ISSUE-1')!.status).toBe('released');
     expect(store.runsForIssue('ISSUE-1').every((r) => r.humanVerdict === 'approve')).toBe(true);
-    expect(store.prForIssue('ISSUE-1')!.status).toBe('merged');
+    // This compatibility runner only returns a lifecycle state, not the merged
+    // commit SHA. Keep the last correlated approved identity instead of
+    // manufacturing a merged PR variant with unproven coordinates.
+    expect(store.prForIssue('ISSUE-1')!.status).toBe('approved');
+    expect(store.prForIssue('ISSUE-1')!.mergedHeadSha).toBeNull();
   });
 
   it('closed → repair lane + humanVerdict=request_changes (a false-pass the panel let through)', () => {
