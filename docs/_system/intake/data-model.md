@@ -17,3 +17,10 @@
 - **DATA-intake-009 UI design projection/evidence** — `Issue.uiDesign`/`uiDesignInvocationKey`はnullable additive、
   `PlanningEnrichmentRecord.uiDesignCandidateKeys[]`/`uiDesignInvocationKeys{}`はdefault空。session実体は
   `.harness/ui-design-worktrees/<intake-candidate>`、sidecarは`.harness/ui-design-evidence/<intake-candidate>`。
+- **DATA-intake-010 external design projection** — 将来の`PlanningEnrichmentRecord.experienceDesign`は
+  provider id、schema version、requestId、revisionId、manifest locator、sourceDigest、bundleDigestだけを保持する。
+  bundle本体はprovider/artifact storeの正本を参照し、DBへ複製しない。
+- **DATA-intake-011 human design decision reference** — decision id、actor、decision、decidedAt、revisionId、
+  bundleDigestを監査参照として保持する。decision本文とpreviewはbundle側artifactへの参照とする。
+- **DATA-intake-012 capability trace projection** — capabilityIdから最終Issue id、criterion id、system element idへの
+  1..N edgeを保持する。dangling/zero coverage/異revision混在をschema適用前のall-or-nothing gateで拒否する。

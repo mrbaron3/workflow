@@ -65,7 +65,13 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
   consumerはcurrent snapshotを再取得する。pollは同じseamへreconciliation eventを供給する。
 - **planning → intake UI authoring → execution**（Customer-Supplier・ACL）: frontend/fullstack Candidateだけを専用
   ui-designer sessionへ渡し、AC-traceableなUI Design Artifactを検証する。不在・曖昧・不正はqueueへ投影せず、
-  accepted artifactはIssueのPublished Languageとしてgeneratorと各reviewerへ渡す。
+  accepted artifactはIssueのPublished Languageとしてgeneratorと各reviewerへ渡す。この経路は
+  ADR-0012移行中のlegacy providerであり、標準経路は次項へ移す。
+- **Designflow Provider → intake/planning**（Open Host Service・Published Language・ACL）:
+  intakeはversioned Design Requestだけを外部providerへ渡し、Design Bundle、preview、Capability Requirements、
+  digest-bound Human Design Decisionを受ける。providerの内部model/store/runtimeは共有しない。planningは
+  approve済みcapabilityを最終Issue Contract/API設計へreconcileし、intakeの決定論gateがschema/digest/trace/
+  decision/coverageを検証してからexecutionへ投影する（ADR-0012）。
 - **evaluation → planning**（改善フィードバック・Customer-Supplier）: Harness Analyst が `type:harness`/`type:eval` の改善 issue を計画の木へ戻し、Curator が失敗を回帰として育てる。北極星の「改善」軸の閉路。
 - **Shared Kernel**: 各状態コンテキストは `domain`（契約・状態機械）と `store`（Eval DB）を共有する。契約が Published Language として境界を跨ぐ唯一の語彙。
 

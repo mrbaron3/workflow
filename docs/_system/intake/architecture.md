@@ -35,3 +35,16 @@
 - **ARCH-intake-013 UI validation / queue projection** — `applyPlanningEnrichment`が`UiDesignOutput` schema、AC↔design
   element完全性、invocation role/subject/outcomeを決定論検証する。通過時だけartifactとinvocationKeyをIssueへ写し、
   generator/reviewer promptへ同じUI契約を供給する。backendへのunexpected artifactはfail-closed。
+- **ARCH-intake-014 Designflow Provider port** — versioned Design Requestを渡し、Design Bundle参照と
+  Human Design Decisionを受けるruntime非依存port。最初のadapterはlocal path/CLIとし、HTTP serviceやprovider SDKを
+  workflowの必須依存にしない。
+- **ARCH-intake-015 design-before-final-contract** — frontend/fullstack要求ではplanning draftを最終Issueへ投影せず、
+  Design Request→Design Bundle→Human Design Decision→Capability Reconciliationの後に最終Issue Contractを作る。
+- **ARCH-intake-016 planning reconciliation loop** — approve済みCapability Requirementsをplannerへ戻し、
+  frontend/backend Issue、AC、system/API elementへ分解する。providerはendpoint形を決めず、plannerはUX capabilityを
+  根拠なく削除しない。
+- **ARCH-intake-017 bundle validation / review projection** — schema、source/bundle/artifact digest、request/revision
+  identity、cross-reference、ambiguity、Human Design Decisionを決定論検証する。人間面にはraw JSONでなく同じdigestの
+  preview、目的、effort、attention、element rationale、design system/capability deltaを提示する。
+- **ARCH-intake-018 legacy migration** — 現行`runUiDesignSession`はlegacy provider adapterとして維持し、
+  candidate単位の明示設定で新providerへ切り替える。dual-writeせず、外部provider失敗時にlegacyへ暗黙fallbackしない。

@@ -37,3 +37,15 @@
 - **DOM-intake-016 UI design integrity** — UI Candidateの全ACはちょうど1つのcriterionTraceを持ち、参照先は同じ
   artifact内の一意なtoken/component idでなければならない。全要素のsourceCriterionIdsは実在ACを指す。
   対応Invocationはrole=ui-designer、candidate固有subject、completedでなければ採用しない。
+- **DOM-intake-017 ExperienceDesignRequest** — Source Snapshot、要求trace、surface、制約、任意のdesign system
+  base revisionから作る値オブジェクト。provider固有prompt、workflow Issue ID、HTTP endpoint案を含めない。
+- **DOM-intake-018 DesignBundleReference** — request/revision identity、manifest location、source digest、
+  bundle digest、schema versionを持つ外部成果物参照。bundle内容をstoreへdual-writeしない。
+- **DOM-intake-019 CapabilityReconciliation** — approve済みCapability Requirementごとに、最終Issue/AC/system element
+  への充足edgeを所有する。全capabilityが1つ以上の実在edgeを持つまでqueue projectionを許さない。
+- **DOM-intake-020 digest-bound design authority** — Human Design Decisionは同じrequestId、revisionId、
+  bundleDigestにだけ適用する。digest不一致、未承認、request-changes/reject、ambiguity残存は
+  `needs-human-review`へ止める。
+- **DOM-intake-021 single provider per revision** — 同じcandidate/revisionでlegacy `UiDesignArtifact`と外部
+  Design Bundleを同時に正本化しない。backend-onlyはdesign gate不要、frontend/fullstackは選択providerの
+  完全な検証を必須とする。

@@ -17,3 +17,9 @@
 | LANG-intake-010 | Planning Ambiguity | 原文/systemだけでは一意に決められず、人間WHAT判断が必要な未解決点。推測してcontractへ変換しない。 |
 | LANG-intake-011 | UI Design Readiness | frontend/fullstack Candidateをgeneric実装へ投影する前に、専用UI著述がschema-valid・trace-complete・provenance-completeなUI Design Artifactを供給した状態。不在・曖昧・不正は明示的な停止理由。 |
 | LANG-intake-012 | UI Design Artifact | 1 Enrichment CandidateのACをdesign principles、tokens、components、states/interactions、accessibilityへ写し、各設計要素をACへ逆参照できるHOW契約。 |
+| LANG-intake-013 | Designflow Provider | Design Requestからrevisioned Design Bundleを作る外部Open Host Service。workflow内部型、store、agent promptを共有しない。 |
+| LANG-intake-014 | Design Request | Source Snapshot、product intent、要求trace、制約、surface、design system base revisionをproviderへ渡すversioned Published Language。最終Issue/API形は含めない。 |
+| LANG-intake-015 | Design Bundle | Experience Contract、Design System Delta、Capability Requirements、previewをmanifestで束ねたcontent-addressed成果物。 |
+| LANG-intake-016 | Experience Contract | page purpose、task、flow、effort budget、attention hierarchyと、全elementのplacement rationale/removal impactを表す体験設計契約。 |
+| LANG-intake-017 | Capability Requirement | UI/UXが必要とするquery/command、認可、freshness、idempotency、failure semantics等の能力要求。endpointや実装方式はplanning/designが決める。 |
+| LANG-intake-018 | Human Design Decision | 人間が特定`revisionId`＋`bundleDigest`へ与えるapprove/request-changes/reject。artifact変更後へ持ち越せない。 |
