@@ -58,6 +58,7 @@ export interface GithubDevelopmentTurnDeps {
   discoverPullRequests?: boolean;
   /** Isolated-runner hooks; ordinary CLI callers leave these absent. */
   liveOptions?: LiveOptions;
+  beforeIssueClaim?: () => Promise<void>;
   beforeReconcile?: () => Promise<void>;
   reconcileOptions?: AutoMergeOptions;
 }
@@ -176,7 +177,12 @@ export async function runGithubDevelopmentTurn(
       );
     }
   }
-  const intakeResults = pollAndClaimGithubIssues(store, config, deps.issueRunner);
+  const intakeResults = await pollAndClaimGithubIssues(
+    store,
+    config,
+    deps.issueRunner,
+    deps.beforeIssueClaim,
+  );
   const systemDir = config.target?.systemDir
     ? path.resolve(harnessRoot, config.target.systemDir)
     : path.join(config.target ? path.resolve(harnessRoot, config.target.repo) : harnessRoot, 'docs', '_system');

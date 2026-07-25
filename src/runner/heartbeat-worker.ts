@@ -8,6 +8,7 @@ const Input = z.object({
   workerId: z.string().min(1),
   durationMs: z.number().int().positive(),
   intervalMs: z.number().int().positive(),
+  attemptTimeoutMs: z.number().int().positive(),
 }).strict();
 
 const input = Input.parse(workerData);
@@ -21,6 +22,7 @@ let timer: NodeJS.Timeout | null = null;
 let stopping = false;
 let inFlight: Promise<void> | null = null;
 let poolEnded = false;
+let deadlineTimer: NodeJS.Timeout | null = null;
 
 async function closePool(): Promise<void> {
   if (poolEnded) return;
@@ -33,6 +35,8 @@ async function stop(): Promise<void> {
   stopping = true;
   if (timer) clearInterval(timer);
   timer = null;
+  if (deadlineTimer) clearTimeout(deadlineTimer);
+  deadlineTimer = null;
   await inFlight;
   await closePool();
   parentPort?.postMessage({ type: 'stopped' });
@@ -88,3 +92,20 @@ parentPort?.on('message', (message: unknown) => {
   }
 });
 schedule();
+deadlineTimer = setTimeout(() => {
+  if (stopping) return;
+  stopping = true;
+  if (timer) clearInterval(timer);
+  timer = null;
+  parentPort?.postMessage({
+    type: 'lost',
+    message: 'overall attempt deadline exceeded',
+  });
+  if (!inFlight) {
+    void closePool().finally(() => {
+      parentPort?.postMessage({ type: 'stopped' });
+      parentPort?.close();
+    });
+  }
+}, input.attemptTimeoutMs);
+deadlineTimer.unref();

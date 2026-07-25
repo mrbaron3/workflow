@@ -1,5 +1,4 @@
 /** Deterministic GitHub Issue polling + store-first claim (FEAT-016 / ADR-0008). */
-import { spawnSync } from 'node:child_process';
 import {
   GithubIssueSnapshot,
   IntakeRecord,
@@ -8,6 +7,7 @@ import {
 } from '../domain/schema.js';
 import type { HarnessConfig, IntakeConfig } from '../config.js';
 import { Store, nowISO } from '../store/store.js';
+import { runCommand } from '../pipeline/execution/command.js';
 
 export interface ResolvedGithubIntakeConfig {
   repository: string;
@@ -58,7 +58,19 @@ function claimPending(
   record: IntakeRecordType,
   config: ResolvedGithubIntakeConfig,
   runner: GithubIssueRunner,
-): void {
+  beforeClaim?: () => Promise<void>,
+): Promise<void> {
+  return claimPendingAsync(store, record, config, runner, beforeClaim);
+}
+
+async function claimPendingAsync(
+  store: Store,
+  record: IntakeRecordType,
+  config: ResolvedGithubIntakeConfig,
+  runner: GithubIssueRunner,
+  beforeClaim?: () => Promise<void>,
+): Promise<void> {
+  await beforeClaim?.();
   runner.claimIssue(config.repository, record.snapshot.number, config.readyLabel, config.claimedLabel);
   record.status = 'claimed';
   record.claimedAt = nowISO();
@@ -74,7 +86,22 @@ export function pollAndClaimGithubIssues(
   store: Store,
   harnessConfig: HarnessConfig,
   runner: GithubIssueRunner,
-): IntakePollResult[] {
+  beforeClaim?: () => Promise<void>,
+): Promise<IntakePollResult[]> {
+  return pollAndClaimGithubIssuesAsync(
+    store,
+    harnessConfig,
+    runner,
+    beforeClaim,
+  );
+}
+
+async function pollAndClaimGithubIssuesAsync(
+  store: Store,
+  harnessConfig: HarnessConfig,
+  runner: GithubIssueRunner,
+  beforeClaim?: () => Promise<void>,
+): Promise<IntakePollResult[]> {
   const config = resolveGithubIntakeConfig(harnessConfig);
   if (!config) return [];
 
@@ -88,7 +115,7 @@ export function pollAndClaimGithubIssues(
   // Retry durable pending work even if a partially-applied external label change makes the source
   // disappear from the ready query.
   for (const pending of store.db.intakeRecords.filter((record) => record.status === 'claim-pending')) {
-    claimPending(store, pending, config, runner);
+    await claimPending(store, pending, config, runner, beforeClaim);
     results.push({ intakeKey: pending.intakeKey, issueNumber: pending.snapshot.number, status: pending.status, created: false });
   }
 
@@ -128,16 +155,14 @@ export function pollAndClaimGithubIssues(
       }),
     );
     store.save(); // store-first durability: MUST precede runner.claimIssue
-    claimPending(store, record, config, runner);
+    await claimPending(store, record, config, runner, beforeClaim);
     results.push({ intakeKey: key, issueNumber: snapshot.number, status: record.status, created: true });
   }
   return results;
 }
 
 function gh(cwd: string, args: string[]): string {
-  const result = spawnSync('gh', args, { cwd, encoding: 'utf8' });
-  if (result.status !== 0) throw new Error(`gh ${args.join(' ')} failed: ${result.stdout ?? ''}${result.stderr ?? ''}`);
-  return result.stdout ?? '';
+  return runCommand('gh', args, cwd);
 }
 
 /** Real GitHub adapter; unit tests use GithubIssueRunner fakes and never access the network. */

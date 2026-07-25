@@ -54,8 +54,11 @@ export interface AgentOpsRunnerAdapter {
 
 export interface ExistingAgentOpsAdapterDependencies {
   issueRunner?: (cwd: string) => GithubIssueRunner;
-  gateRunner?: () => GhGateRunner;
-  prNativeRunner?: (mergeMethod: 'squash' | 'merge' | 'rebase') => PrNativeGithubRunner;
+  gateRunner?: (repository: string) => GhGateRunner;
+  prNativeRunner?: (
+    mergeMethod: 'squash' | 'merge' | 'rebase',
+    repository: string,
+  ) => PrNativeGithubRunner;
   planningRunner?: typeof runPlanningSession;
   uiDesignRunner?: typeof runUiDesignSession;
   generatorSession?: typeof runGeneratorSession;
@@ -68,6 +71,7 @@ function baseBranch(ref: string): string {
 }
 
 function scopedIssueRunner(
+  fence: RunnerLeaseFence,
   delegate: GithubIssueRunner,
   issueNumber: number,
 ): GithubIssueRunner {
@@ -86,6 +90,7 @@ function scopedIssueRunner(
           'provider',
         );
       }
+      fence.consume('claim');
       delegate.claimIssue(repository, number, readyLabel, claimedLabel);
     },
   };
@@ -101,7 +106,7 @@ function guardedGateRunner(
       delegate.pushBranch(worktree, branch);
     },
     createPr(cwd, args) {
-      fence.assertLive('push');
+      fence.consume('push');
       return delegate.createPr(cwd, args);
     },
     viewPr: delegate.viewPr.bind(delegate),
@@ -233,6 +238,8 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
 
   async execute(input: AgentOpsAdapterInput): Promise<AgentOpsAdapterResult> {
     const event = input.payload.event;
+    const repository =
+      `${input.payload.repository.owner}/${input.payload.repository.name}`;
     process.env.AGENTOPS_RUNNER_REGISTRATION_ROOT =
       input.workspace.registrationRoot;
     const store = new Store(input.workspace.statePath);
@@ -242,7 +249,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       this.dependencies.issueRunner ?? realGithubIssueRunner
     )(input.workspace.worktreePath);
     const issueRunner = input.payload.event.kind === 'issue'
-      ? scopedIssueRunner(realIssueRunner, input.payload.event.number)
+      ? scopedIssueRunner(input.fence, realIssueRunner, input.payload.event.number)
       : {
           listReadyIssues: () => [],
           claimIssue: () => {
@@ -256,13 +263,13 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         };
     const gateRunner = guardedGateRunner(
       input.fence,
-      (this.dependencies.gateRunner ?? realGhGateRunner)(),
+      (this.dependencies.gateRunner ?? realGhGateRunner)(repository),
     );
     const prNativeRunner = guardedPrNativeRunner(
       input.fence,
       (
         this.dependencies.prNativeRunner ?? realPrNativeGithubRunner
-      )(input.payload.execution.mergeMethod),
+      )(input.payload.execution.mergeMethod, repository),
       input.payload.event.kind === 'pull_request'
         ? input.payload.event.number
         : undefined,
@@ -279,6 +286,9 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       config,
       {
         issueRunner,
+        ...(input.payload.event.kind === 'issue'
+          ? { beforeIssueClaim: () => input.fence.arm('claim') }
+          : {}),
         planningRunner: async ({ intake, route }) => {
           await beforeProvider();
           return (this.dependencies.planningRunner ?? runPlanningSession)(
@@ -323,6 +333,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           prNativeRunner,
           beforeProviderExecution: beforeProvider,
           beforePush: () => input.fence.arm('push'),
+          beforeCreatePr: () => input.fence.arm('push'),
           beforeMerge: () => input.fence.arm('merge'),
           beforeRelease: async () => {
             await input.fence.arm('release');

@@ -8,11 +8,16 @@ import type {
   RunnerJobPayloadV1,
 } from '../control-store/types.js';
 import { RunnerExecutionError } from './errors.js';
+import {
+  commandEnvironment,
+  commandTimeoutMs,
+} from '../pipeline/execution/command.js';
 
 export interface WorkspaceCommandResult {
   status: number | null;
   stdout: string;
   stderr: string;
+  error?: string;
 }
 
 export type WorkspaceCommandRunner = (
@@ -22,16 +27,33 @@ export type WorkspaceCommandRunner = (
 ) => WorkspaceCommandResult;
 
 const defaultRunner: WorkspaceCommandRunner = (command, args, options) => {
-  const result = spawnSync(command, [...args], {
+  const commandArgs = command === 'git'
+    ? [
+        '-c', 'core.hooksPath=/dev/null',
+        '-c', 'core.fsmonitor=false',
+        '-c', 'commit.gpgSign=false',
+        '-c', 'credential.helper=',
+        '-c', 'http.proxy=',
+        ...args,
+      ]
+    : [...args];
+  const result = spawnSync(command, commandArgs, {
     cwd: options.cwd,
-    env: options.env,
+    env: {
+      ...commandEnvironment('github', options.env),
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+    },
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
+    timeout: commandTimeoutMs(options.env.AGENTOPS_RUNNER_COMMAND_TIMEOUT_MS),
+    killSignal: 'SIGKILL',
   });
   return {
     status: result.status,
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
+    ...(result.error ? { error: result.error.message } : {}),
   };
 };
 
@@ -121,10 +143,11 @@ function runChecked(
   env: NodeJS.ProcessEnv,
 ): string {
   const result = run(command, args, { cwd, env });
-  if (result.status !== 0) {
+  if (result.error || result.status !== 0) {
     throw new RunnerExecutionError(
       'workspace_failure',
-      `${command} ${args.join(' ')} failed: ${(result.stdout + result.stderr).slice(-2_000)}`,
+      `${command} ${args.join(' ')} failed: ${(result.error ?? '')
+        + (result.stdout + result.stderr).slice(-2_000)}`,
       true,
     );
   }
@@ -203,7 +226,10 @@ export class RunnerWorkspaceManager {
     runChecked(
       this.run,
       'git',
-      ['-C', repositoryPath, 'fetch', '--prune', 'origin', '+refs/heads/*:refs/heads/*'],
+      [
+        '-C', repositoryPath, 'fetch', '--prune',
+        cloneUrl, '+refs/heads/*:refs/heads/*',
+      ],
       registrationRoot,
       this.env,
     );

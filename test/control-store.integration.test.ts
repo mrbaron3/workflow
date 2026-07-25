@@ -388,6 +388,48 @@ integration('PostgreSQL control store', () => {
     expect(leases.filter(Boolean)).toHaveLength(1);
   });
 
+  it('scopes isolated-runner claim and reclaim to agentops.runner jobs', async () => {
+    const store = await migratedStore();
+    const legacyRegistration = await registration(store, '-legacy');
+    const runnerRegistration = await registration(store, '-runner');
+    await enqueue(
+      store,
+      legacyRegistration.id,
+      legacyRegistration.version,
+      'legacy-first',
+    );
+    const runnerJob = await enqueueRunner(
+      store,
+      runnerRegistration.id,
+      runnerRegistration.version,
+      '-runner',
+    );
+
+    const runnerLease = await store.acquireLease({
+      workerId: 'isolated-runner',
+      durationMs: 10_000,
+      jobType: 'agentops.runner',
+    });
+    expect(runnerLease?.job.id).toBe(runnerJob.job.id);
+    await store.finishLease(runnerLease!.token, { status: 'succeeded' });
+
+    const legacyLease = await store.acquireLease({
+      workerId: 'legacy-consumer',
+      durationMs: 20,
+    });
+    expect(legacyLease?.job.jobType).toBe('github_issue_turn');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(await store.reclaimExpiredLeases(3, {
+      jobType: 'agentops.runner',
+      retryBaseMs: 1_000,
+    })).toBe(0);
+    const legacyState = await pool.query<{ status: string }>(
+      `SELECT status FROM agentops_control.job_leases WHERE id = $1`,
+      [legacyLease!.id],
+    );
+    expect(legacyState.rows[0]?.status).toBe('active');
+  });
+
   it('heartbeats, times out, reclaims, and preserves attempt history', async () => {
     const store = await migratedStore();
     const repo = await registration(store);
@@ -939,6 +981,7 @@ integration('PostgreSQL control store', () => {
       reconciliationIntervalMs: 250,
       maxAttempts: 2,
       retryBaseMs: 0,
+      attemptTimeoutMs: 60_000,
     }, {
       store,
       workspace: new RunnerWorkspaceManager(root, {}, commandRunner),

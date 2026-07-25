@@ -27,12 +27,17 @@ export const RunnerStartupInput = z.object({
   reconciliationIntervalMs: z.number().int().min(250).max(10 * 60_000),
   maxAttempts: z.number().int().min(1).max(20),
   retryBaseMs: z.number().int().min(0).max(60 * 60_000),
+  commandTimeoutMs: z.number().int().min(1_000).max(30 * 60_000),
+  attemptTimeoutMs: z.number().int().min(5_000).max(24 * 60 * 60_000),
   mounts: z.array(Mount),
   publishedPorts: z.array(z.number().int().min(1).max(65_535)),
   outbound: z.array(OutboundDestination).min(1),
 }).strict().refine(
   (value) => value.heartbeatIntervalMs * 2 < value.leaseDurationMs,
   'heartbeat interval must be less than half the lease duration',
+).refine(
+  (value) => value.commandTimeoutMs < value.attemptTimeoutMs,
+  'command timeout must be less than the overall attempt timeout',
 );
 export type RunnerStartupInput = z.infer<typeof RunnerStartupInput>;
 
@@ -45,7 +50,16 @@ export interface RunnerCredentials {
 export interface RunnerRuntimeBoundary {
   mountInfo: string;
   listeningTcpPorts: number[];
+  visibleContainerSocketPaths: string[];
 }
+
+const CONTAINER_SOCKET_PATHS = [
+  '/var/run/docker.sock',
+  '/run/docker.sock',
+  '/run/containerd/containerd.sock',
+  '/run/podman/podman.sock',
+  '/run/host-services/container.sock',
+] as const;
 
 function listeningPorts(raw: string): number[] {
   const ports = new Set<number>();
@@ -74,29 +88,119 @@ export function inspectRunnerRuntime(): RunnerRuntimeBoundary {
       ...listeningPorts(tcp),
       ...listeningPorts(tcp6),
     ])].sort((a, b) => a - b),
+    visibleContainerSocketPaths: CONTAINER_SOCKET_PATHS.filter((candidate) => {
+      try {
+        return fs.statSync(candidate).isSocket();
+      } catch {
+        return false;
+      }
+    }),
   };
 }
 
+interface ObservedMount {
+  majorMinor: string;
+  root: string;
+  target: string;
+  options: string[];
+  fsType: string;
+  source: string;
+  raw: string;
+}
+
+function decodeMountField(value: string): string {
+  return value.replaceAll(/\\(040|011|012|134)/g, (escaped, code: string) => ({
+    '040': ' ',
+    '011': '\t',
+    '012': '\n',
+    '134': '\\',
+  })[code] ?? escaped);
+}
+
+function observedMount(line: string): ObservedMount {
+  const fields = line.split(' ');
+  const separator = fields.indexOf('-');
+  if (separator < 6 || fields.length < separator + 3) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      `malformed kernel mount entry: ${line}`,
+      false,
+    );
+  }
+  return {
+    majorMinor: fields[2] ?? '',
+    root: decodeMountField(fields[3] ?? ''),
+    target: decodeMountField(fields[4] ?? ''),
+    options: (fields[5] ?? '').split(','),
+    fsType: fields[separator + 1] ?? '',
+    source: decodeMountField(fields[separator + 2] ?? ''),
+    raw: line,
+  };
+}
+
+function platformVirtualMount(mount: ObservedMount): boolean {
+  const { target } = mount;
+  return (target === '/home/agentops' && mount.fsType === 'tmpfs')
+    || target === '/tmp'
+    || target === '/run'
+    || target === '/etc/hosts'
+    || target === '/etc/hostname'
+    || target === '/etc/resolv.conf'
+    || target === '/proc'
+    || target.startsWith('/proc/')
+    || target === '/sys'
+    || target.startsWith('/sys/')
+    || target === '/dev'
+    || target.startsWith('/dev/');
+}
+
 function validateRuntimeBoundary(boundary: RunnerRuntimeBoundary): void {
-  const mounts = boundary.mountInfo.split('\n').filter(Boolean).map((line) => {
-    const fields = line.split(' ');
-    return { target: fields[4] ?? '', options: fields[5] ?? '', raw: line };
-  });
+  const mounts = boundary.mountInfo.split('\n').filter(Boolean).map(observedMount);
   const workspace = mounts.find((mount) => mount.target === '/workspace');
   const root = mounts.find((mount) => mount.target === '/');
-  if (!workspace || !workspace.options.split(',').includes('rw')) {
+  if (!workspace || !workspace.options.includes('rw')) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
       'kernel mount table does not show a writable /workspace volume',
       false,
     );
   }
-  if (!root || !root.options.split(',').includes('ro')) {
+  if (!root || !root.options.includes('ro')) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
       'runner root filesystem must be kernel-mounted read-only',
       false,
     );
+  }
+  const namedVolumeRoot = workspace?.root === '/'
+    ? workspace.majorMinor !== root.majorMinor
+    : /^\/var\/lib\/(?:docker\/volumes|containers\/storage\/volumes)\/[^/]+\/_data$/
+      .test(workspace?.root ?? '');
+  if (
+    !workspace
+    || !['ext4', 'xfs', 'btrfs'].includes(workspace.fsType)
+    || !workspace.source.startsWith('/dev/')
+    || !namedVolumeRoot
+  ) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'kernel /workspace mount is not an observed private block-backed named volume',
+      false,
+    );
+  }
+  for (const mount of mounts) {
+    if (
+      mount.options.includes('rw')
+      && mount.target !== '/'
+      && mount.target !== '/workspace'
+      && !platformVirtualMount(mount)
+    ) {
+      throw new RunnerExecutionError(
+        'startup_isolation_failure',
+        `unexpected writable kernel mount: ${mount.target}`,
+        false,
+      );
+    }
   }
   for (const marker of [
     '/Users/',
@@ -118,6 +222,13 @@ function validateRuntimeBoundary(boundary: RunnerRuntimeBoundary): void {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
       `runner must start without listening TCP sockets: ${boundary.listeningTcpPorts.join(',')}`,
+      false,
+    );
+  }
+  if (boundary.visibleContainerSocketPaths.length !== 0) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      `runner can see container management sockets: ${boundary.visibleContainerSocketPaths.join(',')}`,
       false,
     );
   }
@@ -298,6 +409,16 @@ export function loadRunnerStartup(
     ),
     maxAttempts: integerEnv(env, 'AGENTOPS_RUNNER_MAX_ATTEMPTS', 3),
     retryBaseMs: integerEnv(env, 'AGENTOPS_RUNNER_RETRY_BASE_MS', 5_000),
+    commandTimeoutMs: integerEnv(
+      env,
+      'AGENTOPS_RUNNER_COMMAND_TIMEOUT_MS',
+      120_000,
+    ),
+    attemptTimeoutMs: integerEnv(
+      env,
+      'AGENTOPS_RUNNER_ATTEMPT_TIMEOUT_MS',
+      4 * 60 * 60_000,
+    ),
     mounts,
     publishedPorts,
     outbound,
@@ -374,6 +495,7 @@ export function loadRunnerStartup(
 export function minimalExecutionEnvironment(
   credentials: RunnerCredentials,
   source: NodeJS.ProcessEnv = process.env,
+  timeouts?: { commandTimeoutMs: number },
 ): NodeJS.ProcessEnv {
   const providerKey = PROVIDER_TOKEN_KEYS[credentials.provider];
   return {
@@ -384,6 +506,12 @@ export function minimalExecutionEnvironment(
     LC_ALL: source.LC_ALL ?? 'C.UTF-8',
     NO_COLOR: '1',
     AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
+    ...(timeouts
+      ? {
+          AGENTOPS_RUNNER_COMMAND_TIMEOUT_MS:
+            String(timeouts.commandTimeoutMs),
+        }
+      : {}),
     GH_TOKEN: credentials.githubToken,
     GITHUB_TOKEN: credentials.githubToken,
     GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',

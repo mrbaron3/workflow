@@ -30,6 +30,7 @@ export interface RunnerServiceConfig {
   reconciliationIntervalMs: number;
   maxAttempts: number;
   retryBaseMs: number;
+  attemptTimeoutMs: number;
 }
 
 export interface RunnerServiceDependencies {
@@ -43,6 +44,7 @@ class LeaseHeartbeat {
   private timer: NodeJS.Timeout | null = null;
   private inFlight: Promise<void> | null = null;
   private worker: Worker | null = null;
+  private deadlineTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly store: PostgresControlStore,
@@ -52,6 +54,7 @@ class LeaseHeartbeat {
     private readonly intervalMs: number,
     private readonly log: (message: string) => void,
     private readonly databaseUrl?: string,
+    private readonly attemptTimeoutMs = 4 * 60 * 60_000,
   ) {}
 
   start(): void {
@@ -63,6 +66,7 @@ class LeaseHeartbeat {
           workerId: this.lease.workerId,
           durationMs: this.durationMs,
           intervalMs: this.intervalMs,
+          attemptTimeoutMs: this.attemptTimeoutMs,
         },
       });
       this.worker.on('message', (message: unknown) => {
@@ -81,6 +85,13 @@ class LeaseHeartbeat {
       });
       return;
     }
+    this.deadlineTimer = setTimeout(() => {
+      this.fence.markLost('overall attempt deadline exceeded');
+      this.log(`runner attempt deadline exceeded for lease ${this.lease.id}`);
+      if (this.timer) clearInterval(this.timer);
+      this.timer = null;
+    }, this.attemptTimeoutMs);
+    this.deadlineTimer.unref();
     this.timer = setInterval(() => {
       if (this.inFlight) return;
       this.inFlight = this.store.heartbeatLease(this.lease.token, this.durationMs)
@@ -100,6 +111,8 @@ class LeaseHeartbeat {
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    if (this.deadlineTimer) clearTimeout(this.deadlineTimer);
+    this.deadlineTimer = null;
     await this.inFlight;
     if (this.worker) {
       const worker = this.worker;
@@ -191,6 +204,7 @@ export class IsolatedRunnerService {
       this.config.heartbeatIntervalMs,
       this.log,
       this.config.heartbeatDatabaseUrl,
+      this.config.attemptTimeoutMs,
     );
     let prepared: PreparedRunnerWorkspace | null = null;
     heartbeat.start();
@@ -297,10 +311,14 @@ export class IsolatedRunnerService {
 
   async runOnce(): Promise<boolean> {
     if (this.stopping) return false;
-    await this.store.reclaimExpiredLeases(this.config.maxAttempts);
+    await this.store.reclaimExpiredLeases(this.config.maxAttempts, {
+      jobType: 'agentops.runner',
+      retryBaseMs: this.config.retryBaseMs,
+    });
     const lease = await this.store.acquireLease({
       workerId: this.config.workerId,
       durationMs: this.config.leaseDurationMs,
+      jobType: 'agentops.runner',
     });
     if (!lease) return false;
     this.active = this.processLease(lease);

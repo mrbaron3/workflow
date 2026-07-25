@@ -280,8 +280,9 @@ describe('existing AgentOps isolated-runner adapter', () => {
     expect(githubSideEffects).toContain('push');
     expect(githubSideEffects).toContain('create-pr');
     expect(githubSideEffects).toContain(`merge:38:${headSha}`);
-    for (const boundary of ['provider', 'push', 'merge', 'release'] as const) {
+    for (const boundary of ['claim', 'provider', 'push', 'merge', 'release'] as const) {
       expect(boundaries).toContain(boundary);
     }
+    expect(boundaries.filter((boundary) => boundary === 'push')).toHaveLength(2);
   });
 });

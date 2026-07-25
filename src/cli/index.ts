@@ -366,14 +366,18 @@ function cmdAssign(pos: string[]): void {
   log(`\nNext: the execution loop polls it (e.g. ${c.b('npx tsx scripts/real-panel-run.ts')}).`);
 }
 
-function cmdPollIntake(): void {
+async function cmdPollIntake(): Promise<void> {
   const store = requireInit();
   const config = loadConfig(ROOT);
   if (!config.intake) {
     log(c.dim('GitHub Issue intake is disabled — configure config.intake first.'));
     return;
   }
-  const results = pollAndClaimGithubIssues(store, config, realGithubIssueRunner(resolveTargetRoot(config, ROOT)));
+  const results = await pollAndClaimGithubIssues(
+    store,
+    config,
+    realGithubIssueRunner(resolveTargetRoot(config, ROOT)),
+  );
   const created = results.filter((result) => result.created).length;
   log(c.green(`✓ intake poll`) + ` ${results.length} ready issue(s), ${created} newly claimed`);
   for (const result of results) {

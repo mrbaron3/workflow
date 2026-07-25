@@ -10,11 +10,33 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { commandEnvironment, commandTimeoutMs } from './command.js';
 
 function git(cwd: string, args: string[], allowFail = false): { ok: boolean; out: string } {
-  const res = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  const res = spawnSync('git', [
+    '-c', 'core.hooksPath=/dev/null',
+    '-c', 'core.fsmonitor=false',
+    '-c', 'commit.gpgSign=false',
+    '-c', 'credential.helper=',
+    ...args,
+  ], {
+    cwd,
+    encoding: 'utf8',
+    env: {
+      ...commandEnvironment('none'),
+      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_NOSYSTEM: '1',
+    },
+    timeout: commandTimeoutMs(),
+    killSignal: 'SIGKILL',
+    maxBuffer: 32 * 1024 * 1024,
+  });
   const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
-  if (!allowFail && res.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${out}`);
+  if (!allowFail && (res.error || res.status !== 0)) {
+    throw new Error(
+      `git ${args.join(' ')} failed: ${res.error?.message ?? out}`,
+    );
+  }
   return { ok: res.status === 0, out };
 }
 

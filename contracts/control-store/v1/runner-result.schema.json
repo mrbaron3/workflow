@@ -40,6 +40,10 @@
       "type": "array",
       "items": { "$ref": "runner-job.schema.json#/$defs/artifact" }
     },
-    "completedAt": { "type": "string", "format": "date-time" }
+    "completedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    }
   }
 }

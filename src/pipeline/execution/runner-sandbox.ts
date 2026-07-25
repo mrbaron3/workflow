@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 
 const registrationRootPattern =
   /^\/workspace\/registrations\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -33,6 +34,8 @@ export function runnerSandboxArgs(
   ) {
     throw new Error(`runner subprocess cwd escapes Registration sandbox: ${cwd}`);
   }
+  const repositoryMetadata = path.join(registrationRoot, 'repository.git');
+  const worktreeMetadata = path.join(resolvedCwd, '.git');
   return [
     '--die-with-parent',
     '--new-session',
@@ -45,6 +48,12 @@ export function runnerSandboxArgs(
     '--dir', '/workspace/registrations',
     '--dir', registrationRoot,
     '--bind', registrationRoot, registrationRoot,
+    ...(fs.existsSync(repositoryMetadata)
+      ? ['--ro-bind', repositoryMetadata, repositoryMetadata]
+      : []),
+    ...(fs.existsSync(worktreeMetadata)
+      ? ['--ro-bind', worktreeMetadata, worktreeMetadata]
+      : []),
     '--tmpfs', '/tmp',
     '--bind', '/home/agentops', '/home/agentops',
     '--chdir', resolvedCwd,

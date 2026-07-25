@@ -85,6 +85,50 @@ describe('isolated runner published contracts', () => {
     }
   });
 
+  it('keeps whitespace and UTC timestamp semantics identical across validators', () => {
+    const payload = fixture();
+    const schema = JSON.parse(fs.readFileSync(
+      path.join(
+        process.cwd(),
+        'contracts/control-store/v1/runner-job.schema.json',
+      ),
+      'utf8',
+    ));
+    const validate = ajv().compile(schema);
+    const execution = payload.execution as Record<string, unknown>;
+    const artifact = (payload.artifacts as Record<string, unknown>[])[0]!;
+    const invalid = [
+      {
+        ...payload,
+        execution: { ...execution, requiredChecks: ['   '] },
+      },
+      {
+        ...payload,
+        execution: { ...execution, requiredChecks: [' test'] },
+      },
+      {
+        ...payload,
+        event: {
+          kind: 'repository',
+          trigger: 'push',
+          identity: ' ',
+        },
+        execution: { ...execution, mode: 'pr_reconciliation' },
+      },
+      {
+        ...payload,
+        artifacts: [{
+          ...artifact,
+          createdAt: '2026-07-25T09:00:00+09:00',
+        }],
+      },
+    ];
+    for (const candidate of invalid) {
+      expect(validate(candidate), JSON.stringify(validate.errors)).toBe(false);
+      expect(() => RunnerJobPayloadV1Contract.parse(candidate)).toThrow();
+    }
+  });
+
   it('rejects unknown versions, arbitrary commands, host paths, clone URLs, and unsafe refs', () => {
     const payload = fixture();
     for (const invalid of [
@@ -158,5 +202,48 @@ describe('isolated runner published contracts', () => {
       boundary: 'push',
       observedAt: '2026-07-25T00:01:00.000Z',
     }).code).toBe('lease_lost');
+  });
+
+  it('keeps result/failure UTC and nonblank semantics aligned with JSON Schema', () => {
+    const jobSchema = JSON.parse(fs.readFileSync(path.join(
+      process.cwd(),
+      'contracts/control-store/v1/runner-job.schema.json',
+    ), 'utf8'));
+    const resultSchema = JSON.parse(fs.readFileSync(path.join(
+      process.cwd(),
+      'contracts/control-store/v1/runner-result.schema.json',
+    ), 'utf8'));
+    const failureSchema = JSON.parse(fs.readFileSync(path.join(
+      process.cwd(),
+      'contracts/control-store/v1/runner-failure.schema.json',
+    ), 'utf8'));
+    const validator = ajv();
+    validator.addSchema(jobSchema);
+    const validateResult = validator.compile(resultSchema);
+    const validateFailure = validator.compile(failureSchema);
+    const invalidResult = {
+      schemaVersion: 1,
+      status: 'succeeded',
+      jobId: 'db837db2-30d7-4788-a56f-00056f5d550e',
+      attemptNumber: 1,
+      repository: 'mrbaron3/workflow',
+      headSha: null,
+      pullRequestNumber: null,
+      artifacts: [],
+      completedAt: '2026-07-25T09:00:00+09:00',
+    };
+    const invalidFailure = {
+      schemaVersion: 1,
+      status: 'failed',
+      code: 'lease_lost',
+      message: '   ',
+      retryable: false,
+      boundary: 'push',
+      observedAt: '2026-07-25T09:00:00+09:00',
+    };
+    expect(validateResult(invalidResult)).toBe(false);
+    expect(() => RunnerJobResultV1Contract.parse(invalidResult)).toThrow();
+    expect(validateFailure(invalidFailure)).toBe(false);
+    expect(() => RunnerJobFailureV1Contract.parse(invalidFailure)).toThrow();
   });
 });

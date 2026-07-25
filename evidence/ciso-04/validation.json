@@ -7,16 +7,15 @@
   "checks": [
     {
       "name": "runner-targeted",
-      "result": "passed",
-      "testsPassed": 33
+      "result": "passed"
     },
     {
       "name": "typescript-full",
       "result": "passed",
-      "filesPassed": 97,
+      "filesPassed": 98,
       "filesSkipped": 1,
-      "testsPassed": 809,
-      "testsSkipped": 24
+      "testsPassed": 819,
+      "testsSkipped": 25
     },
     {
       "name": "typescript-build-typecheck",
@@ -35,7 +34,7 @@
     {
       "name": "postgres-integration",
       "result": "passed",
-      "testsPassed": 23,
+      "testsPassed": 24,
       "environment": "Apple Container internal network, zero host ports"
     },
     {
@@ -65,16 +64,34 @@
       "result": "passed",
       "implementation": "bubblewrap-v1",
       "siblingRegistrationVisible": false,
+      "gitMetadataWritable": false,
       "evidence": "evidence/ciso-04/apple-container-smoke.json"
     },
     {
       "name": "existing-agentops-safe-path",
       "result": "passed",
       "test": "test/runner-adapter.test.ts"
+    },
+    {
+      "name": "round-2-adversarial-command-boundary",
+      "result": "passed",
+      "test": "test/runner-command-security.test.ts",
+      "properties": [
+        "provider/GitHub/DB credential separation",
+        "git hooks disabled",
+        "blocked command deadline"
+      ]
+    },
+    {
+      "name": "formal-independent-review-rounds",
+      "result": "passed",
+      "rounds": 2,
+      "evidence": "evidence/ciso-04/reviews.json"
     }
   ],
   "residualRisk": [
     "The safe test path deliberately uses no real provider or GitHub write credential.",
-    "Apple evidence uses an internal network (deny-all external); production must realize the exact validated destination set with network policy or an egress proxy."
+    "Apple evidence uses an internal network (deny-all external); #16 must realize the exact validated destination set with network policy or an egress proxy.",
+    "The current Registration contract has no repository-specific base/check/merge policy; Go projection defaults main/squash while an empty requiredChecks list still evaluates every visible check."
   ]
 }

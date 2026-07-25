@@ -484,6 +484,9 @@ async function main(): Promise<void> {
   });
 
   const registrationRoot = `/workspace/registrations/${registrationId}`;
+  const sandboxWorktree = `${registrationRoot}/jobs/sandbox/attempt-1/worktree`;
+  const repositoryMetadata = `${registrationRoot}/repository.git`;
+  const worktreeMetadata = `${sandboxWorktree}/.git`;
   run([
     'exec',
     runner,
@@ -491,6 +494,10 @@ async function main(): Promise<void> {
     '-e',
     `const fs=require('fs');`
       + `fs.mkdirSync('${registrationRoot}',{recursive:true});`
+      + `fs.mkdirSync('${repositoryMetadata}',{recursive:true});`
+      + `fs.mkdirSync('${sandboxWorktree}',{recursive:true});`
+      + `fs.writeFileSync('${repositoryMetadata}/config','trusted\\n');`
+      + `fs.writeFileSync('${worktreeMetadata}','gitdir: trusted\\n');`
       + `fs.mkdirSync('/workspace/registrations/${siblingRegistrationId}',{recursive:true});`,
   ]);
   run([
@@ -516,24 +523,33 @@ async function main(): Promise<void> {
     '--bind',
     registrationRoot,
     registrationRoot,
+    '--ro-bind',
+    repositoryMetadata,
+    repositoryMetadata,
+    '--ro-bind',
+    worktreeMetadata,
+    worktreeMetadata,
     '--tmpfs',
     '/tmp',
     '--bind',
     '/home/agentops',
     '/home/agentops',
     '--chdir',
-    registrationRoot,
+    sandboxWorktree,
     '--',
     'node',
     '-e',
     `const fs=require('fs');`
       + `if(fs.existsSync('/workspace/registrations/${siblingRegistrationId}'))process.exit(91);`
-      + `fs.writeFileSync('${registrationRoot}/sandbox-proof','ok');`,
+      + `for(const p of ['${repositoryMetadata}/config','${worktreeMetadata}']){`
+      + `try{fs.appendFileSync(p,'poisoned');process.exit(92)}catch{}}`
+      + `fs.writeFileSync('${sandboxWorktree}/sandbox-proof','ok');`,
   ]);
   pass('registrationProcessSandbox', {
     implementation: 'bubblewrap-v1',
     activeRegistrationWritable: true,
     siblingRegistrationVisible: false,
+    gitMetadataWritable: false,
     isolatedProcessNamespace: true,
   });
 

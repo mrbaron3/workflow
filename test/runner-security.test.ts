@@ -30,11 +30,12 @@ function safeEnv(): NodeJS.ProcessEnv {
 function safeRuntimeBoundary() {
   return {
     mountInfo: [
-      '1 0 0:1 / / ro,relatime - overlay overlay ro',
-      '2 1 0:2 / /workspace rw,relatime - ext4 runner-volume rw',
+      '1 0 254:16 / / ro,relatime - ext4 /dev/vdb rw',
+      '2 1 254:32 / /workspace rw,relatime - ext4 /dev/vdc rw',
       '3 1 0:3 / /tmp rw,nosuid - tmpfs tmpfs rw',
     ].join('\n'),
     listeningTcpPorts: [],
+    visibleContainerSocketPaths: [],
   };
 }
 
@@ -81,6 +82,31 @@ describe('runner startup isolation', () => {
       },
     ],
     ['listening socket', { ...safeRuntimeBoundary(), listeningTcpPorts: [8080] }],
+    [
+      'host bind mounted as workspace',
+      {
+        ...safeRuntimeBoundary(),
+        mountInfo: safeRuntimeBoundary().mountInfo.replace(
+          '254:32 / /workspace rw,relatime - ext4 /dev/vdc rw',
+          '0:42 /Users/operator/repo /workspace rw,relatime - virtiofs host rw',
+        ),
+      },
+    ],
+    [
+      'unexpected secrets mount',
+      {
+        ...safeRuntimeBoundary(),
+        mountInfo: `${safeRuntimeBoundary().mountInfo}\n`
+          + '4 1 254:48 / /secrets rw,relatime - ext4 /dev/vdd rw',
+      },
+    ],
+    [
+      'visible management socket',
+      {
+        ...safeRuntimeBoundary(),
+        visibleContainerSocketPaths: ['/run/containerd/containerd.sock'],
+      },
+    ],
   ])('fails closed for kernel-observed %s', (_name, boundary) => {
     expect(() => loadRunnerStartup(safeEnv(), '/app', boundary)).toThrow();
   });

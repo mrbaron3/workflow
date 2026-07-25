@@ -71,7 +71,7 @@ export const RunnerEventContract = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('repository'),
     trigger: z.enum(['push', 'check_run', 'check_suite']),
-    identity: z.string().trim().min(1).max(512),
+    identity: z.string().min(1).max(512).regex(/^\S(?:[\s\S]*\S)?$/),
     ref: z.string().max(255).optional(),
     after: z.string().regex(/^[0-9a-f]{40,64}$/).optional(),
   }).strict(),
@@ -107,7 +107,9 @@ export const RunnerJobPayloadV1Contract = z.object({
   }).strict(),
   execution: z.object({
     mode: z.enum(['development_turn', 'pr_reconciliation']),
-    requiredChecks: z.array(z.string().trim().min(1)).max(64),
+    requiredChecks: z.array(
+      z.string().min(1).regex(/^\S(?:[\s\S]*\S)?$/),
+    ).max(64),
     mergeMethod: z.enum(['squash', 'merge', 'rebase']),
   }).strict(),
   artifacts: z.array(ArtifactReferenceContract).max(64),
@@ -167,7 +169,7 @@ export const RunnerJobFailureV1Contract = z.object({
   schemaVersion: z.literal(1),
   status: z.literal('failed'),
   code: RunnerFailureCode,
-  message: z.string().trim().min(1).max(2_000),
+  message: z.string().min(1).max(2_000).regex(/^\S(?:[\s\S]*\S)?$/),
   retryable: z.boolean(),
   boundary: RunnerCriticalBoundary.nullable(),
   observedAt: z.string().datetime(),

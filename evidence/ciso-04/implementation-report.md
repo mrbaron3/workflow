@@ -22,9 +22,10 @@
 
 ### runner と既存 AgentOps adapter
 
-- `src/runner/service.ts` がLISTEN wake＋周期reconciliation、worker thread heartbeat、expiry/reclaim、
-  max-attempt付きretry/backoff、drain/restart recoveryを実装する。同期graderでmain event loopが3秒停止しても
-  heartbeatは継続し、lease loss後のfinish/retry競合はDBを権威にfail closedとする。
+- `src/runner/service.ts` がLISTEN wake＋周期reconciliation、`agentops.runner`だけを対象とする
+  claim/reclaim、worker thread heartbeat、expiry/reclaim、max-attempt付き指数retry/backoff、
+  drain/restart recoveryを実装する。同期graderでmain event loopが3秒停止してもheartbeatは継続する一方、
+  overall attempt deadline到達時はworker thread自身がrenewalを止め、lease loss後のfinish/retry競合はDBを権威にfail closedとする。
 - workspaceはprivate volumeの
   `/workspace/registrations/<registration-id>/jobs/<job-id>/attempt-<n>`へ決定論的に作る。
   clone URLはcanonical repository identityからHTTPSで導出し、job-scoped stateとmirror/worktree/artifactを
@@ -33,7 +34,8 @@
   outputはatomic fileとしてvolumeへ書き、DBへURI/digest/size/timeだけをlinkする。
 - `ExistingAgentOpsRunnerAdapter`は既存のplanning、UI design、generator、perspective、
   PR-native review/repair/test/current-head required checks/expected-SHA merge/releaseを呼ぶ。
-  push/merge/release wrapperはDB guard後の短命・単回permitを実side effect呼出しで消費し、shortcutを持たない。
+  Issue claim、push、PR create、merge、release wrapperは各external mutation直前のDB guard後に
+  短命・単回permitを実side effect呼出しで消費し、shortcutを持たない。
   Issue jobは他PRをdiscoverせず、PR jobは指定PR番号だけ、repository eventだけがrepository-wide reconciliationを許可する。
 
 ### OCI と credential boundary
@@ -42,26 +44,29 @@
 - 起動時にHOME=`/home/agentops`、cwd=`/app`、唯一のwritable named volume=`/workspace`、zero host ports、
   DB/GitHub/選択providerだけのoutbound集合、Mac HOME/development root/SSH agent/Apple Container socket/control credential
   不在を検証する。
-- self-declared設定に加え、Linux kernel mount tableでread-only root/writable `/workspace`/socket・host bind不在を、
-  `/proc/net/tcp{,6}`でlistening socket不在を検証する。Apple側inspectもzero published port/socket、
+- self-declared設定に加え、Linux kernel mount tableでread-only root、block-backed private `/workspace`、
+  unexpected writable mount不在を検証し、既知のcontainer管理socketを実filesystemから、
+  listening socketを`/proc/net/tcp{,6}`から検査する。Apple側inspectもzero published port/socket、
   named volume、read-only root、cap-drop ALLを実測する。
-- PostgreSQL pool確立後にprocess envをGitHub＋選択provider credentialへ縮小し、provider/tmux/git子processへ
-  database/control credentialを継承しない。Git clone/fetch/pushはHTTPS askpass、providerはprovider tokenのみ、
-  repository graderはcredential-free envを受ける。runner DB roleはjob/lease/attempt/artifact/auditだけを変更でき、
+- PostgreSQL pool確立後にprocess envを縮小し、provider、GitHub、local gitを明示的に別environmentへ分離する。
+  Git clone/fetch/pushはHTTPS askpassだけを受け、canonical repository URLを直接使用し、git hook、
+  provider書換え可能なglobal/system config、provider tokenを無効化する。provider sandboxではmirrorとworktree
+  `.git` metadataをread-onlyにし、providerはprovider tokenのみ、repository grader/local gitはcredential-free envを受ける。
+  runner DB roleはjob/lease/attempt/artifact/auditだけを変更でき、
   Registration desired state、webhook、control requestを変更・参照できない。
 
 ## fastest-first 検証
 
 | 境界 | コマンド | 結果 |
 | --- | --- | --- |
-| targeted contract/security/workspace/fence/adapter | `npx vitest run ... runner-*.test.ts control-store-contract.test.ts` | 33/33 pass |
-| TypeScript full | `npm test` | 97 files pass、1 skip、809 pass、24 skip（PostgreSQL 23 + 既存1） |
+| targeted contract/security/workspace/fence/adapter | `npx vitest run ... runner-*.test.ts github-*.test.ts` | pass |
+| TypeScript full | `npm test` | 98 files pass、1 skip、819 pass、25 skip（PostgreSQL 24 + 既存1） |
 | build/typecheck | `npm run typecheck && npm run build` | pass |
 | production dependency audit | `npm audit --omit=dev` | 0 vulnerability |
 | Go unit | OCI `control-test` build内 `go test ./...` | pass |
 | Go race | OCI `go test -race ./...` | pass |
 | Go vet | OCI `go vet ./...` | pass |
-| PostgreSQL integration | Apple internal network上 `test/control-store.integration.test.ts` | 23/23 pass |
+| PostgreSQL integration | Apple internal network上 `test/control-store.integration.test.ts` | 24/24 pass |
 | standard OCI runner | Apple Container `--target runner` | pass、CLI pin/expected-head merge flag検証済み |
 | Apple boundary smoke | `npm run smoke:runner:apple` | pass |
 
@@ -77,5 +82,8 @@ PostgreSQL integrationはlease競合/expiry/restart/stale race/max-attempt/typed
 `ExistingAgentOpsRunnerAdapter`のplanning→generator→grounding→全perspective→PR作成→required-check evaluation→
 expected-SHA merge→releaseを通す。Apple smokeはinternal networkで外部side effectを禁止したactual runnerへ
 unknown schema/tampered artifactを投入し、3秒main-thread block中heartbeat、least-privilege DB role、
-bubblewrap sibling Registration非可視も実測する。このため無権限push/mergeは発生しない。実credentialを使うreleaseは
-意図的に行わず、production network policy/egress proxyとcredential brokerを含む統合rehearsalを残余リスクとする。
+bubblewrap sibling Registration非可視とproviderからのgit metadata書込み拒否も実測する。adversarial unitは
+provider指定hookがharness commitで起動しないこと、GitHub subprocessがprovider/DB credentialを持たないこと、
+永久block commandがdeadlineで終了することを固定する。このため無権限push/mergeは発生しない。
+実credentialを使うreleaseは意図的に行わず、#16が所有するproduction network policy/egress proxyと
+credential brokerを含む統合rehearsalを残余リスクとする。

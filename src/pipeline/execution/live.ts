@@ -61,6 +61,8 @@ export interface LiveOptions {
   beforeProviderExecution?: () => Promise<void>;
   /** Isolated-runner lease/Registration fence immediately before a generated head is pushed. */
   beforePush?: () => Promise<void>;
+  /** Fresh isolated-runner fence immediately before the distinct GitHub PR-create mutation. */
+  beforeCreatePr?: () => Promise<void>;
   /** Isolated-runner lease/Registration fence immediately before expected-SHA merge evaluation. */
   beforeMerge?: () => Promise<void>;
   /** Isolated-runner lease/Registration fence armed for the exact durable release mutation. */
@@ -145,10 +147,10 @@ export async function runLiveSample(
       harnessRoot,
       log,
     );
-    let revision: ReturnType<typeof projectReviewRevision> | null = null;
+    let revision: Awaited<ReturnType<typeof projectReviewRevision>> | null = null;
     if (sess.outcome === 'completed' && sess.headSha) {
       await opts.beforePush?.();
-      revision = (opts.projectRevision ?? projectReviewRevision)(
+      revision = await (opts.projectRevision ?? projectReviewRevision)(
         store,
         config,
         {
@@ -159,6 +161,7 @@ export async function runLiveSample(
         },
         opts.gateRunner ?? realGhGateRunner(),
         log,
+        opts.beforeCreatePr,
       );
     }
     // Persist the actual runtime provider separately from its model/routing intent. This replaces

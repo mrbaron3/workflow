@@ -22,6 +22,7 @@ const worker = new Worker(
       workerId: Input.workerId,
       durationMs: 1_500,
       intervalMs: 250,
+      attemptTimeoutMs: 30_000,
     },
   },
 );

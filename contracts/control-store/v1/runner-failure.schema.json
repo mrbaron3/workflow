@@ -24,7 +24,12 @@
         "internal_failure"
       ]
     },
-    "message": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000,
+      "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+    },
     "retryable": { "type": "boolean" },
     "boundary": {
       "oneOf": [
@@ -32,6 +37,10 @@
         { "type": "null" }
       ]
     },
-    "observedAt": { "type": "string", "format": "date-time" }
+    "observedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    }
   }
 }

@@ -47,7 +47,12 @@
           "properties": {
             "kind": { "const": "repository" },
             "trigger": { "enum": ["push", "check_run", "check_suite"] },
-            "identity": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "identity": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+            },
             "ref": { "type": "string", "maxLength": 255 },
             "after": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" }
           }
@@ -72,7 +77,11 @@
         "requiredChecks": {
           "type": "array",
           "maxItems": 64,
-          "items": { "type": "string", "minLength": 1 }
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+          }
         },
         "mergeMethod": { "enum": ["squash", "merge", "rebase"] }
       }
@@ -136,7 +145,11 @@
         },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "sizeBytes": { "type": "integer", "minimum": 0 },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
       }
     }
   }

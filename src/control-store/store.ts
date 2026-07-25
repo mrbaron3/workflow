@@ -821,10 +821,14 @@ export class PostgresControlStore {
   async acquireLease(input: {
     workerId: string;
     durationMs: number;
+    jobType?: string;
   }): Promise<Lease | null> {
     if (!input.workerId.trim()) throw new Error('workerId is required');
     if (!Number.isInteger(input.durationMs) || input.durationMs <= 0) {
       throw new Error('durationMs must be a positive integer');
+    }
+    if (input.jobType !== undefined && !input.jobType.trim()) {
+      throw new Error('jobType must be non-empty when provided');
     }
     return transaction(this.pool, async (client) => {
       const candidate = await client.query<JobRow>(
@@ -833,12 +837,14 @@ export class PostgresControlStore {
            JOIN agentops_control.repository_registrations r ON r.id = j.registration_id
           WHERE j.status = 'queued'
             AND j.available_at <= clock_timestamp()
+            AND ($1::text IS NULL OR j.job_type = $1)
             AND r.enabled
             AND r.execution_enabled
             AND r.version = j.registration_version
           ORDER BY j.available_at, j.created_at
           FOR UPDATE OF j, r SKIP LOCKED
           LIMIT 1`,
+        [input.jobType ?? null],
       );
       const selected = candidate.rows[0];
       if (!selected) return null;
@@ -913,9 +919,19 @@ export class PostgresControlStore {
     return result.rows[0].expires_at.toISOString();
   }
 
-  async reclaimExpiredLeases(maxAttempts = 3): Promise<number> {
+  async reclaimExpiredLeases(
+    maxAttempts = 3,
+    options: { jobType?: string; retryBaseMs?: number } = {},
+  ): Promise<number> {
     if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
       throw new Error('maxAttempts must be a positive integer');
+    }
+    if (options.jobType !== undefined && !options.jobType.trim()) {
+      throw new Error('jobType must be non-empty when provided');
+    }
+    const retryBaseMs = options.retryBaseMs ?? 0;
+    if (!Number.isInteger(retryBaseMs) || retryBaseMs < 0) {
+      throw new Error('retryBaseMs must be a non-negative integer');
     }
     return transaction(this.pool, async (client) => {
       const expired = await client.query<{
@@ -930,10 +946,16 @@ export class PostgresControlStore {
            JOIN agentops_control.jobs j ON j.id = l.job_id
            JOIN agentops_control.repository_registrations r ON r.id = j.registration_id
           WHERE l.status = 'active' AND l.expires_at <= clock_timestamp()
+            AND ($1::text IS NULL OR j.job_type = $1)
           ORDER BY l.expires_at
           FOR UPDATE OF l, a, j, r SKIP LOCKED`,
+        [options.jobType ?? null],
       );
       for (const lease of expired.rows) {
+        const retryDelayMs = Math.min(
+          60 * 60_000,
+          retryBaseMs * (2 ** Math.max(0, lease.attempt_number - 1)),
+        );
         await client.query(
           `UPDATE agentops_control.job_leases
               SET status = 'expired', released_at = clock_timestamp()
@@ -973,7 +995,7 @@ export class PostgresControlStore {
                     WHEN r.enabled AND r.execution_enabled
                      AND r.version = j.registration_version
                      AND $2::integer > $3::integer
-                    THEN clock_timestamp()
+                    THEN clock_timestamp() + ($4 * interval '1 millisecond')
                     ELSE j.available_at
                   END,
                   finished_at = CASE
@@ -1028,7 +1050,7 @@ export class PostgresControlStore {
              FROM agentops_control.repository_registrations r
             WHERE j.id = $1 AND j.status = 'leased'
               AND r.id = j.registration_id`,
-          [lease.job_id, maxAttempts, lease.attempt_number],
+          [lease.job_id, maxAttempts, lease.attempt_number, retryDelayMs],
         );
         await client.query(
           `INSERT INTO agentops_control.runtime_audit(
@@ -1039,6 +1061,8 @@ export class PostgresControlStore {
             {
               attemptNumber: lease.attempt_number,
               maxAttempts,
+              retryDelayMs,
+              jobType: options.jobType ?? null,
             },
           ],
         );

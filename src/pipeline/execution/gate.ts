@@ -85,6 +85,25 @@ export function projectReviewRevision(
   input: ProjectReviewRevisionInput,
   runner: GhGateRunner,
   log: (m: string) => void = () => {},
+  beforeCreatePr?: () => Promise<void>,
+) {
+  return projectReviewRevisionAsync(
+    store,
+    config,
+    input,
+    runner,
+    log,
+    beforeCreatePr,
+  );
+}
+
+async function projectReviewRevisionAsync(
+  store: Store,
+  config: HarnessConfig,
+  input: ProjectReviewRevisionInput,
+  runner: GhGateRunner,
+  log: (m: string) => void,
+  beforeCreatePr?: () => Promise<void>,
 ) {
   let projectedPr = store.getPR(input.pr.id) ?? input.pr;
   const revision = observePrRevision(store, projectedPr, input.headSha);
@@ -93,6 +112,7 @@ export function projectReviewRevision(
   runner.pushBranch(input.worktree, input.pr.branch);
   projectedPr = store.getPR(input.pr.id) ?? projectedPr;
   if (!projectedPr.externalRef) {
+    await beforeCreatePr?.();
     const base = config.gate?.baseBranch ?? config.baseBranch;
     const ref = PrExternalRef.parse(runner.createPr(input.worktree, {
       base,
@@ -252,7 +272,11 @@ function latestAttemptRuns(runs: EvalRun[]): EvalRun[] {
 // --- real backend (shells out; grounded only, never exercised in unit tests) ----------------
 
 /** The production GhGateRunner: real `git push` + `gh` against the target repo's remote. */
-export function realGhGateRunner(): GhGateRunner {
+export function realGhGateRunner(repository?: string): GhGateRunner {
+  const remote = repository
+    ? `https://github.com/${repository}.git`
+    : 'origin';
+  const repoArgs = repository ? ['--repo', repository] : [];
   return {
     pushBranch(worktree, branch) {
       // Push an AgentOps-generated worktree HEAD to its stable remote PR branch.
@@ -263,25 +287,33 @@ export function realGhGateRunner(): GhGateRunner {
         'push',
         '--force-with-lease',
         '-u',
-        'origin',
+        remote,
         prHeadRefspec(branch),
-      ], worktree);
+      ], worktree, { credentials: 'github' });
     },
     createPr(cwd, args) {
       const bodyFile = path.join(os.tmpdir(), `ao-gate-body-${args.head.replace(/\W+/g, '-')}.md`);
       fs.writeFileSync(bodyFile, args.body, 'utf8');
       try {
-        run('gh', ['pr', 'create', '--base', args.base, '--head', args.head, '--title', args.title, '--body-file', bodyFile], cwd);
+        run('gh', [
+          'pr', 'create', ...repoArgs,
+          '--base', args.base, '--head', args.head,
+          '--title', args.title, '--body-file', bodyFile,
+        ], cwd);
       } finally {
         fs.rmSync(bodyFile, { force: true });
       }
       // read back number + url (gh pr create prints only the url; --json gives both)
-      const out = run('gh', ['pr', 'view', args.head, '--json', 'number,url'], cwd);
+      const out = run('gh', [
+        'pr', 'view', args.head, ...repoArgs, '--json', 'number,url',
+      ], cwd);
       const json = JSON.parse(out) as { number: number; url: string };
       return { provider: 'github', number: json.number, url: json.url };
     },
     viewPr(cwd, prNumber) {
-      const out = run('gh', ['pr', 'view', String(prNumber), '--json', 'state'], cwd);
+      const out = run('gh', [
+        'pr', 'view', String(prNumber), ...repoArgs, '--json', 'state',
+      ], cwd);
       const state = String((JSON.parse(out) as { state: string }).state).toLowerCase();
       return state === 'merged' ? 'merged' : state === 'closed' ? 'closed' : 'open';
     },

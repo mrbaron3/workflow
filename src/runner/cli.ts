@@ -24,7 +24,9 @@ async function main(): Promise<void> {
   });
   // From this point the pool owns DB connectivity. Provider/GitHub/tmux child
   // processes inherit a minimal environment with no PostgreSQL credential.
-  const executionEnvironment = minimalExecutionEnvironment(credentials);
+  const executionEnvironment = minimalExecutionEnvironment(credentials, process.env, {
+    commandTimeoutMs: config.commandTimeoutMs,
+  });
   replaceProcessEnvironment(executionEnvironment);
   const service = new IsolatedRunnerService(
     {
@@ -37,6 +39,7 @@ async function main(): Promise<void> {
       reconciliationIntervalMs: config.reconciliationIntervalMs,
       maxAttempts: config.maxAttempts,
       retryBaseMs: config.retryBaseMs,
+      attemptTimeoutMs: config.attemptTimeoutMs,
     },
     {
       store,
@@ -64,6 +67,10 @@ async function main(): Promise<void> {
         outbound: config.outbound,
         kernelMountValidated: runtimeBoundary !== null,
         listeningTcpPorts: runtimeBoundary?.listeningTcpPorts ?? null,
+        visibleContainerSocketPaths:
+          runtimeBoundary?.visibleContainerSocketPaths ?? null,
+        commandTimeoutMs: config.commandTimeoutMs,
+        attemptTimeoutMs: config.attemptTimeoutMs,
         processEnvironmentKeys: Object.keys(process.env).sort(),
         databaseCredentialPresentInProcessEnvironment:
           process.env.AGENTOPS_RUNNER_DATABASE_URL !== undefined,
