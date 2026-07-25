@@ -492,6 +492,37 @@ integration('PostgreSQL control store', () => {
     )).resolves.toMatchObject({ duplicate: false });
   });
 
+  it('terminates crash/expiry retries at the configured attempt ceiling', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store, '-expiry-ceiling');
+    await enqueue(store, repo.id, repo.version, 'expiry-ceiling');
+    const lease = await store.acquireLease({
+      workerId: 'worker-expiry-ceiling',
+      durationMs: 40,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(await store.reclaimExpiredLeases(1)).toBe(1);
+    await expect(store.acquireLease({
+      workerId: 'worker-after-ceiling',
+      durationMs: 1_000,
+    })).resolves.toBeNull();
+    const outcome = await pool.query<{
+      status: string;
+      failure: Record<string, unknown>;
+    }>(
+      'SELECT status, failure FROM agentops_control.jobs WHERE id = $1',
+      [lease!.job.id],
+    );
+    expect(outcome.rows[0]).toMatchObject({
+      status: 'failed',
+      failure: {
+        schemaVersion: 1,
+        code: 'lease_lost',
+        retryable: false,
+      },
+    });
+  });
+
   it('serializes expired lease reclaim with a concurrent registration update', async () => {
     const store = await migratedStore();
     const repo = await registration(store);

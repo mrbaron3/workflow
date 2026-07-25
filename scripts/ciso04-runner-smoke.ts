@@ -24,15 +24,28 @@ const runnerImage = `agentops-runner:ciso04-${suffix}`;
 const databasePassword = `postgres-${suffix}`;
 const runnerDatabasePassword = `runner-${suffix}`;
 const registrationId = randomUUID();
+const siblingRegistrationId = randomUUID();
 const unknownJobId = randomUUID();
 const artifactJobId = randomUUID();
+const heartbeatRegistrationId = randomUUID();
+const heartbeatJobId = randomUUID();
+const heartbeatAttemptId = randomUUID();
+const heartbeatLeaseId = randomUUID();
+const heartbeatLeaseToken = randomUUID();
 const evidencePath = path.join(root, 'evidence', 'ciso-04', 'apple-container-smoke.json');
 
 interface ContainerInspection {
   configuration: {
     id: string;
     publishedPorts?: Array<unknown>;
-    mounts?: Array<unknown>;
+    publishedSockets?: Array<unknown>;
+    readOnly?: boolean;
+    capDrop?: string[];
+    mounts?: Array<{
+      destination?: string;
+      source?: string;
+      type?: Record<string, unknown>;
+    }>;
   };
   status: {
     state: string;
@@ -211,11 +224,121 @@ async function main(): Promise<void> {
      $$;
      GRANT CONNECT ON DATABASE agentops TO agentops_runner;
      GRANT USAGE ON SCHEMA agentops_control TO agentops_runner;
-     GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA agentops_control TO agentops_runner;
-     GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA agentops_control TO agentops_runner;`,
+     GRANT SELECT ON agentops_control.schema_migrations,
+       agentops_control.repository_registrations TO agentops_runner;
+     -- PostgreSQL row-locking clauses require UPDATE on at least one column.
+     -- Grant only the non-authoritative observation timestamp; repository,
+     -- desired-state flags, version, and configuration remain non-writable.
+     GRANT UPDATE(updated_at)
+       ON agentops_control.repository_registrations TO agentops_runner;
+     GRANT SELECT, UPDATE ON agentops_control.jobs TO agentops_runner;
+     GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
+       agentops_control.job_leases,
+       agentops_control.artifact_links TO agentops_runner;
+     GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_runner;
+     GRANT USAGE, SELECT ON SEQUENCE
+       agentops_control.runtime_audit_id_seq TO agentops_runner;`,
   );
+  const rolePrivileges = JSON.parse(postgresExec(
+    `SELECT json_build_object(
+       'jobsUpdate', has_table_privilege(
+         'agentops_runner', 'agentops_control.jobs', 'UPDATE'
+       ),
+       'registrationExecutionUpdate', has_column_privilege(
+         'agentops_runner',
+         'agentops_control.repository_registrations',
+         'execution_enabled',
+         'UPDATE'
+       ),
+       'registrationVersionUpdate', has_column_privilege(
+         'agentops_runner',
+         'agentops_control.repository_registrations',
+         'version',
+         'UPDATE'
+       ),
+       'webhookUpdate', has_table_privilege(
+         'agentops_runner', 'agentops_control.webhook_deliveries', 'UPDATE'
+       ),
+       'controlRequestRead', has_table_privilege(
+         'agentops_runner', 'agentops_control.control_api_requests', 'SELECT'
+       )
+     )::text`,
+  )) as Record<string, boolean>;
+  if (
+    rolePrivileges.jobsUpdate !== true
+    || rolePrivileges.registrationExecutionUpdate !== false
+    || rolePrivileges.registrationVersionUpdate !== false
+    || rolePrivileges.webhookUpdate !== false
+    || rolePrivileges.controlRequestRead !== false
+  ) {
+    throw new Error(`runner DB role privilege boundary failed: ${
+      JSON.stringify(rolePrivileges)
+    }`);
+  }
+  pass('leastPrivilegeDatabaseRole', rolePrivileges);
   const runnerUrl =
     `postgresql://agentops_runner:${runnerDatabasePassword}@${postgresIp}:5432/agentops`;
+
+  postgresExec(
+    `INSERT INTO agentops_control.repository_registrations(
+       id, repository, enabled, issue_monitor_enabled, pr_monitor_enabled,
+       execution_enabled, configuration, version
+     ) VALUES (
+       '${heartbeatRegistrationId}', 'example/heartbeat-smoke', true, false,
+       false, true, '{}'::jsonb, 1
+     );
+     INSERT INTO agentops_control.jobs(
+       id, registration_id, registration_version, contract_version,
+       source_kind, source_key, idempotency_key, job_type, payload, status
+     ) VALUES (
+       '${heartbeatJobId}', '${heartbeatRegistrationId}', 1, 1,
+       'manual', 'heartbeat-block', 'heartbeat-block', 'agentops.runner',
+       '{}'::jsonb, 'leased'
+     );
+     INSERT INTO agentops_control.job_attempts(
+       id, job_id, attempt_number, worker_id, status
+     ) VALUES (
+       '${heartbeatAttemptId}', '${heartbeatJobId}', 1,
+       'heartbeat-block-worker', 'running'
+     );
+     INSERT INTO agentops_control.job_leases(
+       id, job_id, attempt_id, lease_token, worker_id, expires_at
+     ) VALUES (
+       '${heartbeatLeaseId}', '${heartbeatJobId}', '${heartbeatAttemptId}',
+       '${heartbeatLeaseToken}', 'heartbeat-block-worker',
+       clock_timestamp() + interval '1500 milliseconds'
+     );`,
+  );
+  const heartbeatEvidence = JSON.parse(run([
+    'run',
+    '--rm',
+    '--network',
+    network,
+    '--entrypoint',
+    'node',
+    '--env',
+    `AGENTOPS_HEARTBEAT_TEST_DATABASE_URL=${runnerUrl}`,
+    '--env',
+    `AGENTOPS_HEARTBEAT_TEST_LEASE_TOKEN=${heartbeatLeaseToken}`,
+    '--env',
+    'AGENTOPS_HEARTBEAT_TEST_WORKER_ID=heartbeat-block-worker',
+    runnerImage,
+    'dist/scripts/ciso04-heartbeat-block.js',
+  ], true)) as Record<string, unknown>;
+  pass('eventLoopIndependentHeartbeat', heartbeatEvidence);
+  postgresExec(
+    `UPDATE agentops_control.job_leases
+        SET status = 'released', released_at = clock_timestamp()
+      WHERE id = '${heartbeatLeaseId}';
+     UPDATE agentops_control.job_attempts
+        SET status = 'cancelled', finished_at = clock_timestamp()
+      WHERE id = '${heartbeatAttemptId}';
+     UPDATE agentops_control.jobs
+        SET status = 'cancelled', finished_at = clock_timestamp(),
+            updated_at = clock_timestamp()
+      WHERE id = '${heartbeatJobId}';`,
+  );
+
   const outbound = JSON.stringify([
     { host: postgresIp, port: 5432 },
     { host: 'github.com', port: 443 },
@@ -279,6 +402,37 @@ async function main(): Promise<void> {
   if ((runnerInspection.configuration.publishedPorts ?? []).length !== 0) {
     throw new Error('runner unexpectedly published a host port');
   }
+  if ((runnerInspection.configuration.publishedSockets ?? []).length !== 0) {
+    throw new Error('runner unexpectedly published a host socket');
+  }
+  if (runnerInspection.configuration.readOnly !== true) {
+    throw new Error('runner root filesystem is not read-only');
+  }
+  if (!runnerInspection.configuration.capDrop?.includes('ALL')) {
+    throw new Error('runner did not drop all Linux capabilities');
+  }
+  for (const mount of runnerInspection.configuration.mounts ?? []) {
+    if (mount.type?.virtiofs !== undefined) {
+      throw new Error(`runner has a host bind mount: ${JSON.stringify(mount)}`);
+    }
+  }
+  const durableMountEvidence = (
+    runnerInspection.configuration.mounts ?? []
+  ).map((mount) => ({
+    destination: mount.destination ?? null,
+    kind: mount.type?.volume !== undefined
+      ? 'named-volume'
+      : mount.type?.tmpfs !== undefined
+        ? 'tmpfs'
+        : 'unknown',
+    ...(mount.type?.volume !== undefined
+      ? {
+          volumeName: (
+            mount.type.volume as { name?: unknown }
+          ).name ?? null,
+        }
+      : {}),
+  }));
   if ((postgresInspection.configuration.publishedPorts ?? []).length !== 0) {
     throw new Error('PostgreSQL unexpectedly published a host port');
   }
@@ -323,9 +477,64 @@ async function main(): Promise<void> {
     runnerVolume,
     postgresVolume,
     privateNetwork: network,
-    rootFilesystemReadOnly: true,
-    capabilitiesDropped: 'ALL',
+    rootFilesystemReadOnly: runnerInspection.configuration.readOnly,
+    capabilitiesDropped: runnerInspection.configuration.capDrop,
+    mounts: durableMountEvidence,
     startupAudit,
+  });
+
+  const registrationRoot = `/workspace/registrations/${registrationId}`;
+  run([
+    'exec',
+    runner,
+    'node',
+    '-e',
+    `const fs=require('fs');`
+      + `fs.mkdirSync('${registrationRoot}',{recursive:true});`
+      + `fs.mkdirSync('/workspace/registrations/${siblingRegistrationId}',{recursive:true});`,
+  ]);
+  run([
+    'exec',
+    runner,
+    'bwrap',
+    '--die-with-parent',
+    '--new-session',
+    '--unshare-pid',
+    '--unshare-ipc',
+    '--unshare-uts',
+    '--ro-bind',
+    '/',
+    '/',
+    '--proc',
+    '/proc',
+    '--tmpfs',
+    '/workspace',
+    '--dir',
+    '/workspace/registrations',
+    '--dir',
+    registrationRoot,
+    '--bind',
+    registrationRoot,
+    registrationRoot,
+    '--tmpfs',
+    '/tmp',
+    '--bind',
+    '/home/agentops',
+    '/home/agentops',
+    '--chdir',
+    registrationRoot,
+    '--',
+    'node',
+    '-e',
+    `const fs=require('fs');`
+      + `if(fs.existsSync('/workspace/registrations/${siblingRegistrationId}'))process.exit(91);`
+      + `fs.writeFileSync('${registrationRoot}/sandbox-proof','ok');`,
+  ]);
+  pass('registrationProcessSandbox', {
+    implementation: 'bubblewrap-v1',
+    activeRegistrationWritable: true,
+    siblingRegistrationVisible: false,
+    isolatedProcessNamespace: true,
   });
 
   postgresExec(

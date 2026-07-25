@@ -53,6 +53,8 @@ export interface LiveOptions {
   projectRevision?: typeof projectReviewRevision;
   /** Test/embedding seam for grounded artifact construction. */
   groundBuild?: typeof groundArtifact;
+  /** Credential-free environment inherited by repository-controlled grader commands. */
+  graderEnvironment?: NodeJS.ProcessEnv;
   /** Test/embedding seam for the Perspective fan-out. */
   perspectiveSessions?: typeof runPerspectiveSessions;
   /** Isolated-runner lease/Registration fence immediately before provider execution. */
@@ -191,6 +193,7 @@ export async function runLiveSample(
       branch: sess.branch,
       changed: sess.changed,
       issueId: issue.id,
+      graderEnvironment: opts.graderEnvironment,
     });
 
     // 3. real read-only perspective sessions — each in its own detached worktree of the committed

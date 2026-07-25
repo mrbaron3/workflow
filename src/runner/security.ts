@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fs from 'node:fs';
 import { z } from 'zod';
 import { assertContainerNeutralPath } from '../runtime/paths.js';
 import { RunnerExecutionError } from './errors.js';
@@ -20,7 +21,7 @@ export const RunnerStartupInput = z.object({
   workerId: z.string().trim().min(1).max(128),
   workspaceRoot: z.string().min(1),
   databaseUrl: z.string().url(),
-  provider: z.enum(['codex', 'claude', 'gemini']),
+  provider: z.enum(['codex', 'claude']),
   leaseDurationMs: z.number().int().min(5_000).max(60 * 60_000),
   heartbeatIntervalMs: z.number().int().min(500).max(10 * 60_000),
   reconciliationIntervalMs: z.number().int().min(250).max(10 * 60_000),
@@ -37,8 +38,89 @@ export type RunnerStartupInput = z.infer<typeof RunnerStartupInput>;
 
 export interface RunnerCredentials {
   githubToken: string;
-  provider: 'codex' | 'claude' | 'gemini';
+  provider: 'codex' | 'claude';
   providerToken: string;
+}
+
+export interface RunnerRuntimeBoundary {
+  mountInfo: string;
+  listeningTcpPorts: number[];
+}
+
+function listeningPorts(raw: string): number[] {
+  const ports = new Set<number>();
+  for (const line of raw.trim().split('\n').slice(1)) {
+    const fields = line.trim().split(/\s+/);
+    if (fields[3] !== '0A') continue; // Linux TCP_LISTEN
+    const local = fields[1];
+    const encodedPort = local?.split(':').at(-1);
+    if (encodedPort && /^[0-9A-Fa-f]{4}$/.test(encodedPort)) {
+      ports.add(Number.parseInt(encodedPort, 16));
+    }
+  }
+  return [...ports].sort((a, b) => a - b);
+}
+
+/** Inspect kernel-visible container state; no runtime socket is mounted or used. */
+export function inspectRunnerRuntime(): RunnerRuntimeBoundary {
+  const mountInfo = fs.readFileSync('/proc/self/mountinfo', 'utf8');
+  const tcp = fs.readFileSync('/proc/net/tcp', 'utf8');
+  const tcp6 = fs.existsSync('/proc/net/tcp6')
+    ? fs.readFileSync('/proc/net/tcp6', 'utf8')
+    : '';
+  return {
+    mountInfo,
+    listeningTcpPorts: [...new Set([
+      ...listeningPorts(tcp),
+      ...listeningPorts(tcp6),
+    ])].sort((a, b) => a - b),
+  };
+}
+
+function validateRuntimeBoundary(boundary: RunnerRuntimeBoundary): void {
+  const mounts = boundary.mountInfo.split('\n').filter(Boolean).map((line) => {
+    const fields = line.split(' ');
+    return { target: fields[4] ?? '', options: fields[5] ?? '', raw: line };
+  });
+  const workspace = mounts.find((mount) => mount.target === '/workspace');
+  const root = mounts.find((mount) => mount.target === '/');
+  if (!workspace || !workspace.options.split(',').includes('rw')) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'kernel mount table does not show a writable /workspace volume',
+      false,
+    );
+  }
+  if (!root || !root.options.split(',').includes('ro')) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'runner root filesystem must be kernel-mounted read-only',
+      false,
+    );
+  }
+  for (const marker of [
+    '/Users/',
+    '/Company/Development/',
+    'docker.sock',
+    'container.sock',
+    '/run/host-services',
+    'SSH_AUTH_SOCK',
+  ]) {
+    if (boundary.mountInfo.includes(marker)) {
+      throw new RunnerExecutionError(
+        'startup_isolation_failure',
+        `kernel mount table contains forbidden host/socket marker: ${marker}`,
+        false,
+      );
+    }
+  }
+  if (boundary.listeningTcpPorts.length !== 0) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      `runner must start without listening TCP sockets: ${boundary.listeningTcpPorts.join(',')}`,
+      false,
+    );
+  }
 }
 
 const FORBIDDEN_ENV_KEYS = [
@@ -55,13 +137,11 @@ const FORBIDDEN_ENV_KEYS = [
 const PROVIDER_TOKEN_KEYS = {
   codex: 'OPENAI_API_KEY',
   claude: 'ANTHROPIC_API_KEY',
-  gemini: 'GEMINI_API_KEY',
 } as const;
 
 const PROVIDER_DESTINATIONS = {
   codex: 'api.openai.com:443',
   claude: 'api.anthropic.com:443',
-  gemini: 'generativelanguage.googleapis.com:443',
 } as const;
 
 function parseJson(name: string, raw: string | undefined): unknown {
@@ -126,7 +206,12 @@ function destinationKey(destination: z.infer<typeof OutboundDestination>): strin
 export function loadRunnerStartup(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
-): { config: RunnerStartupInput; credentials: RunnerCredentials } {
+  runtimeBoundary?: RunnerRuntimeBoundary,
+): {
+  config: RunnerStartupInput;
+  credentials: RunnerCredentials;
+  runtimeBoundary: RunnerRuntimeBoundary | null;
+} {
   for (const key of FORBIDDEN_ENV_KEYS) {
     if (env[key]) {
       throw new RunnerExecutionError(
@@ -153,7 +238,7 @@ export function loadRunnerStartup(
     );
   }
 
-  const provider = z.enum(['codex', 'claude', 'gemini']).parse(
+  const provider = z.enum(['codex', 'claude']).parse(
     env.AGENTOPS_RUNNER_PROVIDER,
   );
   const selectedProviderKey = PROVIDER_TOKEN_KEYS[provider];
@@ -269,9 +354,11 @@ export function loadRunnerStartup(
       false,
     );
   }
+  if (runtimeBoundary) validateRuntimeBoundary(runtimeBoundary);
 
   return {
     config,
+    runtimeBoundary: runtimeBoundary ?? null,
     credentials: {
       githubToken: requiredSecret(env, 'AGENTOPS_RUNNER_GITHUB_TOKEN'),
       provider,
@@ -296,9 +383,31 @@ export function minimalExecutionEnvironment(
     LANG: source.LANG ?? 'C.UTF-8',
     LC_ALL: source.LC_ALL ?? 'C.UTF-8',
     NO_COLOR: '1',
+    AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
     GH_TOKEN: credentials.githubToken,
     GITHUB_TOKEN: credentials.githubToken,
+    GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',
+    GIT_TERMINAL_PROMPT: '0',
     [providerKey]: credentials.providerToken,
+  };
+}
+
+/** Repository graders receive no provider, GitHub, DB, control, or socket credential. */
+export function isolatedGraderEnvironment(
+  source: NodeJS.ProcessEnv = process.env,
+  registrationRoot?: string,
+): NodeJS.ProcessEnv {
+  return {
+    PATH: source.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+    HOME: '/tmp',
+    TMPDIR: '/tmp',
+    LANG: source.LANG ?? 'C.UTF-8',
+    LC_ALL: source.LC_ALL ?? 'C.UTF-8',
+    NO_COLOR: '1',
+    AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
+    ...(registrationRoot
+      ? { AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot }
+      : {}),
   };
 }
 

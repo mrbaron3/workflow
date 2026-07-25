@@ -54,6 +54,8 @@ export interface GithubDevelopmentTurnDeps {
   driveQueue?: QueueDriver;
   prNativeRunner?: PrNativeGithubRunner;
   repositoryPullRequestReviewer?: RepositoryPullRequestReviewer;
+  /** A scoped issue job must not import unrelated repository PRs. */
+  discoverPullRequests?: boolean;
   /** Isolated-runner hooks; ordinary CLI callers leave these absent. */
   liveOptions?: LiveOptions;
   beforeReconcile?: () => Promise<void>;
@@ -120,12 +122,14 @@ export async function runGithubDevelopmentTurn(
     ?? realPrNativeGithubRunner(config.gate?.mergeMethod);
   if ((config.gate?.backend ?? 'store') === 'github' && config.target) {
     const targetRoot = path.resolve(harnessRoot, config.target.repo);
-    const discoveries = discoverRepositoryPullRequests(
-      store,
-      config,
-      prNativeRunner,
-      targetRoot,
-    );
+    const discoveries = deps.discoverPullRequests === false
+      ? []
+      : discoverRepositoryPullRequests(
+          store,
+          config,
+          prNativeRunner,
+          targetRoot,
+        );
     const review = deps.repositoryPullRequestReviewer
       ?? ((discovery) => reviewRepositoryPullRequest(
         store,
@@ -134,6 +138,18 @@ export async function runGithubDevelopmentTurn(
         prNativeRunner,
         harnessRoot,
         log,
+        PERSPECTIVES,
+        {
+          ...(deps.liveOptions?.graderEnvironment
+            ? {
+                graderEnvironment: deps.liveOptions.graderEnvironment,
+                graderIsolation: 'runner-container' as const,
+              }
+            : {}),
+          ...(deps.liveOptions?.beforeProviderExecution
+            ? { beforeProviderExecution: deps.liveOptions.beforeProviderExecution }
+            : {}),
+        },
       ));
     for (const discovery of discoveries) {
       if (discovery.imported) {

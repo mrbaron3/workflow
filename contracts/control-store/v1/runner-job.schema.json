@@ -39,6 +39,18 @@
               "enum": ["opened", "synchronize", "review_requested", "check_completed", "recovery"]
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "trigger", "identity"],
+          "properties": {
+            "kind": { "const": "repository" },
+            "trigger": { "enum": ["push", "check_run", "check_suite"] },
+            "identity": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "ref": { "type": "string", "maxLength": 255 },
+            "after": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" }
+          }
         }
       ]
     },
@@ -71,6 +83,41 @@
       "items": { "$ref": "#/$defs/artifact" }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "object",
+            "properties": { "kind": { "const": "issue" } },
+            "required": ["kind"]
+          }
+        },
+        "required": ["event"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "execution": {
+            "type": "object",
+            "properties": { "mode": { "const": "development_turn" } },
+            "required": ["mode"]
+          }
+        }
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "execution": {
+            "type": "object",
+            "properties": { "mode": { "const": "pr_reconciliation" } },
+            "required": ["mode"]
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "gitRef": {
       "type": "string",
@@ -85,7 +132,7 @@
       "properties": {
         "uri": {
           "type": "string",
-          "pattern": "^volume://registrations/[0-9a-f-]{36}/[A-Za-z0-9._/-]+$"
+          "pattern": "^volume://registrations/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(?!\\.\\.?(?:/|$))(?!.*\\/\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$"
         },
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
         "sizeBytes": { "type": "integer", "minimum": 0 },

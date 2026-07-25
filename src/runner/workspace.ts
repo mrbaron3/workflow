@@ -71,6 +71,7 @@ export function artifactUri(registrationId: string, relativePath: string): strin
   const normalized = relativePath.split(path.sep).join('/');
   if (
     path.isAbsolute(relativePath)
+    || normalized.split('/').some((segment) => segment === '.' || segment === '..')
     || normalized.startsWith('../')
     || normalized.includes('/../')
     || !/^[A-Za-z0-9._/-]+$/.test(normalized)
@@ -86,12 +87,19 @@ export function artifactUri(registrationId: string, relativePath: string): strin
 
 export function resolveArtifactUri(root: string, reference: ArtifactReference): string {
   const match = reference.uri.match(
-    /^volume:\/\/registrations\/([0-9a-f-]{36})\/([A-Za-z0-9._/-]+)$/,
+    /^volume:\/\/registrations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/([A-Za-z0-9._/-]+)$/,
   );
   if (!match) {
     throw new RunnerExecutionError(
       'artifact_integrity',
       `unsupported artifact URI: ${reference.uri}`,
+      false,
+    );
+  }
+  if (match[2]!.split('/').some((segment) => segment === '.' || segment === '..')) {
+    throw new RunnerExecutionError(
+      'artifact_integrity',
+      `artifact URI contains dot path segments: ${reference.uri}`,
       false,
     );
   }
@@ -159,7 +167,12 @@ export class RunnerWorkspaceManager {
       ),
     );
     const worktreePath = path.join(jobRoot, 'worktree');
-    const statePath = path.join(registrationRoot, 'state');
+    // Existing AgentOps evaluation JSON remains durable for this logical job
+    // across retry attempts, but can never expose another job's queue/PR state.
+    const statePath = assertInside(
+      registrationRoot,
+      path.join(registrationRoot, 'jobs', JobId.parse(lease.job.id), 'state'),
+    );
     const artifactPath = path.join(jobRoot, 'artifacts');
     fs.mkdirSync(registrationRoot, { recursive: true, mode: 0o700 });
     const cloneUrl = githubCloneUrl(payload);

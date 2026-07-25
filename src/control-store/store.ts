@@ -913,16 +913,25 @@ export class PostgresControlStore {
     return result.rows[0].expires_at.toISOString();
   }
 
-  async reclaimExpiredLeases(): Promise<number> {
+  async reclaimExpiredLeases(maxAttempts = 3): Promise<number> {
+    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+      throw new Error('maxAttempts must be a positive integer');
+    }
     return transaction(this.pool, async (client) => {
-      const expired = await client.query<{ id: string; job_id: string; attempt_id: string }>(
-        `SELECT l.id, l.job_id, l.attempt_id
+      const expired = await client.query<{
+        id: string;
+        job_id: string;
+        attempt_id: string;
+        attempt_number: number;
+      }>(
+        `SELECT l.id, l.job_id, l.attempt_id, a.attempt_number
            FROM agentops_control.job_leases l
+           JOIN agentops_control.job_attempts a ON a.id = l.attempt_id
            JOIN agentops_control.jobs j ON j.id = l.job_id
            JOIN agentops_control.repository_registrations r ON r.id = j.registration_id
           WHERE l.status = 'active' AND l.expires_at <= clock_timestamp()
           ORDER BY l.expires_at
-          FOR UPDATE OF l, j, r SKIP LOCKED`,
+          FOR UPDATE OF l, a, j, r SKIP LOCKED`,
       );
       for (const lease of expired.rows) {
         await client.query(
@@ -940,7 +949,7 @@ export class PostgresControlStore {
                     'status', 'failed',
                     'code', 'lease_lost',
                     'message', 'lease expired',
-                    'retryable', true,
+                    'retryable', $2::boolean,
                     'boundary', NULL,
                     'observedAt', to_char(
                       clock_timestamp() AT TIME ZONE 'UTC',
@@ -948,24 +957,29 @@ export class PostgresControlStore {
                     )
                   )
             WHERE id = $1 AND status = 'running'`,
-          [lease.attempt_id],
+          [lease.attempt_id, lease.attempt_number < maxAttempts],
         );
         await client.query(
           `UPDATE agentops_control.jobs j
               SET status = CASE
                     WHEN r.enabled AND r.execution_enabled
-                     AND r.version = j.registration_version THEN 'queued'
+                     AND r.version = j.registration_version
+                     AND $2::integer > $3::integer THEN 'queued'
+                    WHEN r.enabled AND r.execution_enabled
+                     AND r.version = j.registration_version THEN 'failed'
                     ELSE 'rejected'
                   END,
                   available_at = CASE
                     WHEN r.enabled AND r.execution_enabled
                      AND r.version = j.registration_version
+                     AND $2::integer > $3::integer
                     THEN clock_timestamp()
                     ELSE j.available_at
                   END,
                   finished_at = CASE
                     WHEN r.enabled AND r.execution_enabled
                      AND r.version = j.registration_version
+                     AND $2::integer > $3::integer
                     THEN NULL
                     ELSE clock_timestamp()
                   END,
@@ -973,12 +987,31 @@ export class PostgresControlStore {
                   last_error = CASE
                     WHEN r.enabled AND r.execution_enabled
                      AND r.version = j.registration_version
+                     AND $2::integer > $3::integer
                     THEN 'lease expired'
+                    WHEN r.enabled AND r.execution_enabled
+                     AND r.version = j.registration_version
+                    THEN 'lease expired and max attempts exhausted'
                     ELSE 'lease expired after registration changed'
                   END,
                   failure = CASE
                     WHEN r.enabled AND r.execution_enabled
-                     AND r.version = j.registration_version THEN NULL
+                     AND r.version = j.registration_version
+                     AND $2::integer > $3::integer THEN NULL
+                    WHEN r.enabled AND r.execution_enabled
+                     AND r.version = j.registration_version
+                    THEN jsonb_build_object(
+                      'schemaVersion', 1,
+                      'status', 'failed',
+                      'code', 'lease_lost',
+                      'message', 'lease expired and max attempts exhausted',
+                      'retryable', false,
+                      'boundary', NULL,
+                      'observedAt', to_char(
+                        clock_timestamp() AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                      )
+                    )
                     ELSE jsonb_build_object(
                       'schemaVersion', 1,
                       'status', 'failed',
@@ -995,7 +1028,19 @@ export class PostgresControlStore {
              FROM agentops_control.repository_registrations r
             WHERE j.id = $1 AND j.status = 'leased'
               AND r.id = j.registration_id`,
-          [lease.job_id],
+          [lease.job_id, maxAttempts, lease.attempt_number],
+        );
+        await client.query(
+          `INSERT INTO agentops_control.runtime_audit(
+             actor_type, actor_id, event_type, job_id, details
+           ) VALUES ('runner', 'lease-reclaimer', 'runner.lease.expired', $1, $2)`,
+          [
+            lease.job_id,
+            {
+              attemptNumber: lease.attempt_number,
+              maxAttempts,
+            },
+          ],
         );
       }
       return expired.rowCount ?? 0;

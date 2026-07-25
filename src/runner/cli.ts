@@ -3,6 +3,7 @@ import { PostgresControlStore } from '../control-store/store.js';
 import { ExistingAgentOpsRunnerAdapter } from './adapter.js';
 import {
   loadRunnerStartup,
+  inspectRunnerRuntime,
   minimalExecutionEnvironment,
   replaceProcessEnvironment,
 } from './security.js';
@@ -10,7 +11,11 @@ import { IsolatedRunnerService } from './service.js';
 import { RunnerWorkspaceManager } from './workspace.js';
 
 async function main(): Promise<void> {
-  const { config, credentials } = loadRunnerStartup();
+  const { config, credentials, runtimeBoundary } = loadRunnerStartup(
+    process.env,
+    process.cwd(),
+    inspectRunnerRuntime(),
+  );
   const store = await PostgresControlStore.open({
     connectionString: config.databaseUrl,
     max: 6,
@@ -28,6 +33,7 @@ async function main(): Promise<void> {
       provider: config.provider,
       leaseDurationMs: config.leaseDurationMs,
       heartbeatIntervalMs: config.heartbeatIntervalMs,
+      heartbeatDatabaseUrl: config.databaseUrl,
       reconciliationIntervalMs: config.reconciliationIntervalMs,
       maxAttempts: config.maxAttempts,
       retryBaseMs: config.retryBaseMs,
@@ -56,6 +62,8 @@ async function main(): Promise<void> {
         publishedPortCount: config.publishedPorts.length,
         mountSources: config.mounts.map((mount) => mount.source),
         outbound: config.outbound,
+        kernelMountValidated: runtimeBoundary !== null,
+        listeningTcpPorts: runtimeBoundary?.listeningTcpPorts ?? null,
         processEnvironmentKeys: Object.keys(process.env).sort(),
         databaseCredentialPresentInProcessEnvironment:
           process.env.AGENTOPS_RUNNER_DATABASE_URL !== undefined,

@@ -74,21 +74,20 @@ FROM runtime AS runner
 USER root
 ARG CODEX_VERSION=0.145.0
 ARG CLAUDE_CODE_VERSION=2.1.220
-ARG GEMINI_CLI_VERSION=0.52.0
+COPY --chown=root:root deploy/agentops-git-askpass /usr/local/bin/agentops-git-askpass
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates gh tmux openssh-client \
+    && apt-get install -y --no-install-recommends bubblewrap ca-certificates gh tmux openssh-client \
     && npm install --global \
          "@openai/codex@${CODEX_VERSION}" \
          "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
-         "@google/gemini-cli@${GEMINI_CLI_VERSION}" \
     && useradd --uid 65532 --create-home --home-dir /home/agentops \
          --shell /usr/sbin/nologin agentops \
     && mkdir -p /workspace \
     && chown agentops:agentops /workspace \
+    && chmod 0755 /usr/local/bin/agentops-git-askpass \
     && gh pr merge --help | grep -q -- '--match-head-commit' \
     && codex --version \
     && claude --version \
-    && gemini --version \
     && rm -rf /var/lib/apt/lists/*
 ENV HOME=/home/agentops \
     AGENTOPS_APP_ROOT=/app \

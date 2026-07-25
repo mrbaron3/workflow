@@ -45,7 +45,35 @@ describe('runner lease fence', () => {
     const fence = new RunnerLeaseFence(store(allowed), lease(), 'runner-1', 1_000);
     await fence.arm('push');
     expect(() => fence.consume('push')).not.toThrow();
-    expect(() => fence.consume('push')).toThrow(/absent or expired/);
+    expect(() => fence.consume('push')).toThrow(/absent/);
+  });
+
+  it('queues independently authorized permits for consecutive release mutations', async () => {
+    const fence = new RunnerLeaseFence(store(allowed), lease(), 'runner-1', 1_000);
+    await fence.arm('release');
+    await fence.arm('release');
+    expect(() => fence.consume('release')).not.toThrow();
+    expect(() => fence.consume('release')).not.toThrow();
+    expect(() => fence.consume('release')).toThrow(/absent/);
+  });
+
+  it('fails closed but makes a merely expired permit safely retryable', async () => {
+    const fence = new RunnerLeaseFence(store(allowed), lease(), 'runner-1', 0);
+    await fence.arm('merge');
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    const error = (() => {
+      try {
+        fence.consume('merge');
+        return null;
+      } catch (caught) {
+        return caught;
+      }
+    })();
+    expect(error).toMatchObject({
+      code: 'lease_lost',
+      retryable: true,
+      boundary: 'merge',
+    });
   });
 
   it('fails closed and stays stopped after stale Registration or heartbeat loss', async () => {

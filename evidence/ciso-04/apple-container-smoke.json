@@ -4,21 +4,21 @@
   "runtime": "Apple Container",
   "runtimeVersion": "container CLI version 1.1.0 (build: release, commit: unspeci)",
   "images": {
-    "runtimeImage": "agentops-runtime:ciso04-90571-1784986313851",
-    "runnerImage": "agentops-runner:ciso04-90571-1784986313851"
+    "runtimeImage": "agentops-runtime:ciso04-2913-1784988674202",
+    "runnerImage": "agentops-runner:ciso04-2913-1784988674202"
   },
   "topology": {
-    "internalNetwork": "agentops-ciso04-90571-1784986313851",
+    "internalNetwork": "agentops-ciso04-2913-1784988674202",
     "runnerPublishedPorts": [],
     "postgresPublishedPorts": [],
-    "runnerPrivateVolume": "agentops-ciso04-runner-90571-1784986313851",
-    "postgresPrivateVolume": "agentops-ciso04-pg-90571-1784986313851"
+    "runnerPrivateVolume": "agentops-ciso04-runner-2913-1784988674202",
+    "postgresPrivateVolume": "agentops-ciso04-pg-2913-1784988674202"
   },
   "checks": {
     "standardOciRunnerBuild": {
       "result": "passed",
       "detail": {
-        "image": "agentops-runner:ciso04-90571-1784986313851",
+        "image": "agentops-runner:ciso04-2913-1784988674202",
         "target": "runner"
       }
     },
@@ -26,8 +26,27 @@
       "result": "passed",
       "detail": {
         "suite": "test/control-store.integration.test.ts",
-        "network": "agentops-ciso04-90571-1784986313851",
+        "network": "agentops-ciso04-2913-1784988674202",
         "publishedPorts": 0
+      }
+    },
+    "leastPrivilegeDatabaseRole": {
+      "result": "passed",
+      "detail": {
+        "jobsUpdate": true,
+        "registrationExecutionUpdate": false,
+        "registrationVersionUpdate": false,
+        "webhookUpdate": false,
+        "controlRequestRead": false
+      }
+    },
+    "eventLoopIndependentHeartbeat": {
+      "result": "passed",
+      "detail": {
+        "blockedMainThreadMs": 3005,
+        "leaseActive": true,
+        "heartbeatAdvanced": true,
+        "remainingLeaseMs": 1481.935
       }
     },
     "runnerBoundaryIsolation": {
@@ -36,11 +55,28 @@
         "runnerUid": 65532,
         "runnerPublishedPorts": [],
         "postgresPublishedPorts": [],
-        "runnerVolume": "agentops-ciso04-runner-90571-1784986313851",
-        "postgresVolume": "agentops-ciso04-pg-90571-1784986313851",
-        "privateNetwork": "agentops-ciso04-90571-1784986313851",
+        "runnerVolume": "agentops-ciso04-runner-2913-1784988674202",
+        "postgresVolume": "agentops-ciso04-pg-2913-1784988674202",
+        "privateNetwork": "agentops-ciso04-2913-1784988674202",
         "rootFilesystemReadOnly": true,
-        "capabilitiesDropped": "ALL",
+        "capabilitiesDropped": [
+          "ALL"
+        ],
+        "mounts": [
+          {
+            "destination": "/tmp",
+            "kind": "tmpfs"
+          },
+          {
+            "destination": "/home/agentops",
+            "kind": "tmpfs"
+          },
+          {
+            "destination": "/workspace",
+            "kind": "named-volume",
+            "volumeName": "agentops-ciso04-runner-2913-1784988674202"
+          }
+        ],
         "startupAudit": {
           "outbound": [
             {
@@ -62,13 +98,18 @@
           ],
           "provider": "codex",
           "mountSources": [
-            "agentops-ciso04-runner-90571-1784986313851"
+            "agentops-ciso04-runner-2913-1784988674202"
           ],
           "workspaceRoot": "/workspace",
+          "listeningTcpPorts": [],
           "publishedPortCount": 0,
+          "kernelMountValidated": true,
           "processEnvironmentKeys": [
+            "AGENTOPS_RUNNER_PROCESS_SANDBOX",
             "GH_TOKEN",
             "GITHUB_TOKEN",
+            "GIT_ASKPASS",
+            "GIT_TERMINAL_PROMPT",
             "HOME",
             "LANG",
             "LC_ALL",
@@ -84,17 +125,26 @@
         }
       }
     },
+    "registrationProcessSandbox": {
+      "result": "passed",
+      "detail": {
+        "implementation": "bubblewrap-v1",
+        "activeRegistrationWritable": true,
+        "siblingRegistrationVisible": false,
+        "isolatedProcessNamespace": true
+      }
+    },
     "unknownSchemaRejected": {
       "result": "passed",
       "detail": {
-        "jobId": "89bfad8f-51c2-4dd5-af07-9eacddebeba8",
+        "jobId": "3e012b34-e01e-451f-a2b6-297242db4689",
         "outcome": "failed:unknown_job_contract"
       }
     },
     "artifactIntegrityRejected": {
       "result": "passed",
       "detail": {
-        "jobId": "234d3ad2-4ccf-4a19-8c1f-609082a33d68",
+        "jobId": "8f7cb44b-7b2a-48ad-b6d8-d8f0c0ffdc20",
         "outcome": "failed:artifact_integrity"
       }
     },
@@ -107,5 +157,5 @@
       }
     }
   },
-  "completedAt": "2026-07-25T13:33:03.849Z"
+  "completedAt": "2026-07-25T14:12:24.338Z"
 }

@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#14",
+  "roundsRequired": 2,
+  "initialImplementationHead": "58bbdb6fab3f062d9e5bbaef842aa95418f8c612",
+  "rounds": [
+    {
+      "round": 1,
+      "frozenHead": "58bbdb6fab3f062d9e5bbaef842aa95418f8c612",
+      "reviewers": [
+        {
+          "kind": "codex",
+          "taskId": "task_843893b77206",
+          "dispatchId": "ctx_99e48208146f",
+          "workerDoneMessageId": "msg_4c9d646a41ae",
+          "mode": "independent-read-only"
+        },
+        {
+          "kind": "claude",
+          "taskId": "task_ef4517f7ea61",
+          "dispatchId": "ctx_603887db0926",
+          "workerDoneMessageId": "msg_09593245927b",
+          "mode": "independent-read-only"
+        }
+      ],
+      "ownerDisposition": {
+        "confirmedAndRepaired": [
+          "provider and repository grader credential inheritance",
+          "Go control-plane executable job projection",
+          "Issue/PR/repository execution-mode and entity scoping",
+          "event-loop-independent heartbeat and bounded expiry retries",
+          "authenticated HTTPS clone/fetch/push",
+          "sibling Registration process visibility",
+          "kernel-observed startup isolation and actual Apple inspection",
+          "fresh single-use release permits including split-source close",
+          "unsupported Gemini backend acceptance",
+          "artifact URI dot segments and UUID shape",
+          "TypeScript/JSON Schema required-field parity",
+          "least-privilege runner database role",
+          "safe existing-AgentOps adapter-path evidence"
+        ],
+        "failClosedRetry": [
+          "A short-lived permit that expires during a slow GitHub round trip is retryable; it never authorizes the side effect."
+        ],
+        "residualRisk": [
+          "The Apple proof uses an internal deny-all external network; production must implement the exact validated outbound set with network policy or an egress proxy."
+        ]
+      }
+    }
+  ]
+}

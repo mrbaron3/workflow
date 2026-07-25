@@ -8,7 +8,7 @@ import { RunnerExecutionError } from './errors.js';
  * at the exact synchronous GitHub side-effect call site.
  */
 export class RunnerLeaseFence {
-  private readonly permits = new Map<RunnerCriticalBoundary, number>();
+  private readonly permits = new Map<RunnerCriticalBoundary, number[]>();
   private lostReason: string | null = null;
 
   constructor(
@@ -51,7 +51,9 @@ export class RunnerLeaseFence {
         boundary,
       );
     }
-    this.permits.set(boundary, performance.now());
+    const permits = this.permits.get(boundary) ?? [];
+    permits.push(performance.now());
+    this.permits.set(boundary, permits);
   }
 
   /**
@@ -60,13 +62,23 @@ export class RunnerLeaseFence {
    */
   consume(boundary: RunnerCriticalBoundary): void {
     this.assertLive(boundary);
-    const armedAt = this.permits.get(boundary);
-    this.permits.delete(boundary);
-    if (armedAt === undefined || performance.now() - armedAt > this.maxPermitAgeMs) {
+    const permits = this.permits.get(boundary) ?? [];
+    const armedAt = permits.shift();
+    if (permits.length === 0) this.permits.delete(boundary);
+    else this.permits.set(boundary, permits);
+    if (armedAt === undefined) {
       throw new RunnerExecutionError(
         'lease_lost',
-        `runner ${boundary} permit is absent or expired`,
+        `runner ${boundary} permit is absent`,
         false,
+        boundary,
+      );
+    }
+    if (performance.now() - armedAt > this.maxPermitAgeMs) {
+      throw new RunnerExecutionError(
+        'lease_lost',
+        `runner ${boundary} permit expired before its side-effect seam`,
+        true,
         boundary,
       );
     }

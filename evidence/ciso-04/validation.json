@@ -8,15 +8,15 @@
     {
       "name": "runner-targeted",
       "result": "passed",
-      "testsPassed": 28
+      "testsPassed": 33
     },
     {
       "name": "typescript-full",
       "result": "passed",
-      "filesPassed": 95,
+      "filesPassed": 97,
       "filesSkipped": 1,
-      "testsPassed": 797,
-      "testsSkipped": 23
+      "testsPassed": 809,
+      "testsSkipped": 24
     },
     {
       "name": "typescript-build-typecheck",
@@ -35,7 +35,7 @@
     {
       "name": "postgres-integration",
       "result": "passed",
-      "testsPassed": 22,
+      "testsPassed": 23,
       "environment": "Apple Container internal network, zero host ports"
     },
     {
@@ -53,10 +53,28 @@
       "name": "postgres-restart-recovery",
       "result": "passed",
       "evidence": "evidence/ciso-04/postgres-runner-integration.json"
+    },
+    {
+      "name": "event-loop-independent-heartbeat",
+      "result": "passed",
+      "blockedMainThreadMs": 3005,
+      "evidence": "evidence/ciso-04/apple-container-smoke.json"
+    },
+    {
+      "name": "registration-process-sandbox",
+      "result": "passed",
+      "implementation": "bubblewrap-v1",
+      "siblingRegistrationVisible": false,
+      "evidence": "evidence/ciso-04/apple-container-smoke.json"
+    },
+    {
+      "name": "existing-agentops-safe-path",
+      "result": "passed",
+      "test": "test/runner-adapter.test.ts"
     }
   ],
   "residualRisk": [
     "The safe test path deliberately uses no real provider or GitHub write credential.",
-    "Production must enforce the validated outbound destination set with network policy or an egress proxy."
+    "Apple evidence uses an internal network (deny-all external); production must realize the exact validated destination set with network policy or an egress proxy."
   ]
 }

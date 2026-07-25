@@ -467,9 +467,12 @@ func (store *Store) EnqueueWork(
 	if !registration.Enabled || !registration.ExecutionEnabled {
 		return "", false, ErrStaleRegistration
 	}
-	payload := item.CanonicalPayload()
+	payload, err := item.RunnerPayload(sourceKind)
+	if err != nil {
+		return "", false, err
+	}
 	idempotencyKey := item.IdempotencyKey()
-	jobType := "github." + item.Kind
+	jobType := "agentops.runner"
 	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return "", false, unavailable(err)

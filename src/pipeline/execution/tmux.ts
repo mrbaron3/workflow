@@ -19,14 +19,18 @@ import {
   buildInteractiveLaunchCommand,
   type InteractiveLaunchRequest,
 } from '../../agents/interactive-backend.js';
+import { sandboxedShellCommand } from './runner-sandbox.js';
 
 export interface LaunchOpts extends InteractiveLaunchRequest {
   cols?: number;
   rows?: number;
 }
 
-function tmux(args: string[]): { ok: boolean; stdout: string; stderr: string } {
-  const res = spawnSync('tmux', args, { encoding: 'utf8' });
+function tmux(
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): { ok: boolean; stdout: string; stderr: string } {
+  const res = spawnSync('tmux', args, { encoding: 'utf8', env });
   return { ok: res.status === 0, stdout: res.stdout ?? '', stderr: res.stderr ?? '' };
 }
 
@@ -49,12 +53,37 @@ function target(session: string): string {
  * while individual role tabs open and close — without the home window, closing the only role tab
  * would kill the holder and race the next launch. Idempotent: reuses an existing holder.
  */
-function ensureHolder(cols: number, rows: number): void {
+export function providerSessionEnvironment(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  for (const key of [
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'GIT_ASKPASS',
+    'GIT_TERMINAL_PROMPT',
+    'AGENTOPS_RUNNER_DATABASE_URL',
+    'AGENTOPS_CONTROL_TOKEN',
+    'SSH_AUTH_SOCK',
+    'CONTAINER_HOST',
+    'DOCKER_HOST',
+  ]) {
+    delete env[key];
+  }
+  return env;
+}
+
+function ensureHolder(
+  cols: number,
+  rows: number,
+  env: NodeJS.ProcessEnv,
+): void {
   if (tmux(['has-session', '-t', WINDOW_HOLDER]).ok) return;
   const home =
     "printf '%s\\n' 'agentops dashboard — generator/reviewer sessions open here as tabs; a finished tab closes.'; " +
     'while true; do sleep 3600; done';
-  const r = tmux(['new-session', '-d', '-s', WINDOW_HOLDER, '-n', 'home', '-x', String(cols), '-y', String(rows), home]);
+  const r = tmux(
+    ['new-session', '-d', '-s', WINDOW_HOLDER, '-n', 'home', '-x', String(cols), '-y', String(rows), home],
+    env,
+  );
   if (!r.ok) throw new Error(`tmux new-session (holder) failed: ${r.stderr || r.stdout}`);
   // pin our -n window names (tmux would otherwise auto-rename each window to its running command,
   // which would both mislabel the tabs and break name-based targeting below)
@@ -76,8 +105,51 @@ export function buildLaunchCommand(opts: LaunchOpts): string {
 /** Launch an interactive Claude Code session as a WINDOW (tab) of the holder session. */
 export function launchSession(opts: LaunchOpts): void {
   killSession(opts.session); // idempotent: close any stale tab of the same name
-  ensureHolder(opts.cols ?? 200, opts.rows ?? 50);
-  const res = tmux(['new-window', '-t', WINDOW_HOLDER, '-n', opts.session, '-c', opts.cwd, buildLaunchCommand(opts)]);
+  const environment = providerSessionEnvironment();
+  ensureHolder(opts.cols ?? 200, opts.rows ?? 50, environment);
+  for (const key of [
+    'GH_TOKEN',
+    'GITHUB_TOKEN',
+    'GIT_ASKPASS',
+    'GIT_TERMINAL_PROMPT',
+    'AGENTOPS_RUNNER_DATABASE_URL',
+    'AGENTOPS_CONTROL_TOKEN',
+    'SSH_AUTH_SOCK',
+    'CONTAINER_HOST',
+    'DOCKER_HOST',
+    'OPENAI_API_KEY',
+    'ANTHROPIC_API_KEY',
+  ]) {
+    tmux(['set-environment', '-gu', key]);
+  }
+  for (const key of [
+    'PATH',
+    'HOME',
+    'TMPDIR',
+    'LANG',
+    'LC_ALL',
+    'NO_COLOR',
+    'OPENAI_API_KEY',
+    'ANTHROPIC_API_KEY',
+  ]) {
+    const value = environment[key];
+    if (value !== undefined) tmux(['set-environment', '-g', key, value]);
+  }
+  const command = sandboxedShellCommand(
+    environment,
+    opts.cwd,
+    buildLaunchCommand(opts),
+  );
+  const res = tmux([
+    'new-window',
+    '-t',
+    WINDOW_HOLDER,
+    '-n',
+    opts.session,
+    '-c',
+    opts.cwd,
+    command,
+  ]);
   if (!res.ok) throw new Error(`tmux new-window failed: ${res.stderr || res.stdout}`);
 }
 

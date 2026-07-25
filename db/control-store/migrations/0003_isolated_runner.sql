@@ -20,7 +20,10 @@ ALTER TABLE agentops_control.job_attempts
 
 ALTER TABLE agentops_control.artifact_links
   ADD CONSTRAINT artifact_links_registration_volume_uri
-    CHECK (uri ~ '^volume://registrations/[0-9a-f-]{36}/[A-Za-z0-9._/-]+$'),
+    CHECK (
+      uri ~ '^volume://registrations/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[A-Za-z0-9._/-]+$'
+      AND uri !~ '/\.\.?(/|$)'
+    ),
   ADD CONSTRAINT artifact_links_attempt_identity
     UNIQUE NULLS NOT DISTINCT (job_id, attempt_id, kind, uri);
 

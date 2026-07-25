@@ -27,9 +27,20 @@ function safeEnv(): NodeJS.ProcessEnv {
   };
 }
 
+function safeRuntimeBoundary() {
+  return {
+    mountInfo: [
+      '1 0 0:1 / / ro,relatime - overlay overlay ro',
+      '2 1 0:2 / /workspace rw,relatime - ext4 runner-volume rw',
+      '3 1 0:3 / /tmp rw,nosuid - tmpfs tmpfs rw',
+    ].join('\n'),
+    listeningTcpPorts: [],
+  };
+}
+
 describe('runner startup isolation', () => {
   it('accepts one private named volume, zero ports, separated credentials, and controlled outbound', () => {
-    const loaded = loadRunnerStartup(safeEnv(), '/app');
+    const loaded = loadRunnerStartup(safeEnv(), '/app', safeRuntimeBoundary());
     expect(loaded.config).toMatchObject({
       workspaceRoot: '/workspace',
       provider: 'codex',
@@ -40,6 +51,38 @@ describe('runner startup isolation', () => {
         readOnly: false,
       }],
     });
+  });
+
+  it.each([
+    [
+      'writable root filesystem',
+      {
+        ...safeRuntimeBoundary(),
+        mountInfo: safeRuntimeBoundary().mountInfo.replace(
+          '/ / ro,relatime',
+          '/ / rw,relatime',
+        ),
+      },
+    ],
+    [
+      'host development bind mount',
+      {
+        ...safeRuntimeBoundary(),
+        mountInfo: `${safeRuntimeBoundary().mountInfo}\n`
+          + '4 1 0:4 /Users/operator/Company/Development /source ro - virtiofs host ro',
+      },
+    ],
+    [
+      'container socket mount',
+      {
+        ...safeRuntimeBoundary(),
+        mountInfo: `${safeRuntimeBoundary().mountInfo}\n`
+          + '4 1 0:4 / /run/container.sock rw - virtiofs container.sock rw',
+      },
+    ],
+    ['listening socket', { ...safeRuntimeBoundary(), listeningTcpPorts: [8080] }],
+  ])('fails closed for kernel-observed %s', (_name, boundary) => {
+    expect(() => loadRunnerStartup(safeEnv(), '/app', boundary)).toThrow();
   });
 
   it.each([
@@ -100,6 +143,7 @@ describe('runner startup isolation', () => {
       GH_TOKEN: 'github-secret',
       GITHUB_TOKEN: 'github-secret',
       OPENAI_API_KEY: 'provider-secret',
+      AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
     });
     expect(child).not.toHaveProperty('AGENTOPS_RUNNER_DATABASE_URL');
     expect(child).not.toHaveProperty('AGENTOPS_CONTROL_TOKEN');

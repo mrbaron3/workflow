@@ -1,4 +1,5 @@
 import type { PostgresControlStore } from '../control-store/store.js';
+import { Worker } from 'node:worker_threads';
 import {
   JobEnvelopeContract,
   RunnerJobPayloadV1Contract,
@@ -21,9 +22,11 @@ import {
 export interface RunnerServiceConfig {
   workerId: string;
   workspaceRoot: string;
-  provider: 'codex' | 'claude' | 'gemini';
+  provider: 'codex' | 'claude';
   leaseDurationMs: number;
   heartbeatIntervalMs: number;
+  /** Kept only in workerData; never restored to provider/grader process env. */
+  heartbeatDatabaseUrl?: string;
   reconciliationIntervalMs: number;
   maxAttempts: number;
   retryBaseMs: number;
@@ -39,6 +42,7 @@ export interface RunnerServiceDependencies {
 class LeaseHeartbeat {
   private timer: NodeJS.Timeout | null = null;
   private inFlight: Promise<void> | null = null;
+  private worker: Worker | null = null;
 
   constructor(
     private readonly store: PostgresControlStore,
@@ -47,9 +51,36 @@ class LeaseHeartbeat {
     private readonly durationMs: number,
     private readonly intervalMs: number,
     private readonly log: (message: string) => void,
+    private readonly databaseUrl?: string,
   ) {}
 
   start(): void {
+    if (this.databaseUrl) {
+      this.worker = new Worker(new URL('./heartbeat-worker.js', import.meta.url), {
+        workerData: {
+          connectionString: this.databaseUrl,
+          token: this.lease.token,
+          workerId: this.lease.workerId,
+          durationMs: this.durationMs,
+          intervalMs: this.intervalMs,
+        },
+      });
+      this.worker.on('message', (message: unknown) => {
+        if (
+          message
+          && typeof message === 'object'
+          && (message as { type?: unknown }).type === 'lost'
+        ) {
+          const detail = String((message as { message?: unknown }).message ?? 'unknown');
+          this.fence.markLost(`heartbeat worker failed: ${detail}`);
+          this.log(`runner heartbeat lost lease ${this.lease.id}: ${detail}`);
+        }
+      });
+      this.worker.on('error', (error) => {
+        this.fence.markLost(`heartbeat worker crashed: ${error.message}`);
+      });
+      return;
+    }
     this.timer = setInterval(() => {
       if (this.inFlight) return;
       this.inFlight = this.store.heartbeatLease(this.lease.token, this.durationMs)
@@ -70,6 +101,19 @@ class LeaseHeartbeat {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     await this.inFlight;
+    if (this.worker) {
+      const worker = this.worker;
+      this.worker = null;
+      const exited = new Promise<void>((resolve) => {
+        worker.once('exit', () => resolve());
+      });
+      worker.postMessage({ type: 'stop' });
+      const timeout = new Promise<void>((resolve) => {
+        setTimeout(resolve, Math.max(1_000, this.intervalMs * 2)).unref();
+      });
+      await Promise.race([exited, timeout]);
+      await worker.terminate();
+    }
   }
 }
 
@@ -146,6 +190,7 @@ export class IsolatedRunnerService {
       this.config.leaseDurationMs,
       this.config.heartbeatIntervalMs,
       this.log,
+      this.config.heartbeatDatabaseUrl,
     );
     let prepared: PreparedRunnerWorkspace | null = null;
     heartbeat.start();
@@ -252,7 +297,7 @@ export class IsolatedRunnerService {
 
   async runOnce(): Promise<boolean> {
     if (this.stopping) return false;
-    await this.store.reclaimExpiredLeases();
+    await this.store.reclaimExpiredLeases(this.config.maxAttempts);
     const lease = await this.store.acquireLease({
       workerId: this.config.workerId,
       durationMs: this.config.leaseDurationMs,

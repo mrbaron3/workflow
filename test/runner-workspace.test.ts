@@ -105,6 +105,9 @@ describe('Registration-rooted runner workspace', () => {
         'worktree',
       ),
     );
+    expect(prepared.statePath).toBe(
+      path.join(root, 'registrations', registrationId, 'jobs', jobId, 'state'),
+    );
     expect(prepared.headSha).toBe(sha);
   });
 

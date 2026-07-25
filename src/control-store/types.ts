@@ -33,8 +33,11 @@ export type JobSource = z.infer<typeof JobSource>;
 
 export const ArtifactReferenceContract = z.object({
   uri: z.string().regex(
-    /^volume:\/\/registrations\/[0-9a-f-]{36}\/[A-Za-z0-9._/-]+$/,
+    /^volume:\/\/registrations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[A-Za-z0-9._/-]+$/,
     'artifact URI must be registration-scoped runner-volume URI',
+  ).refine(
+    (uri) => !uri.split('/').some((segment) => segment === '.' || segment === '..'),
+    'artifact URI must not contain dot path segments',
   ),
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
   sizeBytes: z.number().int().nonnegative(),
@@ -64,6 +67,13 @@ export const RunnerEventContract = z.discriminatedUnion('kind', [
       'check_completed',
       'recovery',
     ]),
+  }).strict(),
+  z.object({
+    kind: z.literal('repository'),
+    trigger: z.enum(['push', 'check_run', 'check_suite']),
+    identity: z.string().trim().min(1).max(512),
+    ref: z.string().max(255).optional(),
+    after: z.string().regex(/^[0-9a-f]{40,64}$/).optional(),
   }).strict(),
 ]);
 export type RunnerEvent = z.infer<typeof RunnerEventContract>;
@@ -97,11 +107,22 @@ export const RunnerJobPayloadV1Contract = z.object({
   }).strict(),
   execution: z.object({
     mode: z.enum(['development_turn', 'pr_reconciliation']),
-    requiredChecks: z.array(z.string().trim().min(1)).max(64).default([]),
-    mergeMethod: z.enum(['squash', 'merge', 'rebase']).default('squash'),
+    requiredChecks: z.array(z.string().trim().min(1)).max(64),
+    mergeMethod: z.enum(['squash', 'merge', 'rebase']),
   }).strict(),
-  artifacts: z.array(ArtifactReferenceContract).max(64).default([]),
-}).strict();
+  artifacts: z.array(ArtifactReferenceContract).max(64),
+}).strict().superRefine((payload, context) => {
+  const expectedMode = payload.event.kind === 'issue'
+    ? 'development_turn'
+    : 'pr_reconciliation';
+  if (payload.execution.mode !== expectedMode) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['execution', 'mode'],
+      message: `${payload.event.kind} event requires ${expectedMode}`,
+    });
+  }
+});
 export type RunnerJobPayloadV1 = z.infer<typeof RunnerJobPayloadV1Contract>;
 
 export const RunnerJobResultV1Contract = z.object({

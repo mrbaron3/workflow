@@ -65,6 +65,18 @@ export type RepositoryPullRequestReviewer = (
   discovery: RepositoryPullRequestDiscovery,
 ) => Promise<RepositoryPullRequestReviewResult | null>;
 
+export interface RepositoryPullRequestReviewOptions {
+  /** Credential-free environment inherited by repository-controlled graders. */
+  graderEnvironment?: NodeJS.ProcessEnv;
+  /**
+   * Host CLI uses the platform sandbox for untrusted PR graders. The isolated
+   * runner instead uses its read-only/cap-drop container plus a credential-free
+   * child environment, because sandbox-exec is intentionally Darwin-only.
+   */
+  graderIsolation?: 'host-sandbox' | 'runner-container';
+  /** Fresh lease/Registration authorization immediately before review agents. */
+  beforeProviderExecution?: () => Promise<void>;
+}
 
 function syntheticContract(pullRequest: GithubOpenPullRequest): IssueContractType {
   return IssueContract.parse({
@@ -310,6 +322,7 @@ export async function reviewRepositoryPullRequest(
   harnessRoot: string,
   log: (message: string) => void = () => {},
   perspectives: PerspectiveSpec[] = PERSPECTIVES,
+  options: RepositoryPullRequestReviewOptions = {},
 ): Promise<RepositoryPullRequestReviewResult | null> {
   if (!discovery.reviewRequired) return null;
   if (!config.target) throw new Error('repository PR review requires config.target');
@@ -353,13 +366,17 @@ export async function reviewRepositoryPullRequest(
       worktree,
       branch: pr.branch,
       changed,
-      untrusted: true,
+      untrusted: options.graderIsolation !== 'runner-container',
+      ...(options.graderEnvironment
+        ? { graderEnvironment: options.graderEnvironment }
+        : {}),
     });
     const deterministicGrade = gradeBuild(issue.contract!, artifact, config);
     const invocationKeys: Record<string, string> = {};
     let evalRoot = path.join(worktree, '.agentops', 'eval');
 
     if (!hasBlockingGateFailure(deterministicGrade.hardGates)) {
+      await options.beforeProviderExecution?.();
       const panelSessions = await runPerspectiveSessions(
         config,
         {

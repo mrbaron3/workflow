@@ -15,6 +15,7 @@ import { runGeneratorSession } from '../pipeline/execution/session.js';
 import {
   runPerspectiveSessions,
 } from '../pipeline/execution/perspective-session.js';
+import type { LiveOptions } from '../pipeline/execution/live.js';
 import {
   realGhGateRunner,
   type GhGateRunner,
@@ -29,6 +30,7 @@ import type {
 } from '../control-store/types.js';
 import { RunnerExecutionError } from './errors.js';
 import type { RunnerLeaseFence } from './guard.js';
+import { isolatedGraderEnvironment } from './security.js';
 import type { PreparedRunnerWorkspace } from './workspace.js';
 
 export interface AgentOpsAdapterResult {
@@ -42,12 +44,23 @@ export interface AgentOpsAdapterInput {
   payload: RunnerJobPayloadV1;
   workspace: PreparedRunnerWorkspace;
   fence: RunnerLeaseFence;
-  provider: 'codex' | 'claude' | 'gemini';
+  provider: 'codex' | 'claude';
   log: (message: string) => void;
 }
 
 export interface AgentOpsRunnerAdapter {
   execute(input: AgentOpsAdapterInput): Promise<AgentOpsAdapterResult>;
+}
+
+export interface ExistingAgentOpsAdapterDependencies {
+  issueRunner?: (cwd: string) => GithubIssueRunner;
+  gateRunner?: () => GhGateRunner;
+  prNativeRunner?: (mergeMethod: 'squash' | 'merge' | 'rebase') => PrNativeGithubRunner;
+  planningRunner?: typeof runPlanningSession;
+  uiDesignRunner?: typeof runUiDesignSession;
+  generatorSession?: typeof runGeneratorSession;
+  perspectiveSessions?: typeof runPerspectiveSessions;
+  groundBuild?: LiveOptions['groundBuild'];
 }
 
 function baseBranch(ref: string): string {
@@ -98,25 +111,66 @@ function guardedGateRunner(
 function guardedPrNativeRunner(
   fence: RunnerLeaseFence,
   delegate: PrNativeGithubRunner,
+  allowedPullRequestNumber?: number,
 ): PrNativeGithubRunner {
+  const assertPullRequest = (number: number): void => {
+    if (
+      allowedPullRequestNumber !== undefined
+      && number !== allowedPullRequestNumber
+    ) {
+      throw new RunnerExecutionError(
+        'provider_failure',
+        `runner job cannot operate on unexpected PR #${number}`,
+        false,
+        'provider',
+      );
+    }
+  };
   return {
-    viewRevision: delegate.viewRevision.bind(delegate),
+    viewRevision(cwd, prNumber) {
+      assertPullRequest(prNumber);
+      return delegate.viewRevision(cwd, prNumber);
+    },
     merge(cwd, prNumber, expectedHeadSha) {
+      assertPullRequest(prNumber);
       fence.consume('merge');
       delegate.merge(cwd, prNumber, expectedHeadSha);
     },
     closeIssue(cwd, repository, issueNumber) {
-      fence.assertLive('release');
+      fence.consume('release');
       delegate.closeIssue(cwd, repository, issueNumber);
     },
     ...(delegate.listOpenPullRequests
-      ? { listOpenPullRequests: delegate.listOpenPullRequests.bind(delegate) }
+      ? {
+          listOpenPullRequests(cwd, baseBranch) {
+            return delegate.listOpenPullRequests!(cwd, baseBranch)
+              .filter((pullRequest) =>
+                allowedPullRequestNumber === undefined
+                || pullRequest.number === allowedPullRequestNumber);
+          },
+        }
       : {}),
     ...(delegate.fetchPullRequestHead
-      ? { fetchPullRequestHead: delegate.fetchPullRequestHead.bind(delegate) }
+      ? {
+          fetchPullRequestHead(cwd, prNumber, expectedHeadSha, headRefName, baseRefName) {
+            assertPullRequest(prNumber);
+            return delegate.fetchPullRequestHead!(
+              cwd,
+              prNumber,
+              expectedHeadSha,
+              headRefName,
+              baseRefName,
+            );
+          },
+        }
       : {}),
     ...(delegate.pullRequestChangedFiles
-      ? { pullRequestChangedFiles: delegate.pullRequestChangedFiles.bind(delegate) }
+      ? {
+          pullRequestChangedFiles(cwd, prNumber) {
+            assertPullRequest(prNumber);
+            return delegate.pullRequestChangedFiles!(cwd, prNumber);
+          },
+        }
       : {}),
   };
 }
@@ -173,11 +227,20 @@ function runnerConfig(input: AgentOpsAdapterInput): HarnessConfig {
  * fences at side-effect seams; it does not implement an alternate fast path.
  */
 export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
+  constructor(
+    private readonly dependencies: ExistingAgentOpsAdapterDependencies = {},
+  ) {}
+
   async execute(input: AgentOpsAdapterInput): Promise<AgentOpsAdapterResult> {
+    const event = input.payload.event;
+    process.env.AGENTOPS_RUNNER_REGISTRATION_ROOT =
+      input.workspace.registrationRoot;
     const store = new Store(input.workspace.statePath);
     if (!Store.isInitialized(input.workspace.statePath)) store.save();
     const config = runnerConfig(input);
-    const realIssueRunner = realGithubIssueRunner(input.workspace.worktreePath);
+    const realIssueRunner = (
+      this.dependencies.issueRunner ?? realGithubIssueRunner
+    )(input.workspace.worktreePath);
     const issueRunner = input.payload.event.kind === 'issue'
       ? scopedIssueRunner(realIssueRunner, input.payload.event.number)
       : {
@@ -191,20 +254,26 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             );
           },
         };
-    const gateRunner = guardedGateRunner(input.fence, realGhGateRunner());
+    const gateRunner = guardedGateRunner(
+      input.fence,
+      (this.dependencies.gateRunner ?? realGhGateRunner)(),
+    );
     const prNativeRunner = guardedPrNativeRunner(
       input.fence,
-      realPrNativeGithubRunner(input.payload.execution.mergeMethod),
+      (
+        this.dependencies.prNativeRunner ?? realPrNativeGithubRunner
+      )(input.payload.execution.mergeMethod),
+      input.payload.event.kind === 'pull_request'
+        ? input.payload.event.number
+        : undefined,
     );
     const beforeProvider = (): Promise<void> => input.fence.arm('provider');
     const beforeMergeAndRelease = async (): Promise<void> => {
       await input.fence.arm('merge');
       await input.fence.arm('release');
+      await input.fence.arm('release');
     };
 
-    // Reconciliation runs before new intake. Arm both permits so restart
-    // recovery can finish an already-approved exact head without bypassing.
-    await beforeMergeAndRelease();
     const developmentTurn = await runGithubDevelopmentTurn(
       store,
       config,
@@ -212,7 +281,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         issueRunner,
         planningRunner: async ({ intake, route }) => {
           await beforeProvider();
-          return runPlanningSession(
+          return (this.dependencies.planningRunner ?? runPlanningSession)(
             config,
             intake,
             route,
@@ -222,7 +291,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         },
         uiDesignRunner: async ({ intake, candidate, route }) => {
           await beforeProvider();
-          return runUiDesignSession(
+          return (this.dependencies.uiDesignRunner ?? runUiDesignSession)(
             config,
             intake,
             candidate,
@@ -232,7 +301,20 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           );
         },
         prNativeRunner,
-        beforeReconcile: async () => {},
+        discoverPullRequests: input.payload.event.kind !== 'issue',
+        // Issue jobs start from a fresh job-scoped store, so there is nothing
+        // to reconcile before intake. PR/repository jobs arm permits only
+        // immediately before their bounded reconciliation pass.
+        beforeReconcile: input.payload.event.kind === 'issue'
+          ? async () => {
+              if (store.db.prs.some((pr) =>
+                pr.externalRef !== null
+                && pr.status !== 'merged'
+                && pr.status !== 'closed')) {
+                await beforeMergeAndRelease();
+              }
+            }
+          : beforeMergeAndRelease,
         reconcileOptions: {
           beforeRelease: () => input.fence.consume('release'),
         },
@@ -242,31 +324,52 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           beforeProviderExecution: beforeProvider,
           beforePush: () => input.fence.arm('push'),
           beforeMerge: () => input.fence.arm('merge'),
-          beforeRelease: () => input.fence.arm('release'),
+          beforeRelease: async () => {
+            await input.fence.arm('release');
+            await input.fence.arm('release');
+          },
           assertReleasePermit: () => input.fence.consume('release'),
-          generatorSession: runGeneratorSession,
-          perspectiveSessions: runPerspectiveSessions,
+          graderEnvironment: isolatedGraderEnvironment(
+            process.env,
+            input.workspace.registrationRoot,
+          ),
+          generatorSession:
+            this.dependencies.generatorSession ?? runGeneratorSession,
+          perspectiveSessions:
+            this.dependencies.perspectiveSessions ?? runPerspectiveSessions,
+          ...(this.dependencies.groundBuild
+            ? { groundBuild: this.dependencies.groundBuild }
+            : {}),
         },
       },
       input.workspace.statePath,
       input.log,
     );
 
-    const matchingPr = input.payload.event.kind === 'pull_request'
+    const matchingPr = event.kind === 'pull_request'
       ? [...store.db.prs].reverse().find(
-          (pr) => pr.externalRef?.number === input.payload.event.number,
+          (pr) => pr.externalRef?.number === event.number,
         )
-      : (() => {
+      : event.kind === 'issue'
+        ? (() => {
           const intake = store.db.intakeRecords.find(
             (record) =>
               record.snapshot.repository
                 === `${input.payload.repository.owner}/${input.payload.repository.name}`
-              && record.snapshot.number === input.payload.event.number,
+              && record.snapshot.number === event.number,
           );
           if (!intake) return undefined;
           return [...store.db.prs].reverse().find((pr) =>
             intake.storeIssueIds.includes(pr.issueId));
-        })();
+        })()
+        : [...store.db.prs].reverse().find((pr) => pr.status === 'merged');
+    if (input.payload.event.kind === 'repository' && !matchingPr) {
+      return {
+        headSha: null,
+        pullRequestNumber: null,
+        developmentTurn,
+      };
+    }
     if (!matchingPr) {
       throw new RunnerExecutionError(
         'provider_failure',

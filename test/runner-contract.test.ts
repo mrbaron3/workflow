@@ -44,6 +44,47 @@ describe('isolated runner published contracts', () => {
     expect(validate(payload), JSON.stringify(validate.errors)).toBe(true);
   });
 
+  it('keeps JSON Schema and TypeScript required fields and event-mode rules identical', () => {
+    const payload = fixture();
+    const schema = JSON.parse(fs.readFileSync(
+      path.join(
+        process.cwd(),
+        'contracts/control-store/v1/runner-job.schema.json',
+      ),
+      'utf8',
+    ));
+    const validate = ajv().compile(schema);
+    const execution = payload.execution as Record<string, unknown>;
+    const cases = [
+      { ...payload, artifacts: undefined },
+      {
+        ...payload,
+        execution: { ...execution, requiredChecks: undefined },
+      },
+      {
+        ...payload,
+        execution: { ...execution, mergeMethod: undefined },
+      },
+      {
+        ...payload,
+        execution: { ...execution, mode: 'pr_reconciliation' },
+      },
+      {
+        ...payload,
+        event: {
+          kind: 'pull_request',
+          number: 38,
+          action: 'synchronize',
+        },
+        execution: { ...execution, mode: 'development_turn' },
+      },
+    ].map((candidate) => JSON.parse(JSON.stringify(candidate)));
+    for (const invalid of cases) {
+      expect(validate(invalid), JSON.stringify(validate.errors)).toBe(false);
+      expect(() => RunnerJobPayloadV1Contract.parse(invalid)).toThrow();
+    }
+  });
+
   it('rejects unknown versions, arbitrary commands, host paths, clone URLs, and unsafe refs', () => {
     const payload = fixture();
     for (const invalid of [
@@ -58,6 +99,16 @@ describe('isolated runner published contracts', () => {
       {
         ...payload,
         target: { baseRef: 'main; curl attacker.invalid' },
+      },
+      {
+        ...payload,
+        artifacts: [{
+          uri:
+            'volume://registrations/ca3126a8-b83f-4698-90af-462523880c20/jobs/../secret',
+          sha256: 'a'.repeat(64),
+          sizeBytes: 1,
+          createdAt: '2026-07-25T00:00:00.000Z',
+        }],
       },
     ]) {
       expect(() => RunnerJobPayloadV1Contract.parse(invalid)).toThrow();
