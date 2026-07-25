@@ -9,6 +9,7 @@ import {
   assertNoHostPathDependencies,
   isHostAbsolutePath,
   resolveContainerPaths,
+  resolveHarnessRoot,
   scanForHostPathDependencies,
 } from '../src/runtime/paths.js';
 
@@ -56,6 +57,21 @@ describe('container-neutral path resolution', () => {
     expect(() => resolveContainerPaths({ AGENTOPS_WORKSPACE_ROOT: 'relative/workspace' }))
       .toThrow(HostPathDependencyError);
     expect(() => resolveContainerPaths({ AGENTOPS_STORE_ROOT: 'data' }))
+      .toThrow(HostPathDependencyError);
+  });
+});
+
+describe('harness root resolution (bootstrap wiring)', () => {
+  it('AC-CISO-011 consumes AGENTOPS_APP_ROOT when set, else preserves cwd behavior', () => {
+    expect(resolveHarnessRoot({}, '/some/cwd')).toBe('/some/cwd');
+    expect(resolveHarnessRoot({ AGENTOPS_APP_ROOT: '/app' }, '/some/cwd')).toBe('/app');
+    expect(resolveHarnessRoot({ AGENTOPS_APP_ROOT: '  ' }, '/some/cwd')).toBe('/some/cwd');
+  });
+
+  it('fails closed when AGENTOPS_APP_ROOT is a macOS home path or relative', () => {
+    expect(() => resolveHarnessRoot({ AGENTOPS_APP_ROOT: `${HOST_PATH}/app` }, '/cwd'))
+      .toThrow(HostPathDependencyError);
+    expect(() => resolveHarnessRoot({ AGENTOPS_APP_ROOT: 'relative/app' }, '/cwd'))
       .toThrow(HostPathDependencyError);
   });
 });

@@ -4,36 +4,39 @@
  * Drives the container-runtime adapter end to end and grounds every AC-CISO-011 claim against a real
  * engine — nothing here is a mock. It fails closed: if preflight cannot confirm the runtime, if an
  * image is unavailable, or if any check does not hold, it prints the reason and exits non-zero rather
- * than reporting a fabricated pass. Every resource it creates carries a per-run-unique name and is
- * torn down by ownership tracking, so a second (or `--keep`) run is never harmed.
+ * than reporting a fabricated pass. Every resource it creates carries a per-run-unique name and an
+ * OS-assigned free port, and is torn down by ownership tracking, so a second (or `--keep`) run is
+ * never harmed. `--keep` preserves the topology ONLY when every check passed — a failure always tears
+ * down, so a partial topology is never left behind.
  *
  *   npx tsx scripts/runtime-smoke.ts                     # Apple Container (default)
  *   npx tsx scripts/runtime-smoke.ts --runtime=docker    # standard-OCI portability evidence
- *   npx tsx scripts/runtime-smoke.ts --keep              # leave containers up for inspection
+ *   npx tsx scripts/runtime-smoke.ts --keep              # keep a fully-successful topology up
  *
- * Steps: preflight (fail-closed) → build standard OCI image → assert publish invariant (static) →
+ * Steps: preflight (fail-closed) → capture the host loopback BASELINE (before anything of ours starts,
+ * so a genuine leak can never be mistaken for a pre-existing service) → build standard OCI image →
  * create internal network → preflight app + official-postgres images (fail-closed BEFORE any topology
- * starts, so a missing image never leaves a partial topology) → create persistent volume → start
- * postgres (internal, volume) + control (loopback publish) + runner (internal) → verify host publish
- * surface (control reachable on 127.0.0.1; internal ports refused; control refused off-loopback) → run
- * the typecheck + runtime unit-test graders inside the container from container-relative paths →
- * drain/stop. Emits a JSON evidence file for the PR.
+ * starts) → create persistent volume → start postgres (internal, volume) + control (loopback publish)
+ * + runner (internal) → verify host publish surface (control reachable on 127.0.0.1; internal ports
+ * refused; control refused on every non-loopback interface) → run the typecheck + runtime unit-test
+ * graders inside the container from container-relative paths → drain/stop.
  */
 
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import {
   AppleContainerRuntime,
   OciCliRuntime,
   agentopsTopology,
+  anyHostProbe,
   assertPublishInvariant,
   hostExpectationForTopology,
-  primaryNonLoopbackAddress,
+  nonLoopbackAddresses,
   runPreflight,
   scanForHostPathDependencies,
   tcpLoopbackProbe,
-  tcpProbe,
   verifyHostPublishSurface,
   type ContainerRuntime,
   type ContainerSpec,
@@ -48,10 +51,8 @@ interface StepResult {
 }
 
 const REPO_ROOT = process.cwd();
-// Per-run-unique so parallel or `--keep` runs never collide on names or ports.
-const RUN_ID = String(process.pid);
-const NAME_PREFIX = `agentops-smoke-${RUN_ID}`;
-const CONTROL_HOST_PORT = 17600 + (process.pid % 2000);
+// Per-run-unique: the pid is unique among live processes, so names never collide with a concurrent run.
+const NAME_PREFIX = `agentops-smoke-${process.pid}`;
 const CONTROL_CONTAINER_PORT = 8080;
 const POSTGRES_PORT = 5432;
 const IMAGE_TAG = 'agentops-app:smoke';
@@ -59,6 +60,19 @@ const POSTGRES_PASSWORD = 'agentops-smoke-pw';
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
+
+/** An OS-assigned free loopback port — genuinely unique, unlike a pid-derived guess. */
+function findFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+      server.close(() => (port ? resolve(port) : reject(new Error('could not obtain a free port'))));
+    });
+  });
 }
 
 function parseArgs(argv: string[]): { runtime: string; keep: boolean; evidence: string; build: boolean } {
@@ -97,8 +111,13 @@ class Ownership {
   }
 
   runContainer(runtime: ContainerRuntime, spec: ContainerSpec): void {
-    runtime.runContainer(spec);
     this.containers.push(spec.name);
+    runtime.runContainer(spec);
+  }
+
+  /** Registers a container name so teardown reaps it even if an inline removal is skipped or fails. */
+  track(name: string): void {
+    this.containers.push(name);
   }
 
   teardown(runtime: ContainerRuntime, log: (m: string) => void): void {
@@ -139,7 +158,8 @@ async function waitForPostgres(runtime: ContainerRuntime, name: string, timeoutM
 }
 
 /** Runs a throwaway container to confirm an image is available/runnable, then removes it. Throws on failure. */
-function probeImage(runtime: ContainerRuntime, image: string, network: string, name: string): void {
+function probeImage(runtime: ContainerRuntime, owned: Ownership, image: string, network: string, name: string): void {
+  owned.track(name);
   try {
     runtime.runContainer({
       role: 'runner', name, image, network, publish: [], volumes: [], env: {}, command: ['true'],
@@ -167,6 +187,8 @@ async function main(): Promise<number> {
     return ok;
   };
 
+  const controlHostPort = await findFreePort();
+
   // 1. Preflight — fail closed. Nothing is built or started if the runtime is not confirmed.
   const preflight: PreflightReport = runPreflight(runtime, {
     minVersion: args.runtime === 'apple' ? '0.1.0' : undefined,
@@ -190,7 +212,7 @@ async function main(): Promise<number> {
 
   const topology = agentopsTopology({
     appImage: IMAGE_TAG,
-    controlHostPort: CONTROL_HOST_PORT,
+    controlHostPort,
     controlContainerPort: CONTROL_CONTAINER_PORT,
     postgresPort: POSTGRES_PORT,
     postgresPassword: POSTGRES_PASSWORD,
@@ -207,10 +229,22 @@ async function main(): Promise<number> {
     return 1;
   }
 
+  // 3. Capture the loopback BASELINE now — BEFORE anything of ours starts. A negative-check port that
+  //    is already reachable here is a pre-existing host service and is excluded; a port that becomes
+  //    reachable only AFTER our topology starts is a genuine leak and stays asserted (fail-closed).
+  const loopback = tcpLoopbackProbe(750);
+  const negativeCandidates = [POSTGRES_PORT, CONTROL_CONTAINER_PORT];
+  const negativePorts: number[] = [];
+  for (const port of negativeCandidates) {
+    if (await loopback(port)) log(`note: 127.0.0.1:${port} was already in use before start; excluding from the leak assertion`);
+    else negativePorts.push(port);
+  }
+  record('leak-baseline', true, `ports asserted as must-not-leak: [${negativePorts.join(',')}]`);
+
   const postgresImage = topology.containers.find((c) => c.role === 'postgres')!.image;
 
   try {
-    // 3. Build the standard OCI image.
+    // 4. Build the standard OCI image.
     if (args.build) {
       runtime.buildImage({ image: IMAGE_TAG, containerfile: 'deploy/Containerfile', contextDir: REPO_ROOT });
       record('oci-build', true, `${IMAGE_TAG} built from deploy/Containerfile (standard OCI)`);
@@ -218,14 +252,12 @@ async function main(): Promise<number> {
       record('oci-build', true, 'skipped (--no-build)');
     }
 
-    // 4. Internal network.
+    // 5. Internal network, then image preflight — confirm BOTH images run BEFORE starting any topology
+    //    container, so a missing image is reported up front and never leaves a partial topology.
     owned.createNetwork(runtime, topology.network.name);
-
-    // 5. Image preflight — confirm BOTH images run BEFORE starting any topology container, so a
-    //    missing image is reported up front and never leaves control/runner partially started.
     try {
-      probeImage(runtime, IMAGE_TAG, topology.network.name, `${NAME_PREFIX}-imgprobe-app`);
-      probeImage(runtime, postgresImage, topology.network.name, `${NAME_PREFIX}-imgprobe-pg`);
+      probeImage(runtime, owned, IMAGE_TAG, topology.network.name, `${NAME_PREFIX}-imgprobe-app`);
+      probeImage(runtime, owned, postgresImage, topology.network.name, `${NAME_PREFIX}-imgprobe-pg`);
       record('image-preflight', true, `${IMAGE_TAG} and ${postgresImage} are runnable`);
     } catch (error) {
       record('image-preflight', false, `image not runnable (no topology started): ${error instanceof Error ? error.message : String(error)}`);
@@ -237,27 +269,19 @@ async function main(): Promise<number> {
     for (const container of topology.containers) owned.runContainer(runtime, container);
     record('containers-started', true, topology.containers.map((c) => `${c.role}:${c.name}`).join(', '));
 
-    await waitForLoopback(CONTROL_HOST_PORT, 60_000, 'control plane');
+    await waitForLoopback(controlHostPort, 60_000, 'control plane');
     await waitForPostgres(runtime, `${NAME_PREFIX}-postgres`, 90_000);
     record('services-ready', true, 'control listening on loopback; postgres accepting connections on its volume');
 
-    // 7. Grounded host publish surface. Only ports refused at BASELINE (before start) are asserted as
-    //    "must not leak" — a port already used by a pre-existing host service can't be attributed to us.
-    const loopback = tcpLoopbackProbe(750);
-    const negativeCandidates = [POSTGRES_PORT, CONTROL_CONTAINER_PORT];
-    const negativePorts: number[] = [];
-    for (const port of negativeCandidates) {
-      if (await loopback(port)) log(`note: 127.0.0.1:${port} was already in use before start; excluding from the leak assertion`);
-      else negativePorts.push(port);
-    }
+    // 7. Grounded host publish surface, using the pre-start baseline negative set and every interface.
+    const addresses = nonLoopbackAddresses();
+    const offLoopback = addresses.length ? anyHostProbe(addresses, 750) : undefined;
     const expectation = hostExpectationForTopology(topology, negativePorts);
-    const lanAddress = primaryNonLoopbackAddress();
-    const offLoopback = lanAddress ? tcpProbe(lanAddress, 750) : undefined;
     const surface = await verifyHostPublishSurface(expectation, loopback, offLoopback);
     record('publish-invariant-grounded', surface.ok,
       surface.ok
-        ? `127.0.0.1:${CONTROL_HOST_PORT} reachable; [${negativePorts.join(',')}] refused on 127.0.0.1; `
-          + `control refused off-loopback${lanAddress ? ` (${lanAddress})` : ' (no LAN address; skipped)'}`
+        ? `127.0.0.1:${controlHostPort} reachable; [${negativePorts.join(',')}] refused on 127.0.0.1; `
+          + `control refused off-loopback ${addresses.length ? `(${addresses.join(', ')})` : '(no non-loopback interface observed)'}`
         : surface.violations.join('; '));
 
     // 8. Grounded Mac-absolute-path independence — the graders run inside the container from /app.
@@ -280,8 +304,11 @@ async function main(): Promise<number> {
   } catch (error) {
     record('runtime-error', false, error instanceof Error ? error.message : String(error));
   } finally {
-    if (!args.keep) owned.teardown(runtime, log);
-    else log('--keep set; leaving this run\'s topology up');
+    // Fail-closed: `--keep` preserves the topology ONLY when every check passed. Any failure tears down,
+    // so a partial or broken topology is never left behind.
+    const anyFailed = steps.some((s) => !s.ok);
+    if (args.keep && !anyFailed) log('--keep set and all checks passed; leaving this run\'s topology up');
+    else owned.teardown(runtime, log);
   }
 
   const ok = steps.every((s) => s.ok);

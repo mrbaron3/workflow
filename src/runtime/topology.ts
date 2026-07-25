@@ -198,6 +198,17 @@ export function tcpLoopbackProbe(timeoutMs: number = 500): PortProbe {
   return tcpProbe(LOOPBACK_HOST_IP, timeoutMs);
 }
 
+/** Every non-loopback address on the host (IPv4 and IPv6) — each an interface a 0.0.0.0/:: bind would expose. */
+export function nonLoopbackAddresses(): string[] {
+  const out: string[] = [];
+  for (const addresses of Object.values(os.networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (!address.internal) out.push(address.address);
+    }
+  }
+  return out;
+}
+
 /** The Mac's primary non-loopback IPv4 address, or null if the host has only loopback. */
 export function primaryNonLoopbackAddress(): string | null {
   for (const addresses of Object.values(os.networkInterfaces())) {
@@ -206,6 +217,17 @@ export function primaryNonLoopbackAddress(): string | null {
     }
   }
   return null;
+}
+
+/** A probe that reports a port reachable if ANY of the given hosts accepts a connection. */
+export function anyHostProbe(hosts: string[], timeoutMs: number = 500): PortProbe {
+  const probes = hosts.map((host) => tcpProbe(host, timeoutMs));
+  return async (port) => {
+    for (const probe of probes) {
+      if (await probe(port)) return true;
+    }
+    return false;
+  };
 }
 
 // --- default topology builder ----------------------------------------------

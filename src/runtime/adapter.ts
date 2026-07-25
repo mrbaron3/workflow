@@ -11,6 +11,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { NAMED_RESOURCE_PATTERN } from './schema.js';
 import type {
   CapabilityReport,
   ContainerSpec,
@@ -71,9 +72,22 @@ export interface ContainerRuntime {
 /** argv flags whose following `KEY=VALUE` token may carry a credential and must be redacted in errors/logs. */
 const SECRET_VALUE_FLAGS = new Set(['--env', '-e', '--build-arg']);
 
+/** Extracts the secret VALUES carried by `--env`/`--build-arg KEY=VALUE` tokens, for text redaction. */
+export function extractSecretValues(args: readonly string[]): string[] {
+  const secrets: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (SECRET_VALUE_FLAGS.has(args[i] as string) && i + 1 < args.length) {
+      const next = args[i + 1] as string;
+      const eq = next.indexOf('=');
+      const value = eq >= 0 ? next.slice(eq + 1) : next;
+      if (value !== '') secrets.push(value);
+    }
+  }
+  return secrets;
+}
+
 /**
- * Redacts credential-bearing values so a failed command never leaks a secret into an exception,
- * a log line, or the smoke evidence JSON (parent #10 レッドライン: control/runner の資格情報を漏らさない).
+ * Redacts credential-bearing argv values so a failed command never leaks a secret through its argv.
  * `--env GITHUB_TOKEN=ghs-…` becomes `--env GITHUB_TOKEN=***`; a bare secret value becomes `***`.
  */
 export function redactArgs(args: readonly string[]): string[] {
@@ -91,22 +105,41 @@ export function redactArgs(args: readonly string[]): string[] {
   return out;
 }
 
+/** Replaces every occurrence of each secret value in `text` with `***`. */
+export function redactText(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) {
+    if (secret) out = out.split(secret).join('***');
+  }
+  return out;
+}
+
 /**
- * A failed CLI invocation, carrying the streams for a deterministic, debuggable failure. The
- * rendered message uses `redactArgs`, so an `--env`/`--build-arg` secret is never exposed even
- * though the raw `args` remain available on the object for trusted, non-logging inspection.
+ * A failed CLI invocation. Every field is safe to log: `args` and `result` are stored ALREADY
+ * REDACTED — argv secrets (`--env`/`--build-arg` values) are masked, and those same values are
+ * scrubbed from stdout/stderr — so neither the message nor `JSON.stringify(error)` can expose a
+ * credential (parent #10 レッドライン: control/runner の資格情報を漏らさない). The raw, unredacted
+ * argv/output never leave this constructor.
  */
 export class RuntimeCommandError extends Error {
-  constructor(
-    readonly command: string,
-    readonly args: readonly string[],
-    readonly result: CommandResult,
-  ) {
+  readonly args: readonly string[];
+  readonly result: CommandResult;
+
+  constructor(readonly command: string, args: readonly string[], result: CommandResult) {
+    const secrets = extractSecretValues(args);
+    const redactedArgs = redactArgs(args);
+    const redactedResult: CommandResult = {
+      status: result.status,
+      stdout: redactText(result.stdout, secrets),
+      stderr: redactText(result.stderr, secrets),
+    };
     super(
-      `${command} ${redactArgs(args).join(' ')} failed (status=${result.status ?? 'null'}): `
-      + `${result.stdout}${result.stderr}`.trim(),
+      `${command} ${redactedArgs.join(' ')} failed (status=${result.status ?? 'null'}): `
+      + `${redactedResult.stdout}${redactedResult.stderr}`.trim(),
     );
     this.name = 'RuntimeCommandError';
+    this.args = redactedArgs;
+    this.result = redactedResult;
   }
 }
 
@@ -132,9 +165,16 @@ export function renderPublishFlag(publish: PortPublication): string {
 }
 
 /**
- * Renders one `VolumeMount` into the `--volume` value `name:mountPath[:ro]`.
+ * Renders one `VolumeMount` into the `--volume` value `name:mountPath[:ro]`. Enforces the named-volume
+ * red line AT THE ARGV BOUNDARY — not just in the Zod schema — so even an untyped/JS caller that skips
+ * `.parse()` cannot smuggle a host bind mount (e.g. a macOS home path) into the actual command.
  */
 export function renderVolumeFlag(mount: { volume: string; mountPath: string; readOnly?: boolean }): string {
+  if (!NAMED_RESOURCE_PATTERN.test(mount.volume)) {
+    throw new Error(
+      `refusing to mount volume source "${mount.volume}": only a named volume is allowed, never a host bind mount`,
+    );
+  }
   return mount.readOnly ? `${mount.volume}:${mount.mountPath}:ro` : `${mount.volume}:${mount.mountPath}`;
 }
 

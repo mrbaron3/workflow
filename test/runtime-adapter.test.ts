@@ -55,6 +55,18 @@ describe('container-runtime adapter — neutral argv translation', () => {
     expect(renderVolumeFlag({ volume: 'v', mountPath: '/data', readOnly: true })).toBe('v:/data:ro');
   });
 
+  it('AC-CISO-011 renderVolumeFlag refuses a host bind mount source at the argv boundary', () => {
+    expect(() => renderVolumeFlag({ volume: '/Users/alice/Company', mountPath: '/workspace' }))
+      .toThrow('never a host bind mount');
+    // Enforced even for an untyped runContainer call that skipped Zod .parse().
+    const { runner } = fakeRunner();
+    const docker = new OciCliRuntime('docker', runner);
+    expect(() => docker.runContainer({
+      role: 'runner', name: 'r', image: 'app', network: 'net', publish: [],
+      volumes: [{ volume: '/Users/alice/Company', mountPath: '/workspace', readOnly: false }], env: {},
+    })).toThrow('never a host bind mount');
+  });
+
   it('AC-CISO-011 builds run argv from a runtime-neutral spec (publish, volume, env, workdir, command)', () => {
     expect(buildRunArgs(fullSpec)).toEqual([
       'run', '--detach', '--name', 'agentops-postgres', '--network', 'agentops-internal',
@@ -127,18 +139,25 @@ describe('container-runtime adapter — runtime-specific dialect isolation', () 
     expect(redactArgs(['build', '--build-arg', 'NPM_TOKEN=abc', '.']))
       .toEqual(['build', '--build-arg', 'NPM_TOKEN=***', '.']);
 
-    const { runner } = fakeRunner((_cmd, args) => args[0] === 'run' ? { status: 1, stderr: 'boom' } : {});
+    // The engine may echo the secret back on stderr — that must be scrubbed too, and the error object's
+    // own args/result fields must already be redacted so even JSON.stringify(error) cannot leak it.
+    const secret = 'ghs-super-secret';
+    const { runner } = fakeRunner((_cmd, args) =>
+      args[0] === 'run' ? { status: 1, stderr: `error: invalid token ${secret}` } : {});
     const apple = new AppleContainerRuntime(runner);
     try {
       apple.runContainer({
         role: 'runner', name: 'r', image: 'app:dev', network: 'net', publish: [], volumes: [],
-        env: { GITHUB_TOKEN: 'ghs-super-secret' },
+        env: { GITHUB_TOKEN: secret },
       });
       expect.unreachable('runContainer should have thrown');
-    } catch (error) {
-      const message = (error as RuntimeCommandError).message;
-      expect(message).toContain('GITHUB_TOKEN=***');
-      expect(message).not.toContain('ghs-super-secret');
+    } catch (caught) {
+      const error = caught as RuntimeCommandError;
+      expect(error.message).toContain('GITHUB_TOKEN=***');
+      expect(JSON.stringify(error)).not.toContain(secret);
+      expect(error.message).not.toContain(secret);
+      expect(error.result.stderr).not.toContain(secret);
+      expect(error.args).not.toContain(`GITHUB_TOKEN=${secret}`);
     }
   });
 });

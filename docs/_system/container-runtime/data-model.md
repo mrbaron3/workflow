@@ -12,9 +12,10 @@
 - **DATA-container-runtime-003 image build descriptor** — `deploy/Containerfile`（＋ `.dockerignore`）が標準 OCI
   イメージの宣言的定義。Apple 専用構文を持たず、`deps → build → runtime` の再現可能な multi-stage seam。
 - **DATA-container-runtime-004 container-neutral paths config** — 環境変数 `AGENTOPS_APP_ROOT`／
-  `AGENTOPS_WORKSPACE_ROOT`／`AGENTOPS_STORE_ROOT`／`AGENTOPS_SYSTEM_DIR`。DB へ複製せず起動時に `resolveContainerPaths`
-  で解決し、relative／Mac home path を fail-closed 拒否する。これらは**宣言された**container-neutral root であり、
-  現行 TypeScript bootstrap は既に `process.cwd()=/app` で container-neutral。workspace／store をこの root 上へ移す実際の
-  配線は DB／volume 化に合わせて consumer が段階採用する（#12/#14）。
+  `AGENTOPS_WORKSPACE_ROOT`／`AGENTOPS_STORE_ROOT`／`AGENTOPS_SYSTEM_DIR`。DB へ複製せず起動時に解決し、relative／
+  Mac home path を fail-closed 拒否する。`AGENTOPS_APP_ROOT` は CLI bootstrap（`resolveHarnessRoot`）が実際に消費し、
+  Store／workspace／systemDir がこの root に anchor する（env 未設定時は `process.cwd()` ＝ 現挙動を保存）。
+  残りの WORKSPACE／STORE root は、workspace／store を専用 volume へ移す consumer が `resolveContainerPaths` を採用して
+  段階配線する（#12/#14）。いずれも macOS 依存を持たない。
 - **DATA-container-runtime-005 grounded evidence artifact** — `scripts/runtime-smoke.ts` が出力する JSON 証跡
   （`runtime`・`ok`・`preflight`・`steps`）。監査・PR 添付用の一時 artifact であり SoT ではない。

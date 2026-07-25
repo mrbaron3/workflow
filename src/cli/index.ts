@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Verdict, emptyDB } from '../domain/schema.js';
 import { Store } from '../store/store.js';
+import { resolveHarnessRoot } from '../runtime/paths.js';
 import { signRequirementDir } from '../authoring/sign-dir.js';
 import { requirementsDocPath } from '../authoring/spec-doc.js';
 import { recheckSpec } from '../authoring/recheck.js';
@@ -115,7 +116,9 @@ function parseArgs(argv: string[]): Args {
   return { cmd, flags, pos };
 }
 
-const ROOT = process.cwd();
+// The harness root honors the container-neutral AGENTOPS_APP_ROOT when set (in-container), else cwd —
+// so Store / workspace / systemDir carry no macOS /Users dependency (AC-CISO-011, DATA-container-runtime-004).
+const ROOT = resolveHarnessRoot();
 
 function requireInit(): Store {
   if (!Store.isInitialized(ROOT)) {

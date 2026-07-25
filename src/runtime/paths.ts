@@ -81,6 +81,24 @@ export function assertContainerNeutralPath(value: string, label: string): string
 }
 
 /**
+ * Resolves the harness root the bootstrap should anchor on: the container-neutral `AGENTOPS_APP_ROOT`
+ * when set (validated host-neutral), otherwise the process cwd. This is the one place the env-configured
+ * container root actually enters the application data flow — the CLI derives Store, workspace, and
+ * systemDir from this root — so setting `AGENTOPS_APP_ROOT` relocates every path deterministically with
+ * no `/Users` dependency. An absent env preserves today's cwd-based behavior exactly.
+ */
+export function resolveHarnessRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  const configured = env.AGENTOPS_APP_ROOT;
+  if (configured && configured.trim() !== '') {
+    return assertContainerNeutralPath(configured.trim(), 'AGENTOPS_APP_ROOT');
+  }
+  return cwd;
+}
+
+/**
  * Resolves the harness's in-container roots from env, falling back to container-absolute defaults.
  * Fails closed via `assertContainerNeutralPath` if any override points into the macOS home tree.
  */
@@ -123,8 +141,14 @@ function collectSourceFiles(root: string, dir: string, exts: string[]): string[]
 /**
  * The build/runtime surface scanned by default: the executable code that actually ships into the
  * image (`COPY . .`) — everything under `src/`, `scripts/`, and `bin/` — plus the build config that
- * shapes the image. Docs and tests are intentionally excluded: they legitimately cite host-specific
- * example paths (e.g. an ADR quoting an operator's daemon path) and never execute in the container.
+ * shapes the image.
+ *
+ * Docs and tests are excluded, but for different reasons. Docs legitimately cite host-specific example
+ * paths (an ADR quoting an operator's daemon path). Tests are excluded because they use host paths as
+ * *rejection inputs* — the runtime unit tests deliberately construct a `/Users/...` string to assert it
+ * is refused — so scanning them would be a false positive: a host path appearing in a test is test data,
+ * not a shipped dependency. (Some of the runtime tests DO run in-container via the smoke, but they carry
+ * no host dependency; their host-path literals are the very inputs they prove are rejected.)
  */
 export function defaultScanTargets(root: string): string[] {
   const targets = [
