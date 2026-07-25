@@ -10,7 +10,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Store } from '../store/store.js';
-import { computeMetrics, type Metrics } from '../metrics/metrics.js';
+import {
+  computeMetrics,
+  MIN_HUMAN_DECISIONS_FOR_CALIBRATION,
+  type Metrics,
+} from '../metrics/metrics.js';
 
 export function writeDashboard(store: Store): { path: string; metrics: Metrics } {
   const metrics = computeMetrics(store);
@@ -32,6 +36,8 @@ function verdictClass(v: string): string {
 
 function renderHtml(store: Store, m: Metrics): string {
   const r = store.db.roadmap;
+  const calibrationSufficient =
+    m.humanDecisionCount >= MIN_HUMAN_DECISIONS_FOR_CALIBRATION;
   const evHref = (rel: string | null, file: string): string | null => {
     if (!rel) return null;
     const abs = path.join(store.root, rel);
@@ -49,10 +55,16 @@ function renderHtml(store: Store, m: Metrics): string {
     card('cost', `$${m.cost.usd.toFixed(2)}`, `${(m.cost.tokens / 1000).toFixed(0)}k tok · ${m.cost.seconds}s`),
     card(
       'false pass / fail',
-      m.falsePassRate === null ? 'n/a' : `${pct(m.falsePassRate)} / ${pct(m.falseFailRate ?? 0)}`,
-      m.falsePassRate === null
-        ? 'no human labels yet'
-        : `vs human review${m.falsePassTrend.length >= 2 ? ` · trend ${m.falsePassTrend.slice(-4).map((p) => pct(p.rate)).join('→')}` : ''}`,
+      !calibrationSufficient || m.falsePassRate === null
+        ? 'n/a'
+        : `${pct(m.falsePassRate)} / ${pct(m.falseFailRate ?? 0)}`,
+      !calibrationSufficient
+        ? `較正不足: n=${m.humanDecisionCount}`
+        : `vs human review · n=${m.humanDecisionCount} decisions${
+          m.falsePassTrend.length >= 2
+            ? ` · trend ${m.falsePassTrend.slice(-4).map((p) => pct(p.rate)).join('→')}`
+            : ''
+        }`,
     ),
     card(
       'regression capture',
@@ -280,12 +292,20 @@ export function statusReport(store: Store, m: Metrics): string {
   L.push('');
   L.push(`  avg attempts/sample: ${m.avgRepairAttempts.toFixed(2)}   instability: ${pct1(m.instabilityRate)}`);
   L.push(`  cost: $${m.cost.usd.toFixed(2)} · ${(m.cost.tokens / 1000).toFixed(0)}k tokens · ${m.cost.seconds}s`);
-  if (m.falsePassRate !== null) {
-    L.push(`  false-pass: ${pct1(m.falsePassRate)}  false-fail: ${pct1(m.falseFailRate ?? 0)}  grader agreement: ${pct1(m.graderAgreement ?? 0)}`);
+  const calibrationSufficient =
+    m.humanDecisionCount >= MIN_HUMAN_DECISIONS_FOR_CALIBRATION;
+  if (calibrationSufficient && m.falsePassRate !== null) {
+    const denominator = `(n=${m.humanDecisionCount} 判断)`;
+    L.push(`  false-pass: ${pct1(m.falsePassRate)} ${denominator}`);
+    L.push(`  false-fail: ${pct1(m.falseFailRate ?? 0)} ${denominator}`);
+    L.push(`  grader agreement: ${pct1(m.graderAgreement ?? 0)} ${denominator}`);
   } else {
-    L.push(`  false-pass/fail: n/a (no human labels — run \`agentops label\` to add some)`);
+    const unavailable = `n/a（較正不足: n=${m.humanDecisionCount}）`;
+    L.push(`  false-pass: ${unavailable}`);
+    L.push(`  false-fail: ${unavailable}`);
+    L.push(`  grader agreement: ${unavailable}`);
   }
-  if (m.falsePassTrend.length >= 2) {
+  if (calibrationSufficient && m.falsePassTrend.length >= 2) {
     L.push(`  false-pass trend:    ${m.falsePassTrend.slice(-6).map((p) => pct1(p.rate)).join(' → ')}`);
   }
   L.push(

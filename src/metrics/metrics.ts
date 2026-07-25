@@ -12,10 +12,14 @@
  *   - "pass@1 (first attempt)" = approved on attempt 1, no repair needed
  */
 
-import type { EvalRun, Issue } from '../domain/schema.js';
+import type { EvalRun, Issue, Verdict } from '../domain/schema.js';
 import { activeEvalTasks, buildTaskId } from '../domain/eval-task.js';
 import type { Store } from '../store/store.js';
 import { aggregatePanelVerdict } from '../pipeline/panel.js';
+
+/** Do not present calibration rates until this many independent human decisions exist. */
+export const MIN_HUMAN_DECISIONS_FOR_CALIBRATION = 10;
+const FALSE_PASS_TREND_WINDOW = 10;
 
 export interface IssueStats {
   issueId: string;
@@ -76,6 +80,8 @@ export interface Metrics {
   falsePassRate: number | null;
   falseFailRate: number | null;
   graderAgreement: number | null;
+  /** Independent human judgments, collapsed by issueId|prId|attempt. */
+  humanDecisionCount: number;
   /**
    * ③ steering star, first half (capture): the share of observed blocker-AC failures that
    * exist in the Eval Task Registry as regression tasks (curator id convention
@@ -115,7 +121,7 @@ export interface Metrics {
   lastTurnPeakConcurrency: number | null;
   lastTurnIssuesDriven: number | null;
   lastTurnCap: number | null;
-  /** false-pass rate over a sliding window of the human-labelled runs, oldest → newest. */
+  /** false-pass rate over a sliding window of human decisions, oldest → newest. */
   falsePassTrend: { upTo: string; rate: number }[];
   passCurve: { k: number; passAtK: number; passHatK: number }[];
   byAgent: AgentStats[];
@@ -153,6 +159,43 @@ interface PerSample {
   firstApproved: boolean;
   attempts: number;
   agent: string;
+}
+
+interface HumanDecisionSample {
+  graderVerdict: Verdict;
+  humanVerdict: Verdict;
+  createdAt: string;
+}
+
+/**
+ * Human review happens once per build attempt, then the verdict is copied to every
+ * perspective run. Collapse those copies before computing any calibration metric.
+ */
+function humanDecisionSamples(evalRuns: EvalRun[]): HumanDecisionSample[] {
+  const byDecision = new Map<string, EvalRun[]>();
+  for (const run of evalRuns) {
+    const key = `${run.issueId}|${run.prId}|${run.attempt}`;
+    const runs = byDecision.get(key) ?? [];
+    runs.push(run);
+    byDecision.set(key, runs);
+  }
+
+  const decisions: HumanDecisionSample[] = [];
+  for (const runs of byDecision.values()) {
+    const labeled = runs.find(
+      (run): run is EvalRun & { humanVerdict: Verdict } => run.humanVerdict !== null,
+    );
+    if (!labeled) continue;
+    decisions.push({
+      graderVerdict: aggregatePanelVerdict(runs),
+      humanVerdict: labeled.humanVerdict,
+      createdAt: runs.reduce(
+        (latest, run) => run.createdAt.localeCompare(latest) > 0 ? run.createdAt : latest,
+        runs[0]!.createdAt,
+      ),
+    });
+  }
+  return decisions;
 }
 
 function perSample(runs: EvalRun[]): PerSample[] {
@@ -283,32 +326,42 @@ export function computeMetrics(store: Store): Metrics {
   }
   const headline = passCurve.find((p) => p.k === headlineK);
 
-  // false pass / fail from human labels, when present
-  const labeled = evalRuns.filter((r) => r.humanVerdict !== null);
+  // False pass / fail from independent human decisions, when present. A panel's
+  // perspective runs are copies of one build-level judgment and never inflate n.
+  const humanDecisions = humanDecisionSamples(evalRuns);
   let falsePassRate: number | null = null;
   let falseFailRate: number | null = null;
   let graderAgreement: number | null = null;
-  if (labeled.length > 0) {
-    const fp = labeled.filter(
-      (r) => r.verdict === 'approve' && r.humanVerdict === 'request_changes',
+  if (humanDecisions.length > 0) {
+    const fp = humanDecisions.filter(
+      (decision) =>
+        decision.graderVerdict === 'approve'
+        && decision.humanVerdict === 'request_changes',
     ).length;
-    const ff = labeled.filter(
-      (r) => r.verdict === 'request_changes' && r.humanVerdict === 'approve',
+    const ff = humanDecisions.filter(
+      (decision) =>
+        decision.graderVerdict === 'request_changes'
+        && decision.humanVerdict === 'approve',
     ).length;
-    const agree = labeled.filter((r) => r.verdict === r.humanVerdict).length;
-    falsePassRate = fp / labeled.length;
-    falseFailRate = ff / labeled.length;
-    graderAgreement = agree / labeled.length;
+    const agree = humanDecisions.filter(
+      (decision) => decision.graderVerdict === decision.humanVerdict,
+    ).length;
+    falsePassRate = fp / humanDecisions.length;
+    falseFailRate = ff / humanDecisions.length;
+    graderAgreement = agree / humanDecisions.length;
   }
 
-  // The same false-pass definition over the labelled timeline (sliding window) — the
+  // The same false-pass definition over the decision timeline (sliding window) — the
   // number that should fall as ③ improvements land, where the point value can't show it.
-  const TREND_WINDOW = 10;
-  const chrono = [...labeled].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const falsePassTrend = chrono.map((r, i) => {
-    const win = chrono.slice(Math.max(0, i - TREND_WINDOW + 1), i + 1);
-    const fp = win.filter((x) => x.verdict === 'approve' && x.humanVerdict === 'request_changes').length;
-    return { upTo: r.createdAt, rate: fp / win.length };
+  const chrono = [...humanDecisions].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const falsePassTrend = chrono.map((decision, i) => {
+    const win = chrono.slice(Math.max(0, i - FALSE_PASS_TREND_WINDOW + 1), i + 1);
+    const fp = win.filter(
+      (sample) =>
+        sample.graderVerdict === 'approve'
+        && sample.humanVerdict === 'request_changes',
+    ).length;
+    return { upTo: decision.createdAt, rate: fp / win.length };
   });
 
   // ③ capture rate: every failed blocker AC should have been promoted to a regression
@@ -399,6 +452,7 @@ export function computeMetrics(store: Store): Metrics {
     falsePassRate,
     falseFailRate,
     graderAgreement,
+    humanDecisionCount: humanDecisions.length,
     regressionCaptureRate,
     regressionExecutedRate,
     regressionFailingTasks,

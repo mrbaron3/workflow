@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store } from '../src/store/store.js';
-import { computeMetrics } from '../src/metrics/metrics.js';
+import {
+  computeMetrics,
+  MIN_HUMAN_DECISIONS_FOR_CALIBRATION,
+} from '../src/metrics/metrics.js';
+import { statusReport } from '../src/dashboard/dashboard.js';
 import { curateEvalTasks } from '../src/pipeline/curator.js';
 import { Issue, EvalRun, type Verdict } from '../src/domain/schema.js';
 
@@ -37,8 +41,14 @@ function addIssue(store: Store, id: string): void {
 }
 
 let evalCounter = 0;
-function addRun(store: Store, issueId: string, sample: number, attempt: number, verdict: Verdict): void {
-  store.addEvalRun(
+function addRun(
+  store: Store,
+  issueId: string,
+  sample: number,
+  attempt: number,
+  verdict: Verdict,
+): EvalRun {
+  return store.addEvalRun(
     EvalRun.parse({
       id: `EVAL-${++evalCounter}`,
       issueId,
@@ -88,18 +98,32 @@ describe('computeMetrics: pass@k vs pass^k', () => {
     expect(m.instabilityRate).toBeCloseTo(1, 5);
   });
 
-  it('reports false-pass / false-fail once runs carry human labels', () => {
+  it('counts one human decision when its label is copied to multiple perspective runs', () => {
     const store = tmpStore('metrics-labels');
     addIssue(store, 'ISSUE-0001');
-    addRun(store, 'ISSUE-0001', 0, 1, 'approve');
-    addRun(store, 'ISSUE-0001', 1, 1, 'request_changes');
-    // label: the approve was actually wrong (false pass), the request_changes was right
-    store.db.evalRuns[0]!.humanVerdict = 'request_changes';
-    store.db.evalRuns[1]!.humanVerdict = 'request_changes';
+    const functionality = addRun(store, 'ISSUE-0001', 0, 1, 'approve');
+    const security = addRun(store, 'ISSUE-0001', 0, 1, 'approve');
+    functionality.perspective = 'functionality';
+    security.perspective = 'security';
+    functionality.humanVerdict = 'request_changes';
+    security.humanVerdict = 'request_changes';
+
+    const veto = addRun(store, 'ISSUE-0001', 1, 1, 'request_changes');
+    const approvingLens = addRun(store, 'ISSUE-0001', 1, 1, 'approve');
+    veto.perspective = 'functionality';
+    approvingLens.perspective = 'security';
+    veto.humanVerdict = 'approve';
+    approvingLens.humanVerdict = 'approve';
+
+    const agreed = addRun(store, 'ISSUE-0001', 2, 1, 'request_changes');
+    agreed.humanVerdict = 'request_changes';
+
     const m = computeMetrics(store);
-    expect(m.falsePassRate).toBeCloseTo(0.5, 5);
-    expect(m.falseFailRate).toBeCloseTo(0, 5);
-    expect(m.graderAgreement).toBeCloseTo(0.5, 5);
+    expect(m.humanDecisionCount).toBe(3);
+    expect(m.falsePassRate).toBeCloseTo(1 / 3, 5);
+    expect(m.falseFailRate).toBeCloseTo(1 / 3, 5);
+    expect(m.graderAgreement).toBeCloseTo(1 / 3, 5);
+    expect(m.falsePassTrend).toHaveLength(3);
   });
 });
 
@@ -141,18 +165,24 @@ describe('③ steering instruments (ADR-0007 I4)', () => {
   it('falsePassTrend follows the labelled timeline, windowed, oldest → newest', () => {
     const store = tmpStore('metrics-trend');
     addIssue(store, 'ISSUE-0001');
-    // three labelled runs, in time order: false-pass, correct, correct
+    // Three decisions, in time order: false-pass, correct, correct. The first
+    // decision has two perspective runs but must contribute only one trend point.
+    addRun(store, 'ISSUE-0001', 0, 1, 'approve');
     addRun(store, 'ISSUE-0001', 0, 1, 'approve');
     addRun(store, 'ISSUE-0001', 1, 1, 'request_changes');
     addRun(store, 'ISSUE-0001', 2, 1, 'approve');
     store.db.evalRuns[0]!.createdAt = '2026-01-01T00:00:00.000Z';
-    store.db.evalRuns[1]!.createdAt = '2026-01-02T00:00:00.000Z';
-    store.db.evalRuns[2]!.createdAt = '2026-01-03T00:00:00.000Z';
+    store.db.evalRuns[1]!.createdAt = '2026-01-01T00:00:00.000Z';
+    store.db.evalRuns[2]!.createdAt = '2026-01-02T00:00:00.000Z';
+    store.db.evalRuns[3]!.createdAt = '2026-01-03T00:00:00.000Z';
     store.db.evalRuns[0]!.humanVerdict = 'request_changes'; // grader approved → false pass
-    store.db.evalRuns[1]!.humanVerdict = 'request_changes'; // agreement
-    store.db.evalRuns[2]!.humanVerdict = 'approve'; // agreement
+    store.db.evalRuns[1]!.humanVerdict = 'request_changes'; // same decision, copied label
+    store.db.evalRuns[2]!.humanVerdict = 'request_changes'; // agreement
+    store.db.evalRuns[3]!.humanVerdict = 'approve'; // agreement
 
     const m = computeMetrics(store);
+    expect(m.humanDecisionCount).toBe(3);
+    expect(m.falsePassTrend).toHaveLength(3);
     expect(m.falsePassTrend.map((p) => p.rate)).toEqual([1, 1 / 2, 1 / 3]); // cumulative within the window
     expect(m.falsePassTrend[0]!.upTo).toBe('2026-01-01T00:00:00.000Z');
     expect(m.falsePassTrend.at(-1)!.upTo).toBe('2026-01-03T00:00:00.000Z');
@@ -163,5 +193,37 @@ describe('③ steering instruments (ADR-0007 I4)', () => {
     addIssue(store, 'ISSUE-0001');
     addRun(store, 'ISSUE-0001', 0, 1, 'approve');
     expect(computeMetrics(store).falsePassTrend).toEqual([]);
+  });
+});
+
+describe('statusReport: human calibration sample size', () => {
+  it('hides rates below the single calibration threshold and reports the decision count', () => {
+    const store = tmpStore('metrics-calibration-thin');
+    addIssue(store, 'ISSUE-0001');
+    for (let sample = 0; sample < 6; sample++) {
+      const run = addRun(store, 'ISSUE-0001', sample, 1, 'approve');
+      run.humanVerdict = 'approve';
+    }
+
+    const report = statusReport(store, computeMetrics(store));
+    expect(report).toContain('false-pass: n/a（較正不足: n=6）');
+    expect(report).toContain('false-fail: n/a（較正不足: n=6）');
+    expect(report).toContain('grader agreement: n/a（較正不足: n=6）');
+    expect(report).not.toContain('false-pass trend:');
+  });
+
+  it('shows rates with their denominator once the calibration threshold is met', () => {
+    const store = tmpStore('metrics-calibration-ready');
+    addIssue(store, 'ISSUE-0001');
+    for (let sample = 0; sample < MIN_HUMAN_DECISIONS_FOR_CALIBRATION; sample++) {
+      const run = addRun(store, 'ISSUE-0001', sample, 1, 'approve');
+      run.humanVerdict = 'approve';
+    }
+
+    const report = statusReport(store, computeMetrics(store));
+    const denominator = `(n=${MIN_HUMAN_DECISIONS_FOR_CALIBRATION} 判断)`;
+    expect(report).toContain(`false-pass: 0.0% ${denominator}`);
+    expect(report).toContain(`false-fail: 0.0% ${denominator}`);
+    expect(report).toContain(`grader agreement: 100.0% ${denominator}`);
   });
 });
