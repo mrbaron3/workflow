@@ -43,6 +43,7 @@ import {
   type GithubOpenPullRequest,
   type PrNativeGithubRunner,
 } from './pr-native.js';
+import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
 
 export interface RepositoryPullRequestDiscovery {
   pullRequest: GithubOpenPullRequest;
@@ -357,6 +358,8 @@ export async function reviewRepositoryPullRequest(
           baseRef: pullRequest.baseRefName,
           uiDesign: issue.uiDesign,
           untrusted: true,
+          surrogateOracleMismatchCount:
+            surrogateOracleMismatchRevisions(store, pr.id).length,
         },
         log,
       );

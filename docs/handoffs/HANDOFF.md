@@ -1,5 +1,10 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
+> **最新の作業前線（2026-07-23）**: PR #9 の repository-level webhook / PR gate 対応は
+> [pr-9-webhook-control-plane.md](pr-9-webhook-control-plane.md) を先に読むこと。
+> `5070329` の push と対象テストまで完了し、最新 head の全テストと r43 再レビュー前で意図的に停止している。
+> 以下は長期文脈を保持する履歴であり、冒頭の clean / `origin/main` 前提は現在の作業状態には適用しない。
+>
 > 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑮セッションで更新・最終更新は **D4 released（PR #3・direct engineering 経路）＋M4 grounded 初回巡（channel-compass EPIC-01 released）＋新ギャップ D5/D6 発見** 後）。**次セッションの開始点は §4 冒頭「★ 次セッションの開始点」**。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。

@@ -39,6 +39,7 @@ import {
   type PrNativeGithubRunner,
 } from './pr-native.js';
 import { improveTick } from '../improve.js';
+import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
 
 export interface LiveOptions {
   /** Which lenses to convene (default: all 7). Reduce it for a cheap smoke. */
@@ -170,6 +171,8 @@ async function runLiveSample(
     //    A re-review (attempt > 1) hands each lens its OWN previous-attempt findings so the reviewer
     //    attests lineage (persisted/new) per finding — never inferred downstream (ISSUE-0009).
     const priorFindings = priorFindingsByLens(store, pr.id, attempt);
+    const surrogateOracleMismatchCount =
+      surrogateOracleMismatchRevisions(store, pr.id).length;
     const panelSessions = await runPerspectiveSessions(
       config,
       {
@@ -181,6 +184,7 @@ async function runLiveSample(
         buildRef: sess.headSha,
         priorFindings,
         uiDesign: issue.uiDesign,
+        surrogateOracleMismatchCount,
       },
       log,
     );
