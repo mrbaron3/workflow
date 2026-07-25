@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 describe('webhook-daemon command boundary', () => {
-  it('ISSUE-0024/PR-INTENT starts and stops through the real CLI dispatch', async () => {
+  it('CISO-02 fails closed instead of starting the legacy JSON daemon', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-daemon-cli-'));
     roots.push(root);
     const launcher = path.resolve(import.meta.dirname, '..', 'bin', 'agentops.mjs');
@@ -48,57 +48,16 @@ describe('webhook-daemon command boundary', () => {
     });
     children.push(child);
     let output = '';
-    const url = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`daemon startup timed out\n${output}`)), 10_000);
-      const inspect = (chunk: Buffer | string) => {
-        output += String(chunk);
-        const match = output.match(/webhook control listening (http:\/\/127\.0\.0\.1:\d+)/);
-        if (!match) return;
-        clearTimeout(timer);
-        resolve(match[1]!);
-      };
-      child.stdout!.on('data', inspect);
-      child.stderr!.on('data', inspect);
+    child.stdout!.on('data', (chunk) => { output += String(chunk); });
+    child.stderr!.on('data', (chunk) => { output += String(chunk); });
+    const exit = await new Promise<number | null>((resolve, reject) => {
       child.once('error', reject);
-      child.once('exit', (code) => {
-        if (code !== null && !output.includes('webhook control listening')) {
-          reject(new Error(`daemon exited during startup (${code})\n${output}`));
-        }
-      });
+      child.once('exit', resolve);
     });
-
-    const headers = { authorization: 'Bearer control-token' };
-    const state = await fetch(`${url}/api/state`, { headers });
-    expect(state.status).toBe(200);
-    expect(await state.json()).toMatchObject({
-      repositories: [],
-      deliveries: [],
-      runtime: { forwarders: [] },
-    });
-    const page = await fetch(url, { headers });
-    expect(page.status).toBe(200);
-    expect(await page.text()).toContain('Repositoryを追加');
-    expect(output).toContain('GitHub forwarders disabled');
-    expect(output).toContain('polling reconciliation disabled');
-    const browserLogin = output.match(/browser login \(single-use, 60s\): (http:\/\/127\.0\.0\.1:\d+\/launch\?token=[^\s]+)/);
-    const browserLoginUrl = browserLogin?.[1];
-    expect(browserLoginUrl).toBeTruthy();
-    if (!browserLoginUrl) throw new Error(`missing browser login URL\n${output}`);
-    expect(browserLoginUrl).not.toContain('control-token');
-    const launched = await fetch(browserLoginUrl, { redirect: 'manual' });
-    expect(launched.status).toBe(303);
-    const cookie = launched.headers.get('set-cookie');
-    expect(cookie).toContain('agentops_webhook_session=');
-    const browserPage = await fetch(`${url}/`, {
-      headers: { cookie: cookie!.split(';')[0]! },
-    });
-    expect(browserPage.status).toBe(200);
-    expect(await browserPage.text()).toContain('Repositoryを追加');
-
-    child.kill('SIGTERM');
-    const exit = await new Promise<number | null>((resolve) => child.once('exit', resolve));
-    expect(exit).toBe(0);
-    expect(fs.existsSync(path.join(root, '.harness', 'webhooks.json'))).toBe(true);
+    expect(exit).toBe(1);
+    expect(output).toContain('legacy webhook-daemon is disabled');
+    expect(output).toContain('PostgreSQL');
+    expect(fs.existsSync(path.join(root, '.harness'))).toBe(false);
   }, 15_000);
 
   it('ISSUE-0024/PR-INTENT parses flags and propagates trimmed credentials', () => {
