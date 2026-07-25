@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mrbaron3.github.io/workflow/contracts/control-store/v1/registration.schema.json",
+  "title": "Repository Registration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "repository",
+    "enabled",
+    "issueMonitorEnabled",
+    "prMonitorEnabled",
+    "executionEnabled",
+    "configuration",
+    "version",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[a-z0-9_.-]+/[a-z0-9_.-]+$"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "issueMonitorEnabled": {
+      "type": "boolean"
+    },
+    "prMonitorEnabled": {
+      "type": "boolean"
+    },
+    "executionEnabled": {
+      "type": "boolean"
+    },
+    "configuration": {
+      "type": "object",
+      "maxProperties": 0
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

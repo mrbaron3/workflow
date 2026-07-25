@@ -6,3 +6,6 @@
 - **ARCH-webhook-004 Local Forwarder Manager** — enabled registrationごとに`gh webhook forward --repo --events`を監督し、payloadは親processだけが読めるstdout pipeで受け取ってからdaemon内で署名して`/hook`へ渡す。secretやsigning endpointをchild argvへ公開しない。設定変更時に対象processだけを再構成する。coreはprocess形を知らない。
 - **ARCH-webhook-005 Consumer Adapters** — `agentops`はIssue intake/PR revision loopをwakeし、`orca-worktree-sync`は既存同期engineへ型付きeventを渡す。adapterだけが各runtimeを知る。
 - **ARCH-webhook-006 Local Control UI** — loopback限定のHTTP UI/APIがRegistration、forwarder health、delivery履歴、failure replayを操作する。任意command入力は提供しない。
+- **ARCH-webhook-007 Go production control** — productionのIngress/Router/Reconciliation/Forwarder Managerは
+  PostgreSQL Registration駆動の`agentops-control`が所有する。旧TypeScript daemonは非永続compatibility oracleであり、
+  production entry pointやdual-write pathではない（ADR-0014）。

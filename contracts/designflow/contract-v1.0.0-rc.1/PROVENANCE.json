@@ -1,0 +1,8 @@
+{
+  "providerRef": "mrbaron3/designflow@contract-v1.0.0-rc.1",
+  "tagObject": "a5598951bbc405f9d83ebbccc184c7994844715b",
+  "commit": "ce732a80a8c3867b4ac881531ce8f7546e001dbb",
+  "retrievedAt": "2026-07-25",
+  "contractPath": "contracts/v1",
+  "purpose": "Pinned, runtime-independent Experience Contract Provider input for mrbaron3/workflow#13"
+}

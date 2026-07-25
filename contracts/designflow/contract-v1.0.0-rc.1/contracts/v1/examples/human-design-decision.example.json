@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0",
+  "decisionId": "design-decision-001",
+  "requestId": "design-dashboard-001",
+  "revisionId": "design-revision-001",
+  "bundleDigest": "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97",
+  "verdict": "approve",
+  "rationale": "主目的、Effort Budget、異常優先のAttention Hierarchy、retry前の原因確認、API能力要求が妥当",
+  "decidedBy": {
+    "provider": "local",
+    "subject": "product-owner",
+    "displayName": "Product owner"
+  },
+  "decidedAt": "2026-07-25T04:00:00.000Z",
+  "supersedesDecisionId": null
+}

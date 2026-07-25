@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const CONTROL_SCHEMA_VERSION = 1;
+export const CONTROL_SCHEMA_VERSION = 2;
 
 export const RepositoryRegistrationInput = z.object({
   repository: z.string().trim().toLowerCase()
@@ -9,7 +9,7 @@ export const RepositoryRegistrationInput = z.object({
   issueMonitorEnabled: z.boolean().default(true),
   prMonitorEnabled: z.boolean().default(true),
   executionEnabled: z.boolean().default(true),
-  configuration: z.record(z.unknown()).default({}),
+  configuration: z.object({}).strict().default({}),
 });
 export type RepositoryRegistrationInput = z.infer<typeof RepositoryRegistrationInput>;
 export const RepositoryRegistrationPatch = RepositoryRegistrationInput

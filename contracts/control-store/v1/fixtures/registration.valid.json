@@ -1,0 +1,12 @@
+{
+  "id": "42060c4c-a08a-4e15-b633-2ce73f1c6620",
+  "repository": "mrbaron3/workflow",
+  "enabled": true,
+  "issueMonitorEnabled": true,
+  "prMonitorEnabled": true,
+  "executionEnabled": true,
+  "configuration": {},
+  "version": 1,
+  "createdAt": "2026-07-25T00:00:00.000Z",
+  "updatedAt": "2026-07-25T00:00:00.000Z"
+}

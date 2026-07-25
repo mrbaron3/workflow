@@ -104,14 +104,18 @@ integration('PostgreSQL control store', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-bad-migration-'));
     const directory = path.join(root, 'db', 'control-store', 'migrations');
     fs.mkdirSync(directory, { recursive: true });
-    const valid = fs.readFileSync(
-      path.join(process.cwd(), 'db', 'control-store', 'migrations', '0001_control_store.sql'),
-      'utf8',
-    );
-    fs.writeFileSync(
-      path.join(directory, '0001_control_store.sql'),
-      `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`,
-    );
+    for (const name of ['0001_control_store.sql', '0002_registration_control.sql']) {
+      const valid = fs.readFileSync(
+        path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
+        'utf8',
+      );
+      fs.writeFileSync(
+        path.join(directory, name),
+        name.startsWith('0002_')
+          ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
+          : valid,
+      );
+    }
     await expect(migrateControlSchema(pool, { root })).rejects.toThrow(/failed closed/);
     const result = await pool.query<{ relation: string | null }>(
       `SELECT to_regclass('agentops_control.repository_registrations')::text AS relation`,
@@ -190,6 +194,45 @@ integration('PostgreSQL control store', () => {
     expect(stored.rows[0]?.headers).toEqual({
       'x-github-delivery': 'github-delivery-1',
     });
+  });
+
+  it('requeues an observation rejected only by a Registration version change', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store, '-requeue');
+    const first = await enqueue(
+      store,
+      repo.id,
+      repo.version,
+      'versioned-observation',
+      'webhook',
+    );
+    const updated = await store.updateRegistration(repo.id, { configuration: {} });
+    const recovered = await enqueue(
+      store,
+      updated.id,
+      updated.version,
+      'versioned-observation',
+      'poll',
+    );
+    expect(recovered.duplicate).toBe(false);
+    expect(recovered.job).toMatchObject({
+      id: first.job.id,
+      registrationVersion: updated.version,
+      status: 'queued',
+    });
+    const audit = await pool.query<{ count: string }>(
+      `SELECT count(*) FROM agentops_control.runtime_audit
+        WHERE job_id = $1
+          AND event_type = 'job.requeued_after_registration_change'`,
+      [first.job.id],
+    );
+    expect(Number(audit.rows[0]?.count)).toBe(1);
+    await expect(pool.query(
+      `UPDATE agentops_control.repository_registrations
+          SET configuration = '{"command":"unsafe"}'::jsonb
+        WHERE id = $1`,
+      [repo.id],
+    )).rejects.toThrow();
   });
 
   it('does not steal live webhook work and recovers only expired ownership after restart', async () => {

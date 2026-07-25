@@ -1,0 +1,113 @@
+{
+  "schemaVersion": "1.0",
+  "requestId": "design-dashboard-001",
+  "revisionId": "design-revision-001",
+  "baseRevisionRef": {
+    "provider": "git",
+    "externalId": "control-plane-design-system",
+    "uri": "https://example.com/acme/design-system",
+    "revision": "main",
+    "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "decisions": [
+    {
+      "id": "decision-reuse-alert",
+      "action": "reuse",
+      "targetType": "component",
+      "targetId": "component.alert",
+      "rationale": "失敗理由の提示は既存alert patternの意味と一致する",
+      "sourceRequirementIds": [
+        "REQ-DASH-002"
+      ]
+    },
+    {
+      "id": "decision-extend-status-card",
+      "action": "extend",
+      "targetType": "component",
+      "targetId": "component.repository-status-card",
+      "rationale": "desired／actual差と最終正常時刻を同一componentで比較可能にする必要がある",
+      "sourceRequirementIds": [
+        "REQ-DASH-001",
+        "REQ-DASH-002"
+      ]
+    },
+    {
+      "id": "decision-create-failed-status-token",
+      "action": "create",
+      "targetType": "token",
+      "targetId": "color.status.failed",
+      "rationale": "色以外のlabel／iconと併用しつつ、失敗状態を全surfaceで一貫表示する",
+      "sourceRequirementIds": [
+        "REQ-DASH-002"
+      ]
+    }
+  ],
+  "tokenDocuments": [
+    {
+      "path": "contracts/v1/examples/dashboard.tokens.json",
+      "digest": "sha256:bb50b5fdfce61daef50f456e16b1acdce0a003f969fd28f96c002ff1929bd1c7",
+      "format": "dtcg-2025.10",
+      "purpose": "Dashboard状態表示に必要なsemantic token delta"
+    }
+  ],
+  "componentDeltas": [
+    {
+      "id": "component.repository-status-card",
+      "action": "extend",
+      "name": "Repository Status Card",
+      "purpose": "Repositoryのdesired／actual状態と異常理由を比較可能に表示する",
+      "variants": [
+        "healthy",
+        "degraded",
+        "disabled"
+      ],
+      "states": [
+        "default",
+        "selected",
+        "loading",
+        "stale"
+      ],
+      "slots": [
+        "repository-name",
+        "desired-state",
+        "actual-state",
+        "last-healthy-at",
+        "failure-summary"
+      ],
+      "keyboardBehavior": "cardはbutton semanticsを持ち、EnterまたはSpaceでdetailを開く",
+      "focusBehavior": "選択後もcard focusを維持し、detail更新をlive regionで通知する",
+      "responsiveRules": [
+        "狭いviewportではlabel/valueを縦積みにする",
+        "failure summaryを省略せず折り返す"
+      ],
+      "contentConstraints": [
+        "statusを色だけで表現しない",
+        "repository full nameを識別可能に表示する"
+      ],
+      "tokenRefs": [
+        "color.status.failed"
+      ],
+      "sourceRequirementIds": [
+        "REQ-DASH-001",
+        "REQ-DASH-002"
+      ]
+    }
+  ],
+  "patternDeltas": [
+    {
+      "id": "pattern.failure-recovery",
+      "action": "create",
+      "name": "Failure Recovery",
+      "purpose": "原因、影響、許可された復旧操作、結果を同じcontextで提示する",
+      "compositionRules": [
+        "failure summaryを復旧操作より先に置く",
+        "操作結果を同じregionで通知する",
+        "debug detailはprogressive disclosureへ置く"
+      ],
+      "sourceRequirementIds": [
+        "REQ-DASH-002",
+        "REQ-DASH-003"
+      ]
+    }
+  ]
+}

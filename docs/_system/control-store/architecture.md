@@ -14,5 +14,7 @@
   pending webhook claimは真実回収経路である。
 - **ARCH-control-store-007 Published Contract** — SQL migrationとv1 JSON Schema/fixtureがTypeScript/Go間のPublished
   Languageである。
+- **ARCH-control-store-008 Registration control projection** — Go controlはactual state、API idempotency、
+  delivery retryをschema version 2へtransactionalに保存し、status readをrepeatable-read snapshotから構成する。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)

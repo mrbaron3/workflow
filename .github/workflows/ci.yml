@@ -19,7 +19,12 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
       - run: npm ci
+      - run: go test -race ./...
       - run: npm test
       - run: npm run build
   postgres:
@@ -46,6 +51,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24.x'
+          cache: true
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:postgres
+      - run: go test -race ./...
+      - run: docker build --target control -t agentops-control:ci -f deploy/Containerfile .
