@@ -48,6 +48,7 @@
     {
       "capabilityId": "cap-retry-delivery",
       "apiElements": [
+        "GET /v1/deliveries/{deliveryId}",
         "POST /v1/deliveries/{deliveryId}/retry"
       ],
       "systemElements": [
@@ -61,7 +62,7 @@
       ],
       "facets": {
         "queryCommand": [
-          "command accepts deliveryId and observedAttempts and returns attemptId/state"
+          "command accepts deliveryId and observedAttempts and returns attemptId/state; authenticated GET returns the current delivery and retry-attempt states"
         ],
         "authorization": [
           "Bearer operator token is required; actor is persisted"

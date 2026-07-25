@@ -38,7 +38,8 @@
       "type": "boolean"
     },
     "configuration": {
-      "type": "object"
+      "type": "object",
+      "maxProperties": 0
     },
     "version": {
       "type": "integer",

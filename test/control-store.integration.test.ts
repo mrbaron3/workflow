@@ -196,6 +196,45 @@ integration('PostgreSQL control store', () => {
     });
   });
 
+  it('requeues an observation rejected only by a Registration version change', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store, '-requeue');
+    const first = await enqueue(
+      store,
+      repo.id,
+      repo.version,
+      'versioned-observation',
+      'webhook',
+    );
+    const updated = await store.updateRegistration(repo.id, { configuration: {} });
+    const recovered = await enqueue(
+      store,
+      updated.id,
+      updated.version,
+      'versioned-observation',
+      'poll',
+    );
+    expect(recovered.duplicate).toBe(false);
+    expect(recovered.job).toMatchObject({
+      id: first.job.id,
+      registrationVersion: updated.version,
+      status: 'queued',
+    });
+    const audit = await pool.query<{ count: string }>(
+      `SELECT count(*) FROM agentops_control.runtime_audit
+        WHERE job_id = $1
+          AND event_type = 'job.requeued_after_registration_change'`,
+      [first.job.id],
+    );
+    expect(Number(audit.rows[0]?.count)).toBe(1);
+    await expect(pool.query(
+      `UPDATE agentops_control.repository_registrations
+          SET configuration = '{"command":"unsafe"}'::jsonb
+        WHERE id = $1`,
+      [repo.id],
+    )).rejects.toThrow();
+  });
+
   it('does not steal live webhook work and recovers only expired ownership after restart', async () => {
     const store = await migratedStore();
     const repo = await registration(store);

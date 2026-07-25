@@ -218,8 +218,10 @@ func workItemFromWebhook(claim ClaimedDelivery) (WorkItem, bool) {
 		return WorkItem{
 			Repository: claim.Repository,
 			Kind:       "push",
-			Identity:   after,
-			UpdatedAt:  updatedAt,
+			// GitHub can push the same commit to multiple branches. Include a
+			// length-framed ref so each branch remains a distinct logical event.
+			Identity:  fmt.Sprintf("%d:%s:%s", len(ref), ref, after),
+			UpdatedAt: updatedAt,
 			Payload: map[string]any{
 				"ref": ref, "after": after, "deleted": false,
 			},

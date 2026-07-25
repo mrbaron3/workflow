@@ -193,6 +193,85 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		raceResults[0].duplicate == raceResults[1].duplicate {
 		t.Fatalf("concurrent webhook/poll convergence = %#v", raceResults)
 	}
+	requeueRegistration, duplicate, err := store.CreateRegistration(
+		ctx,
+		CreateRegistration{
+			Repository:          "owner/requeue",
+			IssueMonitorEnabled: &monitorDisabled,
+			PRMonitorEnabled:    &monitorDisabled,
+		},
+		"create-requeue-registration",
+		"operator",
+	)
+	if err != nil || duplicate {
+		t.Fatalf("requeue registration = %#v, %v, %v", requeueRegistration, duplicate, err)
+	}
+	requeueItem := issueItem
+	requeueItem.Repository = requeueRegistration.Repository
+	requeueItem.Number = 88
+	requeueJobID, duplicate, err := store.EnqueueWork(
+		ctx,
+		requeueRegistration,
+		"webhook",
+		"requeue-source",
+		requeueItem,
+	)
+	if err != nil || duplicate {
+		t.Fatalf("initial requeue job = %s, %v, %v", requeueJobID, duplicate, err)
+	}
+	requeueRegistration, err = store.UpdateRegistration(
+		ctx,
+		requeueRegistration.ID,
+		requeueRegistration.Version,
+		RegistrationPatch{Configuration: json.RawMessage(`{}`)},
+		"operator",
+		"registration.updated",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveredJobID, duplicate, err := store.EnqueueWork(
+		ctx,
+		requeueRegistration,
+		"poll",
+		requeueItem.IdempotencyKey(),
+		requeueItem,
+	)
+	if err != nil || duplicate || recoveredJobID != requeueJobID {
+		t.Fatalf(
+			"registration-change requeue = %s, %v, %v",
+			recoveredJobID,
+			duplicate,
+			err,
+		)
+	}
+	var recoveredVersion int64
+	var recoveredStatus string
+	var requeueAudits int
+	if err := store.pool.QueryRow(ctx,
+		`SELECT registration_version, status
+		   FROM agentops_control.jobs WHERE id = $1`,
+		requeueJobID,
+	).Scan(&recoveredVersion, &recoveredStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.pool.QueryRow(ctx,
+		`SELECT count(*) FROM agentops_control.runtime_audit
+		  WHERE job_id = $1
+		    AND event_type = 'job.requeued_after_registration_change'`,
+		requeueJobID,
+	).Scan(&requeueAudits); err != nil {
+		t.Fatal(err)
+	}
+	if recoveredVersion != requeueRegistration.Version ||
+		recoveredStatus != "queued" || requeueAudits != 1 {
+		t.Fatalf(
+			"recovered version=%d status=%s audits=%d",
+			recoveredVersion,
+			recoveredStatus,
+			requeueAudits,
+		)
+	}
 	otherItem := issueItem
 	otherItem.Number = 14
 	if _, _, err := store.EnqueueWork(
@@ -364,6 +443,14 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	)
 	if err != nil || replay || retry.State != "pending" || retry.Cancellable {
 		t.Fatalf("RetryWebhook() = %#v, %v, %v", retry, replay, err)
+	}
+	deliveryStatus, err := store.DeliveryStatus(ctx, failedReceipt.DeliveryID)
+	if err != nil ||
+		deliveryStatus.Status != "pending" ||
+		len(deliveryStatus.RetryAttempts) != 1 ||
+		deliveryStatus.RetryAttempts[0].AttemptID != retry.AttemptID ||
+		deliveryStatus.RetryAttempts[0].Status != "accepted" {
+		t.Fatalf("DeliveryStatus() = %#v, %v", deliveryStatus, err)
 	}
 	retryReplay, replay, err := store.RetryWebhook(
 		ctx,

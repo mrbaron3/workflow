@@ -117,6 +117,25 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  /v1/deliveries/{deliveryId}:
+    get:
+      operationId: getDeliveryStatus
+      x-designflow-capability: cap-retry-delivery
+      x-freshness: deliveryとretry attemptをPostgreSQL repeatable-read snapshotから返す。
+      x-idempotency: read-only
+      parameters:
+        - $ref: "#/components/parameters/DeliveryId"
+      responses:
+        "200":
+          description: deliveryとretry attemptの現在のdurable state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryStatus"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/StoreUnavailable"
   /v1/deliveries/{deliveryId}/retry:
     post:
       operationId: retryDelivery
@@ -128,12 +147,7 @@ paths:
       x-cancellation: responseのcancellable=falseで取消不能を明示。
       x-audit: actor、delivery、attempt、observedAttempts、timeをtransactionalに保存。
       parameters:
-        - name: deliveryId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+        - $ref: "#/components/parameters/DeliveryId"
         - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
@@ -188,6 +202,13 @@ components:
   parameters:
     RegistrationId:
       name: registrationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeliveryId:
+      name: deliveryId
       in: path
       required: true
       schema:
@@ -432,3 +453,94 @@ components:
           const: pending
         cancellable:
           const: false
+    DeliveryStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - deliveryKey
+        - repository
+        - event
+        - status
+        - routeAttempts
+        - receivedAt
+        - updatedAt
+        - retryAttempts
+      properties:
+        id:
+          type: string
+          format: uuid
+        deliveryKey:
+          type: string
+        repository:
+          type: string
+        event:
+          type: string
+        action:
+          type:
+            - string
+            - "null"
+        status:
+          enum:
+            - pending
+            - processing
+            - processed
+            - ignored
+            - failed
+        ignoredReason:
+          type:
+            - string
+            - "null"
+        lastError:
+          type:
+            - string
+            - "null"
+        routeAttempts:
+          type: integer
+          minimum: 0
+        registrationId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        registrationVersion:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+        receivedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        retryAttempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryRetryAttempt"
+    DeliveryRetryAttempt:
+      type: object
+      additionalProperties: false
+      required:
+        - attemptId
+        - status
+        - observedRouteAttempts
+        - createdAt
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        status:
+          enum:
+            - accepted
+            - rejected
+        reason:
+          type:
+            - string
+            - "null"
+        observedRouteAttempts:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time

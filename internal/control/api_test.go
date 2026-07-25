@@ -21,6 +21,8 @@ type fakeAPIStore struct {
 	projections     []RegistrationProjection
 	projectionError error
 	retryError      error
+	deliveryStatus  DeliveryStatus
+	deliveryError   error
 }
 
 func (store *fakeAPIStore) Ping(context.Context) error { return nil }
@@ -76,6 +78,13 @@ func (store *fakeAPIStore) RetryWebhook(
 	int,
 ) (RetryResult, bool, error) {
 	return RetryResult{}, false, store.retryError
+}
+
+func (store *fakeAPIStore) DeliveryStatus(
+	context.Context,
+	string,
+) (DeliveryStatus, error) {
+	return store.deliveryStatus, store.deliveryError
 }
 
 func TestControlAPIRequiresAuthorizationAndOptimisticContractHeaders(t *testing.T) {
@@ -243,6 +252,24 @@ func TestRetryConflictReturnsCurrentStateAndReason(t *testing.T) {
 		!bytes.Contains(response.Body.Bytes(), []byte(`"state":"processing"`)) ||
 		!bytes.Contains(response.Body.Bytes(), []byte(`"routeAttempts":2`)) {
 		t.Fatalf("retry conflict = %d: %s", response.Code, response.Body)
+	}
+}
+
+func TestDeliveryStatusQueryReturnsCurrentDurableState(t *testing.T) {
+	store := &fakeAPIStore{deliveryStatus: DeliveryStatus{
+		ID: "delivery-1", Status: "processed", RouteAttempts: 2,
+		RetryAttempts: []DeliveryRetryAttempt{{
+			AttemptID: "attempt-1", Status: "accepted",
+		}},
+	}}
+	request := httptest.NewRequest(http.MethodGet, "/v1/deliveries/delivery-1", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"status":"processed"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"attemptId":"attempt-1"`)) {
+		t.Fatalf("delivery status = %d: %s", response.Code, response.Body)
 	}
 }
 

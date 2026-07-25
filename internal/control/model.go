@@ -249,6 +249,31 @@ type RetryResult struct {
 	Cancellable bool   `json:"cancellable"`
 }
 
+type DeliveryStatus struct {
+	ID                  string                 `json:"id"`
+	DeliveryKey         string                 `json:"deliveryKey"`
+	Repository          string                 `json:"repository"`
+	Event               string                 `json:"event"`
+	Action              *string                `json:"action"`
+	Status              string                 `json:"status"`
+	IgnoredReason       *string                `json:"ignoredReason"`
+	LastError           *string                `json:"lastError"`
+	RouteAttempts       int                    `json:"routeAttempts"`
+	RegistrationID      *string                `json:"registrationId"`
+	RegistrationVersion *int64                 `json:"registrationVersion"`
+	ReceivedAt          time.Time              `json:"receivedAt"`
+	UpdatedAt           time.Time              `json:"updatedAt"`
+	RetryAttempts       []DeliveryRetryAttempt `json:"retryAttempts"`
+}
+
+type DeliveryRetryAttempt struct {
+	AttemptID             string    `json:"attemptId"`
+	Status                string    `json:"status"`
+	Reason                *string   `json:"reason"`
+	ObservedRouteAttempts int       `json:"observedRouteAttempts"`
+	CreatedAt             time.Time `json:"createdAt"`
+}
+
 type DeliveryRetryConflict struct {
 	Reason        string `json:"reason"`
 	State         string `json:"state"`

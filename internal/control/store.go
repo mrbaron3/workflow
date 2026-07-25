@@ -494,25 +494,50 @@ func (store *Store) EnqueueWork(
 	if !current.Enabled || !current.ExecutionEnabled || current.Version != registration.Version {
 		return "", false, ErrStaleRegistration
 	}
-	var existingID string
+	var existingID, existingStatus string
+	var existingVersion int64
+	var existingLastError *string
 	var sameType, samePayload bool
 	err = transaction.QueryRow(ctx,
-		`SELECT id, job_type = $3, payload = $4::jsonb
+		`SELECT id, registration_version, status, last_error,
+		        job_type = $3, payload = $4::jsonb
 		   FROM agentops_control.jobs
 		  WHERE registration_id = $1 AND idempotency_key = $2`,
 		registration.ID,
 		idempotencyKey,
 		jobType,
 		payload,
-	).Scan(&existingID, &sameType, &samePayload)
+	).Scan(
+		&existingID,
+		&existingVersion,
+		&existingStatus,
+		&existingLastError,
+		&sameType,
+		&samePayload,
+	)
 	if err == nil {
 		if !sameType || !samePayload {
 			return "", false, ErrIdempotencyConflict
 		}
+		requeued, err := requeueAfterRegistrationChange(
+			ctx,
+			transaction,
+			registration,
+			existingID,
+			existingVersion,
+			existingStatus,
+			existingLastError,
+			sourceKind,
+			sourceKey,
+			idempotencyKey,
+		)
+		if err != nil {
+			return "", false, err
+		}
 		if err := transaction.Commit(ctx); err != nil {
 			return "", false, unavailable(err)
 		}
-		return existingID, true, nil
+		return existingID, !requeued, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return "", false, unavailable(err)
@@ -541,23 +566,46 @@ func (store *Store) EnqueueWork(
 	}
 	if tag.RowsAffected() == 0 {
 		if err := transaction.QueryRow(ctx,
-			`SELECT id, job_type = $3, payload = $4::jsonb
+			`SELECT id, registration_version, status, last_error,
+			        job_type = $3, payload = $4::jsonb
 			   FROM agentops_control.jobs
 			  WHERE registration_id = $1 AND idempotency_key = $2`,
 			registration.ID,
 			idempotencyKey,
 			jobType,
 			payload,
-		).Scan(&existingID, &sameType, &samePayload); err != nil {
+		).Scan(
+			&existingID,
+			&existingVersion,
+			&existingStatus,
+			&existingLastError,
+			&sameType,
+			&samePayload,
+		); err != nil {
 			return "", false, unavailable(err)
 		}
 		if !sameType || !samePayload {
 			return "", false, ErrIdempotencyConflict
 		}
+		requeued, err := requeueAfterRegistrationChange(
+			ctx,
+			transaction,
+			registration,
+			existingID,
+			existingVersion,
+			existingStatus,
+			existingLastError,
+			sourceKind,
+			sourceKey,
+			idempotencyKey,
+		)
+		if err != nil {
+			return "", false, err
+		}
 		if err := transaction.Commit(ctx); err != nil {
 			return "", false, unavailable(err)
 		}
-		return existingID, true, nil
+		return existingID, !requeued, nil
 	}
 	if err := appendAuditTx(
 		ctx,
@@ -578,6 +626,67 @@ func (store *Store) EnqueueWork(
 		return "", false, unavailable(err)
 	}
 	return id, false, nil
+}
+
+const registrationChangedBeforeLease = "registration changed before lease acquisition"
+
+func requeueAfterRegistrationChange(
+	ctx context.Context,
+	transaction pgx.Tx,
+	registration Registration,
+	jobID string,
+	existingVersion int64,
+	existingStatus string,
+	existingLastError *string,
+	sourceKind, sourceKey, idempotencyKey string,
+) (bool, error) {
+	if existingVersion == registration.Version ||
+		existingStatus != "rejected" ||
+		existingLastError == nil ||
+		*existingLastError != registrationChangedBeforeLease {
+		return false, nil
+	}
+	tag, err := transaction.Exec(ctx,
+		`UPDATE agentops_control.jobs
+		    SET registration_version = $2,
+		        status = 'queued',
+		        available_at = clock_timestamp(),
+		        finished_at = NULL,
+		        last_error = NULL,
+		        updated_at = clock_timestamp()
+		  WHERE id = $1
+		    AND registration_version = $3
+		    AND status = 'rejected'
+		    AND last_error = $4`,
+		jobID,
+		registration.Version,
+		existingVersion,
+		registrationChangedBeforeLease,
+	)
+	if err != nil {
+		return false, classifyPostgres(err)
+	}
+	if tag.RowsAffected() != 1 {
+		return false, ErrConflict
+	}
+	if err := appendAuditTx(
+		ctx,
+		transaction,
+		"agentops-control",
+		"job.requeued_after_registration_change",
+		&registration.ID,
+		&jobID,
+		map[string]any{
+			"fromRegistrationVersion": existingVersion,
+			"toRegistrationVersion":   registration.Version,
+			"sourceKind":              sourceKind,
+			"sourceKey":               sourceKey,
+			"idempotencyKey":          idempotencyKey,
+		},
+	); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (store *Store) ReceiveWebhook(
@@ -832,6 +941,82 @@ func (store *Store) RecoverInterruptedWebhooks(ctx context.Context) (int64, erro
 		return 0, unavailable(err)
 	}
 	return tag.RowsAffected(), nil
+}
+
+func (store *Store) DeliveryStatus(
+	ctx context.Context,
+	deliveryID string,
+) (DeliveryStatus, error) {
+	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return DeliveryStatus{}, unavailable(err)
+	}
+	defer func() { _ = transaction.Rollback(context.Background()) }()
+	var status DeliveryStatus
+	err = transaction.QueryRow(ctx,
+		`SELECT id, delivery_key, repository, event, action, status,
+		        ignored_reason, last_error, route_attempts, registration_id,
+		        registration_version, received_at, updated_at
+		   FROM agentops_control.webhook_deliveries
+		  WHERE id = $1`,
+		deliveryID,
+	).Scan(
+		&status.ID,
+		&status.DeliveryKey,
+		&status.Repository,
+		&status.Event,
+		&status.Action,
+		&status.Status,
+		&status.IgnoredReason,
+		&status.LastError,
+		&status.RouteAttempts,
+		&status.RegistrationID,
+		&status.RegistrationVersion,
+		&status.ReceivedAt,
+		&status.UpdatedAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryStatus{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryStatus{}, unavailable(err)
+	}
+	status.RetryAttempts = make([]DeliveryRetryAttempt, 0)
+	rows, err := transaction.Query(ctx,
+		`SELECT id, status, reason, observed_route_attempts, created_at
+		   FROM agentops_control.delivery_retry_attempts
+		  WHERE delivery_id = $1
+		  ORDER BY created_at, id`,
+		deliveryID,
+	)
+	if err != nil {
+		return DeliveryStatus{}, unavailable(err)
+	}
+	for rows.Next() {
+		var attempt DeliveryRetryAttempt
+		if err := rows.Scan(
+			&attempt.AttemptID,
+			&attempt.Status,
+			&attempt.Reason,
+			&attempt.ObservedRouteAttempts,
+			&attempt.CreatedAt,
+		); err != nil {
+			rows.Close()
+			return DeliveryStatus{}, unavailable(err)
+		}
+		status.RetryAttempts = append(status.RetryAttempts, attempt)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return DeliveryStatus{}, unavailable(err)
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return DeliveryStatus{}, unavailable(err)
+	}
+	return status, nil
 }
 
 func (store *Store) RetryWebhook(
@@ -1127,6 +1312,10 @@ func (store *Store) Projections(
 		return nil, unavailable(err)
 	}
 	defer func() { _ = transaction.Rollback(context.Background()) }()
+	var databaseNow time.Time
+	if err := transaction.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&databaseNow); err != nil {
+		return nil, unavailable(err)
+	}
 	registrationRows, err := transaction.Query(ctx, registrationSelect+` ORDER BY repository`)
 	if err != nil {
 		return nil, unavailable(err)
@@ -1204,7 +1393,7 @@ func (store *Store) Projections(
 				componentProjection.LastError = observed.LastError
 				componentProjection.Stale =
 					observed.RegistrationVersion != registration.Version ||
-						time.Since(observed.ObservedAt) > staleAfter
+						databaseNow.Sub(observed.ObservedAt) > staleAfter
 				if componentProjection.Stale {
 					componentProjection.State = "stale"
 				}
@@ -1488,13 +1677,6 @@ func supportedWebhookEvent(event string) bool {
 	default:
 		return false
 	}
-}
-
-func equalOptionalString(left, right *string) bool {
-	if left == nil || right == nil {
-		return left == nil && right == nil
-	}
-	return *left == *right
 }
 
 func intervalLiteral(duration time.Duration) string {

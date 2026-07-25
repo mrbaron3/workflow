@@ -228,15 +228,6 @@ func (supervisor *Supervisor) runComponent(
 	}
 }
 
-func (supervisor *Supervisor) stop(key string) {
-	supervisor.mu.Lock()
-	if running, present := supervisor.running[key]; present {
-		delete(supervisor.running, key)
-		running.cancel()
-	}
-	supervisor.mu.Unlock()
-}
-
 func (supervisor *Supervisor) stopAll() {
 	supervisor.mu.Lock()
 	running := supervisor.running

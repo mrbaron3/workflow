@@ -96,6 +96,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 ENV AGENTOPS_APP_ROOT=/app \
     AGENTOPS_CONTROL_LISTEN=0.0.0.0:8080 \
+    HOME=/home/agentops \
     XDG_DATA_HOME=/home/agentops/.local/share
 WORKDIR /app
 COPY --from=control-build /out/agentops-control /usr/local/bin/agentops-control

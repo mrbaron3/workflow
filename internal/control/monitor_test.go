@@ -21,6 +21,8 @@ type fakeMonitorStore struct {
 	savedCursors int
 	received     int
 	actualStates int
+	actualError  error
+	failActualAt int
 }
 
 func (store *fakeMonitorStore) MonitorCursor(
@@ -83,6 +85,9 @@ func (store *fakeMonitorStore) UpsertActualState(
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.actualStates++
+	if store.actualError != nil && store.actualStates >= store.failActualAt {
+		return store.actualError
+	}
 	return nil
 }
 
@@ -310,15 +315,61 @@ func TestForwarderHeartbeatKeepsActualStateFresh(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	runner.heartbeatForwarder(ctx, Registration{
+	if err := runner.heartbeatForwarder(ctx, Registration{
 		ID:         "registration-1",
 		Repository: "owner/repo",
 		Version:    1,
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 	store.mu.Lock()
 	actualStates := store.actualStates
 	store.mu.Unlock()
 	if actualStates == 0 {
 		t.Fatal("long-running forwarder did not refresh actual state")
+	}
+}
+
+func TestForwarderStopsWhenHeartbeatCannotBePersisted(t *testing.T) {
+	persistError := errors.New("control store disconnected")
+	store := &fakeMonitorStore{
+		actualError:  persistError,
+		failActualAt: 2,
+	}
+	commandCancelled := make(chan struct{})
+	factory := func(ctx context.Context, _ string, _ ...string) Command {
+		reader, writer := io.Pipe()
+		go func() {
+			<-ctx.Done()
+			close(commandCancelled)
+			_ = writer.Close()
+		}()
+		return &fakeCommand{
+			stdout: reader,
+			stderr: io.NopCloser(strings.NewReader("")),
+			wait:   context.Canceled,
+		}
+	}
+	runner := &ProductionRunner{
+		Store:          store,
+		SupervisorID:   "test",
+		HealthInterval: time.Millisecond,
+		Command:        factory,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	err := runner.runForwarder(context.Background(), Registration{
+		ID:                  "registration-1",
+		Repository:          "owner/repo",
+		Enabled:             true,
+		IssueMonitorEnabled: true,
+		Version:             1,
+	})
+	if !errors.Is(err, persistError) {
+		t.Fatalf("runForwarder() error = %v, want %v", err, persistError)
+	}
+	select {
+	case <-commandCancelled:
+	default:
+		t.Fatal("forwarder child was left running after heartbeat persistence failed")
 	}
 }

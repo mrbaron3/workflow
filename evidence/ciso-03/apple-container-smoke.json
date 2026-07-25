@@ -4,9 +4,9 @@
   "runtime": "Apple Container",
   "runtimeVersion": "container CLI version 1.1.0 (build: release, commit: unspeci)",
   "images": {
-    "runnerImage": "agentops-runner:ciso03-79926-1784981989289",
-    "controlImage": "agentops-control:ciso03-79926-1784981989289",
-    "controlTestImage": "agentops-control-test:ciso03-79926-1784981989289"
+    "runnerImage": "agentops-runner:ciso03-59636-1784983525031",
+    "controlImage": "agentops-control:ciso03-59636-1784983525031",
+    "controlTestImage": "agentops-control-test:ciso03-59636-1784983525031"
   },
   "checks": {
     "standardOciControlBuild": "passed",
@@ -28,7 +28,7 @@
         "containerPort": 8080,
         "count": 1,
         "hostAddress": "127.0.0.1",
-        "hostPort": 55388,
+        "hostPort": 57445,
         "proto": "tcp"
       }
     ],
@@ -38,11 +38,11 @@
     "runnerPublications": []
   },
   "registration": {
-    "id": "117bc408-a903-4c16-b070-9d7e19bf522d",
+    "id": "3609619a-543d-4adf-bd69-c8d48d8ee54e",
     "createdVersion": 1,
     "enabledVersion": 2,
     "disabledVersion": 3,
     "restoredVersion": 4
   },
-  "completedAt": "2026-07-25T12:21:03.645Z"
+  "completedAt": "2026-07-25T12:46:40.154Z"
 }

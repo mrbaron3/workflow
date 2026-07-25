@@ -201,13 +201,35 @@ func TestCheckAndPushEventsBecomeDurableTypedWork(t *testing.T) {
 		store.enqueued[0].Kind != "check_run" ||
 		store.enqueued[0].Identity != "123" ||
 		store.enqueued[1].Kind != "push" ||
-		store.enqueued[1].Identity != strings.Repeat("a", 40) {
+		store.enqueued[1].Identity !=
+			"15:refs/heads/main:"+strings.Repeat("a", 40) {
 		t.Fatalf("typed work = %#v", store.enqueued)
 	}
 	if len(store.finished) != 2 ||
 		store.finished[0] != "processed:" ||
 		store.finished[1] != "processed:" {
 		t.Fatalf("finished = %#v", store.finished)
+	}
+}
+
+func TestPushIdentityIncludesBranchRef(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	keys := make([]string, 0, 2)
+	for _, ref := range []string{"refs/heads/main", "refs/heads/release"} {
+		item, ok := workItemFromWebhook(ClaimedDelivery{
+			Repository: "owner/repo",
+			Event:      "push",
+			Payload: map[string]any{
+				"after": sha, "ref": ref, "deleted": false,
+			},
+		})
+		if !ok {
+			t.Fatalf("push for %s was rejected", ref)
+		}
+		keys = append(keys, item.IdempotencyKey())
+	}
+	if keys[0] == keys[1] {
+		t.Fatalf("different branch pushes aliased: %q", keys[0])
 	}
 }
 

@@ -18,6 +18,11 @@ const (
 	ProviderRef    = "mrbaron3/designflow@contract-v1.0.0-rc.1"
 	ProviderCommit = "ce732a80a8c3867b4ac881531ce8f7546e001dbb"
 	ProviderTag    = "a5598951bbc405f9d83ebbccc184c7994844715b"
+	// ApprovedBundleDigest is the locally compiled trust anchor for the exact
+	// human-approved contract-v1.0.0-rc.1 Design Bundle. Recomputing internally
+	// consistent digests is insufficient: an attacker must not be able to
+	// replace the bundle, approval, and coverage as one self-consistent set.
+	ApprovedBundleDigest = "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97"
 )
 
 type GateResult struct {
@@ -148,7 +153,10 @@ var expectedCoverage = map[string]struct {
 		},
 	},
 	"cap-retry-delivery": {
-		api: []string{"POST /v1/deliveries/{deliveryId}/retry"},
+		api: []string{
+			"GET /v1/deliveries/{deliveryId}",
+			"POST /v1/deliveries/{deliveryId}/retry",
+		},
 		system: []string{
 			"ARCH-registration-control-004",
 			"ARCH-registration-control-005",
@@ -277,6 +285,9 @@ func Validate(bundleRoot, coveragePath string) (GateResult, error) {
 	}
 	if bundleDigest != bundle.BundleDigest {
 		return GateResult{}, fmt.Errorf("bundleDigest mismatch")
+	}
+	if bundle.BundleDigest != ApprovedBundleDigest {
+		return GateResult{}, fmt.Errorf("bundleDigest does not match the exact approved trust anchor")
 	}
 
 	var approval decision

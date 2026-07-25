@@ -17,6 +17,7 @@ import {
   type ContainerRuntime,
   type ContainerSpec,
 } from '../src/runtime/index.js';
+import { CONTROL_SCHEMA_VERSION } from '../src/control-store/index.js';
 
 interface Step {
   name: string;
@@ -132,6 +133,9 @@ async function main(): Promise<number> {
         image: appImage,
         containerfile: 'deploy/Containerfile',
         contextDir: process.cwd(),
+        // The Containerfile's final stage is the Go control image. This smoke
+        // needs the TypeScript test runner and must never depend on stage order.
+        target: 'runtime',
       });
     }
     record('standard-oci-build', true, skipBuild ? 'reused existing image' : 'built deploy/Containerfile');
@@ -216,7 +220,8 @@ async function main(): Promise<number> {
          || ':'
          || (SELECT count(*) FROM agentops_control.released_builds)::text`,
     ]);
-    const recovered = after.status === 0 && /^1:[1-9][0-9]*$/.test(after.stdout.trim());
+    const recovered = after.status === 0
+      && new RegExp(`^${CONTROL_SCHEMA_VERSION}:[1-9][0-9]*$`).test(after.stdout.trim());
     record(
       'persistent-volume-recovery',
       recovered,

@@ -9,7 +9,7 @@ export const RepositoryRegistrationInput = z.object({
   issueMonitorEnabled: z.boolean().default(true),
   prMonitorEnabled: z.boolean().default(true),
   executionEnabled: z.boolean().default(true),
-  configuration: z.record(z.unknown()).default({}),
+  configuration: z.object({}).strict().default({}),
 });
 export type RepositoryRegistrationInput = z.infer<typeof RepositoryRegistrationInput>;
 export const RepositoryRegistrationPatch = RepositoryRegistrationInput

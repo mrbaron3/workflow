@@ -48,6 +48,7 @@ interface JobRow extends QueryResultRow {
   job_type: string;
   payload: Record<string, unknown>;
   status: JobEnvelope['status'];
+  last_error: string | null;
   created_at: Date;
 }
 
@@ -659,6 +660,52 @@ export class PostgresControlStore {
         'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
         [advisoryRequestKey(parsed.registrationId, parsed.idempotencyKey)],
       );
+      const requeueAfterRegistrationChange = async (
+        row: JobRow,
+      ): Promise<EnqueueResult | null> => {
+        if (
+          Number(row.registration_version) === parsed.registrationVersion
+          || row.status !== 'rejected'
+          || row.last_error !== 'registration changed before lease acquisition'
+        ) {
+          return null;
+        }
+        const requeued = await client.query<JobRow>(
+          `UPDATE agentops_control.jobs
+              SET registration_version = $2, status = 'queued',
+                  available_at = clock_timestamp(), finished_at = NULL,
+                  last_error = NULL, updated_at = clock_timestamp()
+            WHERE id = $1
+              AND registration_version = $3
+              AND status = 'rejected'
+              AND last_error = 'registration changed before lease acquisition'
+            RETURNING *`,
+          [row.id, parsed.registrationVersion, row.registration_version],
+        );
+        if (!requeued.rows[0]) {
+          throw new StaleRegistrationError(
+            `job ${row.id} changed while recovering a stale registration observation`,
+          );
+        }
+        await client.query(
+          `INSERT INTO agentops_control.runtime_audit(
+             actor_type, actor_id, event_type, registration_id, job_id, details
+           ) VALUES ('control', 'control-store',
+                     'job.requeued_after_registration_change', $1, $2, $3)`,
+          [
+            parsed.registrationId,
+            row.id,
+            {
+              fromRegistrationVersion: Number(row.registration_version),
+              toRegistrationVersion: parsed.registrationVersion,
+              sourceKind: parsed.source.kind,
+              sourceKey: parsed.source.key,
+              idempotencyKey: parsed.idempotencyKey,
+            },
+          ],
+        );
+        return { job: job(requeued.rows[0]), duplicate: false };
+      };
       const duplicate = await client.query<JobRow & { same_request: boolean }>(
         `SELECT j.*, (j.job_type = $3 AND j.payload = $4::jsonb) AS same_request
            FROM agentops_control.jobs j
@@ -671,6 +718,8 @@ export class PostgresControlStore {
             `idempotency key ${parsed.idempotencyKey} was reused for a different request`,
           );
         }
+        const recovered = await requeueAfterRegistrationChange(duplicate.rows[0]);
+        if (recovered) return recovered;
         return { job: job(duplicate.rows[0]), duplicate: true };
       }
       const sourceDuplicate = await client.query<JobRow & { same_request: boolean }>(
@@ -691,6 +740,8 @@ export class PostgresControlStore {
             `source key ${parsed.source.kind}:${parsed.source.key} was reused for a different request`,
           );
         }
+        const recovered = await requeueAfterRegistrationChange(sourceDuplicate.rows[0]);
+        if (recovered) return recovered;
         return { job: job(sourceDuplicate.rows[0]), duplicate: true };
       }
 

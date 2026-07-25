@@ -102,6 +102,16 @@ func TestValidateFailsClosedForApprovalAndCoverageDefects(t *testing.T) {
 				})
 			},
 		},
+		{
+			name: "self-consistent but untrusted replacement bundle",
+			mutate: func(t *testing.T, root, coveragePath string) {
+				rebindCapability(t, root, coveragePath, func(value map[string]any) {
+					capabilities := value["capabilities"].([]any)
+					capabilities[0].(map[string]any)["successOutcome"] =
+						"semantically altered replacement outcome"
+				})
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

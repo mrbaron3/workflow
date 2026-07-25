@@ -55,6 +55,7 @@ type APIStore interface {
 		string,
 		int,
 	) (RetryResult, bool, error)
+	DeliveryStatus(context.Context, string) (DeliveryStatus, error)
 }
 
 type API struct {
@@ -276,8 +277,20 @@ func (api *API) registrationCommand(writer http.ResponseWriter, request *http.Re
 
 func (api *API) deliveryCommand(writer http.ResponseWriter, request *http.Request) {
 	parts := splitPath(request.URL.Path)
-	if request.Method != http.MethodPost || len(parts) != 4 ||
-		parts[0] != "v1" || parts[1] != "deliveries" || parts[3] != "retry" {
+	if len(parts) < 3 || parts[0] != "v1" || parts[1] != "deliveries" {
+		writeError(writer, http.StatusNotFound, "not_found", "route does not exist")
+		return
+	}
+	if request.Method == http.MethodGet && len(parts) == 3 {
+		status, err := api.Store.DeliveryStatus(request.Context(), parts[2])
+		if err != nil {
+			api.respondError(writer, err)
+			return
+		}
+		writeJSON(writer, http.StatusOK, status)
+		return
+	}
+	if request.Method != http.MethodPost || len(parts) != 4 || parts[3] != "retry" {
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "POST retry is required")
 		return
 	}

@@ -228,23 +228,40 @@ func (runner *ProductionRunner) runForwarder(
 			return err
 		}
 		healthContext, cancelHealth := context.WithCancel(commandContext)
-		healthDone := make(chan struct{})
+		healthDone := make(chan error, 1)
 		go func() {
-			defer close(healthDone)
-			runner.heartbeatForwarder(healthContext, registration)
+			healthDone <- runner.heartbeatForwarder(healthContext, registration)
 		}()
-		scanErr := runner.scanForwarder(ctx, registration, stdout)
-		if scanErr != nil {
+		scanDone := make(chan error, 1)
+		go func() {
+			scanDone <- runner.scanForwarder(commandContext, registration, stdout)
+		}()
+		var scanErr, healthErr error
+		select {
+		case scanErr = <-scanDone:
+			cancelHealth()
+			healthErr = <-healthDone
+		case healthErr = <-healthDone:
+			if healthErr != nil {
+				cancelCommand()
+			}
+			scanErr = <-scanDone
+		case <-ctx.Done():
 			cancelCommand()
+			scanErr = <-scanDone
+			cancelHealth()
+			healthErr = <-healthDone
 		}
 		waitErr := command.Wait()
 		cancelHealth()
-		<-healthDone
 		cancelCommand()
 		if ctx.Err() != nil {
 			return nil
 		}
 		lastError := <-errorLines
+		if healthErr != nil {
+			return healthErr
+		}
 		if scanErr != nil {
 			return scanErr
 		}
@@ -308,7 +325,7 @@ func sanitizedForwarderEnvironment(environment []string) []string {
 func (runner *ProductionRunner) heartbeatForwarder(
 	ctx context.Context,
 	registration Registration,
-) {
+) error {
 	interval := runner.HealthInterval
 	if interval <= 0 {
 		interval = 15 * time.Second
@@ -318,7 +335,7 @@ func (runner *ProductionRunner) heartbeatForwarder(
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-ticker.C:
 			if err := runner.Store.UpsertActualState(
 				ctx,
@@ -328,12 +345,7 @@ func (runner *ProductionRunner) heartbeatForwarder(
 				runner.SupervisorID,
 				nil,
 			); err != nil {
-				runner.Log.Error(
-					"forwarder health could not be persisted",
-					"repository", registration.Repository,
-					"error", err,
-				)
-				return
+				return fmt.Errorf("persist forwarder health: %w", err)
 			}
 		}
 	}

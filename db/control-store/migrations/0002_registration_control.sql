@@ -1,6 +1,10 @@
 -- CISO-03 registration-driven control/supervision state.
 -- PostgreSQL remains the only durable control-plane source of truth.
 
+ALTER TABLE agentops_control.repository_registrations
+  ADD CONSTRAINT repository_registrations_empty_configuration
+  CHECK (configuration = '{}'::jsonb);
+
 ALTER TABLE agentops_control.webhook_deliveries
   ADD COLUMN registration_version bigint CHECK (registration_version > 0),
   ADD COLUMN next_retry_at timestamptz;

@@ -105,6 +105,12 @@ describe('language-neutral control-store contract', () => {
     });
     expect(validate({ ...fixture, version: 0 })).toBe(false);
     expect(validate({ ...fixture, repository: 'UNKNOWN/Repo' })).toBe(false);
+    const unsafeConfiguration = {
+      ...fixture,
+      configuration: { command: 'host-native-daemon' },
+    };
+    expect(validate(unsafeConfiguration)).toBe(false);
+    expect(() => RepositoryRegistrationInput.parse(unsafeConfiguration)).toThrow();
   });
 
   it('stores only artifact metadata in the schema', () => {
