@@ -23,3 +23,4 @@
 | [ADR-0008](ADR-0008-github-issue-intake-and-entry-altitude.md) | 人間の着手要求の入口＝theme repo の GitHub Issue。planning-agent が Issue Contract-ready へ昇格・決定論 intake が store へ取り込む（PR ゲートの入口対称） | 採択・吸収済み（実remote実証待ち） |
 | [ADR-0009](ADR-0009-pr-native-autonomous-review-and-delivery.md) | PRのhead revisionを評価単位にし、複数観点レビュー→修正push→再レビュー→自動merge→次taskを同じ耐久ループで進める | 採択・吸収・構造実装済み（grounded run待ち） |
 | [ADR-0010](ADR-0010-webhook-ingress-and-multi-repository-control-plane.md) | Webhookを即時トリガー、pollをreconciliationとし、durable inbox・複数repo router・ローカル管理GUIを共通制御面にする | 採択・吸収・構造実装済み（grounded run待ち） |
+| [ADR-0011](ADR-0011-standard-oci-image-and-container-runtime-adapter.md) | application imageを標準OCIとしてbuildし、Apple Container/macOS固有処理をcontainer runtime adapter境界だけへ隔離、preflightとpublish不変条件をfail-closedにする（AC-CISO-011） | 採択・吸収・構造実装済み（Apple Container grounded smokeは未接地＝ユーザー承認待ち／docker smokeはpass） |
