@@ -64,8 +64,8 @@ WF-DF-001、WF-DF-004、WF-DF-005は同時着手できる。いずれもDesignfl
 | WF-DF-001 | [#26](https://github.com/mrbaron3/workflow/issues/26) | contract tag取得、schema validator、fixture pin | なし | valid/invalid fixture test |
 | WF-DF-002 | [#27](https://github.com/mrbaron3/workflow/issues/27) | `DesignflowProvider` port＋in-memory/file fake | WF-DF-001 | external processなしのadapter test |
 | WF-DF-003 | [#28](https://github.com/mrbaron3/workflow/issues/28) | planning outputをdraft requirementsとfinal Issue Contractへ分離 | WF-DF-001 | backend-only回帰＋UI draft停止 |
-| WF-DF-004 | [#29](https://github.com/mrbaron3/workflow/issues/29) | schema/artifact/bundle digest＋Human Decision gate | WF-DF-001 | stale approval／digest mutation拒否 |
-| WF-DF-005 | [#30](https://github.com/mrbaron3/workflow/issues/30) | purpose/effort/attention/rationale/capabilityのreview projection | WF-DF-001 | raw JSON不要のsnapshot test |
+| WF-DF-004 | [#29](https://github.com/mrbaron3/workflow/issues/29) | schema/artifact/bundle digest＋Human Decision gate | なし（contract RC直接） | stale approval／digest mutation拒否 |
+| WF-DF-005 | [#30](https://github.com/mrbaron3/workflow/issues/30) | purpose/effort/attention/rationale/capabilityのreview projection | なし（contract RC直接） | raw JSON不要のsnapshot test |
 | WF-DF-006 | [#31](https://github.com/mrbaron3/workflow/issues/31) | Capability→API/system/Issue/AC coverage | WF-DF-002,003,004 | zero/dangling/異revision拒否 |
 | WF-DF-007 | [#32](https://github.com/mrbaron3/workflow/issues/32) | legacy `UiDesignArtifact`から明示provider選択へ移行 | WF-DF-005,006 | dual-write／暗黙fallback拒否 |
 | WF-DF-008 | [#33](https://github.com/mrbaron3/workflow/issues/33) | #13/#15 Dashboard grounded run | WF-DF-007 | source→bundle→API→UI→release lineage |
