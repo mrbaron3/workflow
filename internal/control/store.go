@@ -475,6 +475,13 @@ func (store *Store) EnqueueWork(
 		return "", false, unavailable(err)
 	}
 	defer func() { _ = transaction.Rollback(context.Background()) }()
+	if _, err := transaction.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		advisoryRequestKey(registration.ID, idempotencyKey),
+	); err != nil {
+		return "", false, unavailable(err)
+	}
 	var current Registration
 	current, err = scanRegistration(transaction.QueryRow(
 		ctx,
@@ -487,17 +494,19 @@ func (store *Store) EnqueueWork(
 	if !current.Enabled || !current.ExecutionEnabled || current.Version != registration.Version {
 		return "", false, ErrStaleRegistration
 	}
-	var existingID, existingType string
-	var existingPayload map[string]any
+	var existingID string
+	var sameType, samePayload bool
 	err = transaction.QueryRow(ctx,
-		`SELECT id, job_type, payload
+		`SELECT id, job_type = $3, payload = $4::jsonb
 		   FROM agentops_control.jobs
 		  WHERE registration_id = $1 AND idempotency_key = $2`,
 		registration.ID,
 		idempotencyKey,
-	).Scan(&existingID, &existingType, &existingPayload)
+		jobType,
+		payload,
+	).Scan(&existingID, &sameType, &samePayload)
 	if err == nil {
-		if existingType != jobType || !jsonEqual(existingPayload, payload) {
+		if !sameType || !samePayload {
 			return "", false, ErrIdempotencyConflict
 		}
 		if err := transaction.Commit(ctx); err != nil {
@@ -512,11 +521,12 @@ func (store *Store) EnqueueWork(
 	if err != nil {
 		return "", false, err
 	}
-	_, err = transaction.Exec(ctx,
+	tag, err := transaction.Exec(ctx,
 		`INSERT INTO agentops_control.jobs(
 		   id, registration_id, registration_version, source_kind, source_key,
 		   idempotency_key, job_type, payload
-		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT (registration_id, idempotency_key) DO NOTHING`,
 		id,
 		registration.ID,
 		registration.Version,
@@ -528,6 +538,26 @@ func (store *Store) EnqueueWork(
 	)
 	if err != nil {
 		return "", false, classifyPostgres(err)
+	}
+	if tag.RowsAffected() == 0 {
+		if err := transaction.QueryRow(ctx,
+			`SELECT id, job_type = $3, payload = $4::jsonb
+			   FROM agentops_control.jobs
+			  WHERE registration_id = $1 AND idempotency_key = $2`,
+			registration.ID,
+			idempotencyKey,
+			jobType,
+			payload,
+		).Scan(&existingID, &sameType, &samePayload); err != nil {
+			return "", false, unavailable(err)
+		}
+		if !sameType || !samePayload {
+			return "", false, ErrIdempotencyConflict
+		}
+		if err := transaction.Commit(ctx); err != nil {
+			return "", false, unavailable(err)
+		}
+		return existingID, true, nil
 	}
 	if err := appendAuditTx(
 		ctx,
@@ -600,27 +630,29 @@ func (store *Store) ReceiveWebhook(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return WebhookReceipt{}, classifyPostgres(err)
 	}
-	var existingRepository, existingEvent string
-	var existingAction *string
-	var existingPayload map[string]any
+	var sameRepository, sameEvent, sameAction, samePayload bool
 	if err := transaction.QueryRow(ctx,
-		`SELECT id, status, repository, event, action, payload
+		`SELECT id, status, repository = $2, event = $3,
+		        action IS NOT DISTINCT FROM $4, payload = $5::jsonb
 		   FROM agentops_control.webhook_deliveries
 		  WHERE delivery_key = $1
 		  FOR UPDATE`,
 		deliveryKey,
+		repository,
+		event,
+		action,
+		payload,
 	).Scan(
 		&insertedID,
 		&status,
-		&existingRepository,
-		&existingEvent,
-		&existingAction,
-		&existingPayload,
+		&sameRepository,
+		&sameEvent,
+		&sameAction,
+		&samePayload,
 	); err != nil {
 		return WebhookReceipt{}, unavailable(err)
 	}
-	if existingRepository != repository || existingEvent != event ||
-		!equalOptionalString(existingAction, action) || !jsonEqual(existingPayload, payload) {
+	if !sameRepository || !sameEvent || !sameAction || !samePayload {
 		return WebhookReceipt{}, ErrIdempotencyConflict
 	}
 	if err := transaction.Commit(ctx); err != nil {
@@ -723,10 +755,9 @@ func (store *Store) FinishWebhook(
 	if status != "processed" && status != "ignored" && status != "failed" {
 		return fmt.Errorf("invalid webhook outcome %s", status)
 	}
-	nextRetry := any(nil)
+	retryDelay := time.Duration(0)
 	if status == "failed" {
-		delay := time.Second * time.Duration(1<<min(claim.RouteAttempts-1, 6))
-		nextRetry = time.Now().Add(delay)
+		retryDelay = time.Second * time.Duration(1<<min(claim.RouteAttempts-1, 6))
 	}
 	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -739,7 +770,10 @@ func (store *Store) FinishWebhook(
 		    SET status = $3,
 		        ignored_reason = CASE WHEN $3 = 'ignored' THEN $4 ELSE NULL END,
 		        last_error = CASE WHEN $3 = 'failed' THEN $4 ELSE NULL END,
-		        next_retry_at = $5,
+		        next_retry_at = CASE
+		          WHEN $3 = 'failed' THEN clock_timestamp() + $5::interval
+		          ELSE NULL
+		        END,
 		        processing_token = NULL,
 		        processing_expires_at = NULL,
 		        updated_at = clock_timestamp()
@@ -751,7 +785,7 @@ func (store *Store) FinishWebhook(
 		claim.Token,
 		status,
 		nullIfEmpty(reason),
-		nextRetry,
+		intervalLiteral(retryDelay),
 	).Scan(&registrationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
@@ -825,17 +859,28 @@ func (store *Store) RetryWebhook(
 	}
 	var storedHash string
 	var storedResponse []byte
+	var storedStatus int
 	err = transaction.QueryRow(ctx,
-		`SELECT request_hash, response
+		`SELECT request_hash, status_code, response
 		   FROM agentops_control.control_api_requests
 		  WHERE scope = $1 AND idempotency_key = $2
 		  FOR UPDATE`,
 		scope,
 		idempotencyKey,
-	).Scan(&storedHash, &storedResponse)
+	).Scan(&storedHash, &storedStatus, &storedResponse)
 	if err == nil {
 		if storedHash != requestHash {
 			return RetryResult{}, false, ErrIdempotencyConflict
+		}
+		if storedStatus == 409 {
+			var conflict DeliveryRetryConflict
+			if err := json.Unmarshal(storedResponse, &conflict); err != nil {
+				return RetryResult{}, false, unavailable(err)
+			}
+			if err := transaction.Commit(ctx); err != nil {
+				return RetryResult{}, false, unavailable(err)
+			}
+			return RetryResult{}, true, &conflict
 		}
 		var result RetryResult
 		if err := json.Unmarshal(storedResponse, &result); err != nil {
@@ -869,9 +914,20 @@ func (store *Store) RetryWebhook(
 		if status != "failed" {
 			reason = "delivery_not_retryable"
 		}
-		return RetryResult{}, false, &DeliveryRetryConflict{
+		conflict := &DeliveryRetryConflict{
 			Reason: reason, State: status, RouteAttempts: routeAttempts,
 		}
+		return persistRetryRejection(
+			ctx,
+			transaction,
+			deliveryID,
+			idempotencyKey,
+			actorID,
+			observedAttempts,
+			requestHash,
+			registrationID,
+			conflict,
+		)
 	}
 	if registrationID != nil {
 		var enabled bool
@@ -884,21 +940,33 @@ func (store *Store) RetryWebhook(
 			*registrationID,
 		).Scan(&enabled, &currentVersion); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
-				return RetryResult{}, false, &DeliveryRetryConflict{
+				conflict := &DeliveryRetryConflict{
 					Reason: "registration_missing", State: status, RouteAttempts: routeAttempts,
 				}
+				return persistRetryRejection(
+					ctx, transaction, deliveryID, idempotencyKey, actorID,
+					observedAttempts, requestHash, registrationID, conflict,
+				)
 			}
 			return RetryResult{}, false, unavailable(err)
 		}
 		if !enabled {
-			return RetryResult{}, false, &DeliveryRetryConflict{
+			conflict := &DeliveryRetryConflict{
 				Reason: "registration_disabled", State: status, RouteAttempts: routeAttempts,
 			}
+			return persistRetryRejection(
+				ctx, transaction, deliveryID, idempotencyKey, actorID,
+				observedAttempts, requestHash, registrationID, conflict,
+			)
 		}
 		if registrationVersion == nil || currentVersion != *registrationVersion {
-			return RetryResult{}, false, &DeliveryRetryConflict{
+			conflict := &DeliveryRetryConflict{
 				Reason: "registration_stale", State: status, RouteAttempts: routeAttempts,
 			}
+			return persistRetryRejection(
+				ctx, transaction, deliveryID, idempotencyKey, actorID,
+				observedAttempts, requestHash, registrationID, conflict,
+			)
 		}
 	}
 	attemptID, err := randomUUID()
@@ -961,6 +1029,71 @@ func (store *Store) RetryWebhook(
 		return RetryResult{}, false, unavailable(err)
 	}
 	return result, false, nil
+}
+
+func persistRetryRejection(
+	ctx context.Context,
+	transaction pgx.Tx,
+	deliveryID, idempotencyKey, actorID string,
+	observedAttempts int,
+	requestHash string,
+	registrationID *string,
+	conflict *DeliveryRetryConflict,
+) (RetryResult, bool, error) {
+	attemptID, err := randomUUID()
+	if err != nil {
+		return RetryResult{}, false, err
+	}
+	conflict.AttemptID = attemptID
+	if _, err := transaction.Exec(ctx,
+		`INSERT INTO agentops_control.delivery_retry_attempts(
+		   id, delivery_id, idempotency_key, observed_route_attempts,
+		   actor_id, status, reason
+		 ) VALUES ($1, $2, $3, $4, $5, 'rejected', $6)`,
+		attemptID,
+		deliveryID,
+		idempotencyKey,
+		observedAttempts,
+		actorID,
+		conflict.Reason,
+	); err != nil {
+		return RetryResult{}, false, classifyPostgres(err)
+	}
+	response, _ := json.Marshal(conflict)
+	if _, err := transaction.Exec(ctx,
+		`INSERT INTO agentops_control.control_api_requests(
+		   scope, idempotency_key, request_hash, status_code, response, actor_id
+		 ) VALUES ($1, $2, $3, 409, $4, $5)`,
+		"delivery:retry:"+deliveryID,
+		idempotencyKey,
+		requestHash,
+		response,
+		actorID,
+	); err != nil {
+		return RetryResult{}, false, classifyPostgres(err)
+	}
+	if err := appendAuditTx(
+		ctx,
+		transaction,
+		actorID,
+		"webhook.retry.rejected",
+		registrationID,
+		nil,
+		map[string]any{
+			"deliveryId":            deliveryID,
+			"attemptId":             attemptID,
+			"observedRouteAttempts": observedAttempts,
+			"reason":                conflict.Reason,
+			"state":                 conflict.State,
+			"routeAttempts":         conflict.RouteAttempts,
+		},
+	); err != nil {
+		return RetryResult{}, false, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return RetryResult{}, false, unavailable(err)
+	}
+	return RetryResult{}, false, conflict
 }
 
 func (store *Store) AppendAudit(
@@ -1048,9 +1181,10 @@ func (store *Store) Projections(
 	projections := make([]RegistrationProjection, 0, len(registrations))
 	for _, registration := range registrations {
 		projection := RegistrationProjection{
-			Registration: registration,
-			Components:   make(map[string]ComponentProjection),
-			LastPoll:     map[string]*time.Time{"issue": nil, "pull_request": nil},
+			Registration:           registration,
+			Components:             make(map[string]ComponentProjection),
+			LastPoll:               map[string]*time.Time{"issue": nil, "pull_request": nil},
+			RecentDeliveryFailures: make([]DeliveryFailureProjection, 0),
 		}
 		for _, component := range []string{
 			ComponentIssueMonitor,
@@ -1117,6 +1251,67 @@ func (store *Store) Projections(
 			return nil, unavailable(err)
 		}
 		projection.ActiveJobID = activeJobID
+		var jobFailure JobFailureProjection
+		err = transaction.QueryRow(ctx,
+			`SELECT id, registration_version, job_type, status, last_error, updated_at
+			   FROM agentops_control.jobs
+			  WHERE registration_id = $1
+			    AND status IN ('failed', 'cancelled', 'rejected')
+			  ORDER BY updated_at DESC, id DESC
+			  LIMIT 1`,
+			registration.ID,
+		).Scan(
+			&jobFailure.ID,
+			&jobFailure.RegistrationVersion,
+			&jobFailure.JobType,
+			&jobFailure.Status,
+			&jobFailure.LastError,
+			&jobFailure.UpdatedAt,
+		)
+		if err == nil {
+			projection.LastJobFailure = &jobFailure
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, unavailable(err)
+		}
+		failureRows, err := transaction.Query(ctx,
+			`SELECT id, delivery_key, event, action, status, ignored_reason,
+			        last_error, route_attempts, registration_version, updated_at
+			   FROM agentops_control.webhook_deliveries
+			  WHERE registration_id = $1
+			    AND status IN ('failed', 'ignored')
+			  ORDER BY updated_at DESC, id DESC
+			  LIMIT 20`,
+			registration.ID,
+		)
+		if err != nil {
+			return nil, unavailable(err)
+		}
+		for failureRows.Next() {
+			var failure DeliveryFailureProjection
+			if err := failureRows.Scan(
+				&failure.ID,
+				&failure.DeliveryKey,
+				&failure.Event,
+				&failure.Action,
+				&failure.Status,
+				&failure.IgnoredReason,
+				&failure.LastError,
+				&failure.RouteAttempts,
+				&failure.RegistrationVersion,
+				&failure.UpdatedAt,
+			); err != nil {
+				failureRows.Close()
+				return nil, unavailable(err)
+			}
+			projection.RecentDeliveryFailures = append(
+				projection.RecentDeliveryFailures,
+				failure,
+			)
+		}
+		failureRows.Close()
+		if err := failureRows.Err(); err != nil {
+			return nil, unavailable(err)
+		}
 		projections = append(projections, projection)
 	}
 	sort.Slice(projections, func(i, j int) bool {
@@ -1232,6 +1427,7 @@ func unavailable(err error) error {
 		return nil
 	}
 	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) ||
+		errors.Is(err, ErrRepositoryBusy) ||
 		errors.Is(err, ErrStaleRegistration) || errors.Is(err, ErrIdempotencyConflict) {
 		return err
 	}
@@ -1243,6 +1439,12 @@ func classifyPostgres(err error) error {
 	if errors.As(err, &postgresError) {
 		switch postgresError.Code {
 		case "23505":
+			switch postgresError.ConstraintName {
+			case "jobs_one_active_per_repository":
+				return fmt.Errorf("%w: %s", ErrRepositoryBusy, postgresError.ConstraintName)
+			case "jobs_registration_idempotency_key", "jobs_registration_source_key":
+				return fmt.Errorf("%w: %s", ErrIdempotencyConflict, postgresError.ConstraintName)
+			}
 			return fmt.Errorf("%w: %s", ErrConflict, postgresError.ConstraintName)
 		case "23514", "22P02", "23503":
 			return fmt.Errorf("%w: %s", ErrConflict, postgresError.Message)

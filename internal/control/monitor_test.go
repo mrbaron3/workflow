@@ -17,6 +17,7 @@ import (
 type fakeMonitorStore struct {
 	mu           sync.Mutex
 	enqueueError error
+	enqueued     int
 	savedCursors int
 	received     int
 	actualStates int
@@ -50,6 +51,9 @@ func (store *fakeMonitorStore) EnqueueWork(
 	string,
 	WorkItem,
 ) (string, bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.enqueued++
 	return "", false, store.enqueueError
 }
 
@@ -84,6 +88,7 @@ func (store *fakeMonitorStore) UpsertActualState(
 
 type fakeMonitorSource struct {
 	items []WorkItem
+	calls *int
 }
 
 func (source fakeMonitorSource) Poll(
@@ -92,11 +97,14 @@ func (source fakeMonitorSource) Poll(
 	string,
 	map[string]any,
 ) ([]WorkItem, map[string]any, time.Time, error) {
+	if source.calls != nil {
+		(*source.calls)++
+	}
 	return source.items, map[string]any{"updatedAfter": "next"}, time.Now(), nil
 }
 
 func TestMonitorDoesNotAdvanceCursorWhenSingleFlightIsBusy(t *testing.T) {
-	store := &fakeMonitorStore{enqueueError: ErrConflict}
+	store := &fakeMonitorStore{enqueueError: ErrRepositoryBusy}
 	runner := &ProductionRunner{
 		Store: store,
 		Source: fakeMonitorSource{items: []WorkItem{{
@@ -115,11 +123,81 @@ func TestMonitorDoesNotAdvanceCursorWhenSingleFlightIsBusy(t *testing.T) {
 		ExecutionEnabled:    true,
 		Version:             1,
 	}, "issue", ComponentIssueMonitor)
-	if !errors.Is(err, ErrConflict) {
+	if err != nil {
 		t.Fatalf("pollOnce() error = %v", err)
 	}
 	if store.savedCursors != 0 {
 		t.Fatal("busy poll advanced its cursor and could lose work")
+	}
+	if store.actualStates != 1 {
+		t.Fatal("single-flight backpressure was projected as monitor failure")
+	}
+}
+
+func TestExecutionDisabledMonitorStillObservesWithoutAdvancingCursor(t *testing.T) {
+	store := &fakeMonitorStore{}
+	polls := 0
+	runner := &ProductionRunner{
+		Store: store,
+		Source: fakeMonitorSource{
+			calls: &polls,
+			items: []WorkItem{{
+				Repository: "owner/repo",
+				Kind:       "issue",
+				Number:     1,
+				UpdatedAt:  time.Now(),
+			}},
+		},
+		SupervisorID: "test",
+	}
+	err := runner.pollOnce(context.Background(), Registration{
+		ID:                  "registration-1",
+		Repository:          "owner/repo",
+		Enabled:             true,
+		IssueMonitorEnabled: true,
+		ExecutionEnabled:    false,
+		Version:             1,
+	}, "issue", ComponentIssueMonitor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if polls != 1 || store.enqueued != 0 || store.savedCursors != 0 ||
+		store.actualStates != 1 {
+		t.Fatalf(
+			"polls=%d enqueued=%d cursors=%d actual=%d",
+			polls,
+			store.enqueued,
+			store.savedCursors,
+			store.actualStates,
+		)
+	}
+}
+
+func TestForwarderEnvironmentExcludesControlPlaneSecrets(t *testing.T) {
+	environment := sanitizedForwarderEnvironment([]string{
+		"PATH=/bin",
+		"HOME=/home/agentops",
+		"GH_TOKEN=github-token",
+		"AGENTOPS_DATABASE_URL=postgres://secret",
+		"AGENTOPS_CONTROL_TOKEN=control-secret",
+		"AGENTOPS_GITHUB_WEBHOOK_SECRET=webhook-secret",
+		"UNRELATED_SECRET=secret",
+	})
+	joined := strings.Join(environment, "\n")
+	for _, expected := range []string{"PATH=/bin", "HOME=/home/agentops", "GH_TOKEN=github-token"} {
+		if !strings.Contains(joined, expected) {
+			t.Fatalf("sanitized environment omitted %s", expected)
+		}
+	}
+	for _, forbidden := range []string{
+		"AGENTOPS_DATABASE_URL",
+		"AGENTOPS_CONTROL_TOKEN",
+		"AGENTOPS_GITHUB_WEBHOOK_SECRET",
+		"UNRELATED_SECRET",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("sanitized environment leaked %s", forbidden)
+		}
 	}
 }
 

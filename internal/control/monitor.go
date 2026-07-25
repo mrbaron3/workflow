@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -96,18 +97,7 @@ func (runner *ProductionRunner) runMonitor(
 	ticker := time.NewTicker(runner.PollInterval)
 	defer ticker.Stop()
 	for {
-		if !registration.ExecutionEnabled {
-			if err := runner.Store.UpsertActualState(
-				ctx,
-				registration,
-				component,
-				"running",
-				runner.SupervisorID,
-				nil,
-			); err != nil {
-				return err
-			}
-		} else if err := runner.pollOnce(ctx, registration, kind, component); err != nil {
+		if err := runner.pollOnce(ctx, registration, kind, component); err != nil {
 			return err
 		}
 		select {
@@ -131,6 +121,16 @@ func (runner *ProductionRunner) pollOnce(
 	if err != nil {
 		return err
 	}
+	if !registration.ExecutionEnabled {
+		return runner.Store.UpsertActualState(
+			ctx,
+			registration,
+			component,
+			"running",
+			runner.SupervisorID,
+			nil,
+		)
+	}
 	for _, item := range items {
 		_, _, err := runner.Store.EnqueueWork(
 			ctx,
@@ -140,6 +140,16 @@ func (runner *ProductionRunner) pollOnce(
 			item,
 		)
 		if err != nil {
+			if errors.Is(err, ErrRepositoryBusy) {
+				return runner.Store.UpsertActualState(
+					ctx,
+					registration,
+					component,
+					"running",
+					runner.SupervisorID,
+					nil,
+				)
+			}
 			return err
 		}
 	}
@@ -173,7 +183,9 @@ func (runner *ProductionRunner) runForwarder(
 	commandFactory := runner.Command
 	if commandFactory == nil {
 		commandFactory = func(ctx context.Context, name string, args ...string) Command {
-			return exec.CommandContext(ctx, name, args...)
+			command := exec.CommandContext(ctx, name, args...)
+			command.Env = sanitizedForwarderEnvironment(os.Environ())
+			return command
 		}
 	}
 	for {
@@ -272,6 +284,25 @@ func (runner *ProductionRunner) runForwarder(
 			return err
 		}
 	}
+}
+
+func sanitizedForwarderEnvironment(environment []string) []string {
+	allowed := map[string]bool{
+		"PATH": true, "HOME": true, "XDG_CONFIG_HOME": true, "XDG_DATA_HOME": true,
+		"GH_CONFIG_DIR": true, "GH_TOKEN": true, "GITHUB_TOKEN": true,
+		"GH_ENTERPRISE_TOKEN": true, "GH_HOST": true, "HTTP_PROXY": true,
+		"HTTPS_PROXY": true, "NO_PROXY": true, "SSL_CERT_FILE": true,
+		"SSL_CERT_DIR": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true,
+		"SSH_AUTH_SOCK": true,
+	}
+	result := make([]string, 0, len(environment))
+	for _, entry := range environment {
+		name, _, present := strings.Cut(entry, "=")
+		if present && allowed[name] {
+			result = append(result, entry)
+		}
+	}
+	return result
 }
 
 func (runner *ProductionRunner) heartbeatForwarder(

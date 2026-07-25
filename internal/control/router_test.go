@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -157,6 +158,56 @@ func TestRouterLeavesFailedWorkForDurableRetry(t *testing.T) {
 	}
 	if err := router.route(context.Background(), claim); err == nil {
 		t.Fatal("route() unexpectedly hid enqueue error")
+	}
+}
+
+func TestCheckAndPushEventsBecomeDurableTypedWork(t *testing.T) {
+	store := &fakeRouterStore{registration: Registration{
+		ID: "registration-1", Repository: "owner/repo", Enabled: true,
+		PRMonitorEnabled: true, ExecutionEnabled: true, Version: 1,
+	}}
+	router := Router{Store: store}
+	action := "completed"
+	events := []ClaimedDelivery{
+		{
+			ID: "delivery-check", DeliveryKey: "check-key", Token: "token",
+			Repository: "owner/repo", Event: "check_run", Action: &action,
+			Payload: map[string]any{
+				"check_run": map[string]any{
+					"id":         123.0,
+					"updated_at": "2026-07-25T00:00:00Z",
+				},
+			},
+		},
+		{
+			ID: "delivery-push", DeliveryKey: "push-key", Token: "token",
+			Repository: "owner/repo", Event: "push",
+			Payload: map[string]any{
+				"after":   strings.Repeat("a", 40),
+				"ref":     "refs/heads/main",
+				"deleted": false,
+				"head_commit": map[string]any{
+					"timestamp": "2026-07-25T00:01:00Z",
+				},
+			},
+		},
+	}
+	for _, claim := range events {
+		if err := router.route(context.Background(), claim); err != nil {
+			t.Fatalf("%s route: %v", claim.Event, err)
+		}
+	}
+	if len(store.enqueued) != 2 ||
+		store.enqueued[0].Kind != "check_run" ||
+		store.enqueued[0].Identity != "123" ||
+		store.enqueued[1].Kind != "push" ||
+		store.enqueued[1].Identity != strings.Repeat("a", 40) {
+		t.Fatalf("typed work = %#v", store.enqueued)
+	}
+	if len(store.finished) != 2 ||
+		store.finished[0] != "processed:" ||
+		store.finished[1] != "processed:" {
+		t.Fatalf("finished = %#v", store.finished)
 	}
 }
 

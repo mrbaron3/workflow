@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -140,6 +141,58 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	if err != nil || !duplicate || pollJobID != jobID {
 		t.Fatalf("webhook/poll convergence = %s, %v, %v", pollJobID, duplicate, err)
 	}
+	monitorDisabled := false
+	raceRegistration, duplicate, err := store.CreateRegistration(
+		ctx,
+		CreateRegistration{
+			Repository:          "owner/race",
+			IssueMonitorEnabled: &monitorDisabled,
+			PRMonitorEnabled:    &monitorDisabled,
+		},
+		"create-race-registration",
+		"operator",
+	)
+	if err != nil || duplicate {
+		t.Fatalf("race registration = %#v, %v, %v", raceRegistration, duplicate, err)
+	}
+	raceItem := issueItem
+	raceItem.Repository = raceRegistration.Repository
+	raceItem.Number = 77
+	type enqueueResult struct {
+		id        string
+		duplicate bool
+		err       error
+	}
+	start := make(chan struct{})
+	results := make(chan enqueueResult, 2)
+	var enqueueGroup sync.WaitGroup
+	for _, sourceKind := range []string{"webhook", "poll"} {
+		enqueueGroup.Add(1)
+		go func(kind string) {
+			defer enqueueGroup.Done()
+			<-start
+			id, duplicate, err := store.EnqueueWork(
+				ctx,
+				raceRegistration,
+				kind,
+				kind+"-source",
+				raceItem,
+			)
+			results <- enqueueResult{id: id, duplicate: duplicate, err: err}
+		}(sourceKind)
+	}
+	close(start)
+	enqueueGroup.Wait()
+	close(results)
+	var raceResults []enqueueResult
+	for result := range results {
+		raceResults = append(raceResults, result)
+	}
+	if len(raceResults) != 2 || raceResults[0].err != nil || raceResults[1].err != nil ||
+		raceResults[0].id != raceResults[1].id ||
+		raceResults[0].duplicate == raceResults[1].duplicate {
+		t.Fatalf("concurrent webhook/poll convergence = %#v", raceResults)
+	}
 	otherItem := issueItem
 	otherItem.Number = 14
 	if _, _, err := store.EnqueueWork(
@@ -148,7 +201,7 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		"poll",
 		otherItem.IdempotencyKey(),
 		otherItem,
-	); !errors.Is(err, ErrConflict) {
+	); !errors.Is(err, ErrRepositoryBusy) {
 		t.Fatalf("single-flight error = %v", err)
 	}
 
@@ -285,6 +338,23 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	if err := store.FinishWebhook(ctx, *failedClaim, "failed", "transient"); err != nil {
 		t.Fatal(err)
 	}
+	projections, err := store.Projections(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var createdProjection *RegistrationProjection
+	for index := range projections {
+		if projections[index].Registration.ID == created.ID {
+			createdProjection = &projections[index]
+			break
+		}
+	}
+	if createdProjection == nil ||
+		len(createdProjection.RecentDeliveryFailures) != 1 ||
+		createdProjection.RecentDeliveryFailures[0].ID != failedReceipt.DeliveryID ||
+		createdProjection.RecentDeliveryFailures[0].LastError == nil {
+		t.Fatalf("failed delivery projection = %#v", createdProjection)
+	}
 	retry, replay, err := store.RetryWebhook(
 		ctx,
 		failedReceipt.DeliveryID,
@@ -304,6 +374,51 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	)
 	if err != nil || !replay || retryReplay.AttemptID != retry.AttemptID {
 		t.Fatalf("retry replay = %#v, %v, %v", retryReplay, replay, err)
+	}
+	_, replay, err = store.RetryWebhook(
+		ctx,
+		failedReceipt.DeliveryID,
+		"retry-rejected",
+		"operator",
+		failedClaim.RouteAttempts,
+	)
+	var retryConflict *DeliveryRetryConflict
+	if replay || !errors.As(err, &retryConflict) || retryConflict.AttemptID == "" ||
+		retryConflict.Reason != "delivery_not_retryable" {
+		t.Fatalf("rejected retry = replay=%v conflict=%#v err=%v", replay, retryConflict, err)
+	}
+	rejectedAttemptID := retryConflict.AttemptID
+	_, replay, err = store.RetryWebhook(
+		ctx,
+		failedReceipt.DeliveryID,
+		"retry-rejected",
+		"operator",
+		failedClaim.RouteAttempts,
+	)
+	if !replay || !errors.As(err, &retryConflict) ||
+		retryConflict.AttemptID != rejectedAttemptID {
+		t.Fatalf("rejected retry replay = replay=%v conflict=%#v err=%v", replay, retryConflict, err)
+	}
+	var rejectedAttempts, rejectedAudits int
+	if err := store.pool.QueryRow(ctx,
+		`SELECT count(*)
+		   FROM agentops_control.delivery_retry_attempts
+		  WHERE delivery_id = $1 AND status = 'rejected'`,
+		failedReceipt.DeliveryID,
+	).Scan(&rejectedAttempts); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.pool.QueryRow(ctx,
+		`SELECT count(*)
+		   FROM agentops_control.runtime_audit
+		  WHERE event_type = 'webhook.retry.rejected'
+		    AND details->>'attemptId' = $1`,
+		rejectedAttemptID,
+	).Scan(&rejectedAudits); err != nil {
+		t.Fatal(err)
+	}
+	if rejectedAttempts != 1 || rejectedAudits != 1 {
+		t.Fatalf("rejected attempts=%d audits=%d", rejectedAttempts, rejectedAudits)
 	}
 
 	disabled := false
@@ -327,6 +442,21 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	}
 	if staleJobStatus != "rejected" {
 		t.Fatalf("stale queued job status = %s", staleJobStatus)
+	}
+	projections, err = store.Projections(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range projections {
+		if projections[index].Registration.ID == created.ID {
+			createdProjection = &projections[index]
+			break
+		}
+	}
+	if createdProjection == nil || createdProjection.LastJobFailure == nil ||
+		createdProjection.LastJobFailure.ID != jobID ||
+		createdProjection.LastJobFailure.Status != "rejected" {
+		t.Fatalf("job failure projection = %#v", createdProjection)
 	}
 	if _, _, err := store.EnqueueWork(
 		ctx,

@@ -32,7 +32,7 @@ CREATE TABLE agentops_control.control_api_requests (
   scope text NOT NULL,
   idempotency_key text NOT NULL,
   request_hash text NOT NULL CHECK (request_hash ~ '^[0-9a-f]{64}$'),
-  status_code integer NOT NULL CHECK (status_code BETWEEN 200 AND 299),
+  status_code integer NOT NULL CHECK (status_code BETWEEN 100 AND 599),
   response jsonb NOT NULL,
   actor_id text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),

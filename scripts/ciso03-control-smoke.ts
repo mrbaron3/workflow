@@ -9,6 +9,7 @@ const network = `agentops-ciso03-${suffix}`;
 const volume = `agentops-ciso03-pgdata-${suffix}`;
 const postgres = `agentops-ciso03-pg-${suffix}`;
 const control = `agentops-ciso03-control-${suffix}`;
+const githubStub = `agentops-ciso03-github-${suffix}`;
 const postgresNetwork = `${network},mac=02:42:ac:11:00:02`;
 const runnerImage = `agentops-runner:ciso03-${suffix}`;
 const controlImage = `agentops-control:ciso03-${suffix}`;
@@ -106,6 +107,7 @@ async function api(
 
 function cleanup(): void {
   bestEffort(['delete', '--force', control]);
+  bestEffort(['delete', '--force', githubStub]);
   bestEffort(['delete', '--force', postgres]);
   bestEffort(['network', 'delete', network]);
   bestEffort(['volume', 'delete', volume]);
@@ -121,8 +123,15 @@ async function main(): Promise<void> {
   run(['build', '--target', 'runtime', '-t', runnerImage, '-f', 'deploy/Containerfile', '.']);
   run(['build', '--target', 'control', '-t', controlImage, '-f', 'deploy/Containerfile', '.']);
   run(['build', '--target', 'control-test', '-t', controlTestImage, '-f', 'deploy/Containerfile', '.']);
+  run(['run', '--rm', '--entrypoint', 'gh', controlImage, 'webhook', '--help']);
   run(['network', 'create', '--internal', network]);
   run(['volume', 'create', volume]);
+  run([
+    'run', '--detach', '--name', githubStub, '--network', network,
+    '--entrypoint', 'node', runnerImage,
+    '-e',
+    "require('node:http').createServer((_,response)=>{response.setHeader('content-type','application/json');response.end('[]')}).listen(8081,'0.0.0.0')",
+  ]);
   run([
     'run', '--detach', '--name', postgres, '--network', postgresNetwork,
     '--volume', `${volume}:/var/lib/postgresql`,
@@ -168,6 +177,9 @@ async function main(): Promise<void> {
   ]);
   const databaseURL =
     `postgresql://agentops_control:${controlDatabasePassword}@${postgresIP}:5432/agentops`;
+  const githubStubIP = inspect(githubStub).status.networks[0]?.ipv4Address.split('/')[0];
+  if (!githubStubIP) throw new Error('GitHub stub has no internal IPv4 address');
+  const githubAPIURL = `http://${githubStubIP}:8081`;
   run([
     'run', '--detach', '--name', control, '--network', network,
     '--publish', `127.0.0.1:${hostPort}:8080`,
@@ -175,6 +187,7 @@ async function main(): Promise<void> {
     '--env', `AGENTOPS_CONTROL_TOKEN=${controlToken}`,
     '--env', 'AGENTOPS_RECONCILIATION_INTERVAL=500ms',
     '--env', 'AGENTOPS_GITHUB_POLL_INTERVAL=1s',
+    '--env', `AGENTOPS_GITHUB_API_URL=${githubAPIURL}`,
     controlImage,
   ]);
   const baseURL = `http://127.0.0.1:${hostPort}`;
@@ -292,6 +305,7 @@ async function main(): Promise<void> {
     '--env', `AGENTOPS_DATABASE_URL=${databaseURL}`,
     '--env', `AGENTOPS_CONTROL_TOKEN=${controlToken}`,
     '--env', 'AGENTOPS_RECONCILIATION_INTERVAL=500ms',
+    '--env', `AGENTOPS_GITHUB_API_URL=${githubAPIURL}`,
     controlImage,
   ]);
   await waitFor('control restart', async () =>
@@ -310,6 +324,7 @@ async function main(): Promise<void> {
 
   const controlInspection = inspect(control);
   const postgresInspection = inspect(postgres);
+  const githubStubInspection = inspect(githubStub);
   const publications = controlInspection.configuration.publishedPorts;
   if (
     publications.length !== 1 ||
@@ -321,6 +336,9 @@ async function main(): Promise<void> {
   if (postgresInspection.configuration.publishedPorts.length !== 0) {
     throw new Error('PostgreSQL unexpectedly published a host port');
   }
+  if (githubStubInspection.configuration.publishedPorts.length !== 0) {
+    throw new Error('GitHub test stub unexpectedly published a host port');
+  }
 
   const evidence = {
     schemaVersion: '1.0',
@@ -330,6 +348,8 @@ async function main(): Promise<void> {
     images: { runnerImage, controlImage, controlTestImage },
     checks: {
       standardOciControlBuild: 'passed',
+      pinnedForwarderExtensionReady: 'passed',
+      githubStubInternalOnly: 'passed',
       goRacePostgresIntegration: 'passed',
       designGateAtControlStartup: 'passed',
       postgresInternalOnly: 'passed',
@@ -343,6 +363,7 @@ async function main(): Promise<void> {
     topology: {
       controlPublications: publications,
       postgresPublications: postgresInspection.configuration.publishedPorts,
+      githubStubPublications: githubStubInspection.configuration.publishedPorts,
       runnerWasLongRunning: false,
       runnerPublications: [],
     },

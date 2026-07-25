@@ -71,12 +71,32 @@ CMD ["node", "bin/agentops.mjs"]
 
 # --- control: Go agentops-control + fixed gh forwarder adapter ------------------------------------
 FROM debian:bookworm-slim AS control
+ARG TARGETARCH
+ARG GH_WEBHOOK_VERSION=v0.2.0
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates gh \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd --uid 65532 --create-home --shell /usr/sbin/nologin agentops
+    && apt-get install -y --no-install-recommends ca-certificates curl gh \
+    && useradd --uid 65532 --create-home --shell /usr/sbin/nologin agentops \
+    && architecture="${TARGETARCH:-$(dpkg --print-architecture)}" \
+    && case "$architecture" in \
+         amd64) checksum="685b6ff3106c76619c0203a4de6e0a1dfc9b229179c1c69afc26ecf766782683" ;; \
+         arm64) checksum="2d213a3d6858ed7602b2564e9a407da80b011775913524d982f60e26b6720a47" ;; \
+         *) echo "unsupported gh-webhook architecture: $architecture" >&2; exit 1 ;; \
+       esac \
+    && extension_dir=/home/agentops/.local/share/gh/extensions/gh-webhook \
+    && mkdir -p "$extension_dir" \
+    && curl --fail --location --retry 3 \
+         "https://github.com/cli/gh-webhook/releases/download/${GH_WEBHOOK_VERSION}/linux-${architecture}" \
+         --output "$extension_dir/gh-webhook" \
+    && echo "$checksum  $extension_dir/gh-webhook" | sha256sum --check --strict \
+    && chmod 0755 "$extension_dir/gh-webhook" \
+    && chown -R agentops:agentops /home/agentops/.local \
+    && runuser -u agentops -- env HOME=/home/agentops \
+         XDG_DATA_HOME=/home/agentops/.local/share gh webhook --help >/dev/null \
+    && apt-get purge -y --auto-remove curl \
+    && rm -rf /var/lib/apt/lists/*
 ENV AGENTOPS_APP_ROOT=/app \
-    AGENTOPS_CONTROL_LISTEN=0.0.0.0:8080
+    AGENTOPS_CONTROL_LISTEN=0.0.0.0:8080 \
+    XDG_DATA_HOME=/home/agentops/.local/share
 WORKDIR /app
 COPY --from=control-build /out/agentops-control /usr/local/bin/agentops-control
 COPY --from=control-build /src/contracts /app/contracts

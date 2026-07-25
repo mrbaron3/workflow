@@ -410,6 +410,7 @@ func (api *API) respondError(writer http.ResponseWriter, err error) {
 				"message":       retryConflict.Error(),
 				"state":         retryConflict.State,
 				"routeAttempts": retryConflict.RouteAttempts,
+				"attemptId":     retryConflict.AttemptID,
 			},
 		})
 	case errors.Is(err, ErrNotFound):

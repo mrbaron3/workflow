@@ -11,10 +11,12 @@ import (
 )
 
 type fakeSupervisionStore struct {
-	mu            sync.Mutex
-	registrations []Registration
-	listError     error
-	states        []string
+	mu                   sync.Mutex
+	registrations        []Registration
+	listError            error
+	states               []string
+	upsertErrorComponent string
+	upsertErrorState     string
 }
 
 func (store *fakeSupervisionStore) ListRegistrations(context.Context) ([]Registration, error) {
@@ -32,7 +34,17 @@ func (store *fakeSupervisionStore) UpsertActualState(
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.states = append(store.states, componentKey(registration.ID, component)+":"+state)
+	if component == store.upsertErrorComponent && state == store.upsertErrorState {
+		return errors.New("actual state unavailable")
+	}
 	return nil
+}
+
+func (store *fakeSupervisionStore) failUpsert(component, state string) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.upsertErrorComponent = component
+	store.upsertErrorState = state
 }
 
 func (store *fakeSupervisionStore) set(registrations []Registration, err error) {
@@ -158,6 +170,81 @@ func TestPeriodicReconciliationRecoversMissedNotification(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("Supervisor.Run did not stop")
 	}
+}
+
+func TestSupervisorFailsClosedAndClearsPlaceholdersWhenActualStateWriteFails(t *testing.T) {
+	store := &fakeSupervisionStore{registrations: []Registration{{
+		ID: "registration-1", Repository: "owner/repo", Enabled: true,
+		IssueMonitorEnabled: true, Version: 1,
+	}}}
+	runner := &fakeComponentRunner{
+		started: make(chan string, 20),
+		stopped: make(chan string, 20),
+	}
+	supervisor := NewSupervisor(
+		store,
+		runner,
+		"test",
+		time.Hour,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	store.failUpsert(ComponentForwarder, "starting")
+	if err := supervisor.Reconcile(context.Background()); err == nil {
+		t.Fatal("Reconcile() accepted a failed starting-state write")
+	}
+	supervisor.mu.Lock()
+	running := len(supervisor.running)
+	supervisor.mu.Unlock()
+	if running != 0 {
+		t.Fatalf("failed reconcile retained %d running placeholders", running)
+	}
+	for {
+		select {
+		case <-runner.started:
+		default:
+			goto drained
+		}
+	}
+drained:
+	store.failUpsert("", "")
+	if err := supervisor.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertStarts(t, runner.started, 2)
+	supervisor.stopAll()
+}
+
+func TestSupervisorStopsExistingComponentsWhenStoppedStateWriteFails(t *testing.T) {
+	store := &fakeSupervisionStore{registrations: []Registration{{
+		ID: "registration-1", Repository: "owner/repo", Enabled: true,
+		IssueMonitorEnabled: true, Version: 1,
+	}}}
+	runner := &fakeComponentRunner{
+		started: make(chan string, 20),
+		stopped: make(chan string, 20),
+	}
+	supervisor := NewSupervisor(
+		store,
+		runner,
+		"test",
+		time.Hour,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := supervisor.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	assertStarts(t, runner.started, 2)
+	disabled := store.registrations[0]
+	disabled.Enabled = false
+	disabled.Version++
+	store.set([]Registration{disabled}, nil)
+	store.failUpsert(ComponentPRMonitor, "stopped")
+	if err := supervisor.Reconcile(ctx); err == nil {
+		t.Fatal("Reconcile() accepted a failed stopped-state write")
+	}
+	assertStops(t, runner.stopped, 2)
 }
 
 func assertStarts(t *testing.T, channel <-chan string, count int) {

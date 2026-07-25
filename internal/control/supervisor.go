@@ -104,14 +104,17 @@ func (supervisor *Supervisor) Reconcile(ctx context.Context) error {
 					component:    component,
 				}
 			} else {
-				_ = supervisor.store.UpsertActualState(
+				if err := supervisor.store.UpsertActualState(
 					ctx,
 					registration,
 					component,
 					"stopped",
 					supervisor.id,
 					nil,
-				)
+				); err != nil {
+					supervisor.stopAll()
+					return err
+				}
 			}
 		}
 	}
@@ -146,7 +149,7 @@ func (supervisor *Supervisor) Reconcile(ctx context.Context) error {
 			supervisor.id,
 			nil,
 		); err != nil {
-			supervisor.stop(componentKey(component.registration.ID, component.component))
+			supervisor.stopAll()
 			return err
 		}
 		childContext, cancel := context.WithCancel(ctx)

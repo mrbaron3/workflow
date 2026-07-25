@@ -92,6 +92,10 @@ function job(row: JobRow): JobEnvelope {
   };
 }
 
+function advisoryRequestKey(scope: string, key: string): string {
+  return `${scope.length}:${scope}:${key.length}:${key}`;
+}
+
 const DURABLE_WEBHOOK_HEADER_ALLOWLIST = new Set([
   'content-type',
   'user-agent',
@@ -649,6 +653,12 @@ export class PostgresControlStore {
           `registration ${parsed.registrationId} is absent, disabled, or stale`,
         );
       }
+      // The idempotency-key lock makes same-logical webhook/poll races converge
+      // before the repository-wide active-job constraint can reject the loser.
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [advisoryRequestKey(parsed.registrationId, parsed.idempotencyKey)],
+      );
       const duplicate = await client.query<JobRow & { same_request: boolean }>(
         `SELECT j.*, (j.job_type = $3 AND j.payload = $4::jsonb) AS same_request
            FROM agentops_control.jobs j

@@ -23,8 +23,12 @@ forwarderが再構成され、webhookとpollが同じdurable queueへ収束す�
    HMAC GitHub webhook ingressを公開する。operator APIはbearer auth、create/retryは`Idempotency-Key`、
    update/disableは`If-Match`を要求し、commandと監査を同じtransactionへ保存する。任意command、host path、
    credentialをRegistration configurationとして受け付けない。
+   status queryはcomponent freshnessに加え、直近job failureとdelivery identity/reason/attemptsを同じ
+   repeatable-read snapshotから返し、retry commandの対象を曖昧にしない。retry拒否も固有attemptIdとauditを持つ。
 3. supervisorはPostgreSQLの全Registrationを周期取得し、enabled/versionに応じてIssue monitor、PR monitor、
-   `gh webhook forward` adapterを個別に起動・停止・再起動する。DB取得失敗時は既存componentを全停止する。
+   checksum固定の`gh-webhook`を用いた`gh webhook forward` adapterを個別に起動・停止・再起動する。childへ渡す
+   environmentはGitHub auth/transport allowlistだけとし、control-plane secretを継承しない。DB取得またはactual-state
+   書込失敗時は既存componentと未起動placeholderを全停止する。
    process restart後はDBだけから再構成する。
 4. webhookはsignature/repository/eventを検証してdeliveryをcommitした後だけACKする。routerは期限付きclaim、
    retry/backoff、ignored reason、auditを永続化し、unknown/disabled/stale/capability-disabled/execution-disabledを

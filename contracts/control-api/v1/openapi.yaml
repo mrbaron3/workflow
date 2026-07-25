@@ -279,10 +279,138 @@ components:
         items:
           type: array
           items:
-            type: object
+            $ref: "#/components/schemas/RegistrationProjection"
         nextPageToken:
           type: string
         observedAt:
+          type: string
+          format: date-time
+    RegistrationProjection:
+      type: object
+      additionalProperties: false
+      required:
+        - registration
+        - components
+        - lastPoll
+        - queueDepth
+        - recentDeliveryFailures
+      properties:
+        registration:
+          type: object
+          description: persisted Registration including immutable id, current version and desired flags
+        components:
+          type: object
+          description: issue_monitor、pr_monitor、forwarderごとのdesired/actual/freshness/error
+          additionalProperties:
+            type: object
+        lastPoll:
+          type: object
+          properties:
+            issue:
+              type:
+                - string
+                - "null"
+              format: date-time
+            pull_request:
+              type:
+                - string
+                - "null"
+              format: date-time
+        lastDelivery:
+          type:
+            - string
+            - "null"
+          format: date-time
+        queueDepth:
+          type: integer
+          minimum: 0
+        activeJobId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        lastJobFailure:
+          oneOf:
+            - $ref: "#/components/schemas/JobFailure"
+            - type: "null"
+        recentDeliveryFailures:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/DeliveryFailure"
+    JobFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - registrationVersion
+        - jobType
+        - status
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        registrationVersion:
+          type: integer
+          minimum: 1
+        jobType:
+          type: string
+        status:
+          enum:
+            - failed
+            - cancelled
+            - rejected
+        lastError:
+          type:
+            - string
+            - "null"
+        updatedAt:
+          type: string
+          format: date-time
+    DeliveryFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - deliveryKey
+        - event
+        - status
+        - routeAttempts
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        deliveryKey:
+          type: string
+        event:
+          type: string
+        action:
+          type:
+            - string
+            - "null"
+        status:
+          enum:
+            - failed
+            - ignored
+        ignoredReason:
+          type:
+            - string
+            - "null"
+        lastError:
+          type:
+            - string
+            - "null"
+        routeAttempts:
+          type: integer
+          minimum: 0
+        registrationVersion:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+        updatedAt:
           type: string
           format: date-time
     RetryResult:

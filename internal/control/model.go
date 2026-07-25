@@ -20,6 +20,7 @@ var repositoryPattern = regexp.MustCompile(`^[a-z0-9_.-]+/[a-z0-9_.-]+$`)
 var (
 	ErrNotFound            = errors.New("not found")
 	ErrConflict            = errors.New("conflict")
+	ErrRepositoryBusy      = errors.New("repository already has active work")
 	ErrStaleRegistration   = errors.New("registration is stale or disabled")
 	ErrStoreUnavailable    = errors.New("control store unavailable")
 	ErrIdempotencyConflict = errors.New("idempotency key was reused for a different request")
@@ -140,23 +141,60 @@ type ComponentProjection struct {
 }
 
 type RegistrationProjection struct {
-	Registration Registration                   `json:"registration"`
-	Components   map[string]ComponentProjection `json:"components"`
-	LastPoll     map[string]*time.Time          `json:"lastPoll"`
-	LastDelivery *time.Time                     `json:"lastDelivery"`
-	QueueDepth   int64                          `json:"queueDepth"`
-	ActiveJobID  *string                        `json:"activeJobId"`
+	Registration           Registration                   `json:"registration"`
+	Components             map[string]ComponentProjection `json:"components"`
+	LastPoll               map[string]*time.Time          `json:"lastPoll"`
+	LastDelivery           *time.Time                     `json:"lastDelivery"`
+	QueueDepth             int64                          `json:"queueDepth"`
+	ActiveJobID            *string                        `json:"activeJobId"`
+	LastJobFailure         *JobFailureProjection          `json:"lastJobFailure"`
+	RecentDeliveryFailures []DeliveryFailureProjection    `json:"recentDeliveryFailures"`
+}
+
+type JobFailureProjection struct {
+	ID                  string    `json:"id"`
+	RegistrationVersion int64     `json:"registrationVersion"`
+	JobType             string    `json:"jobType"`
+	Status              string    `json:"status"`
+	LastError           *string   `json:"lastError"`
+	UpdatedAt           time.Time `json:"updatedAt"`
+}
+
+type DeliveryFailureProjection struct {
+	ID                  string    `json:"id"`
+	DeliveryKey         string    `json:"deliveryKey"`
+	Event               string    `json:"event"`
+	Action              *string   `json:"action"`
+	Status              string    `json:"status"`
+	IgnoredReason       *string   `json:"ignoredReason"`
+	LastError           *string   `json:"lastError"`
+	RouteAttempts       int       `json:"routeAttempts"`
+	RegistrationVersion *int64    `json:"registrationVersion"`
+	UpdatedAt           time.Time `json:"updatedAt"`
 }
 
 type WorkItem struct {
 	Repository string         `json:"repository"`
 	Kind       string         `json:"kind"`
 	Number     int64          `json:"number"`
+	Identity   string         `json:"identity,omitempty"`
 	UpdatedAt  time.Time      `json:"updatedAt"`
 	Payload    map[string]any `json:"-"`
 }
 
 func (item WorkItem) IdempotencyKey() string {
+	if item.Identity != "" {
+		key := fmt.Sprintf(
+			"github:%s:%s:%s",
+			strings.ToLower(item.Repository),
+			item.Kind,
+			item.Identity,
+		)
+		if !item.UpdatedAt.IsZero() {
+			key += ":" + item.UpdatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		return key
+	}
 	return fmt.Sprintf(
 		"github:%s:%s:%d:%s",
 		strings.ToLower(item.Repository),
@@ -167,12 +205,22 @@ func (item WorkItem) IdempotencyKey() string {
 }
 
 func (item WorkItem) CanonicalPayload() map[string]any {
-	return map[string]any{
-		"repository": strings.ToLower(item.Repository),
-		"entityKind": item.Kind,
-		"number":     item.Number,
-		"updatedAt":  item.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	payload := make(map[string]any, len(item.Payload)+5)
+	for key, value := range item.Payload {
+		payload[key] = value
 	}
+	payload["repository"] = strings.ToLower(item.Repository)
+	payload["entityKind"] = item.Kind
+	if item.Number > 0 {
+		payload["number"] = item.Number
+	}
+	if item.Identity != "" {
+		payload["identity"] = item.Identity
+	}
+	if !item.UpdatedAt.IsZero() {
+		payload["updatedAt"] = item.UpdatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return payload
 }
 
 type WebhookReceipt struct {
@@ -205,6 +253,7 @@ type DeliveryRetryConflict struct {
 	Reason        string `json:"reason"`
 	State         string `json:"state"`
 	RouteAttempts int    `json:"routeAttempts"`
+	AttemptID     string `json:"attemptId"`
 }
 
 func (conflict *DeliveryRetryConflict) Error() string {

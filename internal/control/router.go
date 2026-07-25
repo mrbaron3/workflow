@@ -5,8 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 )
+
+var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 
 type RouterStore interface {
 	ClaimWebhook(context.Context, time.Duration) (*ClaimedDelivery, error)
@@ -173,6 +178,52 @@ func workItemFromWebhook(claim ClaimedDelivery) (WorkItem, bool) {
 	case "pull_request", "pull_request_review", "pull_request_review_comment":
 		kind = "pull_request"
 		entity, _ = claim.Payload["pull_request"].(map[string]any)
+	case "check_run", "check_suite":
+		entity, _ = claim.Payload[claim.Event].(map[string]any)
+		if entity == nil {
+			return WorkItem{}, false
+		}
+		identity, ok := jsonNumber(entity["id"])
+		if !ok {
+			return WorkItem{}, false
+		}
+		updatedRaw, _ := entity["updated_at"].(string)
+		updatedAt, err := time.Parse(time.RFC3339, updatedRaw)
+		if err != nil {
+			return WorkItem{}, false
+		}
+		return WorkItem{
+			Repository: claim.Repository,
+			Kind:       claim.Event,
+			Identity:   strconv.FormatInt(identity, 10),
+			UpdatedAt:  updatedAt,
+			Payload: map[string]any{
+				"action": optionalStringValue(claim.Action),
+			},
+		}, true
+	case "push":
+		after, _ := claim.Payload["after"].(string)
+		after = strings.ToLower(strings.TrimSpace(after))
+		ref, _ := claim.Payload["ref"].(string)
+		deleted, _ := claim.Payload["deleted"].(bool)
+		if deleted || !commitSHAPattern.MatchString(after) ||
+			!strings.HasPrefix(ref, "refs/heads/") {
+			return WorkItem{}, false
+		}
+		var updatedAt time.Time
+		if headCommit, ok := claim.Payload["head_commit"].(map[string]any); ok {
+			timestamp, _ := headCommit["timestamp"].(string)
+			updatedAt, _ = time.Parse(time.RFC3339, timestamp)
+		}
+		return WorkItem{
+			Repository: claim.Repository,
+			Kind:       "push",
+			Identity:   after,
+			UpdatedAt:  updatedAt,
+			Payload: map[string]any{
+				"ref": ref, "after": after, "deleted": false,
+			},
+		}, true
 	default:
 		return WorkItem{}, false
 	}
@@ -194,4 +245,11 @@ func workItemFromWebhook(claim ClaimedDelivery) (WorkItem, bool) {
 		Number:     number,
 		UpdatedAt:  updatedAt,
 	}, true
+}
+
+func optionalStringValue(value *string) any {
+	if value == nil {
+		return nil
+	}
+	return *value
 }
