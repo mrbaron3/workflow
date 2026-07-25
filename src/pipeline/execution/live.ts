@@ -53,8 +53,22 @@ export interface LiveOptions {
   projectRevision?: typeof projectReviewRevision;
   /** Test/embedding seam for grounded artifact construction. */
   groundBuild?: typeof groundArtifact;
+  /** Credential-free environment inherited by repository-controlled grader commands. */
+  graderEnvironment?: NodeJS.ProcessEnv;
   /** Test/embedding seam for the Perspective fan-out. */
   perspectiveSessions?: typeof runPerspectiveSessions;
+  /** Isolated-runner lease/Registration fence immediately before provider execution. */
+  beforeProviderExecution?: () => Promise<void>;
+  /** Isolated-runner lease/Registration fence immediately before a generated head is pushed. */
+  beforePush?: () => Promise<void>;
+  /** Fresh isolated-runner fence immediately before the distinct GitHub PR-create mutation. */
+  beforeCreatePr?: () => Promise<void>;
+  /** Isolated-runner lease/Registration fence immediately before expected-SHA merge evaluation. */
+  beforeMerge?: () => Promise<void>;
+  /** Isolated-runner lease/Registration fence armed for the exact durable release mutation. */
+  beforeRelease?: () => Promise<void>;
+  /** Synchronous single-use permit consumed at the exact durable release mutation. */
+  assertReleasePermit?: () => void;
   /** Best-of-N: independent samples to drive per issue (default config.samples; real default = 1). */
   samples?: number;
   /** Measurement run: drive ALL samples to completion for pass@k / pass^k, not first-approve-stop (E5). */
@@ -119,6 +133,7 @@ export async function runLiveSample(
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
     log(`▶ ${issue.id} s${sampleIndex}: generator session (attempt ${attempt}/${maxAttempts})`);
+    await opts.beforeProviderExecution?.();
     const sess = await (opts.generatorSession ?? runGeneratorSession)(
       config,
       {
@@ -132,9 +147,10 @@ export async function runLiveSample(
       harnessRoot,
       log,
     );
-    let revision: ReturnType<typeof projectReviewRevision> | null = null;
+    let revision: Awaited<ReturnType<typeof projectReviewRevision>> | null = null;
     if (sess.outcome === 'completed' && sess.headSha) {
-      revision = (opts.projectRevision ?? projectReviewRevision)(
+      await opts.beforePush?.();
+      revision = await (opts.projectRevision ?? projectReviewRevision)(
         store,
         config,
         {
@@ -145,6 +161,7 @@ export async function runLiveSample(
         },
         opts.gateRunner ?? realGhGateRunner(),
         log,
+        opts.beforeCreatePr,
       );
     }
     // Persist the actual runtime provider separately from its model/routing intent. This replaces
@@ -179,6 +196,7 @@ export async function runLiveSample(
       branch: sess.branch,
       changed: sess.changed,
       issueId: issue.id,
+      graderEnvironment: opts.graderEnvironment,
     });
 
     // 3. real read-only perspective sessions — each in its own detached worktree of the committed
@@ -186,6 +204,7 @@ export async function runLiveSample(
     //    A re-review (attempt > 1) hands each lens its OWN previous-attempt findings so the reviewer
     //    attests lineage (persisted/new) per finding — never inferred downstream (ISSUE-0009).
     const priorFindings = priorFindingsByLens(store, pr.id, attempt);
+    await opts.beforeProviderExecution?.();
     const panelSessions = await (opts.perspectiveSessions ?? runPerspectiveSessions)(
       config,
       {
@@ -377,6 +396,8 @@ export async function driveIssueLive(
   // consume only current-head evidence and use an expected-SHA merge.
   if (winner?.worktree && (config.gate?.backend ?? 'store') === 'github') {
     const pr = store.getPR(winner.prId)!;
+    await opts.beforeMerge?.();
+    await opts.beforeRelease?.();
     const result = autoMergeCurrentRevision(
       store,
       config,
@@ -384,6 +405,7 @@ export async function driveIssueLive(
       opts.prNativeRunner ?? realPrNativeGithubRunner(config.gate?.mergeMethod),
       path.resolve(harnessRoot, config.target.repo),
       (opts.perspectives ?? PERSPECTIVES).map((perspective) => perspective.key),
+      { beforeRelease: opts.assertReleasePermit },
     );
     log(
       `  ⇩ ${issue.id}: revision ${result.headSha?.slice(0, 12) ?? 'unobserved'} `

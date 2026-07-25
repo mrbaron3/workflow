@@ -19,6 +19,8 @@ describe('language-neutral control-store contract', () => {
     expect(migrations[0]?.sql).toContain('pg_notify');
     expect(migrations[1]?.sql).toContain('monitor_actual_states');
     expect(migrations[1]?.sql).toContain('control_api_requests');
+    expect(migrations[2]?.sql).toContain('jobs_terminal_outcome_shape');
+    expect(migrations[2]?.sql).toContain('runner.boundary.claim.denied');
     expect(fs.readFileSync(
       path.join(process.cwd(), 'src', 'control-store', 'store.ts'),
       'utf8',

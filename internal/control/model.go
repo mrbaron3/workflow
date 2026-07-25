@@ -223,6 +223,69 @@ func (item WorkItem) CanonicalPayload() map[string]any {
 	return payload
 }
 
+// RunnerPayload projects control-plane observations into the only executable
+// job contract. It never forwards the webhook body, a command, clone URL,
+// credential, host path, or arbitrary environment to the runner.
+func (item WorkItem) RunnerPayload(sourceKind string) (map[string]any, error) {
+	canonicalRepository := strings.ToLower(strings.TrimSpace(item.Repository))
+	repository := strings.Split(canonicalRepository, "/")
+	if len(repository) != 2 || canonicalRepository != item.Repository ||
+		!repositoryPattern.MatchString(canonicalRepository) {
+		return nil, fmt.Errorf("runner work repository must be canonical owner/name")
+	}
+	event := map[string]any{}
+	mode := "pr_reconciliation"
+	switch item.Kind {
+	case "issue":
+		if item.Number < 1 {
+			return nil, fmt.Errorf("runner issue number must be positive")
+		}
+		mode = "development_turn"
+		event = map[string]any{
+			"kind": "issue", "number": item.Number, "action": "recovery",
+		}
+	case "pull_request":
+		if item.Number < 1 {
+			return nil, fmt.Errorf("runner pull request number must be positive")
+		}
+		event = map[string]any{
+			"kind": "pull_request", "number": item.Number, "action": "recovery",
+		}
+	case "push", "check_run", "check_suite":
+		identity := item.Identity
+		if identity == "" {
+			identity = item.IdempotencyKey()
+		}
+		event = map[string]any{
+			"kind": "repository", "trigger": item.Kind, "identity": identity,
+		}
+		if ref, ok := item.Payload["ref"].(string); ok && ref != "" {
+			event["ref"] = ref
+		}
+		if after, ok := item.Payload["after"].(string); ok && after != "" {
+			event["after"] = after
+		}
+	default:
+		return nil, fmt.Errorf("unsupported executable work item kind %q", item.Kind)
+	}
+	_ = sourceKind // Source identity remains in the outer durable job envelope.
+	return map[string]any{
+		"schemaVersion": 1,
+		"repository": map[string]any{
+			"owner": repository[0],
+			"name":  repository[1],
+		},
+		"event": event,
+		"target": map[string]any{
+			"baseRef": "refs/heads/main",
+		},
+		"execution": map[string]any{
+			"mode": mode, "requiredChecks": []string{}, "mergeMethod": "squash",
+		},
+		"artifacts": []any{},
+	}, nil
+}
+
 type WebhookReceipt struct {
 	DeliveryID string `json:"deliveryId"`
 	Duplicate  bool   `json:"duplicate"`

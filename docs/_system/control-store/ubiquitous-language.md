@@ -10,5 +10,11 @@
 - **LANG-control-store-008 Wake** — LISTEN/NOTIFYの非権威hint。
 - **LANG-control-store-009 Reconciliation** — DBからdesired workを回収する周期query。
 - **LANG-control-store-010 Escape** — panel approve済みreleased buildにrelease後紐づいたdefect。
+- **LANG-control-store-011 Runner Job** — shell commandでなく、version付きrepository/event/ref/gate identity。
+- **LANG-control-store-012 Critical Boundary** — claim/provider/push/merge/releaseの副作用直前の再認可点。
+- **LANG-control-store-013 Execution Guard** — lease ownership/expiryとRegistration current stateをDBで裁定する操作。
+- **LANG-control-store-014 Side-effect Permit** — guard成功から対応side effectまでを結ぶ短命・単回token。
+- **LANG-control-store-015 Runner Failure** — code/retryable/boundary/timeを持つversioned failure。
 
-根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)
+根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
+[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)

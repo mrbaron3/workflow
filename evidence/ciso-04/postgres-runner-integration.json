@@ -1,0 +1,38 @@
+{
+  "generatedAt": "2026-07-25T13:30:54.623Z",
+  "generatedFrom": "scripts/ciso02-postgres-smoke.ts",
+  "runtime": "apple-container",
+  "ok": true,
+  "steps": [
+    {
+      "name": "apple-container-preflight",
+      "ok": true,
+      "detail": "Apple Container service and lifecycle are available"
+    },
+    {
+      "name": "standard-oci-build",
+      "ok": true,
+      "detail": "reused existing image"
+    },
+    {
+      "name": "internal-topology",
+      "ok": true,
+      "detail": "PostgreSQL and runner started on a private network with zero published ports"
+    },
+    {
+      "name": "postgres-integration",
+      "ok": true,
+      "detail": "all PostgreSQL integration tests passed inside the OCI runner"
+    },
+    {
+      "name": "persistent-volume-before-restart",
+      "ok": true,
+      "detail": "6 durable job record(s) present"
+    },
+    {
+      "name": "persistent-volume-recovery",
+      "ok": true,
+      "detail": "container replaced; schema/data recovered as 3:6"
+    }
+  ]
+}

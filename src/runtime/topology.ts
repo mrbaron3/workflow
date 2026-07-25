@@ -245,12 +245,16 @@ export interface AgentopsTopologyOptions {
   namePrefix?: string;
   postgresImage?: string;
   postgresVolume?: string;
+  /** Runner-only private workspace volume; never shared with control/PostgreSQL. */
+  runnerVolume?: string;
   /** Required: this reusable builder must not inject a hardcoded default credential (#12/#13 reuse it). */
   postgresPassword: string;
   /** Control container command; defaults to a tiny node HTTP listener on the control port. */
   controlCommand?: string[];
   /** Runner container command; defaults to a node keep-alive so the container stays up. */
   runnerCommand?: string[];
+  /** Minimal runner-only credentials/config; never copied to control/PostgreSQL. */
+  runnerEnv?: Record<string, string>;
 }
 
 /** A node one-liner HTTP listener, so the built app image (node-based) can serve as the control stand-in. */
@@ -276,11 +280,12 @@ export function agentopsTopology(options: AgentopsTopologyOptions): TopologySpec
   const prefix = options.namePrefix ?? 'agentops';
   const networkName = options.networkName ?? `${prefix}-internal`;
   const postgresVolume = options.postgresVolume ?? `${prefix}-postgres-data`;
+  const runnerVolume = options.runnerVolume ?? `${prefix}-runner-workspace`;
   const postgresPort = options.postgresPort ?? 5432;
 
   return {
     network: { name: networkName },
-    volumes: [{ name: postgresVolume }],
+    volumes: [{ name: postgresVolume }, { name: runnerVolume }],
     containers: [
       {
         role: 'control',
@@ -302,8 +307,8 @@ export function agentopsTopology(options: AgentopsTopologyOptions): TopologySpec
         image: options.appImage,
         network: networkName,
         publish: [],
-        volumes: [],
-        env: {},
+        volumes: [{ volume: runnerVolume, mountPath: '/workspace', readOnly: false }],
+        env: options.runnerEnv ?? {},
         command: options.runnerCommand ?? nodeKeepAliveCommand(),
       },
       {

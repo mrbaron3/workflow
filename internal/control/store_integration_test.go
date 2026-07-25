@@ -131,6 +131,23 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	if err != nil || duplicate {
 		t.Fatalf("EnqueueWork() = %s, %v, %v", jobID, duplicate, err)
 	}
+	var jobType string
+	var runnerPayload map[string]any
+	if err := store.pool.QueryRow(ctx,
+		`SELECT job_type, payload FROM agentops_control.jobs WHERE id = $1`,
+		jobID,
+	).Scan(&jobType, &runnerPayload); err != nil {
+		t.Fatal(err)
+	}
+	event, _ := runnerPayload["event"].(map[string]any)
+	execution, _ := runnerPayload["execution"].(map[string]any)
+	if jobType != "agentops.runner" ||
+		runnerPayload["schemaVersion"] != float64(1) ||
+		event["kind"] != "issue" ||
+		event["number"] != float64(13) ||
+		execution["mode"] != "development_turn" {
+		t.Fatalf("runner contract projection = %s %#v", jobType, runnerPayload)
+	}
 	pollJobID, duplicate, err := store.EnqueueWork(
 		ctx,
 		created,
@@ -582,6 +599,7 @@ func resetAndMigrate(
 	for version, name := range []string{
 		"0001_control_store.sql",
 		"0002_registration_control.sql",
+		"0003_isolated_runner.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

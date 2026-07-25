@@ -69,6 +69,35 @@ COPY --from=build --chown=node:node /app /app
 USER node
 CMD ["node", "bin/agentops.mjs"]
 
+# --- runner: isolated PostgreSQL lease consumer + existing AgentOps toolchain --------------------
+FROM runtime AS runner
+USER root
+ARG CODEX_VERSION=0.145.0
+ARG CLAUDE_CODE_VERSION=2.1.220
+COPY --chown=root:root deploy/agentops-git-askpass /usr/local/bin/agentops-git-askpass
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends bubblewrap ca-certificates gh tmux openssh-client \
+    && npm install --global \
+         "@openai/codex@${CODEX_VERSION}" \
+         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && useradd --uid 65532 --create-home --home-dir /home/agentops \
+         --shell /usr/sbin/nologin agentops \
+    && mkdir -p /workspace \
+    && chown agentops:agentops /workspace \
+    && chmod 0755 /usr/local/bin/agentops-git-askpass \
+    && gh pr merge --help | grep -q -- '--match-head-commit' \
+    && codex --version \
+    && claude --version \
+    && rm -rf /var/lib/apt/lists/*
+ENV HOME=/home/agentops \
+    AGENTOPS_APP_ROOT=/app \
+    AGENTOPS_WORKSPACE_ROOT=/workspace \
+    AGENTOPS_STORE_ROOT=/workspace/store \
+    AGENTOPS_SYSTEM_DIR=/app/docs/_system
+WORKDIR /app
+USER agentops
+ENTRYPOINT ["node", "dist/src/runner/cli.js"]
+
 # --- control: Go agentops-control + fixed gh forwarder adapter ------------------------------------
 FROM debian:bookworm-slim AS control
 ARG TARGETARCH

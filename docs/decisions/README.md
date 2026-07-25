@@ -26,3 +26,4 @@
 | [ADR-0011](ADR-0011-standard-oci-image-and-container-runtime-adapter.md) | application imageを標準OCIとしてbuildし、Apple Container/macOS固有処理をcontainer runtime adapter境界だけへ隔離、preflightとpublish不変条件をfail-closedにする（AC-CISO-011） | 採択・吸収・構造実装済み（Apple Container 1.1 grounded smoke pass） |
 | [ADR-0013](ADR-0013-postgresql-control-plane-source-of-truth.md) | control-plane durable stateの唯一のSoTをPostgreSQLとし、transactional queue/lease、schema fail-closed、build/escape linkageを言語中立契約にする | 採択・吸収・構造実装済み（Apple Container/PostgreSQL grounded smoke pass） |
 | [ADR-0014](ADR-0014-registration-driven-go-control.md) | PostgreSQL RegistrationからGo controlのmonitor/forwarder/routerを動的収束させ、approved Experience contractをAPI gateにする | 採択・吸収・構造実装済み（CISO-03） |
+| [ADR-0015](ADR-0015-postgresql-fenced-isolated-runner.md) | isolated runnerをPostgreSQL lease/Registration fence、private workspace、既存AgentOps gateの内側で実行する | 採択・吸収・構造実装済み（CISO-04） |

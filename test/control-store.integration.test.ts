@@ -15,6 +15,12 @@ import {
   assertControlSchema,
   migrateControlSchema,
 } from '../src/control-store/index.js';
+import type { AgentOpsRunnerAdapter } from '../src/runner/adapter.js';
+import { IsolatedRunnerService } from '../src/runner/service.js';
+import {
+  RunnerWorkspaceManager,
+  type WorkspaceCommandRunner,
+} from '../src/runner/workspace.js';
 
 const databaseUrl = process.env.AGENTOPS_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe.sequential : describe.skip;
@@ -69,6 +75,33 @@ integration('PostgreSQL control store', () => {
     });
   }
 
+  async function enqueueRunner(
+    store: PostgresControlStore,
+    registrationId: string,
+    registrationVersion: number,
+    key: string,
+  ) {
+    return store.enqueueJob({
+      registrationId,
+      registrationVersion,
+      source: { kind: 'manual', key },
+      idempotencyKey: key,
+      jobType: 'agentops.runner',
+      payload: {
+        schemaVersion: 1,
+        repository: { owner: 'mrbaron3', name: `control-store${key}` },
+        event: { kind: 'issue', number: 14, action: 'labeled' },
+        target: { baseRef: 'refs/heads/main' },
+        execution: {
+          mode: 'development_turn',
+          requiredChecks: ['test'],
+          mergeMethod: 'squash',
+        },
+        artifacts: [],
+      },
+    });
+  }
+
   it('upgrades, verifies after restart, and rejects partial/unknown schema', async () => {
     await reset();
     await expect(assertControlSchema(pool)).rejects.toBeInstanceOf(ControlSchemaError);
@@ -104,14 +137,18 @@ integration('PostgreSQL control store', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-bad-migration-'));
     const directory = path.join(root, 'db', 'control-store', 'migrations');
     fs.mkdirSync(directory, { recursive: true });
-    for (const name of ['0001_control_store.sql', '0002_registration_control.sql']) {
+    for (const name of [
+      '0001_control_store.sql',
+      '0002_registration_control.sql',
+      '0003_isolated_runner.sql',
+    ]) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
         'utf8',
       );
       fs.writeFileSync(
         path.join(directory, name),
-        name.startsWith('0002_')
+        name.startsWith('0003_')
           ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
           : valid,
       );
@@ -351,6 +388,48 @@ integration('PostgreSQL control store', () => {
     expect(leases.filter(Boolean)).toHaveLength(1);
   });
 
+  it('scopes isolated-runner claim and reclaim to agentops.runner jobs', async () => {
+    const store = await migratedStore();
+    const legacyRegistration = await registration(store, '-legacy');
+    const runnerRegistration = await registration(store, '-runner');
+    await enqueue(
+      store,
+      legacyRegistration.id,
+      legacyRegistration.version,
+      'legacy-first',
+    );
+    const runnerJob = await enqueueRunner(
+      store,
+      runnerRegistration.id,
+      runnerRegistration.version,
+      '-runner',
+    );
+
+    const runnerLease = await store.acquireLease({
+      workerId: 'isolated-runner',
+      durationMs: 10_000,
+      jobType: 'agentops.runner',
+    });
+    expect(runnerLease?.job.id).toBe(runnerJob.job.id);
+    await store.finishLease(runnerLease!.token, { status: 'succeeded' });
+
+    const legacyLease = await store.acquireLease({
+      workerId: 'legacy-consumer',
+      durationMs: 20,
+    });
+    expect(legacyLease?.job.jobType).toBe('github_issue_turn');
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(await store.reclaimExpiredLeases(3, {
+      jobType: 'agentops.runner',
+      retryBaseMs: 1_000,
+    })).toBe(0);
+    const legacyState = await pool.query<{ status: string }>(
+      `SELECT status FROM agentops_control.job_leases WHERE id = $1`,
+      [legacyLease!.id],
+    );
+    expect(legacyState.rows[0]?.status).toBe('active');
+  });
+
   it('heartbeats, times out, reclaims, and preserves attempt history', async () => {
     const store = await migratedStore();
     const repo = await registration(store);
@@ -361,21 +440,46 @@ integration('PostgreSQL control store', () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
     await expect(store.heartbeatLease(first!.token, 100))
       .rejects.toBeInstanceOf(LeaseRejectedError);
+    await expect(store.failOrRetryLease({
+      token: first!.token,
+      workerId: 'worker-a',
+      failure: {
+        schemaVersion: 1,
+        status: 'failed',
+        code: 'provider_failure',
+        message: 'stale worker must not retry',
+        retryable: true,
+        boundary: 'provider',
+        observedAt: new Date().toISOString(),
+      },
+      retryDelayMs: 0,
+      maxAttempts: 2,
+    })).rejects.toBeInstanceOf(LeaseRejectedError);
     expect(await store.reclaimExpiredLeases()).toBe(1);
     const second = await store.acquireLease({ workerId: 'worker-b', durationMs: 1_000 });
     expect(second?.job.id).toBe(first?.job.id);
     expect(second?.attemptNumber).toBe(2);
-    const attempts = await pool.query<{ status: string }>(
-      `SELECT status FROM agentops_control.job_attempts
+    const attempts = await pool.query<{
+      status: string;
+      failure: Record<string, unknown> | null;
+    }>(
+      `SELECT status, failure FROM agentops_control.job_attempts
         WHERE job_id = $1 ORDER BY attempt_number`,
       [first!.job.id],
     );
     expect(attempts.rows.map((row) => row.status)).toEqual(['timed_out', 'running']);
+    expect(attempts.rows[0]?.failure).toMatchObject({
+      schemaVersion: 1,
+      status: 'failed',
+      code: 'lease_lost',
+      retryable: true,
+      boundary: null,
+    });
     const artifactId = await store.linkArtifact({
       jobId: second!.job.id,
       attemptId: second!.attemptId,
       kind: 'test-output',
-      uri: 'volume://runner/tests/attempt-2.log',
+      uri: `volume://registrations/${repo.id}/tests/attempt-2.log`,
       sha256: 'a'.repeat(64),
       sizeBytes: 1234,
     });
@@ -392,7 +496,7 @@ integration('PostgreSQL control store', () => {
       [artifactId],
     );
     expect(metadata.rows[0]).toMatchObject({
-      uri: 'volume://runner/tests/attempt-2.log',
+      uri: `volume://registrations/${repo.id}/tests/attempt-2.log`,
       size_bytes: '1234',
     });
     await store.finishLease(second!.token, { status: 'succeeded' });
@@ -407,17 +511,58 @@ integration('PostgreSQL control store', () => {
     const updated = await store.updateRegistration(repo.id, { prMonitorEnabled: false });
     await new Promise((resolve) => setTimeout(resolve, 80));
     expect(await store.reclaimExpiredLeases()).toBe(1);
-    const stale = await pool.query<{ status: string }>(
-      'SELECT status FROM agentops_control.jobs WHERE id = $1',
+    const stale = await pool.query<{
+      status: string;
+      failure: Record<string, unknown>;
+    }>(
+      'SELECT status, failure FROM agentops_control.jobs WHERE id = $1',
       [lease!.job.id],
     );
     expect(stale.rows[0]?.status).toBe('rejected');
+    expect(stale.rows[0]?.failure).toMatchObject({
+      schemaVersion: 1,
+      status: 'failed',
+      code: 'registration_stale',
+      retryable: false,
+      boundary: 'claim',
+    });
     await expect(enqueue(
       store,
       repo.id,
       updated.version,
       'replacement-after-stale-lease',
     )).resolves.toMatchObject({ duplicate: false });
+  });
+
+  it('terminates crash/expiry retries at the configured attempt ceiling', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store, '-expiry-ceiling');
+    await enqueue(store, repo.id, repo.version, 'expiry-ceiling');
+    const lease = await store.acquireLease({
+      workerId: 'worker-expiry-ceiling',
+      durationMs: 40,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(await store.reclaimExpiredLeases(1)).toBe(1);
+    await expect(store.acquireLease({
+      workerId: 'worker-after-ceiling',
+      durationMs: 1_000,
+    })).resolves.toBeNull();
+    const outcome = await pool.query<{
+      status: string;
+      failure: Record<string, unknown>;
+    }>(
+      'SELECT status, failure FROM agentops_control.jobs WHERE id = $1',
+      [lease!.job.id],
+    );
+    expect(outcome.rows[0]).toMatchObject({
+      status: 'failed',
+      failure: {
+        schemaVersion: 1,
+        code: 'lease_lost',
+        retryable: false,
+      },
+    });
   });
 
   it('serializes expired lease reclaim with a concurrent registration update', async () => {
@@ -633,6 +778,314 @@ integration('PostgreSQL control store', () => {
     ]);
     await expect(store.listFalsePassBuilds()).resolves.toEqual([
       { buildId, gateReturned: false, escapeCount: 2 },
+    ]);
+  });
+
+  it('audits fail-closed Registration races at claim/provider/push/merge/release', async () => {
+    const store = await migratedStore();
+    const boundaries = ['claim', 'provider', 'push', 'merge', 'release'] as const;
+    for (const boundary of boundaries) {
+      const suffix = `-${boundary}`;
+      const repo = await registration(store, suffix);
+      await enqueueRunner(store, repo.id, repo.version, suffix);
+      if (boundary === 'claim') {
+        await store.updateRegistration(repo.id, { executionEnabled: false });
+        await expect(store.acquireLease({
+          workerId: `runner-${boundary}`,
+          durationMs: 5_000,
+        })).resolves.toBeNull();
+      } else {
+        const lease = await store.acquireLease({
+          workerId: `runner-${boundary}`,
+          durationMs: 5_000,
+        });
+        expect(lease).not.toBeNull();
+        await store.updateRegistration(repo.id, { executionEnabled: false });
+        await expect(store.assertExecutionGuard({
+          token: lease!.token,
+          workerId: `runner-${boundary}`,
+          boundary,
+        })).resolves.toMatchObject({
+          ok: false,
+          reason: 'registration_execution_disabled',
+          jobId: lease!.job.id,
+        });
+      }
+      const audit = await pool.query<{
+        event_type: string;
+        reason: string;
+      }>(
+        `SELECT event_type, details->>'reason' AS reason
+           FROM agentops_control.runtime_audit
+          WHERE registration_id = $1
+            AND event_type = $2`,
+        [repo.id, `runner.boundary.${boundary}.denied`],
+      );
+      expect(audit.rows).toEqual([{
+        event_type: `runner.boundary.${boundary}.denied`,
+        reason: 'registration_execution_disabled',
+      }]);
+    }
+  });
+
+  it('revalidates a live lease at every allowed critical boundary', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store, '-allowed-boundaries');
+    await enqueueRunner(store, repo.id, repo.version, '-allowed-boundaries');
+    const lease = await store.acquireLease({
+      workerId: 'runner-allowed',
+      durationMs: 10_000,
+    });
+    expect(lease).not.toBeNull();
+    for (const boundary of ['provider', 'push', 'merge', 'release'] as const) {
+      await expect(store.assertExecutionGuard({
+        token: lease!.token,
+        workerId: 'runner-allowed',
+        boundary,
+      })).resolves.toMatchObject({
+        ok: true,
+        reason: null,
+        jobId: lease!.job.id,
+        registration: {
+          id: repo.id,
+          version: repo.version,
+          enabled: true,
+          executionEnabled: true,
+        },
+      });
+    }
+    const events = await pool.query<{ event_type: string }>(
+      `SELECT event_type
+         FROM agentops_control.runtime_audit
+        WHERE job_id = $1 AND event_type LIKE 'runner.boundary.%.allowed'
+        ORDER BY event_type`,
+      [lease!.job.id],
+    );
+    expect(events.rows.map((row) => row.event_type)).toEqual([
+      'runner.boundary.claim.allowed',
+      'runner.boundary.merge.allowed',
+      'runner.boundary.provider.allowed',
+      'runner.boundary.push.allowed',
+      'runner.boundary.release.allowed',
+    ]);
+  });
+
+  it('records typed retry history and never retries stale Registration work', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store, '-typed-retry');
+    await enqueueRunner(store, repo.id, repo.version, '-typed-retry');
+    const first = await store.acquireLease({
+      workerId: 'runner-retry',
+      durationMs: 10_000,
+    });
+    const failure = {
+      schemaVersion: 1 as const,
+      status: 'failed' as const,
+      code: 'provider_failure' as const,
+      message: 'provider temporarily unavailable',
+      retryable: true,
+      boundary: 'provider' as const,
+      observedAt: new Date().toISOString(),
+    };
+    await expect(store.failOrRetryLease({
+      token: first!.token,
+      workerId: 'runner-retry',
+      failure,
+      retryDelayMs: 0,
+      maxAttempts: 2,
+    })).resolves.toBe('queued');
+    const second = await store.acquireLease({
+      workerId: 'runner-retry',
+      durationMs: 10_000,
+    });
+    expect(second?.attemptNumber).toBe(2);
+    await store.updateRegistration(repo.id, { executionEnabled: false });
+    await expect(store.failOrRetryLease({
+      token: second!.token,
+      workerId: 'runner-retry',
+      failure,
+      retryDelayMs: 0,
+      maxAttempts: 3,
+    })).resolves.toBe('rejected');
+    const persisted = await pool.query<{
+      job_status: string;
+      job_failure: Record<string, unknown>;
+      attempt_status: string;
+      attempt_failure: Record<string, unknown>;
+    }>(
+      `SELECT j.status AS job_status, j.failure AS job_failure,
+              a.status AS attempt_status, a.failure AS attempt_failure
+         FROM agentops_control.jobs j
+         JOIN agentops_control.job_attempts a ON a.job_id = j.id
+        WHERE j.id = $1
+        ORDER BY a.attempt_number DESC
+        LIMIT 1`,
+      [first!.job.id],
+    );
+    expect(persisted.rows[0]).toMatchObject({
+      job_status: 'rejected',
+      job_failure: failure,
+      attempt_status: 'failed',
+      attempt_failure: failure,
+    });
+  });
+
+  it('runs a safe existing-AgentOps-shaped path through all fences and stores only artifact metadata', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store, '-service');
+    const queued = await enqueueRunner(store, repo.id, repo.version, '-service');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-runner-service-'));
+    const commandRunner: WorkspaceCommandRunner = (_command, args) => {
+      if (args[0] === 'clone') fs.mkdirSync(String(args.at(-1)), { recursive: true });
+      if (args.includes('add')) {
+        const index = args.indexOf('add');
+        fs.mkdirSync(String(args[index + 4]), { recursive: true });
+      }
+      if (args.includes('rev-parse')) {
+        return { status: 0, stdout: `${'a'.repeat(40)}\n`, stderr: '' };
+      }
+      if (args.includes('get-url')) {
+        return {
+          status: 0,
+          stdout: 'https://github.com/mrbaron3/control-store-service.git\n',
+          stderr: '',
+        };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    const adapter: AgentOpsRunnerAdapter = {
+      async execute(input) {
+        await input.fence.arm('push');
+        input.fence.consume('push');
+        await input.fence.arm('merge');
+        input.fence.consume('merge');
+        await input.fence.arm('release');
+        input.fence.consume('release');
+        return {
+          headSha: 'b'.repeat(40),
+          pullRequestNumber: 38,
+          developmentTurn: {
+            intake: [],
+            enrichmentIds: [],
+            driveResults: [],
+          },
+        };
+      },
+    };
+    const service = new IsolatedRunnerService({
+      workerId: 'runner-service',
+      workspaceRoot: root,
+      provider: 'codex',
+      leaseDurationMs: 10_000,
+      heartbeatIntervalMs: 1_000,
+      reconciliationIntervalMs: 250,
+      maxAttempts: 2,
+      retryBaseMs: 0,
+      attemptTimeoutMs: 60_000,
+    }, {
+      store,
+      workspace: new RunnerWorkspaceManager(root, {}, commandRunner),
+      adapter,
+    });
+    await expect(service.runOnce()).resolves.toBe(true);
+    const outcome = await pool.query<{
+      status: string;
+      result: Record<string, unknown>;
+      payload: Record<string, unknown>;
+      artifact_count: string;
+      artifact_uri: string;
+    }>(
+      `SELECT j.status, j.result, j.payload,
+              count(a.id)::text AS artifact_count,
+              min(a.uri) AS artifact_uri
+         FROM agentops_control.jobs j
+         LEFT JOIN agentops_control.artifact_links a ON a.job_id = j.id
+        WHERE j.id = $1
+        GROUP BY j.id`,
+      [queued.job.id],
+    );
+    expect(outcome.rows[0]).toMatchObject({
+      status: 'succeeded',
+      result: {
+        schemaVersion: 1,
+        status: 'succeeded',
+        jobId: queued.job.id,
+        headSha: 'b'.repeat(40),
+        pullRequestNumber: 38,
+      },
+      artifact_count: '1',
+    });
+    expect(outcome.rows[0]?.artifact_uri).toMatch(
+      new RegExp(`^volume://registrations/${repo.id}/`),
+    );
+    expect(JSON.stringify(outcome.rows[0]?.payload)).not.toContain('runner-result');
+    expect(await fs.promises.readFile(
+      path.join(
+        root,
+        'registrations',
+        repo.id,
+        'jobs',
+        queued.job.id,
+        'attempt-1',
+        'artifacts',
+        'runner-result.json',
+      ),
+      'utf8',
+    )).toContain('"developmentTurn"');
+  });
+
+  it('leaves durable final-suite evidence for every stale critical boundary', async () => {
+    const store = await migratedStore();
+    for (const boundary of ['claim', 'provider', 'push', 'merge', 'release'] as const) {
+      const suffix = `-final-${boundary}`;
+      const repo = await registration(store, suffix);
+      await enqueueRunner(store, repo.id, repo.version, suffix);
+      if (boundary === 'claim') {
+        await store.updateRegistration(repo.id, { enabled: false });
+      } else {
+        const lease = await store.acquireLease({
+          workerId: `runner-final-${boundary}`,
+          durationMs: 60_000,
+        });
+        await store.updateRegistration(repo.id, { enabled: false });
+        await store.assertExecutionGuard({
+          token: lease!.token,
+          workerId: `runner-final-${boundary}`,
+          boundary,
+        });
+      }
+    }
+    const allowedRepo = await registration(store, '-final-allowed');
+    await enqueueRunner(
+      store,
+      allowedRepo.id,
+      allowedRepo.version,
+      '-final-allowed',
+    );
+    const allowedLease = await store.acquireLease({
+      workerId: 'runner-final-allowed',
+      durationMs: 60_000,
+    });
+    for (const boundary of ['provider', 'push', 'merge', 'release'] as const) {
+      await expect(store.assertExecutionGuard({
+        token: allowedLease!.token,
+        workerId: 'runner-final-allowed',
+        boundary,
+      })).resolves.toMatchObject({ ok: true, reason: null });
+    }
+    const durable = await pool.query<{ boundary: string; reason: string }>(
+      `SELECT split_part(event_type, '.', 3) AS boundary,
+              details->>'reason' AS reason
+         FROM agentops_control.runtime_audit
+        WHERE event_type LIKE 'runner.boundary.%.denied'
+        ORDER BY boundary`,
+    );
+    expect(durable.rows).toEqual([
+      { boundary: 'claim', reason: 'registration_disabled' },
+      { boundary: 'merge', reason: 'registration_disabled' },
+      { boundary: 'provider', reason: 'registration_disabled' },
+      { boundary: 'push', reason: 'registration_disabled' },
+      { boundary: 'release', reason: 'registration_disabled' },
     ]);
   });
 });

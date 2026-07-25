@@ -5,7 +5,7 @@ import { PlanningEnrichmentOutput, type EnrichmentCandidate, type IntakeRecord }
 import { recordAgentInvocation } from '../agents/invocation.js';
 import { resolveAgentRoute, type AgentRoute } from '../agents/routing.js';
 import type { DriveResult } from '../pipeline/execution/loop.js';
-import { runLoopLive } from '../pipeline/execution/live.js';
+import { runLoopLive, type LiveOptions } from '../pipeline/execution/live.js';
 import type { Store } from '../store/store.js';
 import {
   pollAndClaimGithubIssues,
@@ -24,6 +24,7 @@ import { PERSPECTIVES } from '../pipeline/panel.js';
 import {
   realPrNativeGithubRunner,
   reconcilePrNativeGates,
+  type AutoMergeOptions,
   type PrNativeGithubRunner,
 } from '../pipeline/execution/pr-native.js';
 import {
@@ -53,6 +54,13 @@ export interface GithubDevelopmentTurnDeps {
   driveQueue?: QueueDriver;
   prNativeRunner?: PrNativeGithubRunner;
   repositoryPullRequestReviewer?: RepositoryPullRequestReviewer;
+  /** A scoped issue job must not import unrelated repository PRs. */
+  discoverPullRequests?: boolean;
+  /** Isolated-runner hooks; ordinary CLI callers leave these absent. */
+  liveOptions?: LiveOptions;
+  beforeIssueClaim?: () => Promise<void>;
+  beforeReconcile?: () => Promise<void>;
+  reconcileOptions?: AutoMergeOptions;
 }
 
 export interface GithubDevelopmentTurnResult {
@@ -115,12 +123,14 @@ export async function runGithubDevelopmentTurn(
     ?? realPrNativeGithubRunner(config.gate?.mergeMethod);
   if ((config.gate?.backend ?? 'store') === 'github' && config.target) {
     const targetRoot = path.resolve(harnessRoot, config.target.repo);
-    const discoveries = discoverRepositoryPullRequests(
-      store,
-      config,
-      prNativeRunner,
-      targetRoot,
-    );
+    const discoveries = deps.discoverPullRequests === false
+      ? []
+      : discoverRepositoryPullRequests(
+          store,
+          config,
+          prNativeRunner,
+          targetRoot,
+        );
     const review = deps.repositoryPullRequestReviewer
       ?? ((discovery) => reviewRepositoryPullRequest(
         store,
@@ -129,6 +139,18 @@ export async function runGithubDevelopmentTurn(
         prNativeRunner,
         harnessRoot,
         log,
+        PERSPECTIVES,
+        {
+          ...(deps.liveOptions?.graderEnvironment
+            ? {
+                graderEnvironment: deps.liveOptions.graderEnvironment,
+                graderIsolation: 'runner-container' as const,
+              }
+            : {}),
+          ...(deps.liveOptions?.beforeProviderExecution
+            ? { beforeProviderExecution: deps.liveOptions.beforeProviderExecution }
+            : {}),
+        },
       ));
     for (const discovery of discoveries) {
       if (discovery.imported) {
@@ -139,12 +161,14 @@ export async function runGithubDevelopmentTurn(
       }
       if (discovery.reviewRequired) await review(discovery);
     }
+    await deps.beforeReconcile?.();
     const results = reconcilePrNativeGates(
       store,
       config,
       prNativeRunner,
       targetRoot,
       PERSPECTIVES.map((perspective) => perspective.key),
+      deps.reconcileOptions,
     );
     for (const result of results) {
       log(
@@ -153,7 +177,12 @@ export async function runGithubDevelopmentTurn(
       );
     }
   }
-  const intakeResults = pollAndClaimGithubIssues(store, config, deps.issueRunner);
+  const intakeResults = await pollAndClaimGithubIssues(
+    store,
+    config,
+    deps.issueRunner,
+    deps.beforeIssueClaim,
+  );
   const systemDir = config.target?.systemDir
     ? path.resolve(harnessRoot, config.target.systemDir)
     : path.join(config.target ? path.resolve(harnessRoot, config.target.repo) : harnessRoot, 'docs', '_system');
@@ -233,7 +262,13 @@ export async function runGithubDevelopmentTurn(
 
   // The downstream is the existing queue driver — no intake-specific implementation pipeline.
   const driveQueue = deps.driveQueue
-    ?? (() => runLoopLive(store, config, harnessRoot, { prNativeRunner }, log));
+    ?? (() => runLoopLive(
+      store,
+      config,
+      harnessRoot,
+      { ...deps.liveOptions, prNativeRunner },
+      log,
+    ));
   const driveResults = await driveQueue();
   return { intake: intakeResults, enrichmentIds, driveResults };
 }

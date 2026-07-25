@@ -29,11 +29,18 @@
 - **ARCH-container-runtime-007 standard OCI build seam** — publicな形: `deploy/Containerfile` の multi-stage
   （`deps → build → runtime`）。Apple 専用構文なし、`build` stage の in-container typecheck、Go control builder stage を
   後から差し込む seam。標準 OCI なので docker/podman でも同一に build/run できる。
+- **ARCH-container-runtime-008 isolated runner stage** — standard OCIの`runner` stageはuid 65532、専用HOME、
+  `/workspace` private volume、zero host ports、read-only root/capability dropの起動契約でlease consumerを実行する。
+- **ARCH-container-runtime-009 startup isolation proof** — runnerはHOME/cwd/mount/publish/outboundとcredential/socket不在を
+  DB接続・provider実行前にfail closed検証し、secret値を含まない検証結果をcontrol-store auditへ残す。
+- **ARCH-container-runtime-010 Registration workspace** — mirror/worktree/state/artifactは
+  `/workspace/registrations/<id>`だけに置き、job/attempt pathはDB identityから決定論的に導出する。
 
 ## 段階導入
 
 - #11（CISO-01）: `ARCH-container-runtime-001`〜`007` を一括で確立する（本フェーズが基盤）。
-- 後続 #13/#16: `control-build` stage と control lifecycle を ARCH-001 の port 越しに追加する（本ビューは不変）。
+- #14（CISO-04）: `runner` stageとprivate Registration workspaceを`ARCH-container-runtime-008`〜`010`で追加する。
+- 後続 #13/#16: `control-build` stage と control lifecycle を ARCH-001 の port 越しに追加する。
 
 ## grounded smoke
 

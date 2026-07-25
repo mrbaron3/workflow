@@ -171,7 +171,41 @@ describe('openGate: project an approved build to the gate UI', () => {
 });
 
 describe('projectReviewRevision: PR exists before perspective review', () => {
-  it('AC-PRLOOP-001 creates the PR on the first head, then pushes repairs to the same PR', () => {
+  it('fails closed after push when the fresh PR-create fence rejects', async () => {
+    const store = tmpStore('review-create-fence');
+    const pr = seedGatedIssue(store, 'ISSUE-1', null);
+    const calls: string[] = [];
+    const runner: GhGateRunner = {
+      pushBranch: () => { calls.push('push'); },
+      createPr: () => {
+        calls.push('create');
+        return {
+          provider: 'github',
+          number: 9,
+          url: 'https://github.com/o/r/pull/9',
+        };
+      },
+      viewPr: () => 'open',
+    };
+    await expect(projectReviewRevision(
+      store,
+      GITHUB,
+      {
+        pr,
+        worktree: '/wt',
+        title: 'ISSUE-1: title',
+        headSha: 'a'.repeat(40),
+      },
+      runner,
+      () => {},
+      async () => {
+        throw new Error('registration disabled after push');
+      },
+    )).rejects.toThrow(/registration disabled/);
+    expect(calls).toEqual(['push']);
+  });
+
+  it('AC-PRLOOP-001 creates the PR on the first head, then pushes repairs to the same PR', async () => {
     const store = tmpStore('review-revisions');
     const pr = seedGatedIssue(store, 'ISSUE-1', null);
     const pushes: string[] = [];
@@ -191,7 +225,7 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     const firstSha = 'a'.repeat(40);
     const secondSha = 'b'.repeat(40);
 
-    const first = projectReviewRevision(
+    const first = await projectReviewRevision(
       store,
       GITHUB,
       { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: firstSha },
@@ -201,7 +235,7 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
       status: 'reviewing',
     }));
     store.replacePrRevision(transitionPrRevision(reviewingFirst, { status: 'approved' }));
-    const second = projectReviewRevision(
+    const second = await projectReviewRevision(
       store,
       GITHUB,
       { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: secondSha },
