@@ -33,6 +33,7 @@ import {
   type GhGateRunner,
   type GhPrState,
 } from '../src/pipeline/execution/gate.js';
+import { PERSPECTIVES } from '../src/pipeline/panel.js';
 
 const STORE: HarnessConfig = { ...DEFAULT_CONFIG }; // gate absent = store-direct (default)
 const GITHUB: HarnessConfig = { ...DEFAULT_CONFIG, gate: { backend: 'github' } };
@@ -61,15 +62,18 @@ function seedGatedIssue(store: Store, id: string, prNumber: number | null): PR {
     externalRef: prNumber === null ? null : { provider: 'github', number: prNumber, url: `https://github.com/o/r/pull/${prNumber}` },
     createdAt: nowISO(), updatedAt: nowISO(),
   }));
-  for (const p of ['functionality', 'codeQuality']) addRun(store, id, pr.id, p);
+  for (const { key } of PERSPECTIVES) addRun(store, id, pr, key);
   return pr;
 }
 
-function addRun(store: Store, issueId: string, prId: string, perspective: string): EvalRun {
+function addRun(store: Store, issueId: string, pr: PR, perspective: string): EvalRun {
+  if (!pr.currentRevisionId || !pr.headSha) throw new Error('fixture PR must be revision-bound');
   return store.addEvalRun(EvalRun.parse({
-    id: store.nextId('EVAL'), issueId, prId, attempt: 1, sampleIndex: 0, agent: 'mock', verdict: 'approve', perspective,
+    id: store.nextId('EVAL'), issueId, prId: pr.id, attempt: 1, sampleIndex: 0, agent: 'mock', verdict: 'approve', perspective,
     findings: perspective === 'codeQuality' ? [{ criterionId: 'codeQuality:AC-1', severity: 'minor', expected: 'e', observed: 'nit' }] : [],
     scores: { functionality: 1, codeQuality: 1, testQuality: 1, ux: 1, accessibility: 1 }, overall: 1, cost: {}, createdAt: nowISO(),
+    revisionId: pr.currentRevisionId,
+    headSha: pr.headSha,
   }));
 }
 

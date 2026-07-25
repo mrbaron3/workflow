@@ -63,14 +63,14 @@ verifications:
     method: unit_test
     expected:
       - "承認待ちの issue に人間の承認を適用すると status が released になる"
-      - "承認した EvalRun（勝者 sample の観点 run）の humanVerdict が approve として記録される"
+      - "承認した EvalRun（対象 PR の現在 head に一致する勝者 sample の観点 run）の humanVerdict が approve として記録される"
 
   AC-LOOP-007:
     severity: blocker
     method: unit_test
     expected:
       - "承認待ちの issue に人間の差戻しを適用すると status は released にならない（needs-human-review のまま／changes-requested へ）"
-      - "当該 EvalRun の humanVerdict が request_changes として記録される（false-pass 較正データ）"
+      - "対象 PR の現在 head に一致する当該勝者 sample の EvalRun の humanVerdict が request_changes として記録される（false-pass 較正データ）"
 
   AC-LOOP-008:
     severity: major
