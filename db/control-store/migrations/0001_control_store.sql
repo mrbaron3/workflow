@@ -61,6 +61,9 @@ CREATE TABLE agentops_control.webhook_deliveries (
 CREATE INDEX webhook_deliveries_processing_expiry
   ON agentops_control.webhook_deliveries (processing_expires_at)
   WHERE status = 'processing';
+CREATE INDEX webhook_deliveries_pending
+  ON agentops_control.webhook_deliveries (received_at)
+  WHERE status = 'pending';
 
 CREATE TABLE agentops_control.webhook_consumers (
   delivery_id uuid NOT NULL
@@ -93,8 +96,10 @@ CREATE TABLE agentops_control.jobs (
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   finished_at timestamptz,
   last_error text,
-  CONSTRAINT jobs_idempotency_key_key UNIQUE (idempotency_key),
-  CONSTRAINT jobs_source_key_key UNIQUE (source_kind, source_key)
+  CONSTRAINT jobs_registration_idempotency_key
+    UNIQUE (registration_id, idempotency_key),
+  CONSTRAINT jobs_registration_source_key
+    UNIQUE (registration_id, source_kind, source_key)
 );
 
 -- The database, not merely the runtime, guarantees repository single-flight.
@@ -225,3 +230,7 @@ FOR EACH ROW EXECUTE FUNCTION agentops_control.notify_control_change('agentops_r
 CREATE TRIGGER job_queue_wake
 AFTER INSERT OR UPDATE ON agentops_control.jobs
 FOR EACH ROW EXECUTE FUNCTION agentops_control.notify_control_change('agentops_job_wake');
+
+CREATE TRIGGER webhook_delivery_wake
+AFTER INSERT OR UPDATE ON agentops_control.webhook_deliveries
+FOR EACH ROW EXECUTE FUNCTION agentops_control.notify_control_change('agentops_webhook_wake');

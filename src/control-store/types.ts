@@ -28,7 +28,7 @@ export interface RepositoryRegistration extends RepositoryRegistrationInput {
 export const JobSource = z.object({
   kind: z.enum(['webhook', 'poll', 'manual', 'recovery']),
   key: z.string().min(1),
-});
+}).strict();
 export type JobSource = z.infer<typeof JobSource>;
 
 export const EnqueueJobInput = z.object({
@@ -66,7 +66,7 @@ export const JobEnvelopeContract = z.object({
   payload: z.record(z.unknown()),
   status: z.enum(['queued', 'leased', 'succeeded', 'failed', 'cancelled', 'rejected']),
   createdAt: z.string().datetime(),
-});
+}).strict();
 
 export interface EnqueueResult {
   job: JobEnvelope;
@@ -92,6 +92,32 @@ export interface ReconciliationWork {
   leaseExpiresAt: string | null;
 }
 
+export interface WebhookClaim {
+  deliveryId: string;
+  deliveryKey: string;
+  repository: string;
+  event: string;
+  action: string | null;
+  headers: Record<string, string>;
+  payload: Record<string, unknown>;
+  token: string;
+  expiresAt: string;
+  receivedAt: string;
+}
+
+export interface BuildDefect {
+  id: string;
+  buildId: string;
+  defectKey: string;
+  observationStage: 'review_oracle' | 'release_escape';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  issueUrl: string | null;
+  summary: string;
+  discoveredAt: string;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
 export class ControlStoreUnavailableError extends Error {
   override readonly name = 'ControlStoreUnavailableError';
 }
@@ -106,6 +132,10 @@ export class StaleRegistrationError extends Error {
 
 export class RepositoryBusyError extends Error {
   override readonly name = 'RepositoryBusyError';
+}
+
+export class IdempotencyConflictError extends Error {
+  override readonly name = 'IdempotencyConflictError';
 }
 
 export class LeaseRejectedError extends Error {

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 import {
   CONTROL_SCHEMA_VERSION,
@@ -32,8 +33,31 @@ describe('language-neutral control-store contract', () => {
       ),
       'utf8',
     ));
+    const schema = JSON.parse(fs.readFileSync(
+      path.join(
+        process.cwd(),
+        'contracts',
+        'control-store',
+        'v1',
+        'job-envelope.schema.json',
+      ),
+      'utf8',
+    ));
+    const ajv = new Ajv2020({ strict: true });
+    ajv.addFormat(
+      'uuid',
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    ajv.addFormat('date-time', (value: string) => !Number.isNaN(Date.parse(value)));
+    const validate = ajv.compile(schema);
+    expect(validate(fixture), validate.errors?.map((error) => error.message).join(', '))
+      .toBe(true);
     expect(JobEnvelopeContract.parse(fixture)).toEqual(fixture);
     expect(fixture.status).toBe('queued');
+    const unexpected = { ...fixture, unexpected: true };
+    expect(validate(unexpected)).toBe(false);
+    expect(() => JobEnvelopeContract.parse(unexpected)).toThrow();
+    expect(validate({ ...fixture, status: 'unknown' })).toBe(false);
   });
 
   it('stores only artifact metadata in the schema', () => {

@@ -7,6 +7,7 @@ import {
   CONTROL_SCHEMA_VERSION,
   CONTROL_MIGRATION_LOCK_KEY,
   ControlSchemaError,
+  IdempotencyConflictError,
   JobEnvelopeContract,
   LeaseRejectedError,
   PostgresControlStore,
@@ -148,6 +149,24 @@ integration('PostgreSQL control store', () => {
     expect(new Set([webhook.job.id, poll.job.id]).size).toBe(1);
     expect([webhook.duplicate, poll.duplicate].sort()).toEqual([false, true]);
     expect(JobEnvelopeContract.parse(webhook.job)).toEqual(webhook.job);
+    const otherRepo = await registration(store, '-other');
+    const other = await enqueue(
+      store,
+      otherRepo.id,
+      otherRepo.version,
+      'same-logical-event',
+      'webhook',
+    );
+    expect(other.job.id).not.toBe(webhook.job.id);
+    expect(other.job.registrationId).toBe(otherRepo.id);
+    await expect(store.enqueueJob({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+      source: { kind: 'manual', key: 'manual:mismatched-reuse' },
+      idempotencyKey: 'same-logical-event',
+      jobType: 'github_issue_turn',
+      payload: { issueNumber: 13 },
+    })).rejects.toBeInstanceOf(IdempotencyConflictError);
 
     const deliveries = await Promise.all(Array.from({ length: 8 }, () =>
       store.receiveWebhook({
@@ -213,16 +232,28 @@ integration('PostgreSQL control store', () => {
     );
     expect(state.rows[0]?.status).toBe('pending');
 
-    const second = await restarted.setWebhookConsumers(
-      receipt.deliveryId,
+    const claimed = await Promise.all([
+      restarted.claimPendingWebhook(),
+      restarted.claimPendingWebhook(),
+    ]);
+    const second = claimed.find((row) => row !== null);
+    expect(claimed.filter(Boolean)).toHaveLength(1);
+    expect(second).toMatchObject({
+      deliveryId: receipt.deliveryId,
+      deliveryKey: 'interrupted-delivery',
+      repository: repo.repository,
+      payload: { action: 'labeled' },
+    });
+    await restarted.setClaimedWebhookConsumers(
+      second!.token,
       repo.id,
       ['agentops', 'audit'],
     );
-    await restarted.completeWebhookConsumer(receipt.deliveryId, 'audit', second.token);
+    await restarted.completeWebhookConsumer(receipt.deliveryId, 'audit', second!.token);
     await restarted.finishWebhookDelivery(
       receipt.deliveryId,
       { status: 'processed' },
-      second.token,
+      second!.token,
     );
     const completed = await pool.query<{ status: string }>(
       'SELECT status FROM agentops_control.webhook_deliveries WHERE id = $1',
@@ -346,6 +377,62 @@ integration('PostgreSQL control store', () => {
     )).resolves.toMatchObject({ duplicate: false });
   });
 
+  it('serializes expired lease reclaim with a concurrent registration update', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store);
+    await enqueue(store, repo.id, repo.version, 'concurrent-reclaim');
+    const lease = await store.acquireLease({
+      workerId: 'worker-concurrent-reclaim',
+      durationMs: 60,
+    });
+    expect(lease).not.toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    const updater = await pool.connect();
+    try {
+      await updater.query('BEGIN');
+      await updater.query(
+        `SELECT id FROM agentops_control.repository_registrations
+          WHERE id = $1 FOR UPDATE`,
+        [repo.id],
+      );
+      await updater.query(
+        `UPDATE agentops_control.repository_registrations
+            SET version = version + 1, pr_monitor_enabled = false
+          WHERE id = $1`,
+        [repo.id],
+      );
+      const missed = await updater.query(
+        `UPDATE agentops_control.jobs
+            SET status = 'rejected'
+          WHERE registration_id = $1 AND status = 'queued'`,
+        [repo.id],
+      );
+      expect(missed.rowCount).toBe(0);
+      await expect(store.reclaimExpiredLeases()).resolves.toBe(0);
+      await updater.query('COMMIT');
+    } catch (error) {
+      await updater.query('ROLLBACK');
+      throw error;
+    } finally {
+      updater.release();
+    }
+
+    await expect(store.reclaimExpiredLeases()).resolves.toBe(1);
+    const stale = await pool.query<{ status: string }>(
+      'SELECT status FROM agentops_control.jobs WHERE id = $1',
+      [lease!.job.id],
+    );
+    expect(stale.rows[0]?.status).toBe('rejected');
+    const updated = await store.getRegistration(repo.id);
+    await expect(enqueue(
+      store,
+      repo.id,
+      updated!.version,
+      'replacement-after-concurrent-reclaim',
+    )).resolves.toMatchObject({ duplicate: false });
+  });
+
   it('enforces repository single-flight in parallel transactions and at runtime', async () => {
     const store = await migratedStore();
     const repo = await registration(store);
@@ -393,6 +480,34 @@ integration('PostgreSQL control store', () => {
     await expect(store.listReconciliationWork()).resolves.toHaveLength(1);
   });
 
+  it('wakes webhook listeners and lets a restarted router claim pending work', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store);
+    let resolveNotice!: (payload: string) => void;
+    const notified = new Promise<string>((resolve) => {
+      resolveNotice = resolve;
+    });
+    const stop = await store.listen('agentops_webhook_wake', (notice) => {
+      resolveNotice(notice.payload ?? '');
+    });
+    await store.receiveWebhook({
+      deliveryKey: 'pending-across-restart',
+      repository: repo.repository,
+      event: 'issues',
+      headers: {},
+      payload: { action: 'opened' },
+    });
+    await expect(notified).resolves.toContain('webhook_deliveries');
+    await stop();
+
+    const restarted = new PostgresControlStore(pool);
+    await expect(restarted.claimPendingWebhook()).resolves.toMatchObject({
+      deliveryKey: 'pending-across-restart',
+      repository: repo.repository,
+      payload: { action: 'opened' },
+    });
+  });
+
   it('persists multiple release escapes and derives build-level false passes', async () => {
     const store = await migratedStore();
     const repo = await registration(store);
@@ -405,14 +520,16 @@ integration('PostgreSQL control store', () => {
       panelApproved: true,
       releasedAt: new Date(),
     });
-    await store.recordBuildDefect({
+    const discoveredAt = new Date('2026-07-25T09:00:00.000Z');
+    const firstDefectId = await store.recordBuildDefect({
       buildId,
       defectKey: 'issue-19',
       observationStage: 'release_escape',
       severity: 'high',
       issueUrl: 'https://github.com/mrbaron3/workflow/issues/19',
       summary: 'forwarder accepted a failed relay',
-      discoveredAt: new Date(),
+      discoveredAt,
+      details: { affectedRelay: 'primary' },
     });
     await store.recordBuildDefect({
       buildId,
@@ -420,8 +537,57 @@ integration('PostgreSQL control store', () => {
       observationStage: 'release_escape',
       severity: 'medium',
       summary: 'second defect associated with the same released build',
+      discoveredAt: new Date('2026-07-25T09:01:00.000Z'),
+    });
+    await expect(store.listBuildDefects({
+      buildId,
+      observationStage: 'release_escape',
+    })).resolves.toEqual([
+      expect.objectContaining({
+        id: firstDefectId,
+        buildId,
+        defectKey: 'issue-19',
+        observationStage: 'release_escape',
+        severity: 'high',
+        issueUrl: 'https://github.com/mrbaron3/workflow/issues/19',
+        summary: 'forwarder accepted a failed relay',
+        discoveredAt: discoveredAt.toISOString(),
+        details: { affectedRelay: 'primary' },
+      }),
+      expect.objectContaining({
+        buildId,
+        defectKey: 'issue-19-followup',
+        observationStage: 'release_escape',
+        severity: 'medium',
+        issueUrl: null,
+      }),
+    ]);
+
+    const nonPanelBuildId = await store.recordReleasedBuild({
+      registrationId: repo.id,
+      issueNumber: 12,
+      revisionId: 'PRREV-NON-PANEL',
+      headSha: '8fa3f65a00000000000000000000000000000000',
+      panelApproved: false,
+      releasedAt: new Date(),
+    });
+    await store.recordBuildDefect({
+      buildId: nonPanelBuildId,
+      defectKey: 'issue-non-panel',
+      observationStage: 'release_escape',
+      severity: 'critical',
+      summary: 'escape remains individually queryable regardless of panel state',
       discoveredAt: new Date(),
     });
+    await expect(store.listBuildDefects({
+      buildId: nonPanelBuildId,
+    })).resolves.toEqual([
+      expect.objectContaining({
+        buildId: nonPanelBuildId,
+        defectKey: 'issue-non-panel',
+        severity: 'critical',
+      }),
+    ]);
     await expect(store.listFalsePassBuilds()).resolves.toEqual([
       { buildId, gateReturned: false, escapeCount: 2 },
     ]);

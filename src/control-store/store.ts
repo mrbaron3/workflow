@@ -9,16 +9,19 @@ import {
 import { assertControlSchema, migrateControlSchema } from './migrations.js';
 import {
   EnqueueJobInput,
+  IdempotencyConflictError,
   LeaseRejectedError,
   RepositoryBusyError,
   RepositoryRegistrationInput,
   RepositoryRegistrationPatch,
   StaleRegistrationError,
+  type BuildDefect,
   type EnqueueResult,
   type JobEnvelope,
   type Lease,
   type ReconciliationWork,
   type RepositoryRegistration,
+  type WebhookClaim,
 } from './types.js';
 
 interface RegistrationRow extends QueryResultRow {
@@ -46,6 +49,17 @@ interface JobRow extends QueryResultRow {
   payload: Record<string, unknown>;
   status: JobEnvelope['status'];
   created_at: Date;
+}
+
+interface WebhookDeliveryRow extends QueryResultRow {
+  id: string;
+  delivery_key: string;
+  repository: string;
+  event: string;
+  action: string | null;
+  headers: Record<string, string>;
+  payload: Record<string, unknown>;
+  received_at: Date;
 }
 
 function registration(row: RegistrationRow): RepositoryRegistration {
@@ -376,6 +390,86 @@ export class PostgresControlStore {
     });
   }
 
+  async claimPendingWebhook(durationMs = 5 * 60_000): Promise<WebhookClaim | null> {
+    if (!Number.isInteger(durationMs) || durationMs <= 0) {
+      throw new Error('durationMs must be a positive integer');
+    }
+    return transaction(this.pool, async (client) => {
+      const pending = await client.query<WebhookDeliveryRow>(
+        `SELECT id, delivery_key, repository, event, action, headers, payload, received_at
+           FROM agentops_control.webhook_deliveries
+          WHERE status = 'pending'
+          ORDER BY received_at, id
+          FOR UPDATE SKIP LOCKED
+          LIMIT 1`,
+      );
+      const row = pending.rows[0];
+      if (!row) return null;
+      const token = randomUUID();
+      const ownership = await client.query<{ processing_expires_at: Date }>(
+        `UPDATE agentops_control.webhook_deliveries
+            SET status = 'processing', processing_token = $2,
+                processing_expires_at =
+                  clock_timestamp() + ($3 * interval '1 millisecond'),
+                route_attempts = route_attempts + 1,
+                updated_at = clock_timestamp()
+          WHERE id = $1
+          RETURNING processing_expires_at`,
+        [row.id, token, durationMs],
+      );
+      return {
+        deliveryId: row.id,
+        deliveryKey: row.delivery_key,
+        repository: row.repository,
+        event: row.event,
+        action: row.action,
+        headers: row.headers,
+        payload: row.payload,
+        token,
+        expiresAt: ownership.rows[0]!.processing_expires_at.toISOString(),
+        receivedAt: row.received_at.toISOString(),
+      };
+    });
+  }
+
+  async setClaimedWebhookConsumers(
+    processingToken: string,
+    registrationId: string,
+    consumers: readonly string[],
+  ): Promise<string> {
+    return transaction(this.pool, async (client) => {
+      const claimed = await client.query<{ id: string; registration_id: string | null }>(
+        `SELECT id, registration_id
+           FROM agentops_control.webhook_deliveries
+          WHERE processing_token = $1 AND status = 'processing'
+            AND processing_expires_at > clock_timestamp()
+          FOR UPDATE`,
+        [processingToken],
+      );
+      const row = claimed.rows[0];
+      if (!row || (row.registration_id && row.registration_id !== registrationId)) {
+        throw new LeaseRejectedError(
+          'webhook processing ownership is absent, expired, or already routed',
+        );
+      }
+      await client.query(
+        `UPDATE agentops_control.webhook_deliveries
+            SET registration_id = $2, updated_at = clock_timestamp()
+          WHERE id = $1`,
+        [row.id, registrationId],
+      );
+      for (const consumer of [...new Set(consumers)].sort()) {
+        await client.query(
+          `INSERT INTO agentops_control.webhook_consumers(delivery_id, consumer)
+           VALUES ($1, $2)
+           ON CONFLICT (delivery_id, consumer) DO NOTHING`,
+          [row.id, consumer],
+        );
+      }
+      return row.id;
+    });
+  }
+
   async completeWebhookConsumer(
     deliveryId: string,
     consumer: string,
@@ -454,10 +548,7 @@ export class PostgresControlStore {
       );
       const row = delivery.rows[0];
       if (!row) throw new Error(`no such webhook delivery: ${deliveryId}`);
-      if (outcome.status === 'processed' || outcome.status === 'failed') {
-        if (row.status !== 'processing') {
-          throw new Error(`delivery ${deliveryId} is not processing`);
-        }
+      if (row.status === 'processing') {
         if (
           !processingToken
           || row.processing_token !== processingToken
@@ -466,6 +557,13 @@ export class PostgresControlStore {
           throw new LeaseRejectedError(
             'webhook processing ownership is invalid or expired',
           );
+        }
+      } else if (outcome.status !== 'ignored' || row.status !== 'pending') {
+        throw new Error(`delivery ${deliveryId} cannot transition from ${row.status}`);
+      }
+      if (outcome.status === 'processed' || outcome.status === 'failed') {
+        if (row.status !== 'processing') {
+          throw new Error(`delivery ${deliveryId} is not processing`);
         }
         if (outcome.status === 'processed') {
           const incomplete = await client.query<{ count: string }>(
@@ -551,11 +649,40 @@ export class PostgresControlStore {
           `registration ${parsed.registrationId} is absent, disabled, or stale`,
         );
       }
-      const duplicate = await client.query<JobRow>(
-        'SELECT * FROM agentops_control.jobs WHERE idempotency_key = $1',
-        [parsed.idempotencyKey],
+      const duplicate = await client.query<JobRow & { same_request: boolean }>(
+        `SELECT j.*, (j.job_type = $3 AND j.payload = $4::jsonb) AS same_request
+           FROM agentops_control.jobs j
+          WHERE j.registration_id = $1 AND j.idempotency_key = $2`,
+        [parsed.registrationId, parsed.idempotencyKey, parsed.jobType, parsed.payload],
       );
-      if (duplicate.rows[0]) return { job: job(duplicate.rows[0]), duplicate: true };
+      if (duplicate.rows[0]) {
+        if (!duplicate.rows[0].same_request) {
+          throw new IdempotencyConflictError(
+            `idempotency key ${parsed.idempotencyKey} was reused for a different request`,
+          );
+        }
+        return { job: job(duplicate.rows[0]), duplicate: true };
+      }
+      const sourceDuplicate = await client.query<JobRow & { same_request: boolean }>(
+        `SELECT j.*, (j.job_type = $4 AND j.payload = $5::jsonb) AS same_request
+           FROM agentops_control.jobs j
+          WHERE j.registration_id = $1 AND j.source_kind = $2 AND j.source_key = $3`,
+        [
+          parsed.registrationId,
+          parsed.source.kind,
+          parsed.source.key,
+          parsed.jobType,
+          parsed.payload,
+        ],
+      );
+      if (sourceDuplicate.rows[0]) {
+        if (!sourceDuplicate.rows[0].same_request) {
+          throw new IdempotencyConflictError(
+            `source key ${parsed.source.kind}:${parsed.source.key} was reused for a different request`,
+          );
+        }
+        return { job: job(sourceDuplicate.rows[0]), duplicate: true };
+      }
 
       // Runtime rejection gives a useful error; the partial unique index remains
       // authoritative when parallel transactions race after this read.
@@ -571,14 +698,17 @@ export class PostgresControlStore {
         );
       }
       try {
-        const result = await client.query<JobRow & { duplicate: boolean }>(
+        const result = await client.query<
+          JobRow & { duplicate: boolean; same_request: boolean }
+        >(
           `INSERT INTO agentops_control.jobs(
              id, registration_id, registration_version, source_kind, source_key,
              idempotency_key, job_type, payload, available_at
            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9, clock_timestamp()))
-           ON CONFLICT (idempotency_key) DO UPDATE
+           ON CONFLICT (registration_id, idempotency_key) DO UPDATE
              SET idempotency_key = EXCLUDED.idempotency_key
-           RETURNING *, (xmax <> 0) AS duplicate`,
+           RETURNING *, (xmax <> 0) AS duplicate,
+             (job_type = $7 AND payload = $8::jsonb) AS same_request`,
           [
             randomUUID(),
             parsed.registrationId,
@@ -591,6 +721,11 @@ export class PostgresControlStore {
             parsed.availableAt ?? null,
           ],
         );
+        if (result.rows[0]!.duplicate && !result.rows[0]!.same_request) {
+          throw new IdempotencyConflictError(
+            `idempotency key ${parsed.idempotencyKey} raced with a different request`,
+          );
+        }
         return { job: job(result.rows[0]!), duplicate: result.rows[0]!.duplicate };
       } catch (error) {
         if (
@@ -599,6 +734,14 @@ export class PostgresControlStore {
           && 'code' in error
           && error.code === '23505'
         ) {
+          if (
+            'constraint' in error
+            && error.constraint === 'jobs_registration_source_key'
+          ) {
+            throw new IdempotencyConflictError(
+              `source key ${parsed.source.kind}:${parsed.source.key} raced with another request`,
+            );
+          }
           throw new RepositoryBusyError(
             `repository ${current.repository} already has an active job`,
           );
@@ -690,11 +833,13 @@ export class PostgresControlStore {
   async reclaimExpiredLeases(): Promise<number> {
     return transaction(this.pool, async (client) => {
       const expired = await client.query<{ id: string; job_id: string; attempt_id: string }>(
-        `SELECT id, job_id, attempt_id
-           FROM agentops_control.job_leases
-          WHERE status = 'active' AND expires_at <= clock_timestamp()
-          ORDER BY expires_at
-          FOR UPDATE SKIP LOCKED`,
+        `SELECT l.id, l.job_id, l.attempt_id
+           FROM agentops_control.job_leases l
+           JOIN agentops_control.jobs j ON j.id = l.job_id
+           JOIN agentops_control.repository_registrations r ON r.id = j.registration_id
+          WHERE l.status = 'active' AND l.expires_at <= clock_timestamp()
+          ORDER BY l.expires_at
+          FOR UPDATE OF l, j, r SKIP LOCKED`,
       );
       for (const lease of expired.rows) {
         await client.query(
@@ -923,6 +1068,44 @@ export class PostgresControlStore {
     return id;
   }
 
+  async listBuildDefects(input: {
+    buildId: string;
+    observationStage?: 'review_oracle' | 'release_escape';
+  }): Promise<BuildDefect[]> {
+    const result = await this.pool.query<{
+      id: string;
+      build_id: string;
+      defect_key: string;
+      observation_stage: BuildDefect['observationStage'];
+      severity: BuildDefect['severity'];
+      issue_url: string | null;
+      summary: string;
+      discovered_at: Date;
+      details: Record<string, unknown>;
+      created_at: Date;
+    }>(
+      `SELECT id, build_id, defect_key, observation_stage, severity, issue_url,
+              summary, discovered_at, details, created_at
+         FROM agentops_control.build_defects
+        WHERE build_id = $1
+          AND ($2::text IS NULL OR observation_stage = $2)
+        ORDER BY discovered_at, id`,
+      [input.buildId, input.observationStage ?? null],
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      buildId: row.build_id,
+      defectKey: row.defect_key,
+      observationStage: row.observation_stage,
+      severity: row.severity,
+      issueUrl: row.issue_url,
+      summary: row.summary,
+      discoveredAt: row.discovered_at.toISOString(),
+      details: row.details,
+      createdAt: row.created_at.toISOString(),
+    }));
+  }
+
   async listFalsePassBuilds(): Promise<Array<{
     buildId: string;
     gateReturned: boolean;
@@ -952,7 +1135,10 @@ export class PostgresControlStore {
 
   /** LISTEN is only a low-latency hint; callers must also reconcile periodically. */
   async listen(
-    channel: 'agentops_job_wake' | 'agentops_registration_wake',
+    channel:
+      | 'agentops_job_wake'
+      | 'agentops_registration_wake'
+      | 'agentops_webhook_wake',
     onNotification: (notification: Notification) => void,
   ): Promise<() => Promise<void>> {
     const client = await this.pool.connect();
