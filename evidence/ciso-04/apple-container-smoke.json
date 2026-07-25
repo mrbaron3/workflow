@@ -1,0 +1,111 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#14",
+  "runtime": "Apple Container",
+  "runtimeVersion": "container CLI version 1.1.0 (build: release, commit: unspeci)",
+  "images": {
+    "runtimeImage": "agentops-runtime:ciso04-90571-1784986313851",
+    "runnerImage": "agentops-runner:ciso04-90571-1784986313851"
+  },
+  "topology": {
+    "internalNetwork": "agentops-ciso04-90571-1784986313851",
+    "runnerPublishedPorts": [],
+    "postgresPublishedPorts": [],
+    "runnerPrivateVolume": "agentops-ciso04-runner-90571-1784986313851",
+    "postgresPrivateVolume": "agentops-ciso04-pg-90571-1784986313851"
+  },
+  "checks": {
+    "standardOciRunnerBuild": {
+      "result": "passed",
+      "detail": {
+        "image": "agentops-runner:ciso04-90571-1784986313851",
+        "target": "runner"
+      }
+    },
+    "postgresRunnerIntegration": {
+      "result": "passed",
+      "detail": {
+        "suite": "test/control-store.integration.test.ts",
+        "network": "agentops-ciso04-90571-1784986313851",
+        "publishedPorts": 0
+      }
+    },
+    "runnerBoundaryIsolation": {
+      "result": "passed",
+      "detail": {
+        "runnerUid": 65532,
+        "runnerPublishedPorts": [],
+        "postgresPublishedPorts": [],
+        "runnerVolume": "agentops-ciso04-runner-90571-1784986313851",
+        "postgresVolume": "agentops-ciso04-pg-90571-1784986313851",
+        "privateNetwork": "agentops-ciso04-90571-1784986313851",
+        "rootFilesystemReadOnly": true,
+        "capabilitiesDropped": "ALL",
+        "startupAudit": {
+          "outbound": [
+            {
+              "host": "192.168.128.2",
+              "port": 5432
+            },
+            {
+              "host": "github.com",
+              "port": 443
+            },
+            {
+              "host": "api.github.com",
+              "port": 443
+            },
+            {
+              "host": "api.openai.com",
+              "port": 443
+            }
+          ],
+          "provider": "codex",
+          "mountSources": [
+            "agentops-ciso04-runner-90571-1784986313851"
+          ],
+          "workspaceRoot": "/workspace",
+          "publishedPortCount": 0,
+          "processEnvironmentKeys": [
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "NO_COLOR",
+            "OPENAI_API_KEY",
+            "PATH",
+            "TMPDIR"
+          ],
+          "sshAgentPresentInProcessEnvironment": false,
+          "containerSocketPresentInProcessEnvironment": false,
+          "controlCredentialPresentInProcessEnvironment": false,
+          "databaseCredentialPresentInProcessEnvironment": false
+        }
+      }
+    },
+    "unknownSchemaRejected": {
+      "result": "passed",
+      "detail": {
+        "jobId": "89bfad8f-51c2-4dd5-af07-9eacddebeba8",
+        "outcome": "failed:unknown_job_contract"
+      }
+    },
+    "artifactIntegrityRejected": {
+      "result": "passed",
+      "detail": {
+        "jobId": "234d3ad2-4ccf-4a19-8c1f-609082a33d68",
+        "outcome": "failed:artifact_integrity"
+      }
+    },
+    "durableBoundaryAudit": {
+      "result": "passed",
+      "detail": {
+        "claimAllowed": 7,
+        "criticalAllowed": 4,
+        "criticalDenied": 5
+      }
+    }
+  },
+  "completedAt": "2026-07-25T13:33:03.849Z"
+}

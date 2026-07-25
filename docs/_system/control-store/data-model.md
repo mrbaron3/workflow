@@ -16,5 +16,10 @@
   supervisor、observed/healthy/error。
 - **DATA-control-store-011** `control_api_requests` / `delivery_retry_attempts` — command idempotency、
   request hash/response、operator retry attempt。
+- **DATA-control-store-012** runner job `payload` / `result` / `failure` — strict version 1 JSON contract。
+- **DATA-control-store-013** runner attempt `failure` — retry/restart後も残るtyped failureとboundary。
+- **DATA-control-store-014** runner artifact/audit — Registration-scoped volume URI＋digest/size/time、および
+  boundaryごとのallow/deny reason。artifact bytes、credential、test output本文はDBへ入れない。
 
-根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)
+根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
+[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)

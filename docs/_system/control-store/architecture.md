@@ -16,5 +16,13 @@
   Languageである。
 - **ARCH-control-store-008 Registration control projection** — Go controlはactual state、API idempotency、
   delivery retryをschema version 2へtransactionalに保存し、status readをrepeatable-read snapshotから構成する。
+- **ARCH-control-store-009 Runner Published Contract** — `agentops.runner`だけがstrictなversion 1 payload/result/failureを
+  実行でき、未知version・余分field・command/credential/host pathは実行前に拒否する。
+- **ARCH-control-store-010 Critical Boundary Fence** — claim/provider/push/merge/releaseの各直前にactive lease ownership、
+  DB clock expiry、job status、Registration version/enabled/execution_enabledをrow lock下で再検証し、allow/deny理由を
+  同じtransactionへ監査する。
+- **ARCH-control-store-011 Retry and Restart Recovery** — heartbeat loss後はside effect permitを失効し、retryable failureは
+  attempt履歴を閉じて指数backoff再queueする。stale Registrationはretryせず、restart workerはDB queueを再発見する。
 
-根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)
+根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
+[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)

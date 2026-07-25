@@ -14,13 +14,19 @@ import {
   RepositoryBusyError,
   RepositoryRegistrationInput,
   RepositoryRegistrationPatch,
+  RunnerCriticalBoundary,
+  RunnerJobFailureV1Contract,
+  RunnerJobResultV1Contract,
   StaleRegistrationError,
   type BuildDefect,
   type EnqueueResult,
+  type ExecutionGuardVerdict,
   type JobEnvelope,
   type Lease,
   type ReconciliationWork,
   type RepositoryRegistration,
+  type RunnerJobFailureV1,
+  type RunnerJobResultV1,
   type WebhookClaim,
 } from './types.js';
 
@@ -80,7 +86,7 @@ function registration(row: RegistrationRow): RepositoryRegistration {
 
 function job(row: JobRow): JobEnvelope {
   return {
-    contractVersion: 1,
+    contractVersion: row.contract_version as 1,
     id: row.id,
     registrationId: row.registration_id,
     registrationVersion: Number(row.registration_version),
@@ -863,6 +869,22 @@ export class PostgresControlStore {
          RETURNING expires_at`,
         [leaseId, selected.id, attemptId, leaseToken, input.workerId, input.durationMs],
       );
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, job_id, details
+         ) VALUES ('runner', $1, 'runner.boundary.claim.allowed', $2, $3, $4)`,
+        [
+          input.workerId,
+          selected.registration_id,
+          selected.id,
+          {
+            registrationVersion: Number(selected.registration_version),
+            attemptNumber: attemptNumber.rows[0]!.next,
+            leaseId,
+            expiresAt: leaseResult.rows[0]!.expires_at.toISOString(),
+          },
+        ],
+      );
       return {
         id: leaseId,
         token: leaseToken,
@@ -912,7 +934,19 @@ export class PostgresControlStore {
         await client.query(
           `UPDATE agentops_control.job_attempts
               SET status = 'timed_out', finished_at = clock_timestamp(),
-                  error = 'lease expired'
+                  error = 'lease expired',
+                  failure = jsonb_build_object(
+                    'schemaVersion', 1,
+                    'status', 'failed',
+                    'code', 'lease_lost',
+                    'message', 'lease expired',
+                    'retryable', true,
+                    'boundary', NULL,
+                    'observedAt', to_char(
+                      clock_timestamp() AT TIME ZONE 'UTC',
+                      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                    )
+                  )
             WHERE id = $1 AND status = 'running'`,
           [lease.attempt_id],
         );
@@ -941,6 +975,22 @@ export class PostgresControlStore {
                      AND r.version = j.registration_version
                     THEN 'lease expired'
                     ELSE 'lease expired after registration changed'
+                  END,
+                  failure = CASE
+                    WHEN r.enabled AND r.execution_enabled
+                     AND r.version = j.registration_version THEN NULL
+                    ELSE jsonb_build_object(
+                      'schemaVersion', 1,
+                      'status', 'failed',
+                      'code', 'registration_stale',
+                      'message', 'lease expired after registration changed',
+                      'retryable', false,
+                      'boundary', 'claim',
+                      'observedAt', to_char(
+                        clock_timestamp() AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+                      )
+                    )
                   END
              FROM agentops_control.repository_registrations r
             WHERE j.id = $1 AND j.status = 'leased'
@@ -954,8 +1004,16 @@ export class PostgresControlStore {
 
   async finishLease(
     token: string,
-    outcome: { status: 'succeeded' | 'failed'; error?: string },
+    outcome:
+      | { status: 'succeeded'; result?: RunnerJobResultV1 }
+      | { status: 'failed'; error?: string; failure?: RunnerJobFailureV1 },
   ): Promise<void> {
+    const result = outcome.status === 'succeeded' && outcome.result
+      ? RunnerJobResultV1Contract.parse(outcome.result)
+      : null;
+    const failure = outcome.status === 'failed' && outcome.failure
+      ? RunnerJobFailureV1Contract.parse(outcome.failure)
+      : null;
     await transaction(this.pool, async (client) => {
       const lease = await client.query<{ id: string; job_id: string; attempt_id: string }>(
         `SELECT id, job_id, attempt_id
@@ -975,17 +1033,328 @@ export class PostgresControlStore {
       );
       await client.query(
         `UPDATE agentops_control.job_attempts
-            SET status = $2, finished_at = clock_timestamp(), error = $3
+            SET status = $2, finished_at = clock_timestamp(), error = $3,
+                failure = $4
           WHERE id = $1`,
-        [row.attempt_id, outcome.status, outcome.error ?? null],
+        [
+          row.attempt_id,
+          outcome.status,
+          outcome.status === 'failed' ? outcome.error ?? failure?.message ?? null : null,
+          failure,
+        ],
       );
       await client.query(
         `UPDATE agentops_control.jobs
             SET status = $2, finished_at = clock_timestamp(),
-                updated_at = clock_timestamp(), last_error = $3
+                updated_at = clock_timestamp(), last_error = $3,
+                result = $4, failure = $5
           WHERE id = $1`,
-        [row.job_id, outcome.status, outcome.error ?? null],
+        [
+          row.job_id,
+          outcome.status,
+          outcome.status === 'failed' ? outcome.error ?? failure?.message ?? null : null,
+          result,
+          failure,
+        ],
       );
+    });
+  }
+
+  /**
+   * Revalidates lease ownership and Registration desired state in one locked
+   * transaction immediately before a credential-bearing runner boundary. Both
+   * allow and deny decisions are committed to runtime_audit before returning.
+   */
+  async assertExecutionGuard(input: {
+    token: string;
+    workerId: string;
+    boundary: RunnerCriticalBoundary;
+  }): Promise<ExecutionGuardVerdict> {
+    const boundary = RunnerCriticalBoundary.parse(input.boundary);
+    return transaction(this.pool, async (client) => {
+      const result = await client.query<{
+        lease_status: string | null;
+        lease_worker_id: string | null;
+        lease_expires_at: Date | null;
+        job_id: string | null;
+        job_status: string | null;
+        registration_id: string | null;
+        registration_version: string | null;
+        registration_present: boolean;
+        current_version: string | null;
+        enabled: boolean | null;
+        issue_monitor_enabled: boolean | null;
+        pr_monitor_enabled: boolean | null;
+        execution_enabled: boolean | null;
+        repository: string | null;
+        configuration: Record<string, unknown> | null;
+        created_at: Date | null;
+        updated_at: Date | null;
+        lease_unexpired: boolean | null;
+      }>(
+        `SELECT l.status AS lease_status, l.worker_id AS lease_worker_id,
+                l.expires_at AS lease_expires_at,
+                j.id AS job_id, j.status AS job_status,
+                j.registration_id, j.registration_version,
+                (r.id IS NOT NULL) AS registration_present,
+                r.version AS current_version, r.enabled,
+                r.issue_monitor_enabled, r.pr_monitor_enabled,
+                r.execution_enabled, r.repository, r.configuration,
+                r.created_at, r.updated_at,
+                l.expires_at > clock_timestamp() AS lease_unexpired
+           FROM agentops_control.job_leases l
+           JOIN agentops_control.jobs j ON j.id = l.job_id
+           JOIN agentops_control.repository_registrations r
+             ON r.id = j.registration_id
+          WHERE l.lease_token = $1
+          FOR UPDATE OF l, j, r`,
+        [input.token],
+      );
+      const row = result.rows[0];
+      let reason: string | null = null;
+      if (!row) reason = 'lease_absent';
+      else if (row.lease_status !== 'active') reason = `lease_${row.lease_status}`;
+      else if (row.lease_worker_id !== input.workerId) reason = 'lease_worker_mismatch';
+      else if (!row.lease_unexpired) {
+        reason = 'lease_expired';
+      } else if (row.job_status !== 'leased') reason = `job_${row.job_status ?? 'absent'}`;
+      else if (!row.registration_present) reason = 'registration_absent';
+      else if (!row.enabled) reason = 'registration_disabled';
+      else if (!row.execution_enabled) reason = 'registration_execution_disabled';
+      else if (row.current_version !== row.registration_version) {
+        reason = 'registration_version_stale';
+      }
+      const ok = reason === null;
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, job_id, details
+         ) VALUES ('runner', $1, $2, $3, $4, $5)`,
+        [
+          input.workerId,
+          `runner.boundary.${boundary}.${ok ? 'allowed' : 'denied'}`,
+          row?.registration_id ?? null,
+          row?.job_id ?? null,
+          {
+            reason,
+            leaseStatus: row?.lease_status ?? null,
+            leaseWorkerId: row?.lease_worker_id ?? null,
+            leaseExpiresAt: row?.lease_expires_at?.toISOString() ?? null,
+            jobStatus: row?.job_status ?? null,
+            registrationVersion: row?.registration_version
+              ? Number(row.registration_version)
+              : null,
+            currentRegistrationVersion: row?.current_version
+              ? Number(row.current_version)
+              : null,
+            enabled: row?.enabled ?? null,
+            executionEnabled: row?.execution_enabled ?? null,
+          },
+        ],
+      );
+      return {
+        ok,
+        reason,
+        registration: row?.registration_present && row.repository
+          ? {
+              id: row.registration_id!,
+              repository: row.repository,
+              enabled: row.enabled!,
+              issueMonitorEnabled: row.issue_monitor_enabled!,
+              prMonitorEnabled: row.pr_monitor_enabled!,
+              executionEnabled: row.execution_enabled!,
+              configuration: row.configuration ?? {},
+              version: Number(row.current_version),
+              createdAt: row.created_at!.toISOString(),
+              updatedAt: row.updated_at!.toISOString(),
+            }
+          : null,
+        jobId: row?.job_id ?? null,
+        leaseExpiresAt: row?.lease_expires_at?.toISOString() ?? null,
+      };
+    });
+  }
+
+  /**
+   * Ends the current attempt and either requeues it with DB-clock delay or
+   * records a terminal typed failure. Stale Registration and lease loss never
+   * requeue under an obsolete authorization.
+   */
+  async failOrRetryLease(input: {
+    token: string;
+    workerId: string;
+    failure: RunnerJobFailureV1;
+    retryDelayMs: number;
+    maxAttempts: number;
+  }): Promise<'queued' | 'failed' | 'rejected'> {
+    const failure = RunnerJobFailureV1Contract.parse(input.failure);
+    if (!Number.isInteger(input.retryDelayMs) || input.retryDelayMs < 0) {
+      throw new Error('retryDelayMs must be a non-negative integer');
+    }
+    if (!Number.isInteger(input.maxAttempts) || input.maxAttempts < 1) {
+      throw new Error('maxAttempts must be a positive integer');
+    }
+    return transaction(this.pool, async (client) => {
+      const result = await client.query<{
+        lease_id: string;
+        attempt_id: string;
+        attempt_number: number;
+        job_id: string;
+        registration_id: string;
+        registration_version: string;
+        current_version: string | null;
+        enabled: boolean | null;
+        execution_enabled: boolean | null;
+      }>(
+        `SELECT l.id AS lease_id, l.attempt_id, a.attempt_number,
+                j.id AS job_id, j.registration_id, j.registration_version,
+                r.version AS current_version, r.enabled, r.execution_enabled
+           FROM agentops_control.job_leases l
+           JOIN agentops_control.job_attempts a ON a.id = l.attempt_id
+           JOIN agentops_control.jobs j ON j.id = l.job_id
+           JOIN agentops_control.repository_registrations r
+             ON r.id = j.registration_id
+          WHERE l.lease_token = $1
+            AND l.worker_id = $2
+            AND l.status = 'active'
+            AND l.expires_at > clock_timestamp()
+            AND j.status = 'leased'
+          FOR UPDATE OF l, a, j, r`,
+        [input.token, input.workerId],
+      );
+      const row = result.rows[0];
+      if (!row) {
+        throw new LeaseRejectedError('lease is absent, inactive, or not owned by worker');
+      }
+      const registrationCurrent =
+        row.enabled === true
+        && row.execution_enabled === true
+        && row.current_version === row.registration_version;
+      const requeue =
+        failure.retryable
+        && row.attempt_number < input.maxAttempts
+        && registrationCurrent;
+      const finalStatus = requeue
+        ? 'queued'
+        : registrationCurrent
+          ? 'failed'
+          : 'rejected';
+      await client.query(
+        `UPDATE agentops_control.job_leases
+            SET status = 'released', released_at = clock_timestamp()
+          WHERE id = $1`,
+        [row.lease_id],
+      );
+      await client.query(
+        `UPDATE agentops_control.job_attempts
+            SET status = 'failed', finished_at = clock_timestamp(),
+                error = $2, failure = $3
+          WHERE id = $1`,
+        [row.attempt_id, failure.message, failure],
+      );
+      await client.query(
+        `UPDATE agentops_control.jobs
+            SET status = $2,
+                available_at = CASE WHEN $2 = 'queued'
+                  THEN clock_timestamp() + ($3 * interval '1 millisecond')
+                  ELSE available_at END,
+                finished_at = CASE WHEN $2 = 'queued' THEN NULL ELSE clock_timestamp() END,
+                updated_at = clock_timestamp(),
+                last_error = $4,
+                result = NULL,
+                failure = CASE WHEN $2 = 'queued' THEN NULL ELSE $5::jsonb END
+          WHERE id = $1`,
+        [
+          row.job_id,
+          finalStatus,
+          input.retryDelayMs,
+          failure.message,
+          failure,
+        ],
+      );
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, job_id, details
+         ) VALUES ('runner', $1, $2, $3, $4, $5)`,
+        [
+          input.workerId,
+          requeue ? 'runner.attempt.retry_scheduled' : 'runner.attempt.failed',
+          row.registration_id,
+          row.job_id,
+          {
+            attemptNumber: row.attempt_number,
+            failure,
+            finalStatus,
+            registrationCurrent,
+            retryDelayMs: requeue ? input.retryDelayMs : null,
+          },
+        ],
+      );
+      return finalStatus;
+    });
+  }
+
+  async linkLeaseArtifact(input: {
+    token: string;
+    workerId: string;
+    kind: string;
+    uri: string;
+    sha256: string;
+    sizeBytes: number;
+  }): Promise<string> {
+    if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(input.kind)) {
+      throw new Error('artifact kind is invalid');
+    }
+    if (!/^[0-9a-f]{64}$/.test(input.sha256)) {
+      throw new Error('artifact sha256 is invalid');
+    }
+    if (!Number.isSafeInteger(input.sizeBytes) || input.sizeBytes < 0) {
+      throw new Error('artifact sizeBytes is invalid');
+    }
+    return transaction(this.pool, async (client) => {
+      const lease = await client.query<{
+        job_id: string;
+        attempt_id: string;
+        registration_id: string;
+      }>(
+        `SELECT l.job_id, l.attempt_id, j.registration_id
+           FROM agentops_control.job_leases l
+           JOIN agentops_control.jobs j ON j.id = l.job_id
+          WHERE l.lease_token = $1 AND l.worker_id = $2
+            AND l.status = 'active' AND l.expires_at > clock_timestamp()
+            AND j.status = 'leased'
+          FOR UPDATE OF l, j`,
+        [input.token, input.workerId],
+      );
+      const row = lease.rows[0];
+      if (!row) throw new LeaseRejectedError('artifact write requires active lease ownership');
+      const expectedPrefix = `volume://registrations/${row.registration_id}/`;
+      if (!input.uri.startsWith(expectedPrefix)) {
+        throw new Error(`artifact URI must begin with ${expectedPrefix}`);
+      }
+      const id = randomUUID();
+      const inserted = await client.query<{ id: string }>(
+        `INSERT INTO agentops_control.artifact_links(
+           id, job_id, attempt_id, kind, uri, sha256, size_bytes
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (job_id, attempt_id, kind, uri) DO UPDATE
+           SET sha256 = EXCLUDED.sha256, size_bytes = EXCLUDED.size_bytes
+         WHERE agentops_control.artifact_links.sha256 = EXCLUDED.sha256
+           AND agentops_control.artifact_links.size_bytes = EXCLUDED.size_bytes
+         RETURNING id`,
+        [
+          id,
+          row.job_id,
+          row.attempt_id,
+          input.kind,
+          input.uri,
+          input.sha256,
+          input.sizeBytes,
+        ],
+      );
+      if (!inserted.rows[0]) {
+        throw new Error('artifact URI was reused with different digest or size');
+      }
+      return inserted.rows[0].id;
     });
   }
 

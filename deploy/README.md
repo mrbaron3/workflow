@@ -78,8 +78,8 @@ container run --detach --name agentops-control \
   agentops-control:dev
 ```
 
-`control`だけをloopbackへpublishし、PostgreSQL/runnerはpublishしない。通常起動はDDLを変更せずschema version 2と
-両migration checksumをverifyする。起動前にpinned Experience Design Bundleのapproval/revision/digest/capability
+`control`だけをloopbackへpublishし、PostgreSQL/runnerはpublishしない。通常起動はDDLを変更せずschema version 3と
+全migration checksumをverifyする。起動前にpinned Experience Design Bundleのapproval/revision/digest/capability
 coverageも検証し、不一致ならHTTP serverを開始しない。
 
 実Apple Containerでdynamic enable/disable、desired/actual、DB切断fail-closed、同process reconnect、
@@ -90,3 +90,19 @@ npm run smoke:control:apple
 ```
 
 証跡は`evidence/ciso-03/apple-container-smoke.json`へ出力される。
+
+## Isolated AgentOps runner（CISO-04）
+
+```sh
+container build --target runner -t agentops-runner:dev -f deploy/Containerfile .
+npm run smoke:runner:apple
+```
+
+`runner`はuid 65532、`/home/agentops`専用HOME、`/workspace` private named volume、read-only root filesystem、
+capability drop ALL、host publishなしで起動する。起動時にmount/publish/outboundとMac HOME／開発root／SSH agent／
+Apple Container socket／control credential不在を検証し、provider/GitHub子processにはDB credentialを渡さない。
+job/result/failureは`contracts/control-store/v1/runner-*.schema.json`のversion 1だけを受理し、unknown schemaは拒否する。
+
+Apple Container smokeはinternal network上のrunner/PostgreSQL、lease競合・expiry・restart recovery、全critical boundaryの
+Registration stale race、lease loss、artifact tamper、zero host port、private volumeを接地し、
+`evidence/ciso-04/apple-container-smoke.json`へmachine-readable証跡を出力する。

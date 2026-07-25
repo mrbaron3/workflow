@@ -5,7 +5,7 @@ import { PlanningEnrichmentOutput, type EnrichmentCandidate, type IntakeRecord }
 import { recordAgentInvocation } from '../agents/invocation.js';
 import { resolveAgentRoute, type AgentRoute } from '../agents/routing.js';
 import type { DriveResult } from '../pipeline/execution/loop.js';
-import { runLoopLive } from '../pipeline/execution/live.js';
+import { runLoopLive, type LiveOptions } from '../pipeline/execution/live.js';
 import type { Store } from '../store/store.js';
 import {
   pollAndClaimGithubIssues,
@@ -24,6 +24,7 @@ import { PERSPECTIVES } from '../pipeline/panel.js';
 import {
   realPrNativeGithubRunner,
   reconcilePrNativeGates,
+  type AutoMergeOptions,
   type PrNativeGithubRunner,
 } from '../pipeline/execution/pr-native.js';
 import {
@@ -53,6 +54,10 @@ export interface GithubDevelopmentTurnDeps {
   driveQueue?: QueueDriver;
   prNativeRunner?: PrNativeGithubRunner;
   repositoryPullRequestReviewer?: RepositoryPullRequestReviewer;
+  /** Isolated-runner hooks; ordinary CLI callers leave these absent. */
+  liveOptions?: LiveOptions;
+  beforeReconcile?: () => Promise<void>;
+  reconcileOptions?: AutoMergeOptions;
 }
 
 export interface GithubDevelopmentTurnResult {
@@ -139,12 +144,14 @@ export async function runGithubDevelopmentTurn(
       }
       if (discovery.reviewRequired) await review(discovery);
     }
+    await deps.beforeReconcile?.();
     const results = reconcilePrNativeGates(
       store,
       config,
       prNativeRunner,
       targetRoot,
       PERSPECTIVES.map((perspective) => perspective.key),
+      deps.reconcileOptions,
     );
     for (const result of results) {
       log(
@@ -233,7 +240,13 @@ export async function runGithubDevelopmentTurn(
 
   // The downstream is the existing queue driver — no intake-specific implementation pipeline.
   const driveQueue = deps.driveQueue
-    ?? (() => runLoopLive(store, config, harnessRoot, { prNativeRunner }, log));
+    ?? (() => runLoopLive(
+      store,
+      config,
+      harnessRoot,
+      { ...deps.liveOptions, prNativeRunner },
+      log,
+    ));
   const driveResults = await driveQueue();
   return { intake: intakeResults, enrichmentIds, driveResults };
 }

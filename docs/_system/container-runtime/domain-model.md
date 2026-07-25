@@ -25,3 +25,5 @@
   port 上へ出さない。
 - **DOM-container-runtime-008 container-neutral resolution** — 解決される path はコンテナ絶対／設定可能で、Mac home
   （`/Users`）依存を持たない。build/runtime surface の hardcoded host path は回帰検査で fail-closed に検出する。
+- **DOM-container-runtime-009 Runner Isolation Boundary** — nonroot process、private named volume、zero publish、
+  minimal credential env、explicit outbound集合を一体で検証する起動時aggregate。

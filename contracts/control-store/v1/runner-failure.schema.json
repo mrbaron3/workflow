@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mrbaron3/workflow/contracts/control-store/v1/runner-failure.schema.json",
+  "title": "AgentOps isolated runner failure v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "status", "code", "message", "retryable", "boundary", "observedAt"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "const": "failed" },
+    "code": {
+      "enum": [
+        "unknown_job_contract",
+        "registration_stale",
+        "lease_lost",
+        "artifact_integrity",
+        "workspace_failure",
+        "provider_failure",
+        "push_failure",
+        "required_checks_failure",
+        "merge_failure",
+        "release_failure",
+        "startup_isolation_failure",
+        "internal_failure"
+      ]
+    },
+    "message": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "retryable": { "type": "boolean" },
+    "boundary": {
+      "oneOf": [
+        { "enum": ["claim", "provider", "push", "merge", "release"] },
+        { "type": "null" }
+      ]
+    },
+    "observedAt": { "type": "string", "format": "date-time" }
+  }
+}

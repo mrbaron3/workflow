@@ -193,7 +193,7 @@ async function main(): Promise<number> {
       '-d',
       'agentops',
       '-Atc',
-      'SELECT count(*) FROM agentops_control.released_builds',
+      'SELECT count(*) FROM agentops_control.jobs',
     ]);
     if (before.status !== 0 || Number(before.stdout.trim()) < 1) {
       record('persistent-volume-before-restart', false, before.stdout + before.stderr);
@@ -202,7 +202,7 @@ async function main(): Promise<number> {
     record(
       'persistent-volume-before-restart',
       true,
-      `${before.stdout.trim()} released build record(s) present`,
+      `${before.stdout.trim()} durable job record(s) present`,
     );
 
     removeContainer(runtime, postgresName);
@@ -218,7 +218,7 @@ async function main(): Promise<number> {
       `SELECT
          (SELECT max(version) FROM agentops_control.schema_migrations)::text
          || ':'
-         || (SELECT count(*) FROM agentops_control.released_builds)::text`,
+         || (SELECT count(*) FROM agentops_control.jobs)::text`,
     ]);
     const recovered = after.status === 0
       && new RegExp(`^${CONTROL_SCHEMA_VERSION}:[1-9][0-9]*$`).test(after.stdout.trim());
@@ -250,6 +250,7 @@ async function main(): Promise<number> {
         // Evidence has already recorded any substantive failure.
       }
     }
+    fs.mkdirSync(path.dirname(evidence), { recursive: true });
     fs.writeFileSync(evidence, JSON.stringify({
       generatedAt: new Date().toISOString(),
       generatedFrom: 'scripts/ciso02-postgres-smoke.ts',

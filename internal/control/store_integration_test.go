@@ -582,6 +582,7 @@ func resetAndMigrate(
 	for version, name := range []string{
 		"0001_control_store.sql",
 		"0002_registration_control.sql",
+		"0003_isolated_runner.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

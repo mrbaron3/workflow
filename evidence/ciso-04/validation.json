@@ -1,0 +1,62 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#14",
+  "baseSha": "1ad142836cecec0c117e0f1608568bda60e65d3f",
+  "controlSchemaVersion": 3,
+  "evaluationDomainSchemaChanged": false,
+  "checks": [
+    {
+      "name": "runner-targeted",
+      "result": "passed",
+      "testsPassed": 28
+    },
+    {
+      "name": "typescript-full",
+      "result": "passed",
+      "filesPassed": 95,
+      "filesSkipped": 1,
+      "testsPassed": 797,
+      "testsSkipped": 23
+    },
+    {
+      "name": "typescript-build-typecheck",
+      "result": "passed"
+    },
+    {
+      "name": "production-npm-audit",
+      "result": "passed",
+      "vulnerabilities": 0
+    },
+    {
+      "name": "go-unit-race-vet",
+      "result": "passed",
+      "environment": "standard OCI control-test target on Apple Container"
+    },
+    {
+      "name": "postgres-integration",
+      "result": "passed",
+      "testsPassed": 22,
+      "environment": "Apple Container internal network, zero host ports"
+    },
+    {
+      "name": "oci-runner-build",
+      "result": "passed",
+      "target": "runner",
+      "uid": 65532
+    },
+    {
+      "name": "apple-container-boundary",
+      "result": "passed",
+      "evidence": "evidence/ciso-04/apple-container-smoke.json"
+    },
+    {
+      "name": "postgres-restart-recovery",
+      "result": "passed",
+      "evidence": "evidence/ciso-04/postgres-runner-integration.json"
+    }
+  ],
+  "residualRisk": [
+    "The safe test path deliberately uses no real provider or GitHub write credential.",
+    "Production must enforce the validated outbound destination set with network policy or an egress proxy."
+  ]
+}
