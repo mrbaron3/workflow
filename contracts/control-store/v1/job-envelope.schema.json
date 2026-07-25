@@ -13,6 +13,7 @@
     "idempotencyKey",
     "jobType",
     "payload",
+    "status",
     "createdAt"
   ],
   "properties": {
@@ -32,6 +33,9 @@
     "idempotencyKey": { "type": "string", "minLength": 1 },
     "jobType": { "type": "string", "minLength": 1 },
     "payload": { "type": "object" },
+    "status": {
+      "enum": ["queued", "leased", "succeeded", "failed", "cancelled", "rejected"]
+    },
     "createdAt": { "type": "string", "format": "date-time" }
   }
 }

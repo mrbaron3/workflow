@@ -5,7 +5,9 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   CONTROL_SCHEMA_VERSION,
+  CONTROL_MIGRATION_LOCK_KEY,
   ControlSchemaError,
+  JobEnvelopeContract,
   LeaseRejectedError,
   PostgresControlStore,
   RepositoryBusyError,
@@ -116,6 +118,26 @@ integration('PostgreSQL control store', () => {
     expect(result.rows[0]?.relation).toBeNull();
   });
 
+  it('serializes fail-closed verification with schema migration ownership', async () => {
+    await migratedStore();
+    const blocker = await pool.connect();
+    try {
+      await blocker.query('SELECT pg_advisory_lock($1)', [CONTROL_MIGRATION_LOCK_KEY]);
+      let settled = false;
+      const verification = assertControlSchema(pool).then(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      await blocker.query('SELECT pg_advisory_unlock($1)', [CONTROL_MIGRATION_LOCK_KEY]);
+      await expect(verification).resolves.toBeUndefined();
+      expect(settled).toBe(true);
+    } finally {
+      await blocker.query('SELECT pg_advisory_unlock($1)', [CONTROL_MIGRATION_LOCK_KEY]);
+      blocker.release();
+    }
+  });
+
   it('deduplicates concurrent webhook and poll enqueue and duplicate deliveries', async () => {
     const store = await migratedStore();
     const repo = await registration(store);
@@ -125,20 +147,33 @@ integration('PostgreSQL control store', () => {
     ]);
     expect(new Set([webhook.job.id, poll.job.id]).size).toBe(1);
     expect([webhook.duplicate, poll.duplicate].sort()).toEqual([false, true]);
+    expect(JobEnvelopeContract.parse(webhook.job)).toEqual(webhook.job);
 
     const deliveries = await Promise.all(Array.from({ length: 8 }, () =>
       store.receiveWebhook({
         deliveryKey: 'github-delivery-1',
         repository: repo.repository,
         event: 'issues',
-        headers: {},
+        headers: {
+          authorization: 'Bearer secret',
+          cookie: 'session=secret',
+          'x-github-delivery': 'github-delivery-1',
+          'x-hub-signature-256': 'sha256=secret',
+        },
         payload: { action: 'labeled' },
       })));
     expect(new Set(deliveries.map((row) => row.deliveryId)).size).toBe(1);
     expect(deliveries.filter((row) => !row.duplicate)).toHaveLength(1);
+    const stored = await pool.query<{ headers: Record<string, string> }>(
+      'SELECT headers FROM agentops_control.webhook_deliveries WHERE id = $1',
+      [deliveries[0]!.deliveryId],
+    );
+    expect(stored.rows[0]?.headers).toEqual({
+      'x-github-delivery': 'github-delivery-1',
+    });
   });
 
-  it('recovers interrupted webhook consumer state after process restart', async () => {
+  it('does not steal live webhook work and recovers only expired ownership after restart', async () => {
     const store = await migratedStore();
     const repo = await registration(store);
     const receipt = await store.receiveWebhook({
@@ -148,20 +183,47 @@ integration('PostgreSQL control store', () => {
       headers: {},
       payload: { action: 'labeled' },
     });
-    await store.setWebhookConsumers(receipt.deliveryId, repo.id, ['agentops', 'audit']);
-    await store.completeWebhookConsumer(receipt.deliveryId, 'agentops');
+    const first = await store.setWebhookConsumers(
+      receipt.deliveryId,
+      repo.id,
+      ['agentops', 'audit'],
+      80,
+    );
+    await store.completeWebhookConsumer(receipt.deliveryId, 'agentops', first.token);
+    await expect(store.completeWebhookConsumer(
+      receipt.deliveryId,
+      'absent',
+      first.token,
+    )).rejects.toBeInstanceOf(LeaseRejectedError);
 
     const restarted = new PostgresControlStore(pool);
+    expect(await restarted.recoverInterruptedWebhooks()).toBe(0);
+    await restarted.heartbeatWebhookProcessing(first.token, 80);
+    expect(await restarted.recoverInterruptedWebhooks()).toBe(0);
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(await restarted.recoverInterruptedWebhooks()).toBe(1);
+    await expect(restarted.completeWebhookConsumer(
+      receipt.deliveryId,
+      'audit',
+      first.token,
+    )).rejects.toBeInstanceOf(LeaseRejectedError);
     const state = await pool.query<{ status: string }>(
       'SELECT status FROM agentops_control.webhook_deliveries WHERE id = $1',
       [receipt.deliveryId],
     );
     expect(state.rows[0]?.status).toBe('pending');
 
-    await restarted.setWebhookConsumers(receipt.deliveryId, repo.id, ['agentops', 'audit']);
-    await restarted.completeWebhookConsumer(receipt.deliveryId, 'audit');
-    await restarted.finishWebhookDelivery(receipt.deliveryId, { status: 'processed' });
+    const second = await restarted.setWebhookConsumers(
+      receipt.deliveryId,
+      repo.id,
+      ['agentops', 'audit'],
+    );
+    await restarted.completeWebhookConsumer(receipt.deliveryId, 'audit', second.token);
+    await restarted.finishWebhookDelivery(
+      receipt.deliveryId,
+      { status: 'processed' },
+      second.token,
+    );
     const completed = await pool.query<{ status: string }>(
       'SELECT status FROM agentops_control.webhook_deliveries WHERE id = $1',
       [receipt.deliveryId],
@@ -169,23 +231,39 @@ integration('PostgreSQL control store', () => {
     expect(completed.rows[0]?.status).toBe('processed');
   });
 
-  it('persists monitor cursors and rejects a stale registration version', async () => {
+  it('keeps monitor cursors monotonic and releases stale queued single-flight work', async () => {
     const store = await migratedStore();
     const repo = await registration(store);
     const observedAt = new Date('2026-07-25T01:02:03.000Z');
-    await store.saveMonitorCursor({
+    await expect(store.saveMonitorCursor({
       registrationId: repo.id,
       monitorKind: 'issue',
       cursor: { issueUpdatedAt: '2026-07-25T01:00:00Z', issueNumber: 12 },
       observedAt,
-    });
+    })).resolves.toBe(true);
+    await expect(store.saveMonitorCursor({
+      registrationId: repo.id,
+      monitorKind: 'issue',
+      cursor: { issueUpdatedAt: '2026-07-24T23:00:00Z', issueNumber: 11 },
+      observedAt: new Date('2026-07-25T00:00:00.000Z'),
+    })).resolves.toBe(false);
     await expect(store.getMonitorCursor(repo.id, 'issue')).resolves.toMatchObject({
       cursor: { issueUpdatedAt: '2026-07-25T01:00:00Z', issueNumber: 12 },
       observedAt: observedAt.toISOString(),
     });
-    await store.updateRegistration(repo.id, { executionEnabled: false });
+    const stale = await enqueue(store, repo.id, repo.version, 'stale-registration');
+    const updated = await store.updateRegistration(repo.id, { issueMonitorEnabled: false });
+    await expect(store.updateRegistration(repo.id, { enabled: undefined }))
+      .rejects.toThrow(/patch is empty/);
+    const staleStatus = await pool.query<{ status: string }>(
+      'SELECT status FROM agentops_control.jobs WHERE id = $1',
+      [stale.job.id],
+    );
+    expect(staleStatus.rows[0]?.status).toBe('rejected');
     await expect(enqueue(store, repo.id, repo.version, 'stale-registration'))
       .rejects.toThrow(/stale/);
+    await expect(enqueue(store, repo.id, updated.version, 'replacement-registration'))
+      .resolves.toMatchObject({ duplicate: false });
   });
 
   it('lets only one competing worker acquire a lease', async () => {
@@ -244,6 +322,28 @@ integration('PostgreSQL control store', () => {
       size_bytes: '1234',
     });
     await store.finishLease(second!.token, { status: 'succeeded' });
+  });
+
+  it('rejects an expired leased job after its registration changes', async () => {
+    const store = await migratedStore();
+    const repo = await registration(store);
+    await enqueue(store, repo.id, repo.version, 'leased-before-registration-change');
+    const lease = await store.acquireLease({ workerId: 'worker-stale', durationMs: 60 });
+    expect(lease).not.toBeNull();
+    const updated = await store.updateRegistration(repo.id, { prMonitorEnabled: false });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(await store.reclaimExpiredLeases()).toBe(1);
+    const stale = await pool.query<{ status: string }>(
+      'SELECT status FROM agentops_control.jobs WHERE id = $1',
+      [lease!.job.id],
+    );
+    expect(stale.rows[0]?.status).toBe('rejected');
+    await expect(enqueue(
+      store,
+      repo.id,
+      updated.version,
+      'replacement-after-stale-lease',
+    )).resolves.toMatchObject({ duplicate: false });
   });
 
   it('enforces repository single-flight in parallel transactions and at runtime', async () => {

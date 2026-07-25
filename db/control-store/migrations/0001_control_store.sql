@@ -42,6 +42,8 @@ CREATE TABLE agentops_control.webhook_deliveries (
   payload jsonb NOT NULL,
   status text NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'processing', 'processed', 'ignored', 'failed')),
+  processing_token uuid,
+  processing_expires_at timestamptz,
   ignored_reason text,
   last_error text,
   route_attempts integer NOT NULL DEFAULT 0 CHECK (route_attempts >= 0),
@@ -49,8 +51,16 @@ CREATE TABLE agentops_control.webhook_deliveries (
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   CONSTRAINT webhook_deliveries_delivery_key_key UNIQUE (delivery_key),
   CONSTRAINT webhook_deliveries_canonical_repository
-    CHECK (repository = lower(repository))
+    CHECK (repository = lower(repository)),
+  CONSTRAINT webhook_deliveries_processing_ownership CHECK (
+    (status = 'processing' AND processing_token IS NOT NULL AND processing_expires_at IS NOT NULL)
+    OR
+    (status <> 'processing' AND processing_token IS NULL AND processing_expires_at IS NULL)
+  )
 );
+CREATE INDEX webhook_deliveries_processing_expiry
+  ON agentops_control.webhook_deliveries (processing_expires_at)
+  WHERE status = 'processing';
 
 CREATE TABLE agentops_control.webhook_consumers (
   delivery_id uuid NOT NULL

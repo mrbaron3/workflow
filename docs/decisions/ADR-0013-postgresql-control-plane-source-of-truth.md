@@ -20,12 +20,16 @@ post-release escapeはreleased buildとの永続linkがなければ較正信号�
    PostgreSQL control deploymentと同時に起動せず、後続control cutoverで廃止する。
 2. SQL migrationは`db/control-store/migrations/`の連番・checksum付きファイルを正本にする。全pending migrationを
    advisory lock下の1 transactionで適用し、partial/unknown/checksum mismatch/接続失敗はconsumer/runner起動前に
-   fail closedとする。通常起動はverify-only、明示したmigration commandだけがDDLを変更する。
+   fail closedとする。verifyも同じadvisory lockでmigrationとの競合後に再検証する。通常起動はverify-only、
+   明示したmigration commandだけがDDLを変更する。
 3. webhook delivery key、job idempotency key、source keyをuniqueにし、repositoryごとの
    `queued|leased` jobはpartial unique indexで高々1件とする。runtimeも先にactive jobを検査して理解可能な拒否を返すが、
-   最終権威はDB制約である。
-4. lease acquisitionはtransaction内の`FOR UPDATE OF jobs SKIP LOCKED`で行う。heartbeat、expiry、reclaimをlease/attempt
-   historyへ記録し、expired jobを再queueする。process restartはDBから同じqueueを再構成する。
+   最終権威はDB制約である。registration version変更時は未取得jobを同じtransactionでrejectし、古いjobが
+   single-flight枠を占有し続けない。
+4. lease acquisitionはtransaction内の`FOR UPDATE OF job, registration SKIP LOCKED`で行う。heartbeat、expiry、reclaimを
+   lease/attempt historyへ記録し、有効な同一registration versionのexpired jobだけを再queueする。webhook routingも
+   ownership token、expiry、heartbeatを持ち、expired ownershipだけをrestart recoveryする。永続headerは
+   case-insensitive allowlistでcredential/signatureを除外する。process restartはDBから同じqueueを再構成する。
 5. `LISTEN/NOTIFY`は低latency wakeにだけ使う。`listReconciliationWork`を周期的な真実回収経路として必ず残す。
 6. artifactはURI、SHA-256、size、createdAtだけを保持する。released buildと`review_oracle|release_escape` defectを
    1:Nで結び、panel approveかつgate returnまたはescapeのbuildを導出可能にする。

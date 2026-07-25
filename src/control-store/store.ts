@@ -78,6 +78,25 @@ function job(row: JobRow): JobEnvelope {
   };
 }
 
+const DURABLE_WEBHOOK_HEADER_ALLOWLIST = new Set([
+  'content-type',
+  'user-agent',
+  'x-github-delivery',
+  'x-github-event',
+  'x-github-hook-id',
+  'x-github-hook-installation-target-id',
+  'x-github-hook-installation-target-type',
+]);
+
+export function durableControlWebhookHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).filter(([name]) =>
+      DURABLE_WEBHOOK_HEADER_ALLOWLIST.has(name.toLowerCase())),
+  );
+}
+
 async function transaction<T>(
   pool: Pool,
   run: (client: PoolClient) => Promise<T>,
@@ -172,17 +191,34 @@ export class PostgresControlStore {
       ['configuration', 'configuration'],
     ] as const;
     const changes = allowed.filter(([property]) => parsedPatch[property] !== undefined);
+    if (changes.length === 0) throw new Error('registration patch is empty');
     const values = changes.map(([property]) => parsedPatch[property]);
     const assignments = changes.map(([, column], index) => `${column} = $${index + 2}`);
-    const result = await this.pool.query<RegistrationRow>(
-      `UPDATE agentops_control.repository_registrations
-          SET ${assignments.join(', ')}, version = version + 1, updated_at = clock_timestamp()
-        WHERE id = $1
-        RETURNING *`,
-      [id, ...values],
-    );
-    if (!result.rows[0]) throw new Error(`no such repository registration: ${id}`);
-    return registration(result.rows[0]);
+    return transaction(this.pool, async (client) => {
+      const locked = await client.query<{ id: string }>(
+        `SELECT id FROM agentops_control.repository_registrations
+          WHERE id = $1 FOR UPDATE`,
+        [id],
+      );
+      if (!locked.rows[0]) throw new Error(`no such repository registration: ${id}`);
+      const result = await client.query<RegistrationRow>(
+        `UPDATE agentops_control.repository_registrations
+            SET ${assignments.join(', ')}, version = version + 1,
+                updated_at = clock_timestamp()
+          WHERE id = $1
+          RETURNING *`,
+        [id, ...values],
+      );
+      await client.query(
+        `UPDATE agentops_control.jobs
+            SET status = 'rejected', finished_at = clock_timestamp(),
+                updated_at = clock_timestamp(),
+                last_error = 'registration changed before lease acquisition'
+          WHERE registration_id = $1 AND status = 'queued'`,
+        [id],
+      );
+      return registration(result.rows[0]!);
+    });
   }
 
   async getRegistration(id: string): Promise<RepositoryRegistration | null> {
@@ -205,17 +241,20 @@ export class PostgresControlStore {
     monitorKind: 'issue' | 'pull_request';
     cursor: Record<string, unknown>;
     observedAt: Date;
-  }): Promise<void> {
-    await this.pool.query(
+  }): Promise<boolean> {
+    const result = await this.pool.query(
       `INSERT INTO agentops_control.monitor_cursors(
          registration_id, monitor_kind, cursor, observed_at
        ) VALUES ($1, $2, $3, $4)
        ON CONFLICT (registration_id, monitor_kind) DO UPDATE
          SET cursor = EXCLUDED.cursor,
              observed_at = EXCLUDED.observed_at,
-             updated_at = clock_timestamp()`,
+             updated_at = clock_timestamp()
+       WHERE agentops_control.monitor_cursors.observed_at < EXCLUDED.observed_at
+       RETURNING registration_id`,
       [input.registrationId, input.monitorKind, input.cursor, input.observedAt],
     );
+    return (result.rowCount ?? 0) > 0;
   }
 
   async getMonitorCursor(
@@ -267,7 +306,7 @@ export class PostgresControlStore {
           input.repository,
           input.event,
           input.action ?? null,
-          input.headers,
+          durableControlWebhookHeaders(input.headers),
           input.payload,
         ],
       );
@@ -295,8 +334,12 @@ export class PostgresControlStore {
     deliveryId: string,
     registrationId: string,
     consumers: readonly string[],
-  ): Promise<void> {
-    await transaction(this.pool, async (client) => {
+    durationMs = 5 * 60_000,
+  ): Promise<{ token: string; expiresAt: string }> {
+    if (!Number.isInteger(durationMs) || durationMs <= 0) {
+      throw new Error('durationMs must be a positive integer');
+    }
+    return transaction(this.pool, async (client) => {
       const locked = await client.query<{ status: string }>(
         `SELECT status FROM agentops_control.webhook_deliveries
           WHERE id = $1 FOR UPDATE`,
@@ -306,12 +349,17 @@ export class PostgresControlStore {
       if (locked.rows[0].status !== 'pending') {
         throw new Error(`delivery ${deliveryId} is not pending`);
       }
-      await client.query(
+      const token = randomUUID();
+      const ownership = await client.query<{ processing_expires_at: Date }>(
         `UPDATE agentops_control.webhook_deliveries
             SET registration_id = $2, status = 'processing',
+                processing_token = $3,
+                processing_expires_at =
+                  clock_timestamp() + ($4 * interval '1 millisecond'),
                 route_attempts = route_attempts + 1, updated_at = clock_timestamp()
-          WHERE id = $1`,
-        [deliveryId, registrationId],
+          WHERE id = $1
+          RETURNING processing_expires_at`,
+        [deliveryId, registrationId, token, durationMs],
       );
       for (const consumer of [...new Set(consumers)].sort()) {
         await client.query(
@@ -321,22 +369,66 @@ export class PostgresControlStore {
           [deliveryId, consumer],
         );
       }
+      return {
+        token,
+        expiresAt: ownership.rows[0]!.processing_expires_at.toISOString(),
+      };
     });
   }
 
   async completeWebhookConsumer(
     deliveryId: string,
     consumer: string,
+    processingToken: string,
     error?: string,
   ): Promise<void> {
-    await this.pool.query(
-      `UPDATE agentops_control.webhook_consumers
-          SET status = $3, attempts = attempts + 1, last_error = $4,
-              completed_at = CASE WHEN $3 = 'completed' THEN clock_timestamp() END,
+    const result = await this.pool.query(
+      `UPDATE agentops_control.webhook_consumers c
+          SET status = $4, attempts = attempts + 1, last_error = $5,
+              completed_at = CASE WHEN $4 = 'completed' THEN clock_timestamp() END,
               updated_at = clock_timestamp()
-        WHERE delivery_id = $1 AND consumer = $2`,
-      [deliveryId, consumer, error ? 'failed' : 'completed', error ?? null],
+         FROM agentops_control.webhook_deliveries d
+        WHERE c.delivery_id = $1 AND c.consumer = $2
+          AND d.id = c.delivery_id
+          AND d.status = 'processing'
+          AND d.processing_token = $3
+          AND d.processing_expires_at > clock_timestamp()`,
+      [
+        deliveryId,
+        consumer,
+        processingToken,
+        error ? 'failed' : 'completed',
+        error ?? null,
+      ],
     );
+    if ((result.rowCount ?? 0) !== 1) {
+      throw new LeaseRejectedError(
+        `webhook consumer ${consumer} is absent or processing ownership is invalid`,
+      );
+    }
+  }
+
+  async heartbeatWebhookProcessing(
+    processingToken: string,
+    durationMs: number,
+  ): Promise<string> {
+    if (!Number.isInteger(durationMs) || durationMs <= 0) {
+      throw new Error('durationMs must be a positive integer');
+    }
+    const result = await this.pool.query<{ processing_expires_at: Date }>(
+      `UPDATE agentops_control.webhook_deliveries
+          SET processing_expires_at =
+                clock_timestamp() + ($2 * interval '1 millisecond'),
+              updated_at = clock_timestamp()
+        WHERE processing_token = $1 AND status = 'processing'
+          AND processing_expires_at > clock_timestamp()
+        RETURNING processing_expires_at`,
+      [processingToken, durationMs],
+    );
+    if (!result.rows[0]) {
+      throw new LeaseRejectedError('webhook processing ownership is absent or expired');
+    }
+    return result.rows[0].processing_expires_at.toISOString();
   }
 
   async finishWebhookDelivery(
@@ -345,31 +437,46 @@ export class PostgresControlStore {
       | { status: 'processed' }
       | { status: 'ignored'; reason: string }
       | { status: 'failed'; error: string },
+    processingToken?: string,
   ): Promise<void> {
     await transaction(this.pool, async (client) => {
       const delivery = await client.query<{
         status: string;
         registration_id: string | null;
+        processing_token: string | null;
+        ownership_active: boolean;
       }>(
-        `SELECT status, registration_id
+        `SELECT status, registration_id, processing_token,
+                processing_expires_at > clock_timestamp() AS ownership_active
            FROM agentops_control.webhook_deliveries
           WHERE id = $1 FOR UPDATE`,
         [deliveryId],
       );
       const row = delivery.rows[0];
       if (!row) throw new Error(`no such webhook delivery: ${deliveryId}`);
-      if (outcome.status === 'processed') {
+      if (outcome.status === 'processed' || outcome.status === 'failed') {
         if (row.status !== 'processing') {
           throw new Error(`delivery ${deliveryId} is not processing`);
         }
-        const incomplete = await client.query<{ count: string }>(
-          `SELECT count(*) AS count
-             FROM agentops_control.webhook_consumers
-            WHERE delivery_id = $1 AND status <> 'completed'`,
-          [deliveryId],
-        );
-        if (Number(incomplete.rows[0]!.count) > 0) {
-          throw new Error(`delivery ${deliveryId} has incomplete consumers`);
+        if (
+          !processingToken
+          || row.processing_token !== processingToken
+          || !row.ownership_active
+        ) {
+          throw new LeaseRejectedError(
+            'webhook processing ownership is invalid or expired',
+          );
+        }
+        if (outcome.status === 'processed') {
+          const incomplete = await client.query<{ count: string }>(
+            `SELECT count(*) AS count
+               FROM agentops_control.webhook_consumers
+              WHERE delivery_id = $1 AND status <> 'completed'`,
+            [deliveryId],
+          );
+          if (Number(incomplete.rows[0]!.count) > 0) {
+            throw new Error(`delivery ${deliveryId} has incomplete consumers`);
+          }
         }
       } else if (outcome.status === 'ignored' && row.registration_id !== null) {
         throw new Error(`routed delivery ${deliveryId} cannot be ignored`);
@@ -379,6 +486,8 @@ export class PostgresControlStore {
             SET status = $2,
                 ignored_reason = $3,
                 last_error = $4,
+                processing_token = NULL,
+                processing_expires_at = NULL,
                 updated_at = clock_timestamp()
           WHERE id = $1`,
         [
@@ -398,7 +507,8 @@ export class PostgresControlStore {
         `SELECT id
            FROM agentops_control.webhook_deliveries
           WHERE status = 'processing'
-          ORDER BY received_at
+            AND processing_expires_at <= clock_timestamp()
+          ORDER BY processing_expires_at
           FOR UPDATE SKIP LOCKED`,
       );
       if (interrupted.rows.length === 0) return 0;
@@ -413,6 +523,7 @@ export class PostgresControlStore {
       await client.query(
         `UPDATE agentops_control.webhook_deliveries
             SET status = 'pending', last_error = NULL,
+                processing_token = NULL, processing_expires_at = NULL,
                 updated_at = clock_timestamp()
           WHERE id = ANY($1::uuid[])`,
         [ids],
@@ -516,7 +627,7 @@ export class PostgresControlStore {
             AND r.execution_enabled
             AND r.version = j.registration_version
           ORDER BY j.available_at, j.created_at
-          FOR UPDATE OF j SKIP LOCKED
+          FOR UPDATE OF j, r SKIP LOCKED
           LIMIT 1`,
       );
       const selected = candidate.rows[0];
@@ -600,10 +711,34 @@ export class PostgresControlStore {
           [lease.attempt_id],
         );
         await client.query(
-          `UPDATE agentops_control.jobs
-              SET status = 'queued', available_at = clock_timestamp(),
-                  updated_at = clock_timestamp(), last_error = 'lease expired'
-            WHERE id = $1 AND status = 'leased'`,
+          `UPDATE agentops_control.jobs j
+              SET status = CASE
+                    WHEN r.enabled AND r.execution_enabled
+                     AND r.version = j.registration_version THEN 'queued'
+                    ELSE 'rejected'
+                  END,
+                  available_at = CASE
+                    WHEN r.enabled AND r.execution_enabled
+                     AND r.version = j.registration_version
+                    THEN clock_timestamp()
+                    ELSE j.available_at
+                  END,
+                  finished_at = CASE
+                    WHEN r.enabled AND r.execution_enabled
+                     AND r.version = j.registration_version
+                    THEN NULL
+                    ELSE clock_timestamp()
+                  END,
+                  updated_at = clock_timestamp(),
+                  last_error = CASE
+                    WHEN r.enabled AND r.execution_enabled
+                     AND r.version = j.registration_version
+                    THEN 'lease expired'
+                    ELSE 'lease expired after registration changed'
+                  END
+             FROM agentops_control.repository_registrations r
+            WHERE j.id = $1 AND j.status = 'leased'
+              AND r.id = j.registration_id`,
           [lease.job_id],
         );
       }

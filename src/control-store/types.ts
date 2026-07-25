@@ -64,6 +64,7 @@ export const JobEnvelopeContract = z.object({
   idempotencyKey: z.string().min(1),
   jobType: z.string().min(1),
   payload: z.record(z.unknown()),
+  status: z.enum(['queued', 'leased', 'succeeded', 'failed', 'cancelled', 'rejected']),
   createdAt: z.string().datetime(),
 });
 

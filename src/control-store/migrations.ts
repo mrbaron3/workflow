@@ -8,7 +8,7 @@ import {
   ControlStoreUnavailableError,
 } from './types.js';
 
-const MIGRATION_LOCK_KEY = 0x4349534f02;
+export const CONTROL_MIGRATION_LOCK_KEY = 0x4349534f02;
 
 export interface SchemaMigration {
   version: number;
@@ -115,7 +115,7 @@ export async function migrateControlSchema(
   try {
     client = await pool.connect();
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock($1)', [MIGRATION_LOCK_KEY]);
+    await client.query('SELECT pg_advisory_xact_lock($1)', [CONTROL_MIGRATION_LOCK_KEY]);
     const trackingPresent = await hasMigrationTable(client);
     const objects = await schemaObjects(client);
     if (!trackingPresent && objects.length > 0) {
@@ -174,6 +174,8 @@ export async function assertControlSchema(
   let client: PoolClient | undefined;
   try {
     client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock($1)', [CONTROL_MIGRATION_LOCK_KEY]);
     if (!(await hasMigrationTable(client))) {
       const objects = await schemaObjects(client);
       throw new ControlSchemaError(
@@ -188,7 +190,15 @@ export async function assertControlSchema(
         `control schema version ${installed} is not supported version ${CONTROL_SCHEMA_VERSION}`,
       );
     }
+    await client.query('COMMIT');
   } catch (error) {
+    if (client) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // Preserve the verification/connection failure.
+      }
+    }
     throw asUnavailable(error);
   } finally {
     client?.release();

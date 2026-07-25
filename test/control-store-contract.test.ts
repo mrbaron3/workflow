@@ -17,7 +17,7 @@ describe('language-neutral control-store contract', () => {
     expect(fs.readFileSync(
       path.join(process.cwd(), 'src', 'control-store', 'store.ts'),
       'utf8',
-    )).toContain('FOR UPDATE OF j SKIP LOCKED');
+    )).toContain('FOR UPDATE OF j, r SKIP LOCKED');
   });
 
   it('keeps the v1 JSON fixture compatible with the TypeScript contract', () => {
@@ -33,6 +33,7 @@ describe('language-neutral control-store contract', () => {
       'utf8',
     ));
     expect(JobEnvelopeContract.parse(fixture)).toEqual(fixture);
+    expect(fixture.status).toBe('queued');
   });
 
   it('stores only artifact metadata in the schema', () => {

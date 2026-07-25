@@ -12,5 +12,6 @@
   "payload": {
     "issueNumber": 12
   },
+  "status": "queued",
   "createdAt": "2026-07-25T00:00:00.000Z"
 }
