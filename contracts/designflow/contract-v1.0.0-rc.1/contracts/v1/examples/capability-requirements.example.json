@@ -1,0 +1,74 @@
+{
+  "schemaVersion": "1.0",
+  "requestId": "design-dashboard-001",
+  "revisionId": "design-revision-001",
+  "capabilities": [
+    {
+      "id": "cap-list-registration-status",
+      "kind": "query",
+      "userIntent": "登録Repositoryのdesired／actual状態と異常理由を比較する",
+      "sourceInteractionIds": [
+        "interaction-view-status",
+        "interaction-open-failure"
+      ],
+      "sourceRequirementIds": [
+        "REQ-DASH-001",
+        "REQ-DASH-002"
+      ],
+      "inputDescription": "認証済みoperator contextと任意のRepository filter",
+      "successOutcome": "Registrationごとのdesired state、actual state、last healthy time、last errorを返す",
+      "failureSemantics": [
+        {
+          "condition": "control storeへ到達できない",
+          "userVisibleOutcome": "現在状態を取得できないことと最終正常取得時刻を表示する",
+          "recoverability": "自動再試行し、手動refreshも許可する"
+        }
+      ],
+      "authorization": "control-planeのread権限を持つoperatorだけが利用できる",
+      "latencyExpectation": "通常操作でloading状態を認識でき、結果到着後に同一領域を更新する",
+      "freshnessExpectation": "各actual stateにobservedAtを持ち、staleを成功表示しない",
+      "concurrencySemantics": "同時更新中でも各rowは単一versionのsnapshotとして読める",
+      "idempotencySemantics": "read-onlyで副作用を持たない",
+      "retrySemantics": "一時障害はbounded retryし、継続失敗を可視化する",
+      "cancellationSemantics": "新しいfilter queryが開始されたら旧query結果を適用しない",
+      "paginationSemantics": "登録数がviewport budgetを超える場合も異常Repositoryを優先し、探索可能にする",
+      "auditSemantics": "read操作自体の個別auditは不要だが障害を運用logへ残す"
+    },
+    {
+      "id": "cap-retry-delivery",
+      "kind": "command",
+      "userIntent": "原因確認済みの失敗deliveryを安全に再実行する",
+      "sourceInteractionIds": [
+        "interaction-retry-delivery"
+      ],
+      "sourceRequirementIds": [
+        "REQ-DASH-003"
+      ],
+      "inputDescription": "delivery identity、observed failure version、認証済みoperator context",
+      "successOutcome": "重複しないattempt identityと現在状態を返す",
+      "failureSemantics": [
+        {
+          "condition": "deliveryが既にprocessingまたはprocessed",
+          "userVisibleOutcome": "重複実行せず現在のattempt状態を表示する",
+          "recoverability": "現在状態を再取得して待機または結果確認へ進む"
+        },
+        {
+          "condition": "Registrationがdisabledまたはstale",
+          "userVisibleOutcome": "retryを拒否した理由を表示する",
+          "recoverability": "Registration状態を確認してから再判断する"
+        }
+      ],
+      "authorization": "control-planeのrecovery権限を持つoperatorだけが利用できる",
+      "latencyExpectation": "command受付結果を即時に返し、実処理は状態更新として追跡可能にする",
+      "freshnessExpectation": "操作直前にdeliveryとRegistration versionを再検証する",
+      "concurrencySemantics": "同一deliveryへの競合retryは高々1件だけが新attemptを作る",
+      "idempotencySemantics": "同じidempotency keyの再送は同じattemptを返す",
+      "retrySemantics": "通信失敗時に同一keyで安全に再送できる",
+      "cancellationSemantics": "受付後のattemptは無断で成功扱いにせず、取消可否を状態として返す",
+      "paginationSemantics": "適用なし",
+      "auditSemantics": "actor、delivery、attempt、reason、timeを記録する"
+    }
+  ],
+  "ambiguities": []
+}
+

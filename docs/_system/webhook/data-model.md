@@ -7,3 +7,6 @@
 - **DATA-webhook-005 永続配置（superseded）** — 初期JSON inboxはADR-0013/CISO-02で廃止した。現行の
   `WebhookControlStore`はrouting unit test用の非durable compatibility modelだけであり、production entry pointは
   fail closedする。Delivery/Registrationの唯一のdurable配置は`agentops_control` schema（DATA-control-store-001/003）。
+- **DATA-webhook-006 Registration binding / retry** — deliveryはrouting時の`registration_id`と
+  `registration_version`、期限付きprocessing token、`next_retry_at`、route attemptを保持する。manual retry履歴は
+  `delivery_retry_attempts`へ分離し、同じdelivery/idempotency keyを一意にする。

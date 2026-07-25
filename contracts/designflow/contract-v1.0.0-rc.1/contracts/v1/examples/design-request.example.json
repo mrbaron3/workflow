@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "1.0",
+  "requestId": "design-dashboard-001",
+  "sourceRef": {
+    "provider": "github",
+    "externalId": "acme/control-plane#15",
+    "uri": "https://example.com/acme/control-plane/issues/15",
+    "revision": "issue-snapshot-2026-07-25",
+    "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "productIntent": {
+    "primaryOutcome": "運用者が異常なRepositoryを素早く発見し、安全な次の操作を選べる",
+    "users": [
+      "ローカルAgentOps運用者"
+    ],
+    "usageContext": "複数Repositoryの監視・実行状態を日常的に確認し、障害時に復旧する"
+  },
+  "requirements": [
+    {
+      "id": "REQ-DASH-001",
+      "statement": "登録済みRepositoryだけについてdesired stateとactual stateを区別して確認できる",
+      "priority": "blocker",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "acme/control-plane#15",
+          "uri": "https://example.com/acme/control-plane/issues/15"
+        }
+      ]
+    },
+    {
+      "id": "REQ-DASH-002",
+      "statement": "monitor、forwarder、execution、queueの異常理由と最終正常時刻を確認できる",
+      "priority": "blocker",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "acme/control-plane#15",
+          "uri": "https://example.com/acme/control-plane/issues/15"
+        }
+      ]
+    },
+    {
+      "id": "REQ-DASH-003",
+      "statement": "失敗したdeliveryを原因確認後に重複なくretryできる",
+      "priority": "major",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "acme/control-plane#10",
+          "uri": "https://example.com/acme/control-plane/issues/10"
+        }
+      ]
+    }
+  ],
+  "constraints": [
+    {
+      "id": "CONSTRAINT-DASH-A11Y",
+      "category": "accessibility",
+      "statement": "keyboard、focus、status announcementを含むWCAG 2.2 AA相当を満たす"
+    },
+    {
+      "id": "CONSTRAINT-DASH-SECURITY",
+      "category": "security",
+      "statement": "Dashboardから任意command、host path、credentialを登録できない"
+    }
+  ],
+  "targetSurfaces": [
+    "web"
+  ],
+  "contextRefs": [
+    {
+      "provider": "git",
+      "externalId": "control-plane-requirements",
+      "uri": "https://example.com/acme/control-plane/requirements",
+      "revision": "main"
+    }
+  ],
+  "existingDesignSystemRef": {
+    "provider": "git",
+    "externalId": "control-plane-design-system",
+    "uri": "https://example.com/acme/design-system",
+    "revision": "main",
+    "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "requestedAt": "2026-07-25T03:00:00.000Z"
+}

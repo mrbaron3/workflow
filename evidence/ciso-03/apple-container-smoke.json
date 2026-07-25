@@ -1,0 +1,45 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#13",
+  "runtime": "Apple Container",
+  "runtimeVersion": "container CLI version 1.1.0 (build: release, commit: unspeci)",
+  "images": {
+    "runnerImage": "agentops-runner:ciso03-3080-1784979882611",
+    "controlImage": "agentops-control:ciso03-3080-1784979882611",
+    "controlTestImage": "agentops-control-test:ciso03-3080-1784979882611"
+  },
+  "checks": {
+    "standardOciControlBuild": "passed",
+    "goRacePostgresIntegration": "passed",
+    "designGateAtControlStartup": "passed",
+    "postgresInternalOnly": "passed",
+    "controlLoopbackOnly": "passed",
+    "registrationCreateEnableDisableWithoutRestart": "passed",
+    "desiredActualProjection": "passed",
+    "databaseDisconnectFailClosed": "passed",
+    "databaseReconnectReconstruction": "passed",
+    "controlRestartReconstruction": "passed"
+  },
+  "topology": {
+    "controlPublications": [
+      {
+        "containerPort": 8080,
+        "count": 1,
+        "hostAddress": "127.0.0.1",
+        "hostPort": 53490,
+        "proto": "tcp"
+      }
+    ],
+    "postgresPublications": [],
+    "runnerWasLongRunning": false,
+    "runnerPublications": []
+  },
+  "registration": {
+    "id": "b3341f34-c1be-4eda-84c6-bb72ad0ae56e",
+    "createdVersion": 1,
+    "enabledVersion": 2,
+    "disabledVersion": 3,
+    "restoredVersion": 4
+  },
+  "completedAt": "2026-07-25T11:45:56.469Z"
+}

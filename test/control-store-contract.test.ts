@@ -5,16 +5,20 @@ import { describe, expect, it } from 'vitest';
 import {
   CONTROL_SCHEMA_VERSION,
   JobEnvelopeContract,
+  RepositoryRegistrationInput,
   loadControlMigrations,
 } from '../src/control-store/index.js';
 
 describe('language-neutral control-store contract', () => {
   it('publishes a contiguous checksummed migration set', () => {
     const migrations = loadControlMigrations();
-    expect(migrations.map(({ version }) => version)).toEqual([CONTROL_SCHEMA_VERSION]);
-    expect(migrations[0]?.checksum).toMatch(/^[0-9a-f]{64}$/);
+    expect(migrations.map(({ version }) => version))
+      .toEqual(Array.from({ length: CONTROL_SCHEMA_VERSION }, (_, index) => index + 1));
+    expect(migrations.every(({ checksum }) => /^[0-9a-f]{64}$/.test(checksum))).toBe(true);
     expect(migrations[0]?.sql).toContain('jobs_one_active_per_repository');
     expect(migrations[0]?.sql).toContain('pg_notify');
+    expect(migrations[1]?.sql).toContain('monitor_actual_states');
+    expect(migrations[1]?.sql).toContain('control_api_requests');
     expect(fs.readFileSync(
       path.join(process.cwd(), 'src', 'control-store', 'store.ts'),
       'utf8',
@@ -58,6 +62,49 @@ describe('language-neutral control-store contract', () => {
     expect(validate(unexpected)).toBe(false);
     expect(() => JobEnvelopeContract.parse(unexpected)).toThrow();
     expect(validate({ ...fixture, status: 'unknown' })).toBe(false);
+  });
+
+  it('keeps the Registration fixture compatible across JSON Schema, TypeScript, and Go', () => {
+    const fixture = JSON.parse(fs.readFileSync(
+      path.join(
+        process.cwd(),
+        'contracts',
+        'control-store',
+        'v1',
+        'fixtures',
+        'registration.valid.json',
+      ),
+      'utf8',
+    ));
+    const schema = JSON.parse(fs.readFileSync(
+      path.join(
+        process.cwd(),
+        'contracts',
+        'control-store',
+        'v1',
+        'registration.schema.json',
+      ),
+      'utf8',
+    ));
+    const ajv = new Ajv2020({ strict: true });
+    ajv.addFormat(
+      'uuid',
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    ajv.addFormat('date-time', (value: string) => !Number.isNaN(Date.parse(value)));
+    const validate = ajv.compile(schema);
+    expect(validate(fixture), validate.errors?.map((error) => error.message).join(', '))
+      .toBe(true);
+    expect(RepositoryRegistrationInput.parse(fixture)).toEqual({
+      repository: fixture.repository,
+      enabled: fixture.enabled,
+      issueMonitorEnabled: fixture.issueMonitorEnabled,
+      prMonitorEnabled: fixture.prMonitorEnabled,
+      executionEnabled: fixture.executionEnabled,
+      configuration: fixture.configuration,
+    });
+    expect(validate({ ...fixture, version: 0 })).toBe(false);
+    expect(validate({ ...fixture, repository: 'UNKNOWN/Repo' })).toBe(false);
   });
 
   it('stores only artifact metadata in the schema', () => {

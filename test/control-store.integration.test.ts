@@ -104,14 +104,18 @@ integration('PostgreSQL control store', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-bad-migration-'));
     const directory = path.join(root, 'db', 'control-store', 'migrations');
     fs.mkdirSync(directory, { recursive: true });
-    const valid = fs.readFileSync(
-      path.join(process.cwd(), 'db', 'control-store', 'migrations', '0001_control_store.sql'),
-      'utf8',
-    );
-    fs.writeFileSync(
-      path.join(directory, '0001_control_store.sql'),
-      `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`,
-    );
+    for (const name of ['0001_control_store.sql', '0002_registration_control.sql']) {
+      const valid = fs.readFileSync(
+        path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
+        'utf8',
+      );
+      fs.writeFileSync(
+        path.join(directory, name),
+        name.startsWith('0002_')
+          ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
+          : valid,
+      );
+    }
     await expect(migrateControlSchema(pool, { root })).rejects.toThrow(/failed closed/);
     const result = await pool.query<{ relation: string | null }>(
       `SELECT to_regclass('agentops_control.repository_registrations')::text AS relation`,

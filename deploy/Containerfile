@@ -9,11 +9,7 @@
 #   container build -t agentops-app:dev -f deploy/Containerfile .
 #   docker    build -t agentops-app:dev -f deploy/Containerfile .   # standard-OCI portability check
 #
-# Stage boundary (deps → build → runtime) is the reproducible seam #10 asks #11 to establish so a Go
-# builder for agentops-control (#13/#16) can be added later as an additional stage — e.g.
-#   FROM golang:1.23-bookworm AS control-build
-#   ... build the Go control binary, then COPY --from=control-build into a control image ...
-# without disturbing this TypeScript runner image.
+# Stage boundary keeps the TypeScript runner and Go control-plane release surfaces independent.
 
 # --- deps: resolve the full dependency graph from the lockfile (reproducible) -------------------
 FROM node:22-bookworm-slim AS deps
@@ -28,6 +24,26 @@ WORKDIR /app
 COPY . .
 # Grounds "build/typecheck grader runs inside the container with no Mac absolute path" (issue #11 AC).
 RUN npm run typecheck && npm run build
+
+# --- control-build: compile and unit-test the Registration-driven Go control plane ----------------
+FROM golang:1.24-bookworm AS control-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+COPY contracts ./contracts
+COPY evidence ./evidence
+COPY db ./db
+COPY docs ./docs
+RUN go test ./... \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+      -o /out/agentops-control ./cmd/agentops-control
+
+# Integration-test target. It is run on the internal test network with AGENTOPS_TEST_DATABASE_URL;
+# PostgreSQL does not publish a host port in the grounded Apple Container smoke.
+FROM control-build AS control-test
+CMD ["go", "test", "-race", "./..."]
 
 # --- runtime: the application image ------------------------------------------------------------
 # Runs the harness via the tsx launcher (bin/agentops.mjs). Retains the toolchain so the in-container
@@ -52,3 +68,20 @@ WORKDIR /app
 COPY --from=build --chown=node:node /app /app
 USER node
 CMD ["node", "bin/agentops.mjs"]
+
+# --- control: Go agentops-control + fixed gh forwarder adapter ------------------------------------
+FROM debian:bookworm-slim AS control
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates gh \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 65532 --create-home --shell /usr/sbin/nologin agentops
+ENV AGENTOPS_APP_ROOT=/app \
+    AGENTOPS_CONTROL_LISTEN=0.0.0.0:8080
+WORKDIR /app
+COPY --from=control-build /out/agentops-control /usr/local/bin/agentops-control
+COPY --from=control-build /src/contracts /app/contracts
+COPY --from=control-build /src/evidence /app/evidence
+COPY --from=control-build /src/db /app/db
+USER agentops
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/agentops-control"]

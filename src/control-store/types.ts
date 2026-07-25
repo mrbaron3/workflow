@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const CONTROL_SCHEMA_VERSION = 1;
+export const CONTROL_SCHEMA_VERSION = 2;
 
 export const RepositoryRegistrationInput = z.object({
   repository: z.string().trim().toLowerCase()

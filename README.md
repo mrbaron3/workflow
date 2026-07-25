@@ -252,41 +252,38 @@ values fall back to `DEFAULT_GITHUB_WATCH_INTERVAL_MS` (30000 ms).
 
 ### Multi-repository webhook control
 
-Webhook remains an immediate trigger and polling remains the truth-recovery path. CISO-02 moved
-Registration/delivery/job/lease control state to PostgreSQL and disabled the legacy local daemon
-rather than allowing its former JSON store to become a second SoT. The command below now fails
-closed until CISO-03 supplies the PostgreSQL-driven control process:
+Webhook remains an immediate trigger and polling remains the truth-recovery path.
+`agentops-control` is the PostgreSQL Registration-driven production process: it exposes the
+operator Control API, supervises per-Registration Issue/PR monitors and `gh webhook forward`,
+persists webhook deliveries before acknowledgement, and routes webhook/poll observations through
+the same idempotent queue.
 
 ```bash
-export AGENTOPS_WEBHOOK_CONTROL_TOKEN='<random local bearer token>'
+AGENTOPS_DATABASE_URL='postgresql://…' npm run control-store:migrate
+export AGENTOPS_DATABASE_URL='postgresql://…'
+export AGENTOPS_CONTROL_TOKEN='<random operator bearer token>'
 export AGENTOPS_GITHUB_WEBHOOK_SECRET='<GitHub webhook secret>'
-npm run harness -- webhook-daemon --open
+export GH_TOKEN='<GitHub token>'
+go run ./cmd/agentops-control
 ```
 
-Both credentials are still validated before the explicit migration refusal so unsafe historical
-invocations do not silently change behavior. The old GUI/router types remain as a non-durable unit
-compatibility oracle for CISO-03; no production entry point reads or writes a JSON control store.
-Apply the PostgreSQL schema with `AGENTOPS_DATABASE_URL=… npm run control-store:migrate`.
+The operator API defaults to port 8080 and should be published to loopback only; PostgreSQL and
+runner ports must stay internal. Its contract is
+[`contracts/control-api/v1/openapi.yaml`](contracts/control-api/v1/openapi.yaml). Create requires
+`Idempotency-Key`, update/disable requires `If-Match: "<registration version>"`, and all operator
+routes require `Authorization: Bearer …`. Public webhook ingress is disabled unless the HMAC secret
+is configured.
 
-The `agentops` consumer runs the fixed `github-turn` entry point—never a registration-supplied
-shell command. Each registration's `workspaceRoot` must contain a harness config whose
-`intake.repository` matches the registered `owner/name`; separate repositories may therefore use
-separate workspaces while sharing this daemon and GUI. When set in the registration,
-`readyLabel` and `baseBranch` are validated invocation-scoped overrides for that turn and take
-precedence over the workspace's `intake.readyLabel` and gate/base branch without rewriting its
-config file. Empty registration values defer to the workspace configuration. The optional
-`orca-worktree-sync` adapter
-uses `--orca-sync-script F` (or `AGENTOPS_ORCA_SYNC_SCRIPT`) and preserves the old merged-PR/push
-event mapping without hard-coding a macOS path.
+Polling defaults to one minute and shares the same per-repository single-flight queue as webhook
+deliveries. Configure `AGENTOPS_GITHUB_POLL_INTERVAL` and
+`AGENTOPS_RECONCILIATION_INTERVAL` with positive Go durations. `LISTEN/NOTIFY` only accelerates
+wake-up: periodic PostgreSQL reconciliation remains the recovery path after missed notifications,
+control restart, forwarder exit, or DB reconnect. Unknown, disabled, stale, or disconnected
+Registrations never create jobs.
 
-Polling reconciliation defaults to 30000 ms and shares the same per-repository single-flight queue
-as webhook deliveries. Configure it with `--reconcile-interval-ms N`; use `--no-reconcile` only
-for diagnostics. Do not run `watch-github` against the same workspace at the same time as this
-daemon. Repository registration is the only intake boundary: each turn also discovers existing
-and new same-repository Open PRs targeting the configured base branch, imports each PR number
-idempotently, and reviews every unseen current head. Draft heads are reviewed but remain pending
-until ready; fork heads are not auto-repaired because target-repository write authority is not
-assumed.
+The old TypeScript GUI/router types remain as a non-durable PR #9 compatibility oracle. The legacy
+`webhook-daemon` production command remains fail closed; no production entry point reads or writes
+a JSON control store, and evaluation-domain `.harness/db.json` is unchanged.
 
 Claiming removes `ready` and adds `agent-claimed`. The first source snapshot and every planning /
 UI-design / generation / perspective invocation retain stable provenance in `.harness/db.json`; restarts reuse

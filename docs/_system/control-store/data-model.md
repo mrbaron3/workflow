@@ -12,5 +12,9 @@
 - **DATA-control-store-008** `released_builds` / `build_defects` — panel/gate/build identityと、個別照会可能な複数
   escape/oracle mismatch。
 - **DATA-control-store-009** `schema_migrations` — version、filename、SHA-256 checksum。
+- **DATA-control-store-010** `monitor_actual_states` — Registration version付きcomponent actual state、
+  supervisor、observed/healthy/error。
+- **DATA-control-store-011** `control_api_requests` / `delivery_retry_attempts` — command idempotency、
+  request hash/response、operator retry attempt。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)

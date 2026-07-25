@@ -18,8 +18,9 @@ docker    build -t agentops-app:dev -f deploy/Containerfile .   # 可搬性（�
 - `runtime` stage は非 root（`node` uid 1000）で動く。
 - `build` stage で `npm run typecheck` を通し、「build/typecheck grader がコンテナ内・コンテナ相対 path で走る」ことを
   ビルド時に接地する。
-- Go 製 agentops-control（#13/#16）は将来 `control-build` stage を追加して差し込む seam を Containerfile 冒頭に明記済み。
-  この TypeScript runner イメージには手を入れない。
+- `control-build` はGo unit test後に静的`agentops-control`をbuildし、`control-test`はrace/integration用、
+  `control`は非rootのproduction imageである。TypeScript `runtime`とは独立したstageなのでrunner release surfaceを
+  変更しない。
 
 ## runtime adapter 境界
 
@@ -62,3 +63,30 @@ npm run smoke:postgres:apple
 
 Apple Containerのext4 named volumeには`lost+found`があるため、volumeは`/var/lib/postgresql`へmountし、
 `PGDATA=/var/lib/postgresql/data`を指定する。PostgreSQLとrunnerにhost publishはない。
+
+## Registration-driven Go control（CISO-03）
+
+```sh
+container build --target control -t agentops-control:dev -f deploy/Containerfile .
+container run --detach --name agentops-control \
+  --network <internal-network> \
+  --publish 127.0.0.1:8080:8080 \
+  --env AGENTOPS_DATABASE_URL='postgresql://…' \
+  --env AGENTOPS_CONTROL_TOKEN='<operator-token>' \
+  --env AGENTOPS_GITHUB_WEBHOOK_SECRET='<webhook-secret>' \
+  --env GH_TOKEN='<github-token>' \
+  agentops-control:dev
+```
+
+`control`だけをloopbackへpublishし、PostgreSQL/runnerはpublishしない。通常起動はDDLを変更せずschema version 2と
+両migration checksumをverifyする。起動前にpinned Experience Design Bundleのapproval/revision/digest/capability
+coverageも検証し、不一致ならHTTP serverを開始しない。
+
+実Apple Containerでdynamic enable/disable、desired/actual、DB切断fail-closed、同process reconnect、
+control restart reconstruction、publish surfaceを接地する:
+
+```sh
+npm run smoke:control:apple
+```
+
+証跡は`evidence/ciso-03/apple-container-smoke.json`へ出力される。

@@ -1,0 +1,277 @@
+{
+  "schemaVersion": "1.0",
+  "requestId": "design-dashboard-001",
+  "revisionId": "design-revision-001",
+  "pagePurposes": [
+    {
+      "id": "purpose-control-dashboard",
+      "name": "Repository operation overview",
+      "primaryPurpose": "異常のあるRepositoryを発見し、原因を理解して安全な次の操作を選ぶ",
+      "successOutcome": "対象Repository、異常理由、影響、推奨操作を同一画面で判断できる",
+      "secondaryPurposes": [
+        "全体の運転modeを確認する"
+      ],
+      "outOfScope": [
+        "raw database recordの直接編集",
+        "任意shell commandの実行"
+      ],
+      "sourceRequirementIds": [
+        "REQ-DASH-001",
+        "REQ-DASH-002",
+        "REQ-DASH-003"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-diagnose-repository",
+      "pagePurposeId": "purpose-control-dashboard",
+      "goal": "異常なRepositoryと原因を特定する",
+      "criticality": "primary",
+      "frequency": "frequent",
+      "sourceRequirementIds": [
+        "REQ-DASH-001",
+        "REQ-DASH-002"
+      ]
+    },
+    {
+      "id": "task-retry-delivery",
+      "pagePurposeId": "purpose-control-dashboard",
+      "goal": "原因を確認した失敗deliveryをretryする",
+      "criticality": "secondary",
+      "frequency": "occasional",
+      "sourceRequirementIds": [
+        "REQ-DASH-003"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-diagnose",
+      "taskId": "task-diagnose-repository",
+      "name": "Repository anomaly diagnosis",
+      "steps": [
+        {
+          "id": "interaction-view-status",
+          "actorAction": "Dashboardを開く",
+          "systemResponse": "運転modeと異常Repositoryを優先表示する",
+          "resultingState": "overview-loaded",
+          "capabilityRequirementIds": [
+            "cap-list-registration-status"
+          ]
+        },
+        {
+          "id": "interaction-open-failure",
+          "actorAction": "異常Repositoryを選択する",
+          "systemResponse": "異常理由、影響、最終正常時刻、推奨操作を表示する",
+          "resultingState": "failure-detail-visible",
+          "capabilityRequirementIds": [
+            "cap-list-registration-status"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow-retry-delivery",
+      "taskId": "task-retry-delivery",
+      "name": "Failed delivery recovery",
+      "steps": [
+        {
+          "id": "interaction-retry-delivery",
+          "actorAction": "失敗理由の直下にあるretryを選択する",
+          "systemResponse": "重複を排除して新attemptを受け付け、同じ位置へ結果を表示する",
+          "resultingState": "retry-requested",
+          "capabilityRequirementIds": [
+            "cap-retry-delivery"
+          ]
+        }
+      ]
+    }
+  ],
+  "effortBudgets": [
+    {
+      "id": "effort-diagnose",
+      "taskId": "task-diagnose-repository",
+      "maxPrimaryActions": 1,
+      "maxDecisions": 1,
+      "maxContextSwitches": 0,
+      "repeatedInputAllowed": false,
+      "rationale": "異常発見と原因確認を1画面内で完了し、監視時の認知負荷を抑える"
+    },
+    {
+      "id": "effort-retry",
+      "taskId": "task-retry-delivery",
+      "maxPrimaryActions": 2,
+      "maxDecisions": 1,
+      "maxContextSwitches": 0,
+      "repeatedInputAllowed": false,
+      "rationale": "対象IDの再入力を求めず、原因確認から安全なretryまで連続させる"
+    }
+  ],
+  "regions": [
+    {
+      "id": "region-global-status",
+      "pagePurposeId": "purpose-control-dashboard",
+      "purpose": "運転modeと全体異常を最初に伝える",
+      "order": 1,
+      "groupingRationale": "全Repositoryに影響する情報を個別状態より先に判断させる",
+      "prominence": "primary",
+      "responsiveBehavior": "全viewportで先頭に維持し、異常文言を省略しない",
+      "supportsTaskIds": [
+        "task-diagnose-repository"
+      ]
+    },
+    {
+      "id": "region-repository-list",
+      "pagePurposeId": "purpose-control-dashboard",
+      "purpose": "異常Repositoryを正常Repositoryより先に比較可能にする",
+      "order": 2,
+      "groupingRationale": "Repository単位のdesired／actual差を同じ視線移動で比較する",
+      "prominence": "primary",
+      "responsiveBehavior": "狭い画面ではcardへ変換し、異常理由を隠さない",
+      "supportsTaskIds": [
+        "task-diagnose-repository"
+      ]
+    },
+    {
+      "id": "region-failure-detail",
+      "pagePurposeId": "purpose-control-dashboard",
+      "purpose": "選択した異常の原因と復旧操作を近接表示する",
+      "order": 3,
+      "groupingRationale": "原因を読んだ直後に対応を選べるよう、説明と操作を同じregionへ置く",
+      "prominence": "secondary",
+      "responsiveBehavior": "狭い画面ではlistの直後へ展開し、別pageへ遷移しない",
+      "supportsTaskIds": [
+        "task-diagnose-repository",
+        "task-retry-delivery"
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "id": "element-mode-status",
+      "regionId": "region-global-status",
+      "kind": "status",
+      "label": "Current operating mode",
+      "supportsPurposeIds": [
+        "purpose-control-dashboard"
+      ],
+      "supportsTaskIds": [
+        "task-diagnose-repository"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "always",
+      "placementRationale": "全操作の可否を左右するためpage先頭に置く",
+      "interactionRationale": "表示専用とし、mode変更は別の明示操作へ分離する",
+      "removalImpact": "MONITOR_ONLYとACTIVEを誤認し、実行不能を障害と判断する",
+      "sourceRequirementIds": [
+        "REQ-DASH-001"
+      ]
+    },
+    {
+      "id": "element-repository-row",
+      "regionId": "region-repository-list",
+      "kind": "repository-status-card",
+      "label": "Repository desired and actual state",
+      "supportsPurposeIds": [
+        "purpose-control-dashboard"
+      ],
+      "supportsTaskIds": [
+        "task-diagnose-repository"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "registration exists",
+      "placementRationale": "global modeの直後に異常優先で並べ、対象発見までの探索を減らす",
+      "interactionRationale": "選択で同一画面のfailure detailを更新する",
+      "removalImpact": "対象Repositoryを選べず、Dashboardの主目的を達成できない",
+      "sourceRequirementIds": [
+        "REQ-DASH-001",
+        "REQ-DASH-002"
+      ]
+    },
+    {
+      "id": "element-failure-summary",
+      "regionId": "region-failure-detail",
+      "kind": "alert",
+      "label": "Failure reason and impact",
+      "supportsPurposeIds": [
+        "purpose-control-dashboard"
+      ],
+      "supportsTaskIds": [
+        "task-diagnose-repository",
+        "task-retry-delivery"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "selected repository has a failure",
+      "placementRationale": "復旧操作より先に原因と影響を理解させる",
+      "interactionRationale": "error codeだけでなく利用者が判断できる文言を提示する",
+      "removalImpact": "原因未確認のままretryする危険が生じる",
+      "sourceRequirementIds": [
+        "REQ-DASH-002",
+        "REQ-DASH-003"
+      ]
+    },
+    {
+      "id": "element-retry-button",
+      "regionId": "region-failure-detail",
+      "kind": "button",
+      "label": "Retry failed delivery",
+      "supportsPurposeIds": [
+        "purpose-control-dashboard"
+      ],
+      "supportsTaskIds": [
+        "task-retry-delivery"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "selected delivery is failed and retry is permitted",
+      "placementRationale": "failure summary直下に置き、原因確認から復旧までのcontext switchをなくす",
+      "interactionRationale": "delivery IDの再入力なしでidempotent retryを要求する",
+      "removalImpact": "復旧にCLIが必要となり、Dashboard内で目的を完了できない",
+      "sourceRequirementIds": [
+        "REQ-DASH-003"
+      ]
+    }
+  ],
+  "attentionHierarchies": [
+    {
+      "pagePurposeId": "purpose-control-dashboard",
+      "levels": [
+        {
+          "level": 1,
+          "reason": "全体modeと異常対象が最初の判断に必要",
+          "regionIds": [
+            "region-global-status",
+            "region-repository-list"
+          ],
+          "elementIds": [
+            "element-mode-status",
+            "element-repository-row"
+          ]
+        },
+        {
+          "level": 2,
+          "reason": "対象選択後に原因と安全な操作を判断する",
+          "regionIds": [
+            "region-failure-detail"
+          ],
+          "elementIds": [
+            "element-failure-summary",
+            "element-retry-button"
+          ]
+        }
+      ]
+    }
+  ],
+  "accessibilityTarget": {
+    "standard": "WCAG 2.2",
+    "level": "AA",
+    "requirements": [
+      "状態を色だけで伝えない",
+      "全操作をkeyboardで完了できる",
+      "状態更新をlive regionで通知する",
+      "focusを選択対象とdetail間で予測可能に管理する"
+    ]
+  },
+  "ambiguities": []
+}
+

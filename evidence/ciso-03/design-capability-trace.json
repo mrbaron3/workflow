@@ -1,0 +1,87 @@
+{
+  "schemaVersion": "1.0",
+  "providerRef": "mrbaron3/designflow@contract-v1.0.0-rc.1",
+  "providerCommit": "ce732a80a8c3867b4ac881531ce8f7546e001dbb",
+  "requestId": "design-dashboard-001",
+  "revisionId": "design-revision-001",
+  "bundleDigest": "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97",
+  "issue": "mrbaron3/workflow#13",
+  "bindings": [
+    {
+      "capabilityId": "cap-list-registration-status",
+      "apiElements": [
+        "GET /v1/registrations"
+      ],
+      "systemElements": [
+        "ARCH-registration-control-001",
+        "ARCH-registration-control-002",
+        "ARCH-registration-control-003"
+      ],
+      "issueACs": [
+        "AC-CISO-001",
+        "AC-CISO-002"
+      ],
+      "facets": {
+        "queryCommand": [
+          "GET is read-only; optional repository filter and anomaly-first pageToken pagination"
+        ],
+        "authorization": [
+          "Bearer operator token is verified with constant-time comparison"
+        ],
+        "freshness": [
+          "observedAt/lastHealthyAt/stale are projected per component; DB failure is HTTP 503"
+        ],
+        "idempotency": [
+          "GET has no side effects and no durable mutation"
+        ],
+        "failure": [
+          "unknown/stale/disconnected state is never projected as healthy; 503 includes only lastSuccessfulAt and bounded-retry metadata"
+        ],
+        "retryCancel": [
+          "Retry-After bounds transient retries; clients may issue a newer query and discard the older pageToken lineage"
+        ],
+        "audit": [
+          "query failures are emitted to structured operational logs; reads do not create per-user audit rows"
+        ]
+      }
+    },
+    {
+      "capabilityId": "cap-retry-delivery",
+      "apiElements": [
+        "POST /v1/deliveries/{deliveryId}/retry"
+      ],
+      "systemElements": [
+        "ARCH-registration-control-004",
+        "ARCH-registration-control-005",
+        "ARCH-registration-control-006"
+      ],
+      "issueACs": [
+        "AC-CISO-001",
+        "AC-CISO-002"
+      ],
+      "facets": {
+        "queryCommand": [
+          "command accepts deliveryId and observedAttempts and returns attemptId/state"
+        ],
+        "authorization": [
+          "Bearer operator token is required; actor is persisted"
+        ],
+        "freshness": [
+          "delivery status, route attempts, Registration enabled flag and version are locked and revalidated"
+        ],
+        "idempotency": [
+          "Idempotency-Key returns the same attempt; conflicting payload reuse is HTTP 409"
+        ],
+        "failure": [
+          "processing/processed, disabled, missing, and stale Registration are rejected with reason/current state/routeAttempts and without a new attempt"
+        ],
+        "retryCancel": [
+          "transport retry uses the same key; accepted attempt returns cancellable=false rather than implying cancellation"
+        ],
+        "audit": [
+          "actor, delivery, attempt, observed version and time are persisted transactionally"
+        ]
+      }
+    }
+  ]
+}
