@@ -9,7 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import { Store } from '../src/store/store.js';
-import { Issue } from '../src/domain/schema.js';
+import { EvalRun, Issue, PR } from '../src/domain/schema.js';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import { driveOnce, driveIssueOnce, applyPanelVerdict, recordHumanDecision } from '../src/pipeline/execution/loop.js';
 import { PERSPECTIVES, type PerspectiveGrader } from '../src/pipeline/panel.js';
@@ -158,6 +158,169 @@ describe('AC-LOOP-007: human rejection does not release and is recorded (false-p
     recordHumanDecision(store, 'ISSUE-1', 'reject');
     expect(store.getIssue('ISSUE-1')!.status).not.toBe('released');
     for (const r of store.runsForIssue('ISSUE-1')) expect(r.humanVerdict).toBe('request_changes');
+  });
+});
+
+describe('current-head winning sample selection', () => {
+  const currentRevisionId = 'PRREV-CURRENT';
+  const currentHeadSha = 'a'.repeat(40);
+  const oldRevisionId = 'PRREV-OLD';
+  const oldHeadSha = 'b'.repeat(40);
+
+  function seedBoundGate(store: Store, issueId: string): string {
+    addIssue(store, issueId);
+    for (const status of [
+      'ready-for-generation',
+      'generation-in-progress',
+      'ready-for-evaluation',
+      'evaluation-in-progress',
+      'build-approved',
+      'needs-human-review',
+    ] as const) {
+      store.setStatus(issueId, status);
+    }
+    return store.addPR(PR.parse({
+      id: store.nextId('PR'),
+      issueId,
+      branch: `agent/${issueId.toLowerCase()}-s0`,
+      baseBranch: 'main',
+      generator: 'mock',
+      attempts: 64,
+      status: 'open',
+      currentRevisionId,
+      headSha: currentHeadSha,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })).id;
+  }
+
+  function addPerspectiveRun(
+    store: Store,
+    input: {
+      issueId: string;
+      prId: string;
+      attempt: number;
+      perspective: string;
+      revisionId: string;
+      headSha: string;
+      verdict?: 'approve' | 'request_changes';
+    },
+  ): EvalRun {
+    return store.addEvalRun(EvalRun.parse({
+      id: store.nextId('EVAL', 5),
+      issueId: input.issueId,
+      prId: input.prId,
+      attempt: input.attempt,
+      sampleIndex: 0,
+      agent: 'mock',
+      verdict: input.verdict ?? 'approve',
+      scores: ones(),
+      overall: 1,
+      cost: {},
+      perspective: input.perspective,
+      revisionId: input.revisionId,
+      headSha: input.headSha,
+      createdAt: `2026-01-01T00:${String(input.attempt).padStart(2, '0')}:00.000Z`,
+    }));
+  }
+
+  function addFullPanel(
+    store: Store,
+    input: {
+      issueId: string;
+      prId: string;
+      attempt: number;
+      revisionId: string;
+      headSha: string;
+      rejectingPerspective?: string;
+    },
+  ): EvalRun[] {
+    return PERSPECTIVES.map(({ key }) => addPerspectiveRun(store, {
+      ...input,
+      perspective: key,
+      verdict: key === input.rejectingPerspective ? 'request_changes' : 'approve',
+    }));
+  }
+
+  it('labels only the complete approving panel for the PR current revision/head', () => {
+    const store = tmpStore('loop-current-head');
+    const issueId = 'ISSUE-CURRENT';
+    const prId = seedBoundGate(store, issueId);
+    const stalePartial = addPerspectiveRun(store, {
+      issueId,
+      prId,
+      attempt: 24,
+      perspective: 'functionality',
+      revisionId: oldRevisionId,
+      headSha: oldHeadSha,
+    });
+    const current = addFullPanel(store, {
+      issueId,
+      prId,
+      attempt: 64,
+      revisionId: currentRevisionId,
+      headSha: currentHeadSha,
+    });
+
+    const result = recordHumanDecision(store, issueId, 'approve');
+
+    expect(result.targetAttempt).toBe(64);
+    expect(result.targetHeadSha).toBe(currentHeadSha);
+    expect(result.labeledRunIds).toEqual(current.map((run) => run.id));
+    expect(stalePartial.humanVerdict).toBeNull();
+    expect(current.every((run) => run.humanVerdict === 'approve')).toBe(true);
+  });
+
+  it('rejects an incomplete current-head panel instead of falling back to an old approval', () => {
+    const store = tmpStore('loop-current-incomplete');
+    const issueId = 'ISSUE-INCOMPLETE';
+    const prId = seedBoundGate(store, issueId);
+    addFullPanel(store, {
+      issueId,
+      prId,
+      attempt: 23,
+      revisionId: oldRevisionId,
+      headSha: oldHeadSha,
+    });
+    addPerspectiveRun(store, {
+      issueId,
+      prId,
+      attempt: 24,
+      perspective: 'functionality',
+      revisionId: currentRevisionId,
+      headSha: currentHeadSha,
+    });
+
+    expect(() => recordHumanDecision(store, issueId, 'approve'))
+      .toThrow(/current PR head attempt 24 does not have the complete required panel/);
+    expect(store.getIssue(issueId)?.status).toBe('needs-human-review');
+    expect(store.runsForIssue(issueId).every((run) => run.humanVerdict === null)).toBe(true);
+  });
+
+  it('rejects a non-approving current-head panel instead of falling back to an old approval', () => {
+    const store = tmpStore('loop-current-rejected');
+    const issueId = 'ISSUE-REJECTED';
+    const prId = seedBoundGate(store, issueId);
+    addFullPanel(store, {
+      issueId,
+      prId,
+      attempt: 23,
+      revisionId: oldRevisionId,
+      headSha: oldHeadSha,
+    });
+    addFullPanel(store, {
+      issueId,
+      prId,
+      attempt: 24,
+      revisionId: currentRevisionId,
+      headSha: currentHeadSha,
+      rejectingPerspective: 'security',
+    });
+
+    expect(() => recordHumanDecision(store, issueId, 'approve'))
+      .toThrow(/current PR head panel is not approve/);
+    expect(store.getIssue(issueId)?.status).toBe('needs-human-review');
+    expect(store.runsForIssue(issueId).every((run) => run.humanVerdict === null)).toBe(true);
   });
 });
 

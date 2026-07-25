@@ -670,6 +670,7 @@ function cmdDecide(pos: string[]): void {
   store.save();
   if (!res.changed) return void log(c.yellow(`no-op:`) + ` ${issueId} is already released`);
   log(c.green('✓ decided') + ` ${c.b(issueId)}: ${decision} → status=${c.b(res.status)}`);
+  log(c.dim(`  target attempt=${res.targetAttempt} headSha=${res.targetHeadSha ?? 'legacy-unbound'}`));
   if (res.labeledRunIds.length) log(c.dim(`  humanVerdict recorded on ${res.labeledRunIds.length} run(s): ${res.labeledRunIds.join(', ')}`));
 }
 
@@ -678,16 +679,23 @@ function cmdLabel(flags: Args['flags']): void {
   const runId = flags.run;
   const human = flags.human;
   if (typeof runId !== 'string' || typeof human !== 'string') {
-    log(c.red('Usage: agentops label --run EVAL-00001 --human approve|request_changes|needs_human'));
-    process.exit(1);
-  }
-  const parsed = Verdict.safeParse(human);
-  if (!parsed.success) {
-    log(c.red(`Invalid verdict '${human}'. Use approve | request_changes | needs_human.`));
+    log(c.red('Usage: agentops label --run EVAL-00001 --human approve|request_changes|needs_human|clear'));
     process.exit(1);
   }
   const run = store.db.evalRuns.find((r) => r.id === runId);
   if (!run) return void log(c.red(`No such eval run: ${runId}`));
+  if (human === 'clear') {
+    const previous = run.humanVerdict;
+    run.humanVerdict = null;
+    store.save();
+    if (previous === null) return void log(c.yellow('no-op:') + ` ${runId} has no humanVerdict`);
+    return void log(c.green('✓ cleared') + ` ${runId}: humanVerdict=${previous} → null`);
+  }
+  const parsed = Verdict.safeParse(human);
+  if (!parsed.success) {
+    log(c.red(`Invalid verdict '${human}'. Use approve | request_changes | needs_human | clear.`));
+    process.exit(1);
+  }
   run.humanVerdict = parsed.data;
   store.save();
   const agree = run.verdict === parsed.data;
@@ -796,7 +804,7 @@ ${c.b('Commands')}
   decline <ID> --reason T  retire an issue into terminal closed (judgment point, audited; never automatic)
   retire <TASK-ID> --reason T  retire a regression eval task from execution (capture history stays)
   decide <ID> approve|reject  the human review gate for a needs-human-review build
-  label --run ID --human approve|request_changes
+  label --run ID --human approve|request_changes|clear
   intervene <ID> --kind K --reason T  attest a human HOW-intervention (autonomy axis)
   demo [--open]        run the entire loop on the sample roadmap
   help

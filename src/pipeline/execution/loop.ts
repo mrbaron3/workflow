@@ -23,7 +23,13 @@ import type { RepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
 import { makeRunner, type AgentRunner } from '../../agents/runner.js';
 import { pollable } from './guard.js';
-import { runPanel, aggregatePanelVerdict, type RunPanelOptions, type PanelResult } from '../panel.js';
+import {
+  PERSPECTIVES,
+  runPanel,
+  aggregatePanelVerdict,
+  type RunPanelOptions,
+  type PanelResult,
+} from '../panel.js';
 import { buildPanelRepairBrief, toGenerateBrief } from '../repair.js';
 
 /**
@@ -64,6 +70,8 @@ export interface RecordDecisionResult {
   status: string;
   changed: boolean;
   labeledRunIds: string[];
+  targetAttempt: number | null;
+  targetHeadSha: string | null;
 }
 
 /**
@@ -78,34 +86,146 @@ export function recordHumanDecision(store: Store, issueId: string, decision: Hum
   const issue = store.getIssue(issueId);
   if (!issue) throw new Error(`no such issue: ${issueId}`);
   if (issue.status === 'released') {
-    return { issueId, status: issue.status, changed: false, labeledRunIds: [] }; // idempotent
+    return {
+      issueId,
+      status: issue.status,
+      changed: false,
+      labeledRunIds: [],
+      targetAttempt: null,
+      targetHeadSha: null,
+    }; // idempotent
   }
 
   const label: Verdict = decision === 'approve' ? 'approve' : 'request_changes';
   const winning = winningSampleRuns(store, issueId);
-  for (const r of winning) r.humanVerdict = label;
+  for (const r of winning.runs) r.humanVerdict = label;
 
   if (decision === 'approve') {
     store.setStatus(issueId, 'released');
   } else if (issue.status !== 'changes-requested') {
     store.setStatus(issueId, 'changes-requested');
   }
-  return { issueId, status: store.getIssue(issueId)!.status, changed: true, labeledRunIds: winning.map((r) => r.id) };
+  return {
+    issueId,
+    status: store.getIssue(issueId)!.status,
+    changed: true,
+    labeledRunIds: winning.runs.map((r) => r.id),
+    targetAttempt: winning.attempt,
+    targetHeadSha: winning.headSha,
+  };
 }
 
-/** The runs of the sample whose panel aggregate approved — the build the human is judging. */
-function winningSampleRuns(store: Store, issueId: string): EvalRun[] {
+interface WinningSample {
+  runs: EvalRun[];
+  attempt: number;
+  headSha: string | null;
+}
+
+interface SampleRunGroup extends WinningSample {
+  prId: string;
+  sampleIndex: number;
+  revisionId: string | null;
+}
+
+const REQUIRED_PERSPECTIVES = PERSPECTIVES.map((perspective) => perspective.key);
+
+function groupedSampleRuns(runs: EvalRun[]): SampleRunGroup[] {
   const byGroup = new Map<string, EvalRun[]>();
-  for (const r of store.runsForIssue(issueId)) {
-    const key = `${r.prId}|${r.attempt}`;
-    const arr = byGroup.get(key) ?? [];
-    arr.push(r);
-    byGroup.set(key, arr);
+  for (const run of runs) {
+    const key = [
+      run.prId,
+      run.sampleIndex,
+      run.attempt,
+      run.revisionId ?? 'unbound',
+      run.headSha ?? 'unbound',
+    ].join('|');
+    const group = byGroup.get(key) ?? [];
+    group.push(run);
+    byGroup.set(key, group);
   }
-  for (const runs of byGroup.values()) {
-    if (aggregatePanelVerdict(runs) === 'approve') return runs;
+  return [...byGroup.values()].map((group) => {
+    const first = group[0]!;
+    return {
+      runs: group,
+      prId: first.prId,
+      sampleIndex: first.sampleIndex,
+      attempt: first.attempt,
+      revisionId: first.revisionId,
+      headSha: first.headSha,
+    };
+  });
+}
+
+function missingRequiredPerspectives(runs: EvalRun[]): string[] {
+  const present = new Set(runs.flatMap((run) => run.perspective === null ? [] : [run.perspective]));
+  return REQUIRED_PERSPECTIVES.filter((perspective) => !present.has(perspective));
+}
+
+/**
+ * The current-head sample whose complete required panel approved — the build the human is
+ * judging. Revision-bound PRs fail closed: historical approvals, partial panels, and a current
+ * panel that did not approve can never become an implicit fallback target.
+ */
+function winningSampleRuns(store: Store, issueId: string): WinningSample {
+  const issueRuns = store.runsForIssue(issueId);
+  const boundPrs = store.db.prs.filter((pr) =>
+    pr.issueId === issueId
+    && pr.currentRevisionId !== null
+    && pr.headSha !== null);
+
+  if (boundPrs.length > 0) {
+    const currentGroups = groupedSampleRuns(issueRuns.filter((run) => {
+      const pr = boundPrs.find((candidate) => candidate.id === run.prId);
+      if (!pr) return false;
+      const targetHeadSha = pr.mergedHeadSha ?? pr.headSha;
+      return run.revisionId === pr.currentRevisionId && run.headSha === targetHeadSha;
+    }));
+    if (currentGroups.length === 0) {
+      throw new Error(`no eval runs match the current PR revision/head for ${issueId}`);
+    }
+
+    const latestByPr = new Map<string, SampleRunGroup>();
+    for (const group of currentGroups) {
+      const previous = latestByPr.get(group.prId);
+      if (!previous || group.attempt > previous.attempt) latestByPr.set(group.prId, group);
+    }
+    const currentHeads = [...latestByPr.values()];
+    const winner = currentHeads.find((group) =>
+      missingRequiredPerspectives(group.runs).length === 0
+      && aggregatePanelVerdict(group.runs) === 'approve');
+    if (winner) return winner;
+
+    const incomplete = currentHeads
+      .map((group) => ({
+        group,
+        missing: missingRequiredPerspectives(group.runs),
+      }))
+      .find(({ missing }) => missing.length > 0);
+    if (incomplete) {
+      throw new Error(
+        `current PR head attempt ${incomplete.group.attempt} does not have the complete required panel; `
+        + `missing perspectives: ${incomplete.missing.join(', ')}`,
+      );
+    }
+    const verdicts = currentHeads
+      .map((group) => `attempt ${group.attempt}=${aggregatePanelVerdict(group.runs)}`)
+      .join(', ');
+    throw new Error(`current PR head panel is not approve for ${issueId}: ${verdicts}`);
   }
-  return [];
+
+  // Legacy/mock store compatibility: without revision coordinates there is no current-head
+  // identity to match, but a partial panel still must never be labelled as a winning sample.
+  for (const group of groupedSampleRuns(issueRuns)) {
+    if (
+      group.revisionId === null
+      && group.headSha === null
+      && missingRequiredPerspectives(group.runs).length === 0
+      && aggregatePanelVerdict(group.runs) === 'approve'
+    ) {
+      return group;
+    }
+  }
+  throw new Error(`no complete approved panel is available for ${issueId}`);
 }
 
 export interface DriveResult {
