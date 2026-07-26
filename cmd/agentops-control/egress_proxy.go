@@ -10,11 +10,13 @@ import (
 	"time"
 )
 
-func runnerEgressProxy(listenAddress, provider string) (*http.Server, error) {
+func runnerEgressProxy(
+	listenAddress, provider, providerAuth string,
+) (*http.Server, error) {
 	if listenAddress == "" {
 		return nil, nil
 	}
-	allowed, err := runnerEgressDestinations(provider)
+	allowed, err := runnerEgressDestinations(provider, providerAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -66,15 +68,31 @@ func runnerEgressProxy(listenAddress, provider string) (*http.Server, error) {
 	}, nil
 }
 
-func runnerEgressDestinations(provider string) (map[string]bool, error) {
+func runnerEgressDestinations(
+	provider, providerAuth string,
+) (map[string]bool, error) {
 	destinations := map[string]bool{
 		"github.com:443":     true,
 		"api.github.com:443": true,
 	}
+	if providerAuth == "none" {
+		return destinations, nil
+	}
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "codex":
-		destinations["api.openai.com:443"] = true
+		switch providerAuth {
+		case "api-key":
+			destinations["api.openai.com:443"] = true
+		case "codex-login":
+			destinations["chatgpt.com:443"] = true
+			destinations["auth.openai.com:443"] = true
+		default:
+			return nil, fmt.Errorf("unsupported Codex provider authentication mode")
+		}
 	case "claude":
+		if providerAuth != "api-key" {
+			return nil, fmt.Errorf("Claude requires api-key provider authentication")
+		}
 		destinations["api.anthropic.com:443"] = true
 	default:
 		return nil, fmt.Errorf("AGENTOPS_RUNNER_PROVIDER must be codex or claude")

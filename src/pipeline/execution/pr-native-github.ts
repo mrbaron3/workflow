@@ -10,7 +10,10 @@ const GithubSha = z.string().regex(/^[0-9a-f]{40}$/i, 'expected a 40-character G
 const GithubCheck = z.object({
   name: z.string().min(1).optional(),
   context: z.string().min(1).optional(),
-  conclusion: z.enum(['SUCCESS', 'NEUTRAL', 'SKIPPED', 'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE']).nullable().optional(),
+  conclusion: z.preprocess(
+    (value) => value === '' ? null : value,
+    z.enum(['SUCCESS', 'NEUTRAL', 'SKIPPED', 'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE']).nullable().optional(),
+  ),
   state: z.enum(['EXPECTED', 'ERROR', 'FAILURE', 'PENDING', 'SUCCESS']).optional(),
   status: z.enum(['QUEUED', 'IN_PROGRESS', 'COMPLETED', 'PENDING', 'SUCCESS', 'FAILURE']).optional(),
 }).refine((check) => Boolean(check.name ?? check.context), 'check requires name or context')

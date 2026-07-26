@@ -12,28 +12,32 @@ import (
 )
 
 type config struct {
-	Prefix             string
-	Network            string
-	PostgresVolume     string
-	RunnerVolume       string
-	PostgresContainer  string
-	ControlContainer   string
-	RunnerContainer    string
-	PostgresImage      string
-	ControlImage       string
-	RunnerImage        string
-	ProjectRoot        string
-	ControlHostPort    int
-	PostgresPassword   string
-	ControlDBPassword  string
-	RunnerDBPassword   string
-	ControlToken       string
-	DashboardToken     string
-	WebhookSecret      string
-	ControlGitHubToken string
-	RunnerGitHubToken  string
-	Provider           string
-	ProviderToken      string
+	Prefix               string
+	Network              string
+	PostgresVolume       string
+	RunnerVolume         string
+	CredentialVolume     string
+	PostgresContainer    string
+	ControlContainer     string
+	RunnerContainer      string
+	PostgresImage        string
+	ControlImage         string
+	RunnerImage          string
+	ProjectRoot          string
+	ControlHostPort      int
+	PostgresPassword     string
+	NextPostgresPassword string
+	ControlDBPassword    string
+	RunnerDBPassword     string
+	ControlToken         string
+	DashboardToken       string
+	WebhookSecret        string
+	ControlGitHubToken   string
+	RunnerGitHubToken    string
+	Provider             string
+	ProviderToken        string
+	CodexAuthPath        string
+	MonitorRepository    string
 }
 
 func loadConfig() (config, error) {
@@ -56,28 +60,41 @@ func loadConfig() (config, error) {
 	}
 	provider := strings.ToLower(environmentValue("AGENTOPS_RUNNER_PROVIDER", "codex"))
 	var providerToken string
+	var codexAuthPath string
 	switch provider {
 	case "codex":
 		providerToken = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+		codexAuthPath = strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_CODEX_AUTH_FILE"))
+		if providerToken == "" && codexAuthPath == "" {
+			if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
+				codexAuthPath = filepath.Join(codexHome, "auth.json")
+			} else if userHome, homeErr := os.UserHomeDir(); homeErr == nil {
+				codexAuthPath = filepath.Join(userHome, ".codex", "auth.json")
+			}
+		}
 	case "claude":
 		providerToken = strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY"))
 	default:
 		return config{}, fmt.Errorf("AGENTOPS_RUNNER_PROVIDER must be codex or claude")
 	}
 	return config{
-		Prefix:             prefix,
-		Network:            prefix + "-internal",
-		PostgresVolume:     prefix + "-postgres-data",
-		RunnerVolume:       prefix + "-runner-workspace",
-		PostgresContainer:  prefix + "-postgres",
-		ControlContainer:   prefix + "-control",
-		RunnerContainer:    prefix + "-runner",
-		PostgresImage:      environmentValue("AGENTOPSCTL_POSTGRES_IMAGE", "postgres:16"),
-		ControlImage:       environmentValue("AGENTOPSCTL_CONTROL_IMAGE", "agentops-control:dev"),
-		RunnerImage:        environmentValue("AGENTOPSCTL_RUNNER_IMAGE", "agentops-runner:dev"),
-		ProjectRoot:        root,
-		ControlHostPort:    port,
-		PostgresPassword:   strings.TrimSpace(os.Getenv("AGENTOPS_POSTGRES_PASSWORD")),
+		Prefix:            prefix,
+		Network:           prefix + "-internal",
+		PostgresVolume:    prefix + "-postgres-data",
+		RunnerVolume:      prefix + "-runner-workspace",
+		CredentialVolume:  prefix + "-runner-credentials",
+		PostgresContainer: prefix + "-postgres",
+		ControlContainer:  prefix + "-control",
+		RunnerContainer:   prefix + "-runner",
+		PostgresImage:     environmentValue("AGENTOPSCTL_POSTGRES_IMAGE", "agentops-postgres:dev"),
+		ControlImage:      environmentValue("AGENTOPSCTL_CONTROL_IMAGE", "agentops-control:dev"),
+		RunnerImage:       environmentValue("AGENTOPSCTL_RUNNER_IMAGE", "agentops-runner:dev"),
+		ProjectRoot:       root,
+		ControlHostPort:   port,
+		PostgresPassword:  strings.TrimSpace(os.Getenv("AGENTOPS_POSTGRES_PASSWORD")),
+		NextPostgresPassword: strings.TrimSpace(
+			os.Getenv("AGENTOPS_NEXT_POSTGRES_PASSWORD"),
+		),
 		ControlDBPassword:  strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_DB_PASSWORD")),
 		RunnerDBPassword:   strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_DB_PASSWORD")),
 		ControlToken:       strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_TOKEN")),
@@ -87,6 +104,11 @@ func loadConfig() (config, error) {
 		RunnerGitHubToken:  strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_GITHUB_TOKEN")),
 		Provider:           provider,
 		ProviderToken:      providerToken,
+		CodexAuthPath:      codexAuthPath,
+		MonitorRepository: strings.ToLower(environmentValue(
+			"AGENTOPS_MONITOR_REPOSITORY",
+			"mrbaron3/workflow",
+		)),
 	}, nil
 }
 
@@ -107,7 +129,6 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 		"AGENTOPS_CONTROL_TOKEN":             value.ControlToken,
 		"AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN": value.DashboardToken,
 		"AGENTOPS_GITHUB_WEBHOOK_SECRET":     value.WebhookSecret,
-		"AGENTOPS_CONTROL_GITHUB_TOKEN":      value.ControlGitHubToken,
 	}
 	for name, secret := range secrets {
 		if len(secret) < 32 {
@@ -119,19 +140,87 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 		value.ControlDBPassword == value.RunnerDBPassword {
 		return fmt.Errorf("PostgreSQL admin, control, and runner credentials must be distinct")
 	}
+	if value.MonitorRepository != "mrbaron3/workflow" {
+		return fmt.Errorf(
+			"AGENTOPS_MONITOR_REPOSITORY is bounded to mrbaron3/workflow for CISO-07",
+		)
+	}
+	if len(value.RunnerGitHubToken) < 20 {
+		return fmt.Errorf(
+			"AGENTOPS_RUNNER_GITHUB_TOKEN is required for the private monitor broker",
+		)
+	}
 	if mode == lifecycle.ModeActive {
-		if len(value.RunnerGitHubToken) < 20 {
-			return fmt.Errorf("AGENTOPS_RUNNER_GITHUB_TOKEN is required for ACTIVE")
-		}
-		if len(value.ProviderToken) < 20 {
-			if value.Provider == "codex" {
-				return fmt.Errorf("OPENAI_API_KEY is required for ACTIVE codex runner")
+		if value.Provider == "codex" && len(value.ProviderToken) < 20 {
+			if err := validateCodexAuthSource(value.CodexAuthPath); err != nil {
+				return err
 			}
-			return fmt.Errorf("ANTHROPIC_API_KEY is required for ACTIVE claude runner")
+		} else if len(value.ProviderToken) < 20 {
+			return fmt.Errorf("ANTHROPIC_API_KEY is required for the isolated runner")
 		}
-		if value.RunnerGitHubToken == value.ControlGitHubToken {
-			return fmt.Errorf("control and runner GitHub credentials must be distinct")
-		}
+	}
+	if value.ControlGitHubToken != "" {
+		return fmt.Errorf(
+			"AGENTOPS_CONTROL_GITHUB_TOKEN is forbidden for the private monitor broker",
+		)
+	}
+	return nil
+}
+
+func (value config) usesCodexAuthFile() bool {
+	return value.Provider == "codex" && len(value.ProviderToken) < 20
+}
+
+func (value config) providerAuth(mode lifecycle.Mode) string {
+	if mode != lifecycle.ModeActive {
+		return "none"
+	}
+	if value.usesCodexAuthFile() {
+		return "codex-login"
+	}
+	return "api-key"
+}
+
+func (value config) usesCodexAuthFileFor(mode lifecycle.Mode) bool {
+	return mode == lifecycle.ModeActive && value.usesCodexAuthFile()
+}
+
+func (value config) validatePostgresRotation() error {
+	if len(value.PostgresPassword) < 32 {
+		return fmt.Errorf("AGENTOPS_POSTGRES_PASSWORD must be at least 32 bytes")
+	}
+	if len(value.NextPostgresPassword) < 32 {
+		return fmt.Errorf("AGENTOPS_NEXT_POSTGRES_PASSWORD must be at least 32 bytes")
+	}
+	if value.NextPostgresPassword == value.PostgresPassword ||
+		value.NextPostgresPassword == value.ControlDBPassword ||
+		value.NextPostgresPassword == value.RunnerDBPassword {
+		return fmt.Errorf(
+			"next PostgreSQL administrator credential must be distinct from current database credentials",
+		)
+	}
+	return nil
+}
+
+func validateCodexAuthSource(source string) error {
+	if strings.TrimSpace(source) == "" {
+		return fmt.Errorf(
+			"OPENAI_API_KEY or AGENTOPS_RUNNER_CODEX_AUTH_FILE is required for ACTIVE codex runner",
+		)
+	}
+	absolute, err := filepath.Abs(source)
+	if err != nil || absolute != source || filepath.Base(absolute) != "auth.json" {
+		return fmt.Errorf("Codex auth source must be an absolute auth.json file")
+	}
+	info, err := os.Lstat(absolute)
+	if err != nil {
+		return fmt.Errorf("Codex auth source is unavailable")
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("Codex auth source must be a regular file")
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("Codex auth source must not be group/world accessible")
 	}
 	return nil
 }

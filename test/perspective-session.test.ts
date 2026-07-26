@@ -232,6 +232,46 @@ describe('restricted repository-PR reviewers', () => {
     },
   );
 
+  it('PR-INTENT copies the runner Codex credential from its private CODEX_HOME', () => {
+    const operatorHome = tmpDir('restricted-runner-operator');
+    const codexHome = tmpDir('restricted-runner-codex-home');
+    fs.writeFileSync(
+      path.join(codexHome, 'auth.json'),
+      '{"credential":"runner-codex-only"}\n',
+      { mode: 0o600 },
+    );
+    const execution = prepareRestrictedReviewExecution(
+      'codex',
+      process.execPath,
+      {
+        operatorHome,
+        parentEnv: {
+          PATH: process.env.PATH,
+          LANG: 'C',
+          CODEX_HOME: codexHome,
+          GITHUB_TOKEN: 'github-secret',
+          HTTP_PROXY: 'http://192.0.2.10:8082',
+          HTTPS_PROXY: 'http://192.0.2.10:8082',
+          NO_PROXY: '192.0.2.20,127.0.0.1,localhost',
+        },
+      },
+    );
+    try {
+      expect(
+        fs.readFileSync(path.join(execution.home, '.codex', 'auth.json'), 'utf8'),
+      ).toContain('runner-codex-only');
+      expect(execution.env).not.toHaveProperty('CODEX_HOME');
+      expect(JSON.stringify(execution.env)).not.toContain('github-secret');
+      expect(execution.env).toMatchObject({
+        HTTP_PROXY: 'http://192.0.2.10:8082',
+        HTTPS_PROXY: 'http://192.0.2.10:8082',
+        NO_PROXY: '192.0.2.20,127.0.0.1,localhost',
+      });
+    } finally {
+      execution.cleanup();
+    }
+  });
+
   it('PR-INTENT tells a no-tool reviewer to return JSON without attempting a file write', () => {
     const prompt = restrictedPerspectivePrompt(
       perspectivePrompt('security', contract, '/tmp/eval/security'),
@@ -293,8 +333,9 @@ describe('restricted repository-PR reviewers', () => {
           'LANG',
           'PATH',
           'TMPDIR',
-          // macOS injects this locale/encoding hint after spawn even for env -i.
-          '__CF_USER_TEXT_ENCODING',
+          // macOS injects this locale/encoding hint after spawn even for env -i;
+          // the standard OCI Linux runner does not.
+          ...(process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []),
         ]);
         expect(actual.HOME).toBe(execution.home);
         expect(actual.HOME).not.toContain(operatorHome);

@@ -22,6 +22,14 @@ type manager struct {
 	runtime *lifecycle.AppleRuntime
 }
 
+const (
+	ProviderProbeTimeout          = 45 * time.Second
+	CredentialSeedReadyTimeout    = 20 * time.Second
+	ContainerReadyPollInterval    = 250 * time.Millisecond
+	CredentialInitializerLifetime = 10 * time.Minute
+	RunnerReadinessLogLines       = 100
+)
+
 type mutationReceipt struct {
 	Mutated bool
 }
@@ -42,6 +50,17 @@ func (manager *manager) Start(
 	if err := manager.ensureRuntime(ctx); err != nil {
 		return err
 	}
+	if build || !manager.runtime.ImageExists(ctx, manager.config.PostgresImage) {
+		if err := manager.runtime.BuildImage(
+			ctx,
+			manager.config.PostgresImage,
+			"postgres",
+			filepath.Join(manager.config.ProjectRoot, "deploy", "Containerfile"),
+			manager.config.ProjectRoot,
+		); err != nil {
+			return err
+		}
+	}
 	if build || !manager.runtime.ImageExists(ctx, manager.config.ControlImage) {
 		if err := manager.runtime.BuildImage(
 			ctx,
@@ -53,8 +72,7 @@ func (manager *manager) Start(
 			return err
 		}
 	}
-	if mode == lifecycle.ModeActive &&
-		(build || !manager.runtime.ImageExists(ctx, manager.config.RunnerImage)) {
+	if build || !manager.runtime.ImageExists(ctx, manager.config.RunnerImage) {
 		if err := manager.runtime.BuildImage(
 			ctx,
 			manager.config.RunnerImage,
@@ -73,6 +91,14 @@ func (manager *manager) Start(
 	}
 	if err := manager.runtime.EnsureVolume(ctx, manager.config.RunnerVolume); err != nil {
 		return err
+	}
+	if manager.config.usesCodexAuthFileFor(mode) {
+		if err := manager.runtime.EnsureVolume(
+			ctx,
+			manager.config.CredentialVolume,
+		); err != nil {
+			return err
+		}
 	}
 	postgresStarted := false
 	controlChanged := false
@@ -110,7 +136,7 @@ func (manager *manager) Start(
 	}
 	startingMode := persisted.State.Mode
 	initialMode = &startingMode
-	if err := manager.validateExistingTopology(ctx); err != nil {
+	if err := manager.validateExistingTopology(ctx, persisted.State.Mode); err != nil {
 		return err
 	}
 	if persisted.State.Mode == lifecycle.ModeActive {
@@ -190,12 +216,12 @@ func (manager *manager) Start(
 			}
 		}
 	}
+	receipt, err := manager.replaceRunner(ctx, mode)
+	runnerChanged = runnerChanged || receipt.Mutated
+	if err != nil {
+		return err
+	}
 	if mode == lifecycle.ModeActive {
-		receipt, err := manager.replaceRunner(ctx, lifecycle.ModeActive)
-		runnerChanged = runnerChanged || receipt.Mutated
-		if err != nil {
-			return err
-		}
 		current, err := manager.databaseStatus(ctx)
 		if err != nil {
 			return err
@@ -210,15 +236,11 @@ func (manager *manager) Start(
 				return err
 			}
 		}
-	} else {
-		if err := manager.removeRunner(ctx); err != nil {
-			return err
-		}
 	}
 	return manager.verifyPublishedSurface(
 		ctx,
 		true,
-		mode == lifecycle.ModeActive,
+		true,
 		mode,
 	)
 }
@@ -277,6 +299,9 @@ func (manager *manager) Drain(
 			return err
 		}
 	}
+	if err := manager.reconcileExpiredRunnerWork(ctx); err != nil {
+		return err
+	}
 	active, attempts, err := manager.inFlight(ctx)
 	if err == nil && active == 0 && attempts == 0 {
 		runner, runtimeErr := manager.runtime.Container(
@@ -295,6 +320,9 @@ func (manager *manager) Drain(
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
+		if err := manager.reconcileExpiredRunnerWork(drainContext); err != nil {
+			return err
+		}
 		active, attempts, err := manager.inFlight(drainContext)
 		if err == nil && active == 0 && attempts == 0 {
 			runner, runtimeErr := manager.runtime.Container(
@@ -323,6 +351,24 @@ func (manager *manager) Drain(
 		case <-ticker.C:
 		}
 	}
+}
+
+func (manager *manager) reconcileExpiredRunnerWork(ctx context.Context) error {
+	_, err := manager.admin(
+		ctx,
+		[]string{
+			"lifecycle",
+			"reconcile-expired",
+			"--max-attempts",
+			strconv.Itoa(lifecycle.DefaultReconcileMaxAttempts),
+			"--retry-base", lifecycle.DefaultReconcileRetryBase.String(),
+		},
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("reconcile expired runner work: %w", err)
+	}
+	return nil
 }
 
 func (manager *manager) Stop(
@@ -419,7 +465,7 @@ func (manager *manager) Status(ctx context.Context) (combinedStatus, error) {
 		if err != nil {
 			return combinedStatus{}, err
 		}
-		result.Containers[role] = actual
+		result.Containers[role] = redactContainerStatus(actual)
 	}
 	if result.Containers["postgres"] != nil &&
 		result.Containers["postgres"].Status.State == "running" &&
@@ -450,6 +496,28 @@ func (manager *manager) Status(ctx context.Context) (combinedStatus, error) {
 		result.LoopbackOnly = !result.ControlReachable && !result.OffLoopbackReachable
 	}
 	return result, nil
+}
+
+func redactContainerStatus(
+	actual *lifecycle.ContainerActual,
+) *lifecycle.ContainerActual {
+	if actual == nil {
+		return nil
+	}
+	redacted := *actual
+	redacted.Configuration = actual.Configuration
+	redacted.Configuration.InitProcess = actual.Configuration.InitProcess
+	redacted.Configuration.InitProcess.Environment = append(
+		[]string(nil),
+		actual.Configuration.InitProcess.Environment...,
+	)
+	for index, entry := range redacted.Configuration.InitProcess.Environment {
+		key, _, present := strings.Cut(entry, "=")
+		if present && lifecycle.CredentialEnvironmentKey(key) {
+			redacted.Configuration.InitProcess.Environment[index] = key + "=***"
+		}
+	}
+	return &redacted
 }
 
 func printStatus(status combinedStatus) {
@@ -526,6 +594,26 @@ func (manager *manager) Open(ctx context.Context) error {
 	return command.Run()
 }
 
+func (manager *manager) RotatePostgresAdmin(
+	ctx context.Context,
+	requestID string,
+) error {
+	if err := manager.config.validatePostgresRotation(); err != nil {
+		return err
+	}
+	if err := manager.ensureRuntime(ctx); err != nil {
+		return err
+	}
+	_, err := manager.admin(
+		ctx,
+		[]string{"rotate-postgres-admin", "--request-id", requestID},
+		map[string]string{
+			"AGENTOPS_NEXT_POSTGRES_PASSWORD": manager.config.NextPostgresPassword,
+		},
+	)
+	return err
+}
+
 func (manager *manager) ensureRuntime(ctx context.Context) error {
 	capability := manager.runtime.Capability(ctx)
 	if !capability.Available {
@@ -544,6 +632,10 @@ func (manager *manager) ensureRuntime(ctx context.Context) error {
 }
 
 func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
+	spec := manager.postgresSpec()
+	if err := manager.sealSpec(ctx, &spec); err != nil {
+		return false, err
+	}
 	actual, err := manager.runtime.Container(ctx, manager.config.PostgresContainer)
 	if err != nil {
 		return false, err
@@ -553,13 +645,30 @@ func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
 			return false, fmt.Errorf("postgres container name is owned by another deployment")
 		}
 		if actual.Status.State == "running" {
+			if err := validatePostgresActual(actual, manager.config); err != nil {
+				return false, err
+			}
+			if err := validateSpecActual(actual, spec); err != nil {
+				return false, fmt.Errorf(
+					"PostgreSQL image/spec drift requires DRAINING, stop, and volume-preserving restart: %w",
+					err,
+				)
+			}
 			return false, manager.waitPostgres(ctx)
 		}
 		if err := manager.runtime.Delete(ctx, manager.config.PostgresContainer); err != nil {
 			return false, err
 		}
 	}
-	_, err = manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+	_, err = manager.runtime.RunContainer(ctx, spec)
+	if err != nil {
+		return false, err
+	}
+	return true, manager.waitPostgres(ctx)
+}
+
+func (manager *manager) postgresSpec() lifecycle.ContainerSpec {
+	return lifecycle.ContainerSpec{
 		Name:     manager.config.PostgresContainer,
 		Role:     "postgres",
 		Image:    manager.config.PostgresImage,
@@ -575,11 +684,7 @@ func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
 		}},
 		Tmpfs: []string{"/tmp", "/run/postgresql"},
 		Init:  true, Detach: true,
-	})
-	if err != nil {
-		return false, err
 	}
-	return true, manager.waitPostgres(ctx)
 }
 
 func (manager *manager) waitPostgres(ctx context.Context) error {
@@ -680,16 +785,7 @@ func (manager *manager) recoverDraining(
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if _, err := manager.admin(
-			ctx,
-			[]string{
-				"lifecycle",
-				"reconcile-expired",
-				"--max-attempts", "3",
-				"--retry-base", "5s",
-			},
-			nil,
-		); err != nil {
+		if err := manager.reconcileExpiredRunnerWork(ctx); err != nil {
 			return lifecycle.Status{}, err
 		}
 		current, err := manager.databaseStatus(ctx)
@@ -758,17 +854,6 @@ func (manager *manager) transition(
 		)
 	}
 	return result.State, nil
-}
-
-func (manager *manager) removeRunner(ctx context.Context) error {
-	if err := manager.gracefulStop(
-		ctx,
-		manager.config.RunnerContainer,
-		20*time.Second,
-	); err != nil {
-		return err
-	}
-	return manager.runtime.Delete(ctx, manager.config.RunnerContainer)
 }
 
 func (manager *manager) recordFailure(
@@ -849,6 +934,24 @@ func (manager *manager) controlSpec(
 	mode lifecycle.Mode,
 	databaseHost string,
 ) lifecycle.ContainerSpec {
+	environment := map[string]string{
+		"AGENTOPS_DATABASE_URL":              manager.config.controlDatabaseURL(databaseHost),
+		"AGENTOPS_CONTROL_TOKEN":             manager.config.ControlToken,
+		"AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN": manager.config.DashboardToken,
+		"AGENTOPS_GITHUB_WEBHOOK_SECRET":     manager.config.WebhookSecret,
+		"AGENTOPS_OPERATING_MODE":            string(mode),
+		"AGENTOPS_DASHBOARD_ORIGIN": fmt.Sprintf(
+			"http://127.0.0.1:%d",
+			manager.config.ControlHostPort,
+		),
+		"AGENTOPS_CONTROL_LISTEN":                   "127.0.0.1:8081",
+		"AGENTOPS_CONTROL_PROXY_LISTEN":             "0.0.0.0:8080",
+		"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":       "0.0.0.0:8082",
+		"AGENTOPS_RUNNER_PROVIDER":                  manager.config.Provider,
+		"AGENTOPS_RUNNER_PROVIDER_AUTH":             manager.config.providerAuth(mode),
+		"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY": manager.config.MonitorRepository,
+		"AGENTOPS_APP_ROOT":                         "/app",
+	}
 	return lifecycle.ContainerSpec{
 		Name:  manager.config.ControlContainer,
 		Role:  "control",
@@ -856,24 +959,8 @@ func (manager *manager) controlSpec(
 		// Apple Container assigns the default route to the first network.
 		// Keep public egress on default while retaining the host-only network
 		// solely for runner/PostgreSQL connectivity.
-		Networks: []string{"default", manager.config.Network},
-		Environment: map[string]string{
-			"AGENTOPS_DATABASE_URL":              manager.config.controlDatabaseURL(databaseHost),
-			"AGENTOPS_CONTROL_TOKEN":             manager.config.ControlToken,
-			"AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN": manager.config.DashboardToken,
-			"AGENTOPS_GITHUB_WEBHOOK_SECRET":     manager.config.WebhookSecret,
-			"AGENTOPS_OPERATING_MODE":            string(mode),
-			"AGENTOPS_DASHBOARD_ORIGIN": fmt.Sprintf(
-				"http://127.0.0.1:%d",
-				manager.config.ControlHostPort,
-			),
-			"AGENTOPS_CONTROL_LISTEN":             "127.0.0.1:8081",
-			"AGENTOPS_CONTROL_PROXY_LISTEN":       "0.0.0.0:8080",
-			"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN": "0.0.0.0:8082",
-			"AGENTOPS_RUNNER_PROVIDER":            manager.config.Provider,
-			"GH_TOKEN":                            manager.config.ControlGitHubToken,
-			"AGENTOPS_APP_ROOT":                   "/app",
-		},
+		Networks:    []string{"default", manager.config.Network},
+		Environment: environment,
 		Publish: []lifecycle.Publication{{
 			HostIP:        "127.0.0.1",
 			HostPort:      manager.config.ControlHostPort,
@@ -908,13 +995,83 @@ func (manager *manager) ensureRunnerVolumeOwner(ctx context.Context) error {
 		Command: []string{
 			"-c",
 			"mkdir -p /workspace/registrations /workspace/store && " +
-				"chown -R 65532:65532 /workspace/registrations /workspace/store",
+				"chown 65532:65532 /workspace/registrations /workspace/store",
 		},
 		CapDropAll: true,
 		CapAdd:     []string{"CAP_CHOWN"},
 		Remove:     true,
 	})
 	return err
+}
+
+func (manager *manager) seedCodexCredentialVolume(
+	ctx context.Context,
+	mode lifecycle.Mode,
+) error {
+	if !manager.config.usesCodexAuthFileFor(mode) {
+		return nil
+	}
+	if err := validateCodexAuthSource(manager.config.CodexAuthPath); err != nil {
+		return err
+	}
+	name := fmt.Sprintf(
+		"%s-credential-init-%d",
+		manager.config.Prefix,
+		os.Getpid(),
+	)
+	_, err := manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+		Name:     name,
+		Role:     "volume-init",
+		Image:    manager.config.RunnerImage,
+		Networks: []string{manager.config.Network},
+		Mounts: []lifecycle.Mount{{
+			Volume: manager.config.CredentialVolume,
+			Target: "/credentials",
+		}},
+		User:       "root",
+		Entrypoint: "/bin/sh",
+		Command: []string{
+			"-c",
+			"mkdir -p /credentials/codex && " +
+				"chown 0:0 /credentials/codex && " +
+				"chmod 0700 /credentials/codex && " +
+				"chown 65532:65532 /credentials/codex && sleep " +
+				strconv.FormatInt(
+					int64(CredentialInitializerLifetime/time.Second),
+					10,
+				),
+		},
+		CapDropAll: true,
+		CapAdd:     []string{"CAP_CHOWN"},
+		Detach:     true,
+		Remove:     true,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = manager.runtime.Stop(context.Background(), name, 5)
+		_ = manager.runtime.Delete(context.Background(), name)
+	}()
+	ready, cancel := context.WithTimeout(ctx, CredentialSeedReadyTimeout)
+	defer cancel()
+	if err := manager.runtime.WaitState(
+		ready,
+		name,
+		"running",
+		ContainerReadyPollInterval,
+	); err != nil {
+		return err
+	}
+	if err := manager.runtime.CopyFileToContainer(
+		ctx,
+		name,
+		manager.config.CodexAuthPath,
+		"/credentials/codex/auth.json",
+	); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (manager *manager) replaceRunner(
@@ -947,6 +1104,9 @@ func (manager *manager) replaceRunner(
 	if err := manager.ensureRunnerVolumeOwner(ctx); err != nil {
 		return receipt, err
 	}
+	if err := manager.seedCodexCredentialVolume(ctx, mode); err != nil {
+		return receipt, err
+	}
 	_, err = manager.runtime.RunContainer(ctx, spec)
 	if err != nil {
 		return receipt, err
@@ -971,9 +1131,53 @@ func (manager *manager) replaceRunner(
 		return receipt, err
 	}
 	if actual == nil || actual.Status.State != "running" {
-		return receipt, fmt.Errorf("runner exited during readiness stabilization")
+		logs := manager.runtime.RecentLogs(
+			ctx,
+			manager.config.RunnerContainer,
+			RunnerReadinessLogLines,
+		)
+		detail := strings.TrimSpace(logs.Stdout + logs.Stderr)
+		if detail == "" {
+			detail = "no runner log output"
+		}
+		return receipt, fmt.Errorf(
+			"runner exited during readiness stabilization: %s",
+			redactedError(errors.New(detail), manager.config),
+		)
+	}
+	if mode == lifecycle.ModeActive {
+		if err := manager.probeRunnerProvider(ctx); err != nil {
+			return receipt, err
+		}
 	}
 	return receipt, nil
+}
+
+func (manager *manager) probeRunnerProvider(ctx context.Context) error {
+	probeContext, cancel := context.WithTimeout(ctx, ProviderProbeTimeout)
+	defer cancel()
+	var command []string
+	switch manager.config.Provider {
+	case "codex":
+		// The catalog request exercises the selected login/API credential and
+		// its exact egress path without running an agent or persisting output.
+		command = []string{"codex", "debug", "models"}
+	case "claude":
+		// Claude's status command validates the CLI credential boundary. The
+		// CISO-07 grounded execution provider is Codex; Claude remains review-only.
+		command = []string{"claude", "auth", "status", "--json"}
+	default:
+		return fmt.Errorf("runner provider readiness is unsupported")
+	}
+	result := manager.runtime.Exec(
+		probeContext,
+		manager.config.RunnerContainer,
+		command...,
+	)
+	if probeContext.Err() != nil || result.Status != 0 {
+		return fmt.Errorf("runner provider authentication readiness failed")
+	}
+	return nil
 }
 
 func (manager *manager) runnerSpec(
@@ -985,33 +1189,71 @@ func (manager *manager) runnerSpec(
 		{"host": "github.com", "port": 443},
 		{"host": "api.github.com", "port": 443},
 	}
-	if manager.config.Provider == "codex" {
-		outbound = append(outbound, map[string]any{"host": "api.openai.com", "port": 443})
-	} else {
-		outbound = append(outbound, map[string]any{"host": "api.anthropic.com", "port": 443})
+	providerAuth := manager.config.providerAuth(mode)
+	if mode == lifecycle.ModeActive {
+		if manager.config.Provider == "codex" && providerAuth == "codex-login" {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "chatgpt.com", "port": 443},
+				map[string]any{"host": "auth.openai.com", "port": 443},
+			)
+		} else if manager.config.Provider == "codex" {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "api.openai.com", "port": 443},
+			)
+		} else {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "api.anthropic.com", "port": 443},
+			)
+		}
 	}
 	outboundJSON, _ := json.Marshal(outbound)
-	mountJSON, _ := json.Marshal([]map[string]any{{
+	mounts := []map[string]any{{
 		"source":   manager.config.RunnerVolume,
 		"target":   "/workspace",
 		"readOnly": false,
-	}})
+	}}
+	runtimeMounts := []lifecycle.Mount{{
+		Volume: manager.config.RunnerVolume,
+		Target: "/workspace",
+	}}
+	if manager.config.usesCodexAuthFileFor(mode) {
+		mounts = append(mounts, map[string]any{
+			"source":   manager.config.CredentialVolume,
+			"target":   "/run/agentops-credentials",
+			"readOnly": true,
+		})
+		runtimeMounts = append(runtimeMounts, lifecycle.Mount{
+			Volume:   manager.config.CredentialVolume,
+			Target:   "/run/agentops-credentials",
+			ReadOnly: true,
+		})
+	}
+	mountJSON, _ := json.Marshal(mounts)
 	environment := map[string]string{
 		"AGENTOPS_RUNNER_DATABASE_URL":         manager.config.runnerDatabaseURL(databaseHost),
 		"AGENTOPS_RUNNER_WORKER_ID":            manager.config.RunnerContainer,
 		"AGENTOPS_RUNNER_PROVIDER":             manager.config.Provider,
+		"AGENTOPS_RUNNER_PROVIDER_AUTH":        providerAuth,
 		"AGENTOPS_OPERATING_MODE":              string(mode),
 		"AGENTOPS_RUNNER_MOUNTS_JSON":          string(mountJSON),
 		"AGENTOPS_RUNNER_PUBLISHED_PORTS_JSON": "[]",
 		"AGENTOPS_RUNNER_OUTBOUND_JSON":        string(outboundJSON),
 		"AGENTOPS_RUNNER_GITHUB_TOKEN":         manager.config.RunnerGitHubToken,
+		"AGENTOPS_MONITOR_REPOSITORY":          manager.config.MonitorRepository,
 		"HTTPS_PROXY":                          "http://" + controlHost + ":8082",
 		"HTTP_PROXY":                           "http://" + controlHost + ":8082",
 		"NO_PROXY":                             databaseHost + ",127.0.0.1,localhost",
 	}
-	if manager.config.Provider == "codex" {
-		environment["OPENAI_API_KEY"] = manager.config.ProviderToken
-	} else {
+	if mode == lifecycle.ModeActive && manager.config.Provider == "codex" {
+		if manager.config.usesCodexAuthFileFor(mode) {
+			environment["CODEX_HOME"] = "/run/agentops-credentials/codex"
+		} else {
+			environment["OPENAI_API_KEY"] = manager.config.ProviderToken
+		}
+	} else if mode == lifecycle.ModeActive {
 		environment["ANTHROPIC_API_KEY"] = manager.config.ProviderToken
 	}
 	return lifecycle.ContainerSpec{
@@ -1020,15 +1262,12 @@ func (manager *manager) runnerSpec(
 		Image:       manager.config.RunnerImage,
 		Networks:    []string{manager.config.Network},
 		Environment: environment,
-		Mounts: []lifecycle.Mount{{
-			Volume: manager.config.RunnerVolume,
-			Target: "/workspace",
-		}},
-		Tmpfs:      []string{"/tmp", "/home/agentops"},
-		ReadOnly:   true,
-		CapDropAll: true,
-		Init:       true,
-		Detach:     true,
+		Mounts:      runtimeMounts,
+		Tmpfs:       []string{"/tmp", "/home/agentops"},
+		ReadOnly:    true,
+		CapDropAll:  true,
+		Init:        true,
+		Detach:      true,
 	}
 }
 
@@ -1170,22 +1409,28 @@ func (manager *manager) compensateStart(
 		)
 	}
 
-	names := make([]string, 0, 1)
-	if runnerChanged {
-		names = append(names, manager.config.RunnerContainer)
-	}
-	if controlChanged && target == lifecycle.ModeOff {
-		names = append(names, manager.config.ControlContainer)
-	}
+	names, restoreControl, restoreRunner := compensationTopology(
+		target,
+		controlChanged,
+		runnerChanged,
+		manager.config.ControlContainer,
+		manager.config.RunnerContainer,
+	)
 	for _, name := range names {
 		_ = manager.gracefulStop(ctx, name, 10*time.Second)
 		_ = manager.runtime.Delete(ctx, name)
 	}
-	if controlChanged && target != lifecycle.ModeOff {
+	if restoreControl {
 		// Recreate the control plane from current credentials and the safe
 		// durable mode; this restores a pre-existing MONITOR_ONLY topology and
 		// retains the recovery proxy for DRAINING.
 		_, _ = manager.replaceControl(ctx, target)
+	}
+	if restoreRunner {
+		// MONITOR_ONLY still requires the runner-owned private GitHub broker.
+		// An ACTIVE replacement failure must restore that runner rather than
+		// leaving the durable lifecycle healthy while both monitors are inert.
+		_, _ = manager.replaceRunner(ctx, target)
 	}
 	if postgresStarted {
 		if target == lifecycle.ModeOff {
@@ -1194,6 +1439,25 @@ func (manager *manager) compensateStart(
 		}
 	}
 	return nil
+}
+
+func compensationTopology(
+	target lifecycle.Mode,
+	controlChanged, runnerChanged bool,
+	controlContainer, runnerContainer string,
+) (
+	stopNames []string,
+	restoreControl, restoreRunner bool,
+) {
+	if runnerChanged {
+		stopNames = append(stopNames, runnerContainer)
+	}
+	if controlChanged && target == lifecycle.ModeOff {
+		stopNames = append(stopNames, controlContainer)
+	}
+	return stopNames,
+		controlChanged && target != lifecycle.ModeOff,
+		runnerChanged && target == lifecycle.ModeMonitorOnly
 }
 
 func (manager *manager) rollbackLifecycle(
@@ -1358,8 +1622,15 @@ func (manager *manager) verifyManagedTopology(
 	if err := validatePostgresActual(postgres, manager.config); err != nil {
 		return err
 	}
+	postgresSpec := manager.postgresSpec()
+	if err := manager.sealSpec(ctx, &postgresSpec); err != nil {
+		return err
+	}
+	if err := validateSpecActual(postgres, postgresSpec); err != nil {
+		return err
+	}
 	if runnerExpected {
-		if err := validateRunnerActual(runner, manager.config); err != nil {
+		if err := validateRunnerActual(runner, manager.config, mode); err != nil {
 			return err
 		}
 		controlHost, err := manager.networkHost(
@@ -1375,9 +1646,8 @@ func (manager *manager) verifyManagedTopology(
 		}
 		return validateSpecActual(runner, runnerSpec)
 	}
-	if runner != nil {
-		return fmt.Errorf("runner must be absent outside ACTIVE")
-	}
+	// OFF is verified with both controlExpected and runnerExpected false.
+	// MONITOR_ONLY intentionally keeps runner alive for the typed read broker.
 	return nil
 }
 
@@ -1403,25 +1673,61 @@ func validateSpecActual(
 		expected.SpecDigest {
 		return fmt.Errorf("%s immutable image or runtime specification drifted", expected.Name)
 	}
+	actualEnvironment := make(map[string]string)
+	for _, entry := range actual.Configuration.InitProcess.Environment {
+		key, value, present := strings.Cut(entry, "=")
+		if !present || key == "" {
+			return fmt.Errorf("%s actual environment is malformed", expected.Name)
+		}
+		if _, duplicate := actualEnvironment[key]; duplicate {
+			return fmt.Errorf("%s actual environment repeats %s", expected.Name, key)
+		}
+		actualEnvironment[key] = value
+	}
+	for key, desired := range expected.Environment {
+		if observed, present := actualEnvironment[key]; !present || observed != desired {
+			return fmt.Errorf("%s environment drifted at %s", expected.Name, key)
+		}
+	}
+	for key := range actualEnvironment {
+		if lifecycle.CredentialEnvironmentKey(key) {
+			if _, expectedCredential := expected.Environment[key]; !expectedCredential {
+				return fmt.Errorf(
+					"%s has an unexpected credential environment key %s",
+					expected.Name,
+					key,
+				)
+			}
+		}
+	}
 	return nil
 }
 
-func (manager *manager) validateExistingTopology(ctx context.Context) error {
-	for _, item := range []struct {
-		name     string
-		validate func(*lifecycle.ContainerActual, config) error
-	}{
-		{manager.config.ControlContainer, validateControlActual},
-		{manager.config.RunnerContainer, validateRunnerActual},
-		{manager.config.PostgresContainer, validatePostgresActual},
+func (manager *manager) validateExistingTopology(
+	ctx context.Context,
+	mode lifecycle.Mode,
+) error {
+	for _, name := range []string{
+		manager.config.ControlContainer,
+		manager.config.RunnerContainer,
+		manager.config.PostgresContainer,
 	} {
-		actual, err := manager.runtime.Container(ctx, item.name)
+		actual, err := manager.runtime.Container(ctx, name)
 		if err != nil {
 			return err
 		}
 		if actual != nil && actual.Status.State == "running" {
-			if err := item.validate(actual, manager.config); err != nil {
-				return err
+			var validateErr error
+			switch name {
+			case manager.config.ControlContainer:
+				validateErr = validateControlActual(actual, manager.config)
+			case manager.config.RunnerContainer:
+				validateErr = validateRunnerActual(actual, manager.config, mode)
+			case manager.config.PostgresContainer:
+				validateErr = validatePostgresActual(actual, manager.config)
+			}
+			if validateErr != nil {
+				return validateErr
 			}
 		}
 	}
@@ -1454,6 +1760,7 @@ func validateControlActual(
 func validateRunnerActual(
 	actual *lifecycle.ContainerActual,
 	config config,
+	mode lifecycle.Mode,
 ) error {
 	if err := validateManagedActual(
 		actual,
@@ -1469,11 +1776,15 @@ func validateRunnerActual(
 		len(actual.Configuration.PublishedSock) != 0 {
 		return fmt.Errorf("runner exposes a host port or socket")
 	}
-	if !exactMounts(actual, map[string]string{
+	expectedMounts := map[string]string{
 		"/tmp":           "tmpfs",
 		"/home/agentops": "tmpfs",
 		"/workspace":     config.RunnerVolume,
-	}) {
+	}
+	if config.usesCodexAuthFileFor(mode) {
+		expectedMounts["/run/agentops-credentials"] = config.CredentialVolume
+	}
+	if !exactMounts(actual, expectedMounts) {
 		return fmt.Errorf("runner mounts do not match the hardened topology")
 	}
 	return nil
@@ -1535,12 +1846,29 @@ func validateManagedActual(
 		if !actual.Configuration.ReadOnly ||
 			!containsString(actual.Configuration.CapDrop, "ALL") ||
 			len(actual.Configuration.CapAdd) != 0 ||
-			(actual.Configuration.InitProcess.User.ID.UID != 65532 &&
-				actual.Configuration.InitProcess.User.Raw.UserString != "agentops") {
+			!managedNonRootUser(
+				actual.Configuration.InitProcess.User.ID.UID,
+				actual.Configuration.InitProcess.User.Raw.UserString,
+			) {
 			return fmt.Errorf("%s runtime hardening does not match", name)
 		}
 	}
 	return nil
+}
+
+func managedNonRootUser(uid int, raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if uid != 0 && uid != 65532 {
+		return false
+	}
+	switch raw {
+	case "":
+		return uid == 65532
+	case "agentops", "65532", "65532:65532":
+		return uid == 0 || uid == 65532
+	default:
+		return false
+	}
 }
 
 func imageReferenceMatches(actual, expected string) bool {
@@ -1647,6 +1975,7 @@ func redactedError(err error, config config) string {
 	message := err.Error()
 	for _, secret := range []string{
 		config.PostgresPassword,
+		config.NextPostgresPassword,
 		config.ControlDBPassword,
 		config.RunnerDBPassword,
 		config.ControlToken,

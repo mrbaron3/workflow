@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -58,5 +62,81 @@ func TestLoopbackPublishProxyRequiresLoopbackBackendAndExactHost(t *testing.T) {
 	}
 	if !strings.HasPrefix(observedPeer, "127.0.0.1:") {
 		t.Fatalf("backend peer = %q", observedPeer)
+	}
+}
+
+func TestPRIntentAdministrativeRotationBoundary(t *testing.T) {
+	original := rotatePostgresAdmin
+	t.Cleanup(func() { rotatePostgresAdmin = original })
+	t.Setenv(
+		"AGENTOPS_DATABASE_URL",
+		"postgresql://postgres:current-password-value-0000001@postgres/agentops",
+	)
+	next := "next-password-value-00000000000002"
+	t.Setenv("AGENTOPS_NEXT_POSTGRES_PASSWORD", next)
+	var observedURL, observedPassword, observedRequest string
+	rotatePostgresAdmin = func(
+		_ context.Context,
+		databaseURL, nextPassword, requestID string,
+	) error {
+		observedURL = databaseURL
+		observedPassword = nextPassword
+		observedRequest = requestID
+		return nil
+	}
+
+	read, write, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = write
+	commandErr := runAdministrativeCommand([]string{
+		"rotate-postgres-admin",
+		"--request-id",
+		"admin-rotation-001",
+	})
+	_ = write.Close()
+	os.Stdout = originalStdout
+	output, readErr := io.ReadAll(read)
+	_ = read.Close()
+	if commandErr != nil || readErr != nil {
+		t.Fatalf("rotation command=%v output=%v", commandErr, readErr)
+	}
+	if observedURL == "" || observedPassword != next ||
+		observedRequest != "admin-rotation-001" {
+		t.Fatalf(
+			"rotation forwarding url=%q passwordMatch=%t request=%q",
+			observedURL,
+			observedPassword == next,
+			observedRequest,
+		)
+	}
+	if strings.Contains(string(output), next) ||
+		!strings.Contains(string(output), `"rotated":true`) ||
+		!strings.Contains(string(output), `"requestId":"admin-rotation-001"`) {
+		t.Fatalf("unsafe or incorrect success output: %s", output)
+	}
+
+	for _, args := range [][]string{
+		{"rotate-postgres-admin"},
+		{"rotate-postgres-admin", "--request-id", "id", "extra"},
+	} {
+		if err := runAdministrativeCommand(args); err == nil {
+			t.Fatalf("invalid arguments were accepted: %#v", args)
+		}
+	}
+	rotatePostgresAdmin = func(
+		context.Context,
+		string, string, string,
+	) error {
+		return errors.New("injected rotation failure")
+	}
+	if err := runAdministrativeCommand([]string{
+		"rotate-postgres-admin",
+		"--request-id",
+		"admin-rotation-002",
+	}); err == nil || !strings.Contains(err.Error(), "injected rotation failure") {
+		t.Fatalf("runtime failure was not propagated: %v", err)
 	}
 }

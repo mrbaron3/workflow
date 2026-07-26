@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -601,6 +602,19 @@ func BootstrapRoles(
 		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
 		   agentops_control.job_leases, agentops_control.artifact_links
 		   TO agentops_runner`,
+		`GRANT SELECT ON agentops_control.monitor_broker_requests
+		   TO agentops_runner`,
+		`REVOKE UPDATE ON agentops_control.monitor_broker_requests
+		   FROM agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.claim_monitor_broker_request(text, text, uuid, integer)
+		   TO agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.complete_monitor_broker_request(uuid, uuid, text, jsonb)
+		   TO agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.fail_monitor_broker_request(uuid, uuid, text, text, text)
+		   TO agentops_runner`,
 		`GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_runner`,
 		`GRANT USAGE, SELECT ON SEQUENCE agentops_control.runtime_audit_id_seq
 		   TO agentops_runner`,
@@ -616,6 +630,98 @@ func BootstrapRoles(
 		}
 	}
 	return transaction.Commit(ctx)
+}
+
+// RotatePostgresAdmin changes the persistent postgres login only while the
+// durable lifecycle is fenced in DRAINING with no in-flight execution. The
+// caller supplies the next secret through a private environment boundary; it
+// is never returned, logged, or persisted.
+func RotatePostgresAdmin(
+	ctx context.Context,
+	databaseURL, nextPassword, requestID string,
+) error {
+	if len(nextPassword) < 32 {
+		return fmt.Errorf("next PostgreSQL administrator password must be at least 32 bytes")
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" || len(requestID) > 256 {
+		return fmt.Errorf("rotation request ID must be 1..256 bytes")
+	}
+	parsed, err := url.Parse(databaseURL)
+	if err != nil || parsed.User == nil || parsed.User.Username() != "postgres" {
+		return fmt.Errorf("PostgreSQL administrator rotation requires the postgres login")
+	}
+	currentPassword, present := parsed.User.Password()
+	if !present || currentPassword == nextPassword {
+		return fmt.Errorf("current and next PostgreSQL administrator credentials must differ")
+	}
+	if err := func() error {
+		store, err := Open(ctx, databaseURL)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		transaction, err := store.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = transaction.Rollback(context.Background()) }()
+		var mode string
+		var activeLeases, runningAttempts int64
+		if err := transaction.QueryRow(ctx, `
+			SELECT mode,
+			       (SELECT count(*) FROM agentops_control.job_leases
+			         WHERE status = 'active' AND expires_at > clock_timestamp()),
+			       (SELECT count(*) FROM agentops_control.job_attempts
+			         WHERE status = 'running')
+			  FROM agentops_control.lifecycle_state
+			 WHERE singleton
+			 FOR UPDATE
+		`).Scan(&mode, &activeLeases, &runningAttempts); err != nil {
+			return err
+		}
+		if mode != string(ModeDraining) || activeLeases != 0 || runningAttempts != 0 {
+			return fmt.Errorf(
+				"PostgreSQL administrator rotation requires DRAINING with zero active leases and attempts",
+			)
+		}
+		if _, err := transaction.Exec(
+			ctx,
+			`ALTER ROLE postgres PASSWORD `+quoteLiteral(nextPassword),
+		); err != nil {
+			return fmt.Errorf("rotate PostgreSQL administrator credential")
+		}
+		if _, err := transaction.Exec(ctx, `
+			INSERT INTO agentops_control.runtime_audit(
+			  actor_type, actor_id, event_type, details
+			) VALUES (
+			  'lifecycle', 'agentopsctl',
+			  'credential.postgres_admin.rotation_committed',
+			  jsonb_build_object('requestId', $1::text)
+			)
+		`, requestID); err != nil {
+			return fmt.Errorf("audit PostgreSQL administrator rotation")
+		}
+		if err := transaction.Commit(ctx); err != nil {
+			return fmt.Errorf("commit PostgreSQL administrator rotation")
+		}
+		return nil
+	}(); err != nil {
+		return err
+	}
+
+	nextURL := *parsed
+	nextURL.User = url.UserPassword("postgres", nextPassword)
+	nextStore, err := Open(ctx, nextURL.String())
+	if err != nil {
+		return fmt.Errorf("verify next PostgreSQL administrator credential")
+	}
+	nextStore.Close()
+	if oldStore, oldErr := Open(ctx, databaseURL); oldErr == nil {
+		oldStore.Close()
+		return fmt.Errorf("old PostgreSQL administrator credential still authenticates")
+	}
+	return nil
 }
 
 func quoteLiteral(value string) string {

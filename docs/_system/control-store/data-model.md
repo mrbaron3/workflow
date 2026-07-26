@@ -24,6 +24,10 @@
   drain deadline/timeout、redacted last error。
 - **DATA-control-store-016** `lifecycle_transitions` — unique idempotency key、actor、from/to、applied/idempotent/rejected/
   compensated status、deadline、error、details、開始/完了時刻を持つ監査履歴。
+- **DATA-control-store-017** `monitor_broker_requests` — Registration/version、固定repository、issue/PR kind、
+  strict cursor/digest、pending/leased/succeeded/failed state、worker/lease expiry、sanitized responseまたはbounded error。
+  active cursorのpartial unique indexとclaim order indexを持ち、credential/provider本文は保存しない。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
-[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)
+[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)

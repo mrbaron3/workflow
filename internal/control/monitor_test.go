@@ -14,11 +14,33 @@ import (
 	"time"
 )
 
+func TestMonitorBrokerProductionBoundaries(t *testing.T) {
+	if MonitorBrokerTerminalRetention != 7*24*time.Hour {
+		t.Fatalf("terminal retention = %s", MonitorBrokerTerminalRetention)
+	}
+	if MonitorBrokerResponseReuse != 2*time.Minute {
+		t.Fatalf("response reuse = %s", MonitorBrokerResponseReuse)
+	}
+	if DefaultMonitorBrokerTimeout != 25*time.Second ||
+		MaxMonitorBrokerTimeout != 30*time.Second ||
+		MonitorBrokerResponsePoll != 100*time.Millisecond ||
+		MaxMonitorBrokerTransientRetry != 1 {
+		t.Fatalf(
+			"broker timing = default %s max %s poll %s retries %d",
+			DefaultMonitorBrokerTimeout,
+			MaxMonitorBrokerTimeout,
+			MonitorBrokerResponsePoll,
+			MaxMonitorBrokerTransientRetry,
+		)
+	}
+}
+
 type fakeMonitorStore struct {
 	mu           sync.Mutex
 	enqueueError error
 	enqueued     int
 	savedCursors int
+	saveHook     func()
 	received     int
 	actualStates int
 	actualError  error
@@ -43,6 +65,9 @@ func (store *fakeMonitorStore) SaveMonitorCursor(
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.savedCursors++
+	if store.saveHook != nil {
+		store.saveHook()
+	}
 	return nil
 }
 
@@ -92,8 +117,9 @@ func (store *fakeMonitorStore) UpsertActualState(
 }
 
 type fakeMonitorSource struct {
-	items []WorkItem
-	calls *int
+	items  []WorkItem
+	calls  *int
+	errors []error
 }
 
 func (source fakeMonitorSource) Poll(
@@ -102,10 +128,105 @@ func (source fakeMonitorSource) Poll(
 	string,
 	map[string]any,
 ) ([]WorkItem, map[string]any, time.Time, error) {
+	call := 0
 	if source.calls != nil {
 		(*source.calls)++
+		call = *source.calls
+	}
+	if call > 0 && call <= len(source.errors) && source.errors[call-1] != nil {
+		return nil, nil, time.Time{}, source.errors[call-1]
 	}
 	return source.items, map[string]any{"updatedAfter": "next"}, time.Now(), nil
+}
+
+func TestMonitorRetriesOneTransientBrokerProviderFailureWithoutAdvancingCursor(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &fakeMonitorStore{saveHook: cancel}
+	polls := 0
+	runner := &ProductionRunner{
+		Store: store,
+		Source: fakeMonitorSource{
+			calls:  &polls,
+			errors: []error{ErrMonitorBrokerTransientProvider},
+		},
+		Mode:           ModeMonitorOnly,
+		SupervisorID:   "test",
+		PollInterval:   time.Hour,
+		TransientRetry: time.Millisecond,
+	}
+	err := runner.runMonitor(ctx, Registration{
+		ID:                  "registration-1",
+		Repository:          "owner/repo",
+		Enabled:             true,
+		IssueMonitorEnabled: true,
+		ExecutionEnabled:    true,
+		Version:             1,
+	}, "issue", ComponentIssueMonitor)
+	if err != nil {
+		t.Fatalf("runMonitor() error = %v", err)
+	}
+	if polls != 2 || store.savedCursors != 1 || store.actualStates != 2 {
+		t.Fatalf(
+			"polls=%d cursors=%d states=%d, want retry then one durable success",
+			polls,
+			store.savedCursors,
+			store.actualStates,
+		)
+	}
+}
+
+func TestMonitorSurfacesRepeatedTransientBrokerProviderFailure(t *testing.T) {
+	store := &fakeMonitorStore{}
+	polls := 0
+	runner := &ProductionRunner{
+		Store: store,
+		Source: fakeMonitorSource{
+			calls: &polls,
+			errors: []error{
+				ErrMonitorBrokerTransientProvider,
+				ErrMonitorBrokerTransientProvider,
+			},
+		},
+		Mode:           ModeMonitorOnly,
+		SupervisorID:   "test",
+		PollInterval:   time.Hour,
+		TransientRetry: time.Millisecond,
+	}
+	err := runner.runMonitor(context.Background(), Registration{
+		ID:                  "registration-1",
+		Repository:          "owner/repo",
+		Enabled:             true,
+		IssueMonitorEnabled: true,
+		ExecutionEnabled:    true,
+		Version:             1,
+	}, "issue", ComponentIssueMonitor)
+	if !errors.Is(err, ErrMonitorBrokerTransientProvider) {
+		t.Fatalf("runMonitor() error = %v, want transient provider failure", err)
+	}
+	if polls != 2 || store.savedCursors != 0 || store.actualStates != 1 {
+		t.Fatalf(
+			"polls=%d cursors=%d states=%d, want one bounded retry then failure",
+			polls,
+			store.savedCursors,
+			store.actualStates,
+		)
+	}
+}
+
+func TestMonitorBrokerTransientProviderClassificationIsExact(t *testing.T) {
+	for _, code := range []string{"provider_timeout", "provider_failure"} {
+		failure := monitorBrokerFailure(
+			code,
+			"typed provider operation failed",
+		)
+		if !errors.Is(failure, ErrMonitorBrokerTransientProvider) {
+			t.Fatalf("%s was not classified for bounded retry", code)
+		}
+	}
+	other := monitorBrokerFailure("invalid_json", "GitHub response was invalid")
+	if errors.Is(other, ErrMonitorBrokerTransientProvider) {
+		t.Fatal("non-transient broker failure was classified as retryable")
+	}
 }
 
 func TestMonitorDoesNotAdvanceCursorWhenSingleFlightIsBusy(t *testing.T) {
@@ -137,6 +258,38 @@ func TestMonitorDoesNotAdvanceCursorWhenSingleFlightIsBusy(t *testing.T) {
 	}
 	if store.actualStates != 1 {
 		t.Fatal("single-flight backpressure was projected as monitor failure")
+	}
+}
+
+func TestPRIntentActiveStartupFenceDoesNotFailOrAdvanceMonitor(t *testing.T) {
+	store := &fakeMonitorStore{enqueueError: ErrOperatingMode}
+	runner := &ProductionRunner{
+		Store: store,
+		Mode:  ModeActive,
+		Source: fakeMonitorSource{items: []WorkItem{{
+			Repository: "owner/repo",
+			Kind:       "pull_request",
+			Number:     41,
+			UpdatedAt:  time.Now(),
+		}}},
+		SupervisorID: "test",
+	}
+	err := runner.pollOnce(context.Background(), Registration{
+		ID:               "registration-1",
+		Repository:       "owner/repo",
+		Enabled:          true,
+		PRMonitorEnabled: true,
+		ExecutionEnabled: true,
+		Version:          1,
+	}, "pull_request", ComponentPRMonitor)
+	if err != nil {
+		t.Fatalf("startup lifecycle fence was projected as monitor failure: %v", err)
+	}
+	if store.savedCursors != 0 {
+		t.Fatal("startup lifecycle fence advanced the cursor before ACTIVE")
+	}
+	if store.actualStates != 1 {
+		t.Fatal("startup lifecycle fence did not keep monitor health current")
 	}
 }
 
@@ -369,6 +522,44 @@ func TestForwarderHeartbeatKeepsActualStateFresh(t *testing.T) {
 	if actualStates == 0 {
 		t.Fatal("long-running forwarder did not refresh actual state")
 	}
+}
+
+func TestPRIntentSignedWebhookIngressNeverExecutesControlSideGH(t *testing.T) {
+	t.Run("PR-INTENT credential-free signed webhook ingress", func(t *testing.T) {
+		store := &fakeMonitorStore{}
+		commands := 0
+		runner := &ProductionRunner{
+			Store:                    store,
+			SupervisorID:             "test",
+			SignedWebhookIngressOnly: true,
+			HealthInterval:           time.Millisecond,
+			Command: func(context.Context, string, ...string) Command {
+				commands++
+				return nil
+			},
+			Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		if err := runner.runForwarder(ctx, Registration{
+			ID:                  "registration-1",
+			Repository:          "owner/repo",
+			Enabled:             true,
+			IssueMonitorEnabled: true,
+			Version:             1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if commands != 0 {
+			t.Fatalf("credential-free control executed %d gh commands", commands)
+		}
+		store.mu.Lock()
+		actualStates := store.actualStates
+		store.mu.Unlock()
+		if actualStates < 2 {
+			t.Fatalf("signed webhook ingress health updates = %d, want initial + heartbeat", actualStates)
+		}
+	})
 }
 
 func TestForwarderStopsWhenHeartbeatCannotBePersisted(t *testing.T) {

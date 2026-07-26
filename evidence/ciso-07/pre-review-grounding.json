@@ -1,0 +1,235 @@
+{
+  "schemaVersion": "1.0",
+  "observedThrough": "2026-07-26T05:19:13.873542127Z",
+  "sourceState": {
+    "immutableBase": "257dc557753b099a646c94d3e3cc700468ffb32a",
+    "implementationHead": null,
+    "phase": "pre-review-uncommitted"
+  },
+  "appleContainer": {
+    "network": "agentops-ciso07-dogfood-internal",
+    "containers": [
+      {
+        "role": "control",
+        "name": "agentops-ciso07-dogfood-control",
+        "state": "running",
+        "imageDigest": "sha256:bbc3015558b5b8232f6dc745a77115eabfa7958328f03e2748f827cd5f920705",
+        "networks": [
+          "default",
+          "agentops-ciso07-dogfood-internal"
+        ],
+        "publishedPorts": [
+          "127.0.0.1:18097:8080/tcp"
+        ],
+        "publishedSockets": [],
+        "readOnlyRoot": true,
+        "capDrop": [
+          "ALL"
+        ],
+        "mounts": [
+          {
+            "type": "tmpfs",
+            "destination": "/tmp"
+          }
+        ]
+      },
+      {
+        "role": "runner",
+        "name": "agentops-ciso07-dogfood-runner",
+        "state": "running",
+        "imageDigest": "sha256:bd3377d4152a876cf833ecd08a5c611ccf9441ba18da33e64b594fe46aa435aa",
+        "networks": [
+          "agentops-ciso07-dogfood-internal"
+        ],
+        "publishedPorts": [],
+        "publishedSockets": [],
+        "readOnlyRoot": true,
+        "capDrop": [
+          "ALL"
+        ],
+        "mounts": [
+          {
+            "type": "tmpfs",
+            "destination": "/tmp"
+          },
+          {
+            "type": "tmpfs",
+            "destination": "/home/agentops"
+          },
+          {
+            "type": "volume",
+            "name": "agentops-ciso07-dogfood-runner-workspace",
+            "destination": "/workspace"
+          },
+          {
+            "type": "volume",
+            "name": "agentops-ciso07-dogfood-runner-credentials",
+            "destination": "/run/agentops-credentials",
+            "readOnly": true
+          }
+        ]
+      },
+      {
+        "role": "postgres",
+        "name": "agentops-ciso07-dogfood-postgres",
+        "state": "running",
+        "imageDigest": "sha256:49fd5d5bb86efa415fab2dd89aea19fd8f9919ae64d3471a30be315b24f35e31",
+        "networks": [
+          "agentops-ciso07-dogfood-internal"
+        ],
+        "publishedPorts": [],
+        "publishedSockets": [],
+        "mounts": [
+          {
+            "type": "volume",
+            "name": "agentops-ciso07-dogfood-postgres-data",
+            "destination": "/var/lib/postgresql"
+          },
+          {
+            "type": "tmpfs",
+            "destination": "/run/postgresql"
+          },
+          {
+            "type": "tmpfs",
+            "destination": "/tmp"
+          }
+        ]
+      }
+    ],
+    "macListen": {
+      "address": "127.0.0.1",
+      "port": 18097,
+      "observed": true
+    },
+    "forbiddenMountsObserved": {
+      "hostHome": false,
+      "hostDevelopmentRoot": false,
+      "sshAgent": false,
+      "containerSocket": false
+    }
+  },
+  "credentialDerivedSpecFingerprints": {
+    "retracted": true,
+    "reason": "The pre-review labels were unsalted credential-derived verifiers; final credentials are rotated and final labels use credential-redacted canonical specs.",
+    "finalEvidenceMayContainCredentialDerivedDigest": false
+  },
+  "registration": {
+    "id": "5894c60b-3468-45d5-b56a-aa0cbfa4924f",
+    "repository": "mrbaron3/workflow",
+    "onlyRegistration": true,
+    "enabled": true,
+    "issueMonitorEnabled": true,
+    "prMonitorEnabled": true,
+    "executionEnabled": true,
+    "version": 3,
+    "mode": "MONITOR_ONLY",
+    "issueMonitorActual": "running",
+    "prMonitorActual": "running",
+    "executionActual": "paused_by_mode",
+    "queueActual": "blocked_by_mode",
+    "jobCount": 0,
+    "cursors": {
+      "issue": {
+        "updatedAfter": "2026-07-26T04:36:52.000Z",
+        "observedAt": "2026-07-26T05:19:09.671Z"
+      },
+      "pullRequest": {
+        "updatedAfter": "2026-07-25T07:42:15.000Z",
+        "observedAt": "2026-07-26T05:19:10.175Z"
+      }
+    }
+  },
+  "typedPrivateMonitorBroker": {
+    "repositoryAllowlist": [
+      "mrbaron3/workflow"
+    ],
+    "operations": [
+      "issue.read",
+      "pull_request.read"
+    ],
+    "controlHasGitHubCredential": false,
+    "genericHttpProxy": false,
+    "succeededRequests": 18,
+    "failedRequestsPreserved": 12,
+    "auditCounts": {
+      "requested": 30,
+      "claimed": 30,
+      "completed": 18,
+      "failed": 12
+    },
+    "initialFailure": {
+      "boundary": "credential-free control poll of private repository",
+      "providerStatus": 404,
+      "rewrittenAsSuccess": false
+    },
+    "decisionGate": {
+      "requestMessageId": "msg_21c98a5e66c0",
+      "replyMessageId": "msg_cee18193059f"
+    }
+  },
+  "webhookGrounding": {
+    "transport": "direct signed request to the real Control API",
+    "registered": {
+      "deliveryId": "02c304fe-5959-4d28-b321-53d75f1d2f3b",
+      "deliveryKey": "ciso07-monitor-registered-1",
+      "firstDuplicate": false,
+      "replayDuplicate": true,
+      "routeStatus": "ignored",
+      "ignoredReason": "monitor_only",
+      "registrationVersion": 1
+    },
+    "unregistered": {
+      "deliveryId": "f1022241-2af6-4f6c-9a1f-b71c61a01385",
+      "deliveryKey": "ciso07-monitor-unregistered-1",
+      "routeStatus": "ignored",
+      "ignoredReason": "unregistered_repository",
+      "registrationId": null
+    },
+    "disabled": {
+      "deliveryId": "476fda39-660b-49b0-8503-bbe2599a7e85",
+      "deliveryKey": "ciso07-disabled-1",
+      "routeStatus": "ignored",
+      "ignoredReason": "disabled_repository",
+      "registrationId": null
+    },
+    "jobCreatedInMonitorOnly": false,
+    "credentialOrFingerprintRecorded": false
+  },
+  "honestFailures": [
+    {
+      "boundary": "initial unauthenticated private-repository monitor",
+      "outcome": "GitHub 404",
+      "preserved": true
+    },
+    {
+      "boundary": "Apple Container credential seeding before stdin cutover",
+      "outcome": "container copy/init failures",
+      "lifecycleLastErrorPreserved": true
+    },
+    {
+      "boundary": "local GitHub webhook forwarder",
+      "outcome": "failed because the credential is intentionally runner-only and gh webhook forward requires a secret in argv",
+      "claimedAsSuccess": false,
+      "replacementClaim": "Webhook behavior is grounded only by signed Control API deliveries above; no forwarder success is claimed."
+    }
+  ],
+  "validation": {
+    "typecheck": "passed",
+    "goTest": "passed",
+    "unit": {
+      "testFilesPassed": 100,
+      "testFilesSkipped": 1,
+      "testsPassed": 828,
+      "testsSkipped": 27
+    },
+    "postgresIntegration": {
+      "transport": "Apple Container internal network only",
+      "testFilesPassed": 1,
+      "testsPassed": 26
+    },
+    "typedBrokerFocusedTests": {
+      "testFilesPassed": 1,
+      "testsPassed": 4
+    }
+  }
+}

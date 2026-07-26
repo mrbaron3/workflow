@@ -8,6 +8,7 @@ import {
   RunnerJobPayloadV1Contract,
   RunnerJobResultV1Contract,
 } from '../src/control-store/types.js';
+import { RunnerExecutionError } from '../src/runner/errors.js';
 
 function fixture(): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(
@@ -202,6 +203,17 @@ describe('isolated runner published contracts', () => {
       boundary: 'push',
       observedAt: '2026-07-25T00:01:00.000Z',
     }).code).toBe('lease_lost');
+  });
+
+  it('normalizes provider diagnostics before persisting a strict failure', () => {
+    const failure = new RunnerExecutionError(
+      'provider_failure',
+      '\n provider exited with status 1 \n',
+      true,
+      'provider',
+    ).toFailure(new Date('2026-07-25T00:01:00.000Z'));
+    expect(failure.message).toBe('provider exited with status 1');
+    expect(() => RunnerJobFailureV1Contract.parse(failure)).not.toThrow();
   });
 
   it('keeps result/failure UTC and nonblank semantics aligned with JSON Schema', () => {

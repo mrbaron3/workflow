@@ -40,10 +40,13 @@ func TestExactLoopbackPublication(t *testing.T) {
 
 func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 	cfg := config{
-		Network:         "agentops-internal",
-		RunnerContainer: "agentops-runner",
-		RunnerImage:     "agentops-runner:dev",
-		RunnerVolume:    "agentops-runner-workspace",
+		Network:          "agentops-internal",
+		RunnerContainer:  "agentops-runner",
+		RunnerImage:      "agentops-runner:dev",
+		RunnerVolume:     "agentops-runner-workspace",
+		CredentialVolume: "agentops-runner-credentials",
+		Provider:         "codex",
+		CodexAuthPath:    "/operator/.codex/auth.json",
 	}
 	actual := &lifecycle.ContainerActual{ID: cfg.RunnerContainer}
 	actual.Status.State = "running"
@@ -62,9 +65,10 @@ func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 	actual.Configuration.CapDrop = []string{"ALL"}
 	actual.Configuration.InitProcess.User.ID.UID = 65532
 	for destination, kind := range map[string]string{
-		"/tmp":           "tmpfs",
-		"/home/agentops": "tmpfs",
-		"/workspace":     cfg.RunnerVolume,
+		"/tmp":                      "tmpfs",
+		"/home/agentops":            "tmpfs",
+		"/workspace":                cfg.RunnerVolume,
+		"/run/agentops-credentials": cfg.CredentialVolume,
 	} {
 		mount := struct {
 			Destination string         `json:"destination"`
@@ -80,16 +84,49 @@ func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 		}
 		actual.Configuration.Mounts = append(actual.Configuration.Mounts, mount)
 	}
-	if err := validateRunnerActual(actual, cfg); err != nil {
+	if err := validateRunnerActual(actual, cfg, lifecycle.ModeActive); err != nil {
 		t.Fatalf("valid runner topology rejected: %v", err)
 	}
 	actual.Configuration.CapAdd = []string{"CAP_SYS_ADMIN"}
-	if err := validateRunnerActual(actual, cfg); err == nil {
+	if err := validateRunnerActual(actual, cfg, lifecycle.ModeActive); err == nil {
 		t.Fatal("runner with added capability was accepted")
 	}
 }
 
-func TestStartCredentialSeparation(t *testing.T) {
+func TestMonitorOnlyRequiresNoProviderCredentialOrCredentialMount(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "deploy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "deploy", "Containerfile"),
+		[]byte("FROM scratch\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	value := config{
+		Prefix: "agentops", ProjectRoot: root,
+		PostgresPassword:  strings.Repeat("a", 32),
+		ControlDBPassword: strings.Repeat("b", 32),
+		RunnerDBPassword:  strings.Repeat("c", 32),
+		ControlToken:      strings.Repeat("d", 32),
+		DashboardToken:    strings.Repeat("e", 32),
+		WebhookSecret:     strings.Repeat("f", 32),
+		RunnerGitHubToken: strings.Repeat("g", 32),
+		Provider:          "codex",
+		MonitorRepository: "mrbaron3/workflow",
+	}
+	if err := value.validateStart(lifecycle.ModeMonitorOnly); err != nil {
+		t.Fatalf("provider-free MONITOR_ONLY was rejected: %v", err)
+	}
+	if value.providerAuth(lifecycle.ModeMonitorOnly) != "none" ||
+		value.usesCodexAuthFileFor(lifecycle.ModeMonitorOnly) {
+		t.Fatal("MONITOR_ONLY selected a provider credential boundary")
+	}
+}
+
+func TestStartRejectsEveryControlGitHubCredential(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "deploy"), 0o700); err != nil {
 		t.Fatal(err)
@@ -112,9 +149,86 @@ func TestStartCredentialSeparation(t *testing.T) {
 		ControlGitHubToken: strings.Repeat("g", 32),
 		RunnerGitHubToken:  strings.Repeat("g", 32),
 		Provider:           "codex", ProviderToken: strings.Repeat("h", 32),
+		MonitorRepository: "mrbaron3/workflow",
 	}
 	if err := value.validateStart(lifecycle.ModeActive); err == nil ||
-		!strings.Contains(err.Error(), "distinct") {
-		t.Fatalf("shared GitHub credential was accepted: %v", err)
+		!strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("control GitHub credential was accepted: %v", err)
+	}
+}
+
+func TestActiveAllowsCredentialFreeControlWithPrivateBrokerAndCodexLogin(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "deploy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "deploy", "Containerfile"),
+		[]byte("FROM scratch\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	auth := filepath.Join(root, "auth.json")
+	if err := os.WriteFile(auth, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value := config{
+		Prefix: "agentops", ProjectRoot: root,
+		PostgresPassword:  strings.Repeat("a", 32),
+		ControlDBPassword: strings.Repeat("b", 32),
+		RunnerDBPassword:  strings.Repeat("c", 32),
+		ControlToken:      strings.Repeat("d", 32),
+		DashboardToken:    strings.Repeat("e", 32),
+		WebhookSecret:     strings.Repeat("f", 32),
+		RunnerGitHubToken: strings.Repeat("g", 32),
+		Provider:          "codex",
+		CodexAuthPath:     auth,
+		MonitorRepository: "mrbaron3/workflow",
+	}
+	if err := value.validateStart(lifecycle.ModeActive); err != nil {
+		t.Fatalf("credential-free-control/private-runner boundary was rejected: %v", err)
+	}
+	if !value.usesCodexAuthFile() {
+		t.Fatal("Codex login file mode was not selected")
+	}
+}
+
+func TestCodexAuthSourceRejectsPermissiveOrNonCanonicalFile(t *testing.T) {
+	root := t.TempDir()
+	unsafe := filepath.Join(root, "auth.json")
+	if err := os.WriteFile(unsafe, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCodexAuthSource(unsafe); err == nil {
+		t.Fatal("group/world-readable Codex auth was accepted")
+	}
+	safe := filepath.Join(root, "not-auth.json")
+	if err := os.WriteFile(safe, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCodexAuthSource(safe); err == nil {
+		t.Fatal("non-canonical Codex auth filename was accepted")
+	}
+	missing := filepath.Join(root, "missing", "auth.json")
+	err := validateCodexAuthSource(missing)
+	if err == nil || strings.Contains(err.Error(), root) {
+		t.Fatalf("missing Codex auth leaked its host path: %v", err)
+	}
+}
+
+func TestPostgresRotationRequiresDistinctCurrentAndNextCredentials(t *testing.T) {
+	value := config{
+		PostgresPassword:     strings.Repeat("a", 32),
+		NextPostgresPassword: strings.Repeat("b", 32),
+		ControlDBPassword:    strings.Repeat("c", 32),
+		RunnerDBPassword:     strings.Repeat("d", 32),
+	}
+	if err := value.validatePostgresRotation(); err != nil {
+		t.Fatalf("valid PostgreSQL credential rotation rejected: %v", err)
+	}
+	value.NextPostgresPassword = value.ControlDBPassword
+	if err := value.validatePostgresRotation(); err == nil {
+		t.Fatal("database role credential reuse was accepted for admin rotation")
 	}
 }

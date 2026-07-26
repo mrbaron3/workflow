@@ -1,0 +1,107 @@
+{
+  "schemaVersion": "1.0",
+  "capturedAt": "2026-07-26T04:35:00Z",
+  "issue": "mrbaron3/workflow#17",
+  "immutableBase": "257dc557753b099a646c94d3e3cc700468ffb32a",
+  "source": {
+    "path": "evidence/ciso-07/source-issue-17.md",
+    "providerRevision": "2026-07-24T10:28:37Z",
+    "canonicalSelectedFieldsSha256": "acc329987db8776947ee4e79243cd1153cf0d090c5623b50e578426233b2fed9"
+  },
+  "parent": {
+    "issue": "mrbaron3/workflow#10",
+    "state": "OPEN",
+    "canonicalSelectedFieldsSha256": "3b56b7dab9e42dda979f38632ae64b3ef56bf49e895afbe15f6c90f042bd4bdb",
+    "mutationOwnedByCoordinator": true
+  },
+  "blockers": [
+    {
+      "issue": "mrbaron3/workflow#14",
+      "state": "CLOSED",
+      "stateReason": "COMPLETED",
+      "mergeSha": "af16c6ac9e75aac949c9a4e81d6f1877a292e313"
+    },
+    {
+      "issue": "mrbaron3/workflow#15",
+      "state": "CLOSED",
+      "stateReason": "COMPLETED",
+      "mergeSha": "ba79d1f0e02fb71e23774db15dcde81190b735de"
+    },
+    {
+      "issue": "mrbaron3/workflow#16",
+      "state": "CLOSED",
+      "stateReason": "COMPLETED",
+      "mergeSha": "257dc557753b099a646c94d3e3cc700468ffb32a"
+    }
+  ],
+  "releasedPrerequisites": [
+    {
+      "issue": 11,
+      "pullRequest": 35,
+      "finalHead": "ad5e9bd2e2e8f349512063ad5b957531212c5d18",
+      "mergeSha": "81002aed6b8bc399ddba9f0d1bd3a29ce6c459d1"
+    },
+    {
+      "issue": 12,
+      "pullRequest": 36,
+      "finalHead": "b79c7d0c23edb9bd54c5e6359eba7450a2403a36",
+      "mergeSha": "ee590b3361cd2b0f62e7ffa1e2fcfba1a16dac91"
+    },
+    {
+      "issue": 13,
+      "pullRequest": 37,
+      "finalHead": "b3eb1731ed99027c1ca8bca3eb741d1143eb3cfc",
+      "mergeSha": "1ad142836cecec0c117e0f1608568bda60e65d3f"
+    },
+    {
+      "issue": 14,
+      "pullRequest": 38,
+      "finalHead": "52d3aed96fdadf42928034cf3bb2d8fb0dacef6f",
+      "mergeSha": "af16c6ac9e75aac949c9a4e81d6f1877a292e313"
+    },
+    {
+      "issue": 15,
+      "pullRequest": 39,
+      "finalHead": "6b9e11ddf29ee1d25d0937e0a14e3f900c93d933",
+      "mergeSha": "ba79d1f0e02fb71e23774db15dcde81190b735de"
+    },
+    {
+      "issue": 16,
+      "pullRequest": 40,
+      "finalHead": "c02fe62558b86db328825778037b5b680239cce6",
+      "mergeSha": "257dc557753b099a646c94d3e3cc700468ffb32a"
+    }
+  ],
+  "regressionRoot": {
+    "pullRequest": 9,
+    "finalHead": "7fa3f655332d1d6b35ea1cfcab6cb9ae60910a14",
+    "mergeSha": "f391e4ecd7554ddbba61ff8687c72143a40a3e0b"
+  },
+  "repositorySnapshot": {
+    "fullTreeSha256": "53f0af5f7251afe06cd3e3f601a83d1943f450f4b5a8d92dea09adafbf889f79",
+    "releasedContractsAndEvidenceTreeSha256": "5b4b95f50dc05246adb46acfaf73ef41b3d9ff43e745df8b8059c6f397bbfc78"
+  },
+  "ownership": {
+    "acceptanceCriterion": "AC-CISO-012",
+    "implementationAndRepair": "Codex",
+    "claude": "formal-round-independent-read-only-review-only",
+    "formalReviewRounds": 2
+  },
+  "scope": {
+    "in": [
+      "three-container integration and reproducible pinned OCI release surfaces",
+      "credential bootstrap and rotation procedure",
+      "migration, start, upgrade, rollback-safe failure, readiness, and restart recovery",
+      "one bounded real mrbaron3/workflow#17 AgentOps job",
+      "machine-readable source, image, topology, job, attempt, review, merge, release, audit, and artifact lineage"
+    ],
+    "out": [
+      "reimplementation of AC-CISO-001 through AC-CISO-011",
+      "mutation of parent issue #10",
+      "host-native long-running daemon",
+      "legacy JSON control dual writer",
+      "additional repositories or unbounded GitHub targets"
+    ]
+  },
+  "knownResidualBootstrapBoundary": "The integration code and evidence cannot normally self-merge before that code exists on main. The bounded cutover must claim and plan through the existing intake, use the real three-container route for the current implementation head and all mutable release gates, preserve expected-head/current-state authority, and record any pre-main image/source bootstrap as bootstrap rather than normal execution."
+}

@@ -24,3 +24,12 @@
 - **DATA-container-runtime-007 agentopsctl actual status** — Apple Container capability、3 roleのstate/network/
   publish/socket/mount/read-only/capabilityとloopback probeを起動ごとに観測する揮発snapshot。persisted lifecycleとは
   同一視せず並べて表示する。
+- **DATA-container-runtime-008 credential volume and broker configuration** — runner-only named credential volume、
+  private`auth.json` destination、固定monitor repositoryを起動時specへ含める。source host path、credential値、
+  fingerprintはstatus/evidenceへ永続化しない。
+- **DATA-container-runtime-009 sealed PostgreSQL spec** — image descriptor、internal network、named volume、tmpfs と
+  credential **key** を含むredacted canonical desired specのdigestをmanaged labelに保存する。TOKEN／PASSWORD／
+  SECRET／DATABASE_URL／API_KEY値は一律`<credential-redacted>`へ置換するため、labelはoffline credential verifierに
+  ならない。起動・status時はactual descriptor＋redacted spec digestに加え、actual environment値をプロセス内だけで
+  desired値と比較し、DB/providerのbounded authentication probeでcredential有効性を検証する。値・値由来digestは
+  label/status/evidenceへ永続化しない。

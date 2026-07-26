@@ -196,12 +196,12 @@ function runnerConfig(input: AgentOpsAdapterInput): HarnessConfig {
       systemDir: `${input.workspace.worktreePath}/docs/_system`,
       protectedPaths: ['.git', '.github/workflows'],
       graders: {
-        typecheck: 'npm run typecheck',
-        unit_tests: 'npm test',
+        typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
+        unit_tests: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
         commands: {
-          build: 'npm run build',
-          typecheck: 'npm run typecheck',
-          unit_test: 'npm test',
+          build: 'node /app/node_modules/typescript/bin/tsc',
+          typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
+          unit_test: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
         },
       },
     },

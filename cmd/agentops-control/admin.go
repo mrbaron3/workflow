@@ -13,6 +13,8 @@ import (
 	"github.com/mrbaron3/workflow/internal/lifecycle"
 )
 
+var rotatePostgresAdmin = lifecycle.RotatePostgresAdmin
+
 func runAdministrativeCommand(args []string) error {
 	databaseURL := strings.TrimSpace(os.Getenv("AGENTOPS_DATABASE_URL"))
 	if databaseURL == "" {
@@ -46,6 +48,30 @@ func runAdministrativeCommand(args []string) error {
 			return err
 		}
 		return writeJSON(map[string]any{"rolesBootstrapped": true})
+	case "rotate-postgres-admin":
+		flags := flag.NewFlagSet("rotate-postgres-admin", flag.ContinueOnError)
+		requestID := flags.String("request-id", "", "durable rotation identity")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return fmt.Errorf("unexpected rotate-postgres-admin arguments")
+		}
+		if strings.TrimSpace(*requestID) == "" {
+			return fmt.Errorf("rotate-postgres-admin request ID is required")
+		}
+		if err := rotatePostgresAdmin(
+			ctx,
+			databaseURL,
+			os.Getenv("AGENTOPS_NEXT_POSTGRES_PASSWORD"),
+			*requestID,
+		); err != nil {
+			return err
+		}
+		return writeJSON(map[string]any{
+			"rotated":   true,
+			"requestId": *requestID,
+		})
 	case "lifecycle":
 		return runLifecycleCommand(ctx, databaseURL, args[1:])
 	default:
@@ -148,8 +174,16 @@ func runLifecycleCommand(
 		return writeJSON(map[string]any{"recorded": true})
 	case "reconcile-expired":
 		flags := flag.NewFlagSet("lifecycle reconcile-expired", flag.ContinueOnError)
-		maxAttempts := flags.Int("max-attempts", 3, "terminal attempt ceiling")
-		retryBase := flags.Duration("retry-base", 5*time.Second, "retry backoff base")
+		maxAttempts := flags.Int(
+			"max-attempts",
+			lifecycle.DefaultReconcileMaxAttempts,
+			"terminal attempt ceiling",
+		)
+		retryBase := flags.Duration(
+			"retry-base",
+			lifecycle.DefaultReconcileRetryBase,
+			"retry backoff base",
+		)
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}

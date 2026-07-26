@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -239,6 +241,153 @@ func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
 	if err != nil || !status.State.DrainTimedOut ||
 		status.State.LastError == nil || len(status.RecentTransitions) < 4 {
 		t.Fatalf("lifecycle status=%#v err=%v", status, err)
+	}
+}
+
+func TestMonitorBrokerRequestAndOriginAuditAreAtomic(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	const registrationID = "10000000-0000-4000-8000-000000000017"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.repository_registrations(
+		  id, repository, enabled, issue_monitor_enabled,
+		  pr_monitor_enabled, execution_enabled
+		) VALUES ($1, 'mrbaron3/workflow', true, true, true, true)
+	`, registrationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		CREATE FUNCTION agentops_control.reject_monitor_request_audit()
+		RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+		  IF NEW.event_type = 'monitor.broker.requested' THEN
+		    RAISE EXCEPTION 'injected origin audit failure';
+		  END IF;
+		  RETURN NEW;
+		END $$
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		CREATE TRIGGER reject_monitor_request_audit
+		  BEFORE INSERT ON agentops_control.runtime_audit
+		  FOR EACH ROW EXECUTE FUNCTION
+		    agentops_control.reject_monitor_request_audit()
+	`); err != nil {
+		t.Fatal(err)
+	}
+	source := BrokeredGitHubSource{
+		Store:             &Store{pool: pool},
+		AllowedRepository: "mrbaron3/workflow",
+		Timeout:           time.Second,
+	}
+	_, _, _, err = source.Poll(ctx, Registration{
+		ID:                  registrationID,
+		Repository:          "mrbaron3/workflow",
+		Enabled:             true,
+		IssueMonitorEnabled: true,
+		PRMonitorEnabled:    true,
+		ExecutionEnabled:    true,
+		Version:             1,
+	}, "issue", nil)
+	if err == nil || !strings.Contains(err.Error(), "injected origin audit failure") {
+		t.Fatalf("atomic broker request did not surface audit failure: %v", err)
+	}
+	var requests int
+	if err := pool.QueryRow(
+		ctx,
+		`SELECT count(*) FROM agentops_control.monitor_broker_requests`,
+	).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatalf("broker request survived without its origin audit: %d", requests)
+	}
+}
+
+func TestPostgresAdministratorRotationFencesAndInvalidatesOldCredential(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	parsed, err := url.Parse(databaseURL)
+	if err != nil || parsed.User == nil || parsed.User.Username() != "postgres" {
+		t.Skip("integration database is not the postgres administrator login")
+	}
+	currentPassword, present := parsed.User.Password()
+	if !present {
+		t.Skip("integration database URL has no password")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	if _, err := pool.Exec(ctx, `
+		UPDATE agentops_control.lifecycle_state
+		   SET mode = 'DRAINING', generation = generation + 1,
+		       updated_at = clock_timestamp()
+		 WHERE singleton
+	`); err != nil {
+		t.Fatal(err)
+	}
+	nextPassword := strings.Repeat("ciso07-next-admin-", 3)
+	nextURL := *parsed
+	nextURL.User = url.UserPassword("postgres", nextPassword)
+	rotated := false
+	defer func() {
+		if !rotated {
+			return
+		}
+		cleanup, cleanupErr := pgxpool.New(ctx, nextURL.String())
+		if cleanupErr == nil {
+			escaped := strings.ReplaceAll(currentPassword, "'", "''")
+			_, cleanupErr = cleanup.Exec(
+				ctx,
+				`ALTER ROLE postgres PASSWORD '`+escaped+`'`,
+			)
+			cleanup.Close()
+		}
+		if cleanupErr != nil {
+			t.Errorf("restore integration postgres credential: %v", cleanupErr)
+		}
+	}()
+	if err := lifecyclestore.RotatePostgresAdmin(
+		ctx,
+		databaseURL,
+		nextPassword,
+		"ciso07-integration-rotation",
+	); err != nil {
+		t.Fatal(err)
+	}
+	rotated = true
+	nextStore, err := lifecyclestore.Open(ctx, nextURL.String())
+	if err != nil {
+		t.Fatalf("new PostgreSQL administrator credential failed: %v", err)
+	}
+	nextStore.Close()
+	if oldStore, oldErr := lifecyclestore.Open(ctx, databaseURL); oldErr == nil {
+		oldStore.Close()
+		t.Fatal("old PostgreSQL administrator credential still authenticated")
 	}
 }
 
@@ -1333,6 +1482,8 @@ func resetAndMigrate(
 		"0002_registration_control.sql",
 		"0003_isolated_runner.sql",
 		"0004_agentops_lifecycle.sql",
+		"0005_private_monitor_broker.sql",
+		"0006_monitor_broker_capability_functions.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

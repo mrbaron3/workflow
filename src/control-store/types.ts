@@ -1,6 +1,36 @@
 import { z } from 'zod';
 
-export const CONTROL_SCHEMA_VERSION = 4;
+export const CONTROL_SCHEMA_VERSION = 6;
+
+export const MonitorBrokerKind = z.enum(['issue', 'pull_request']);
+export type MonitorBrokerKind = z.infer<typeof MonitorBrokerKind>;
+
+export const MonitorBrokerCursor = z.object({
+  updatedAfter: z.string().datetime({ offset: true }).or(z.literal('')),
+}).strict();
+export type MonitorBrokerCursor = z.infer<typeof MonitorBrokerCursor>;
+
+export interface MonitorBrokerRequest {
+  id: string;
+  registrationId: string;
+  registrationVersion: number;
+  repository: string;
+  monitorKind: MonitorBrokerKind;
+  cursor: MonitorBrokerCursor;
+  leaseToken: string;
+}
+
+export const MonitorBrokerResponse = z.object({
+  items: z.array(z.object({
+    repository: z.string().regex(/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/),
+    kind: MonitorBrokerKind,
+    number: z.number().int().positive().max(2_147_483_647),
+    updatedAt: z.string().datetime({ offset: true }),
+  }).strict()).max(1_000),
+  nextCursor: MonitorBrokerCursor,
+  observedAt: z.string().datetime({ offset: true }),
+}).strict();
+export type MonitorBrokerResponse = z.infer<typeof MonitorBrokerResponse>;
 
 export const RepositoryRegistrationInput = z.object({
   repository: z.string().trim().toLowerCase()

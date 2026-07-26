@@ -22,6 +22,7 @@ export const RunnerStartupInput = z.object({
   workspaceRoot: z.string().min(1),
   databaseUrl: z.string().url(),
   provider: z.enum(['codex', 'claude']),
+  providerAuth: z.enum(['none', 'api-key', 'codex-login']),
   operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']),
   leaseDurationMs: z.number().int().min(5_000).max(60 * 60_000),
   heartbeatIntervalMs: z.number().int().min(500).max(10 * 60_000),
@@ -39,13 +40,39 @@ export const RunnerStartupInput = z.object({
 ).refine(
   (value) => value.commandTimeoutMs < value.attemptTimeoutMs,
   'command timeout must be less than the overall attempt timeout',
-);
+).superRefine((value, context) => {
+  if (value.operatingMode === 'ACTIVE' && value.providerAuth === 'none') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'ACTIVE requires provider authentication',
+      path: ['providerAuth'],
+    });
+  }
+  if (value.operatingMode !== 'ACTIVE' && value.providerAuth !== 'none') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'non-ACTIVE runner must not receive provider authentication',
+      path: ['providerAuth'],
+    });
+  }
+  if (value.providerAuth === 'codex-login' && value.provider !== 'codex') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Codex login authentication requires the codex provider',
+      path: ['provider'],
+    });
+  }
+});
 export type RunnerStartupInput = z.infer<typeof RunnerStartupInput>;
+
+export type RunnerProviderAuthentication =
+  | { kind: 'none'; provider: 'codex' | 'claude' }
+  | { kind: 'api-key'; provider: 'codex' | 'claude'; token: string }
+  | { kind: 'codex-login'; provider: 'codex'; codexHome: string };
 
 export interface RunnerCredentials {
   githubToken: string;
-  provider: 'codex' | 'claude';
-  providerToken: string;
+  providerAuthentication: RunnerProviderAuthentication;
 }
 
 export interface RunnerRuntimeBoundary {
@@ -61,6 +88,56 @@ const CONTAINER_SOCKET_PATHS = [
   '/run/podman/podman.sock',
   '/run/host-services/container.sock',
 ] as const;
+
+const CodexAuthFile = z.object({
+  auth_mode: z.enum(['chatgpt', 'apikey']),
+  OPENAI_API_KEY: z.string().min(20).nullable().optional(),
+  tokens: z.object({
+    access_token: z.string().min(20),
+    refresh_token: z.string().min(20),
+    account_id: z.string().min(1),
+    id_token: z.string().min(20).optional(),
+  }).passthrough().nullable().optional(),
+}).passthrough().superRefine((value, context) => {
+  if (value.auth_mode === 'chatgpt' && !value.tokens) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'chatgpt auth requires tokens',
+      path: ['tokens'],
+    });
+  }
+  if (
+    value.auth_mode === 'apikey'
+    && (!value.OPENAI_API_KEY || value.OPENAI_API_KEY.length < 20)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'apikey auth requires OPENAI_API_KEY',
+      path: ['OPENAI_API_KEY'],
+    });
+  }
+});
+
+export function validateCodexAuthFile(authPath: string): void {
+  try {
+    const authInfo = fs.statSync(authPath);
+    if (
+      !authInfo.isFile()
+      || (authInfo.mode & 0o077) !== 0
+      || authInfo.size < 2
+      || authInfo.size > 256 * 1024
+    ) {
+      throw new Error('invalid metadata');
+    }
+    CodexAuthFile.parse(JSON.parse(fs.readFileSync(authPath, 'utf8')));
+  } catch {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'Codex auth.json has an invalid private credential structure',
+      false,
+    );
+  }
+}
 
 function listeningPorts(raw: string): number[] {
   const ports = new Set<number>();
@@ -155,10 +232,16 @@ function platformVirtualMount(mount: ObservedMount): boolean {
     || target.startsWith('/dev/');
 }
 
-function validateRuntimeBoundary(boundary: RunnerRuntimeBoundary): void {
+function validateRuntimeBoundary(
+  boundary: RunnerRuntimeBoundary,
+  requiresCredentialVolume: boolean,
+): void {
   const mounts = boundary.mountInfo.split('\n').filter(Boolean).map(observedMount);
   const workspace = mounts.find((mount) => mount.target === '/workspace');
   const root = mounts.find((mount) => mount.target === '/');
+  const credential = mounts.find(
+    (mount) => mount.target === '/run/agentops-credentials',
+  );
   if (!workspace || !workspace.options.includes('rw')) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
@@ -186,6 +269,23 @@ function validateRuntimeBoundary(boundary: RunnerRuntimeBoundary): void {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
       'kernel /workspace mount is not an observed private block-backed named volume',
+      false,
+    );
+  }
+  if (
+    requiresCredentialVolume
+    && (
+      !credential
+      || !credential.options.includes('ro')
+      || credential.options.includes('rw')
+      || !['ext4', 'xfs', 'btrfs'].includes(credential.fsType)
+      || !credential.source.startsWith('/dev/')
+      || credential.majorMinor === root.majorMinor
+    )
+  ) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'Codex credential path is not an observed read-only private named volume',
       false,
     );
   }
@@ -353,6 +453,20 @@ export function loadRunnerStartup(
   const provider = z.enum(['codex', 'claude']).parse(
     env.AGENTOPS_RUNNER_PROVIDER,
   );
+  const operatingMode = z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']).parse(
+    env.AGENTOPS_OPERATING_MODE ?? 'MONITOR_ONLY',
+  );
+  const providerAuth = z.enum(['none', 'api-key', 'codex-login']).parse(
+    env.AGENTOPS_RUNNER_PROVIDER_AUTH
+      ?? (operatingMode === 'ACTIVE' ? 'api-key' : 'none'),
+  );
+  if (providerAuth === 'codex-login' && provider !== 'codex') {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'codex-login authentication is valid only for the codex provider',
+      false,
+    );
+  }
   const selectedProviderKey = PROVIDER_TOKEN_KEYS[provider];
   for (const [candidate, key] of Object.entries(PROVIDER_TOKEN_KEYS)) {
     if (candidate !== provider && env[key]) {
@@ -401,9 +515,8 @@ export function loadRunnerStartup(
     workspaceRoot,
     databaseUrl,
     provider,
-    operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']).parse(
-      env.AGENTOPS_OPERATING_MODE ?? 'MONITOR_ONLY',
-    ),
+    providerAuth,
+    operatingMode,
     leaseDurationMs: integerEnv(env, 'AGENTOPS_RUNNER_LEASE_MS', 60_000),
     heartbeatIntervalMs: integerEnv(env, 'AGENTOPS_RUNNER_HEARTBEAT_MS', 15_000),
     reconciliationIntervalMs: integerEnv(
@@ -428,14 +541,31 @@ export function loadRunnerStartup(
     outbound,
   });
 
+  const workspaceMount = config.mounts.find(
+    (mount) => mount.target === '/workspace',
+  );
+  const credentialMount = config.mounts.find(
+    (mount) => mount.target === '/run/agentops-credentials',
+  );
+  if (!workspaceMount || workspaceMount.readOnly) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'runner must have one writable named volume mounted at /workspace',
+      false,
+    );
+  }
   if (
-    config.mounts.length !== 1
-    || config.mounts[0]?.target !== '/workspace'
-    || config.mounts[0].readOnly
+    config.providerAuth !== 'codex-login'
+      ? config.mounts.length !== 1
+      : (
+        config.mounts.length !== 2
+        || !credentialMount
+        || !credentialMount.readOnly
+      )
   ) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
-      'runner must have exactly one writable named volume mounted at /workspace',
+      'runner mounts do not match its exact provider credential boundary',
       false,
     );
   }
@@ -460,15 +590,20 @@ export function loadRunnerStartup(
     `${databaseHost}:${databasePort}`,
     'github.com:443',
     'api.github.com:443',
-    PROVIDER_DESTINATIONS[provider],
   ]);
+  if (config.providerAuth === 'api-key') {
+    required.add(PROVIDER_DESTINATIONS[provider]);
+  } else if (config.providerAuth === 'codex-login') {
+    required.add('chatgpt.com:443');
+    required.add('auth.openai.com:443');
+  }
   if (
     required.size !== allowed.size
     || ![...required].every((destination) => allowed.has(destination))
   ) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
-      `runner outbound allowlist must exactly match the database, GitHub, and ${provider} destinations`,
+      'runner outbound allowlist does not match its exact mode and provider credential boundary',
       false,
     );
   }
@@ -479,15 +614,50 @@ export function loadRunnerStartup(
       false,
     );
   }
-  if (runtimeBoundary) validateRuntimeBoundary(runtimeBoundary);
+  let providerAuthentication: RunnerProviderAuthentication;
+  if (config.providerAuth === 'codex-login') {
+    const codexHome = assertContainerNeutralPath(env.CODEX_HOME ?? '', 'CODEX_HOME');
+    if (codexHome !== '/run/agentops-credentials/codex') {
+      throw new RunnerExecutionError(
+        'startup_isolation_failure',
+        'Codex login must use /run/agentops-credentials/codex',
+        false,
+      );
+    }
+    validateCodexAuthFile(path.join(codexHome, 'auth.json'));
+    providerAuthentication = {
+      kind: 'codex-login',
+      provider: 'codex',
+      codexHome,
+    };
+  } else if (config.providerAuth === 'api-key') {
+    providerAuthentication = {
+      kind: 'api-key',
+      provider,
+      token: requiredSecret(env, selectedProviderKey),
+    };
+  } else if (env[selectedProviderKey] || env.CODEX_HOME) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'non-ACTIVE runner received a provider credential',
+      false,
+    );
+  } else {
+    providerAuthentication = { kind: 'none', provider };
+  }
+  if (runtimeBoundary) {
+    validateRuntimeBoundary(
+      runtimeBoundary,
+      config.providerAuth === 'codex-login',
+    );
+  }
 
   return {
     config,
     runtimeBoundary: runtimeBoundary ?? null,
     credentials: {
       githubToken: requiredSecret(env, 'AGENTOPS_RUNNER_GITHUB_TOKEN'),
-      provider,
-      providerToken: requiredSecret(env, selectedProviderKey),
+      providerAuthentication,
     },
   };
 }
@@ -501,7 +671,12 @@ export function minimalExecutionEnvironment(
   source: NodeJS.ProcessEnv = process.env,
   timeouts?: { commandTimeoutMs: number },
 ): NodeJS.ProcessEnv {
-  const providerKey = PROVIDER_TOKEN_KEYS[credentials.provider];
+  const authentication = credentials.providerAuthentication;
+  const providerCredential = authentication.kind === 'api-key'
+    ? { [PROVIDER_TOKEN_KEYS[authentication.provider]]: authentication.token }
+    : authentication.kind === 'codex-login'
+      ? { CODEX_HOME: authentication.codexHome }
+      : {};
   return {
     PATH: source.PATH ?? '/usr/local/bin:/usr/bin:/bin',
     HOME: '/home/agentops',
@@ -524,7 +699,7 @@ export function minimalExecutionEnvironment(
     GITHUB_TOKEN: credentials.githubToken,
     GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',
     GIT_TERMINAL_PROMPT: '0',
-    [providerKey]: credentials.providerToken,
+    ...providerCredential,
   };
 }
 
@@ -542,7 +717,10 @@ export function isolatedGraderEnvironment(
     NO_COLOR: '1',
     AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
     ...(registrationRoot
-      ? { AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot }
+      ? {
+          AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
+          AGENTOPS_RUNNER_DEPENDENCY_ROOT: '/app/node_modules',
+        }
       : {}),
   };
 }

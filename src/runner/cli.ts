@@ -9,6 +9,8 @@ import {
 } from './security.js';
 import { IsolatedRunnerService } from './service.js';
 import { RunnerWorkspaceManager } from './workspace.js';
+import { PrivateMonitorBroker } from './monitor-broker.js';
+import { runCoupledLoops } from './liveness.js';
 
 async function main(): Promise<void> {
   const { config, credentials, runtimeBoundary } = loadRunnerStartup(
@@ -27,6 +29,7 @@ async function main(): Promise<void> {
   const executionEnvironment = minimalExecutionEnvironment(credentials, process.env, {
     commandTimeoutMs: config.commandTimeoutMs,
   });
+  const monitorRepository = process.env.AGENTOPS_MONITOR_REPOSITORY;
   replaceProcessEnvironment(executionEnvironment);
   const service = new IsolatedRunnerService(
     {
@@ -52,7 +55,20 @@ async function main(): Promise<void> {
       log: (message) => process.stdout.write(`${message}\n`),
     },
   );
-  const drain = (): void => service.requestDrain();
+  if (monitorRepository !== 'mrbaron3/workflow') {
+    throw new Error('private monitor broker repository allowlist is invalid');
+  }
+  const broker = new PrivateMonitorBroker({
+    store,
+    workerId: config.workerId,
+    repository: monitorRepository,
+    githubToken: credentials.githubToken,
+    log: (message) => process.stdout.write(`${message}\n`),
+  });
+  const drain = (): void => {
+    broker.requestStop();
+    service.requestDrain();
+  };
   process.once('SIGTERM', drain);
   process.once('SIGINT', drain);
   try {
@@ -85,7 +101,7 @@ async function main(): Promise<void> {
           || process.env.DOCKER_HOST !== undefined,
       },
     });
-    await service.run();
+    await runCoupledLoops(service, broker);
   } finally {
     process.off('SIGTERM', drain);
     process.off('SIGINT', drain);

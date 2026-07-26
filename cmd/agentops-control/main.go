@@ -111,19 +111,39 @@ func run() error {
 	)
 	pollInterval := durationEnvironment("AGENTOPS_GITHUB_POLL_INTERVAL", time.Minute)
 	httpClient := &http.Client{Timeout: 30 * time.Second}
+	var monitorSource control.MonitorSource = control.GitHubSource{
+		Client:  httpClient,
+		BaseURL: environment("AGENTOPS_GITHUB_API_URL", "https://api.github.com"),
+		Token:   firstNonEmpty(os.Getenv("GH_TOKEN"), os.Getenv("GITHUB_TOKEN")),
+	}
+	if brokerRepository := strings.ToLower(strings.TrimSpace(
+		os.Getenv("AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY"),
+	)); brokerRepository != "" {
+		if strings.TrimSpace(os.Getenv("GH_TOKEN")) != "" ||
+			strings.TrimSpace(os.Getenv("GITHUB_TOKEN")) != "" {
+			return fmt.Errorf(
+				"private monitor broker control must not receive a GitHub credential",
+			)
+		}
+		monitorSource = control.BrokeredGitHubSource{
+			Store:             store,
+			AllowedRepository: brokerRepository,
+			Timeout:           control.DefaultMonitorBrokerTimeout,
+		}
+	}
 	runner := &control.ProductionRunner{
-		Store: store,
-		Source: control.GitHubSource{
-			Client:  httpClient,
-			BaseURL: environment("AGENTOPS_GITHUB_API_URL", "https://api.github.com"),
-			Token:   firstNonEmpty(os.Getenv("GH_TOKEN"), os.Getenv("GITHUB_TOKEN")),
-		},
+		Store:          store,
+		Source:         monitorSource,
 		Mode:           mode,
 		SupervisorID:   supervisorID,
 		PollInterval:   pollInterval,
+		TransientRetry: 2 * time.Second,
 		ForwarderRetry: 2 * time.Second,
 		HealthInterval: reconciliationInterval,
-		Log:            log,
+		// Webhook ingress is the signed HTTP API in the standard OCI
+		// topology. GitHub credentials and gh remain runner-only.
+		SignedWebhookIngressOnly: true,
+		Log:                      log,
 	}
 	supervisor := control.NewSupervisor(
 		store,
@@ -174,6 +194,7 @@ func run() error {
 	egressProxy, err := runnerEgressProxy(
 		strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN")),
 		environment("AGENTOPS_RUNNER_PROVIDER", "codex"),
+		environment("AGENTOPS_RUNNER_PROVIDER_AUTH", "none"),
 	)
 	if err != nil {
 		return err

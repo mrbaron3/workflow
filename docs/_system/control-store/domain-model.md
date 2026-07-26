@@ -12,8 +12,11 @@
 - **DOM-control-store-010 Lifecycle State** — OFF／MONITOR_ONLY／ACTIVE／DRAININGのsingleton aggregate。
 - **DOM-control-store-011 Lifecycle Transition** — actorとidempotency identityを持ち、明示graphだけを進む監査entity。
 - **DOM-control-store-012 Drain Fence** — DRAINING commitと新規routing/enqueue/leaseを直列化するDB権威の境界。
+- **DOM-control-store-013 Monitor Broker Request** — 1 Registration revisionの1 typed cursor readを表すdurable entity。
+  runner lease、stale Registration fence、bounded response、digest auditを一体で所有する。
 
 不変条件: active jobはrepositoryごとに高々1件、active leaseはjobごとに高々1件、stale/disabled Registrationのjobは
 claimしない。artifactはRegistration rootからreal pathで逸脱できず、lease loss後にside effect permitを消費できない。
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
-[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)
+[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)

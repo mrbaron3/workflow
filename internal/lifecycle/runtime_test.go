@@ -2,6 +2,9 @@ package lifecycle
 
 import (
 	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -23,6 +26,14 @@ func (runner *fakeRuntimeRunner) Run(
 	runner.results = runner.results[1:]
 	result.Args = append([]string(nil), args...)
 	return result
+}
+
+func (runner *fakeRuntimeRunner) RunWithStdin(
+	ctx context.Context,
+	args []string,
+	_ io.Reader,
+) CommandResult {
+	return runner.Run(ctx, args)
 }
 
 func TestBuildContainerArgsEnforcesPublicationAndNamedMounts(t *testing.T) {
@@ -49,7 +60,7 @@ func TestBuildContainerArgsEnforcesPublicationAndNamedMounts(t *testing.T) {
 	}
 }
 
-func TestContainerSpecDigestBindsImageEnvironmentAndInit(t *testing.T) {
+func TestContainerSpecDigestBindsNonSecretEnvironmentWithoutCredentialFingerprint(t *testing.T) {
 	spec := ContainerSpec{
 		Name: "agentops-control", Role: "control", Image: "control:test",
 		Networks: []string{"default", "agentops-internal"},
@@ -92,8 +103,19 @@ func TestContainerSpecDigestBindsImageEnvironmentAndInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rotatedDigest == digest {
-		t.Fatal("environment rotation did not change the canonical digest")
+	if rotatedDigest != digest {
+		t.Fatal("credential rotation created a durable credential fingerprint")
+	}
+	rotated.Environment["AGENTOPS_OPERATING_MODE"] = "MONITOR_ONLY"
+	nonSecretDigest, err := SpecDigest(
+		rotated,
+		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonSecretDigest == digest {
+		t.Fatal("non-secret environment drift did not change the canonical digest")
 	}
 	imageDigest, err := SpecDigest(
 		spec,
@@ -207,5 +229,30 @@ func TestRuntimeErrorsRedactEnvironmentValues(t *testing.T) {
 	})
 	if err == nil || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("error was not safely redacted: %v", err)
+	}
+}
+
+func TestCopyFileToContainerRedactsHostCredentialPathOnFailure(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(source, []byte("private\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeRuntimeRunner{results: []CommandResult{{
+		Status: 1, Stderr: "copy rejected",
+	}}}
+	runtime := NewAppleRuntimeForTest(fake)
+	err := runtime.CopyFileToContainer(
+		context.Background(),
+		"agentops-credential-init",
+		source,
+		"/credentials/codex/auth.json",
+	)
+	if err == nil || strings.Contains(err.Error(), source) {
+		t.Fatalf("credential source path leaked: %v", err)
+	}
+	if len(fake.args) != 1 ||
+		fake.args[0][0] != "exec" ||
+		strings.Contains(strings.Join(fake.args[0], " "), source) {
+		t.Fatalf("private stdin copy exposed the host source: %#v", fake.args)
 	}
 }

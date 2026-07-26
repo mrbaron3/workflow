@@ -78,6 +78,19 @@ func run(args []string) error {
 			return usageError()
 		}
 		return manager.Stop(ctx, *timeout, commandID("stop", *requestID))
+	case "rotate-postgres-admin":
+		flags := flag.NewFlagSet("rotate-postgres-admin", flag.ContinueOnError)
+		requestID := flags.String("request-id", "", "durable rotation identity")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return usageError()
+		}
+		return manager.RotatePostgresAdmin(
+			ctx,
+			commandID("rotate-postgres-admin", *requestID),
+		)
 	case "status":
 		flags := flag.NewFlagSet("status", flag.ContinueOnError)
 		asJSON := flags.Bool("json", false, "emit machine-readable JSON")
@@ -138,6 +151,6 @@ func commandID(operation, provided string) string {
 
 func usageError() error {
 	return fmt.Errorf(
-		"usage: agentopsctl start|drain|stop|status|logs|open (use -h after a command)",
+		"usage: agentopsctl start|drain|stop|rotate-postgres-admin|status|logs|open (use -h after a command)",
 	)
 }

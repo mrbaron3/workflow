@@ -67,10 +67,15 @@ type ProductionRunner struct {
 	Mode           OperatingMode
 	SupervisorID   string
 	PollInterval   time.Duration
+	TransientRetry time.Duration
 	ForwarderRetry time.Duration
 	HealthInterval time.Duration
-	Command        CommandFactory
-	Log            *slog.Logger
+	// SignedWebhookIngressOnly makes the HTTP webhook endpoint the forwarder
+	// health boundary. The credential-free control container must never spawn
+	// the credential-bearing `gh webhook forward` process.
+	SignedWebhookIngressOnly bool
+	Command                  CommandFactory
+	Log                      *slog.Logger
 }
 
 func (runner *ProductionRunner) Run(
@@ -97,10 +102,36 @@ func (runner *ProductionRunner) runMonitor(
 ) error {
 	ticker := time.NewTicker(runner.PollInterval)
 	defer ticker.Stop()
+	transientRetries := 0
 	for {
 		if err := runner.pollOnce(ctx, registration, kind, component); err != nil {
+			if errors.Is(err, ErrMonitorBrokerTransientProvider) &&
+				transientRetries < MaxMonitorBrokerTransientRetry {
+				transientRetries++
+				if stateErr := runner.Store.UpsertActualState(
+					ctx,
+					registration,
+					component,
+					"starting",
+					runner.SupervisorID,
+					nil,
+				); stateErr != nil {
+					return stateErr
+				}
+				retry := runner.TransientRetry
+				if retry <= 0 {
+					retry = 2 * time.Second
+				}
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(retry):
+					continue
+				}
+			}
 			return err
 		}
+		transientRetries = 0
 		select {
 		case <-ctx.Done():
 			return nil
@@ -150,7 +181,8 @@ func (runner *ProductionRunner) pollOnce(
 			item,
 		)
 		if err != nil {
-			if errors.Is(err, ErrRepositoryBusy) {
+			if errors.Is(err, ErrRepositoryBusy) ||
+				errors.Is(err, ErrOperatingMode) {
 				return runner.Store.UpsertActualState(
 					ctx,
 					registration,
@@ -189,6 +221,19 @@ func (runner *ProductionRunner) runForwarder(
 	events := forwarderEvents(registration)
 	if len(events) == 0 {
 		return nil
+	}
+	if runner.SignedWebhookIngressOnly {
+		if err := runner.Store.UpsertActualState(
+			ctx,
+			registration,
+			ComponentForwarder,
+			"running",
+			runner.SupervisorID,
+			nil,
+		); err != nil {
+			return err
+		}
+		return runner.heartbeatForwarder(ctx, registration)
 	}
 	commandFactory := runner.Command
 	if commandFactory == nil {

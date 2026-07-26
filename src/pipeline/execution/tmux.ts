@@ -119,6 +119,7 @@ export function launchSession(opts: LaunchOpts): void {
     'DOCKER_HOST',
     'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
+    'CODEX_HOME',
   ]) {
     tmux(['set-environment', '-gu', key]);
   }
@@ -131,6 +132,7 @@ export function launchSession(opts: LaunchOpts): void {
     'NO_COLOR',
     'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
+    'CODEX_HOME',
   ]) {
     const value = environment[key];
     if (value !== undefined) tmux(['set-environment', '-g', key, value]);

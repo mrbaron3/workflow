@@ -19,6 +19,10 @@
 - **LANG-control-store-017 Lifecycle Transition** — validation、idempotency、actor、時刻、結果を一体で保存する状態変更。
 - **LANG-control-store-018 Drain Fence** — DRAINING後の新規routing/enqueue/leaseをDBで拒否する競合境界。
 - **LANG-control-store-019 Recovery Reconciliation** — persisted mode/lease/attemptとactual topologyをrestart時に照合する操作。
+- **LANG-control-store-020 Monitor Broker Request** — 固定repository/kind/cursorだけを持つprivate monitorのdurable read要求。
+- **LANG-control-store-021 Monitor Broker Lease** — runnerが1 requestを期限付きで処理する所有権。expiry後は回収される。
+- **LANG-control-store-022 Sanitized Monitor Response** — repository/kind/number/updatedAtとnext cursorだけのbounded応答。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
-[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)
+[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)

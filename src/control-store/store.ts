@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   Pool,
   type Notification,
@@ -11,6 +11,8 @@ import {
   EnqueueJobInput,
   IdempotencyConflictError,
   LeaseRejectedError,
+  MonitorBrokerCursor,
+  MonitorBrokerResponse,
   OperatingModeError,
   RepositoryBusyError,
   RepositoryRegistrationInput,
@@ -24,6 +26,8 @@ import {
   type ExecutionGuardVerdict,
   type JobEnvelope,
   type Lease,
+  type MonitorBrokerRequest,
+  type MonitorBrokerResponse as MonitorBrokerResponseType,
   type ReconciliationWork,
   type RepositoryRegistration,
   type RunnerJobFailureV1,
@@ -68,6 +72,16 @@ interface WebhookDeliveryRow extends QueryResultRow {
   headers: Record<string, string>;
   payload: Record<string, unknown>;
   received_at: Date;
+}
+
+interface MonitorBrokerRequestRow extends QueryResultRow {
+  id: string;
+  registration_id: string;
+  registration_version: string;
+  repository: string;
+  monitor_kind: 'issue' | 'pull_request';
+  cursor: { updatedAfter: string };
+  lease_token: string;
 }
 
 function registration(row: RegistrationRow): RepositoryRegistration {
@@ -307,6 +321,139 @@ export class PostgresControlStore {
       observedAt: row.observed_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     } : null;
+  }
+
+  async claimMonitorBrokerRequest(input: {
+    workerId: string;
+    allowedRepository: string;
+    leaseMs: number;
+  }): Promise<MonitorBrokerRequest | null> {
+    if (
+      !Number.isInteger(input.leaseMs)
+      || input.leaseMs < 5_000
+      || input.leaseMs > 60_000
+    ) {
+      throw new Error('monitor broker lease must be 5000..60000ms');
+    }
+    const allowedRepository = input.allowedRepository.trim().toLowerCase();
+    return transaction(this.pool, async (client) => {
+      const leaseToken = randomUUID();
+      const result = await client.query<MonitorBrokerRequestRow>(
+        `SELECT * FROM agentops_control.claim_monitor_broker_request($1, $2, $3, $4)`,
+        [input.workerId, allowedRepository, leaseToken, input.leaseMs],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      const cursor = MonitorBrokerCursor.parse(row.cursor);
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, details
+         ) VALUES ('runner', $1, 'monitor.broker.claimed', $2, $3)`,
+        [
+          input.workerId,
+          row.registration_id,
+          {
+            requestId: row.id,
+            registrationVersion: Number(row.registration_version),
+            repository: row.repository,
+            monitorKind: row.monitor_kind,
+          },
+        ],
+      );
+      return {
+        id: row.id,
+        registrationId: row.registration_id,
+        registrationVersion: Number(row.registration_version),
+        repository: row.repository,
+        monitorKind: row.monitor_kind,
+        cursor,
+        leaseToken: row.lease_token,
+      };
+    });
+  }
+
+  async completeMonitorBrokerRequest(input: {
+    request: MonitorBrokerRequest;
+    workerId: string;
+    response: MonitorBrokerResponseType;
+  }): Promise<void> {
+    const response = MonitorBrokerResponse.parse(input.response);
+    await transaction(this.pool, async (client) => {
+      const completed = await client.query<{ registration_id: string | null }>(
+        `SELECT agentops_control.complete_monitor_broker_request($1, $2, $3, $4)
+           AS registration_id`,
+        [
+          input.request.id,
+          input.request.leaseToken,
+          input.workerId,
+          response,
+        ],
+      );
+      if (!completed.rows[0]?.registration_id) {
+        throw new Error('monitor broker lease is stale or lost');
+      }
+      const responseDigest = createHash('sha256')
+        .update(JSON.stringify(response))
+        .digest('hex');
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, details
+         ) VALUES ('runner', $1, 'monitor.broker.completed', $2, $3)`,
+        [
+          input.workerId,
+          input.request.registrationId,
+          {
+            requestId: input.request.id,
+            registrationVersion: input.request.registrationVersion,
+            repository: input.request.repository,
+            monitorKind: input.request.monitorKind,
+            itemCount: response.items.length,
+            responseSha256: responseDigest,
+          },
+        ],
+      );
+    });
+  }
+
+  async failMonitorBrokerRequest(input: {
+    request: MonitorBrokerRequest;
+    workerId: string;
+    code: string;
+    message: string;
+  }): Promise<void> {
+    const message = input.message.slice(0, 512);
+    await transaction(this.pool, async (client) => {
+      const failed = await client.query<{ registration_id: string | null }>(
+        `SELECT agentops_control.fail_monitor_broker_request($1, $2, $3, $4, $5)
+           AS registration_id`,
+        [
+          input.request.id,
+          input.request.leaseToken,
+          input.workerId,
+          input.code,
+          message,
+        ],
+      );
+      if (!failed.rows[0]?.registration_id) {
+        throw new Error('monitor broker lease is stale or lost');
+      }
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, details
+         ) VALUES ('runner', $1, 'monitor.broker.failed', $2, $3)`,
+        [
+          input.workerId,
+          input.request.registrationId,
+          {
+            requestId: input.request.id,
+            registrationVersion: input.request.registrationVersion,
+            repository: input.request.repository,
+            monitorKind: input.request.monitorKind,
+            code: input.code,
+          },
+        ],
+      );
+    });
   }
 
   async receiveWebhook(input: {

@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 const SECRET_KEYS = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
+  'CODEX_HOME',
   'AGENTOPS_RUNNER_DATABASE_URL',
   'AGENTOPS_CONTROL_TOKEN',
   'SSH_AUTH_SOCK',
@@ -59,7 +60,7 @@ export function runCommand(
         '-c', 'core.fsmonitor=false',
         '-c', 'commit.gpgSign=false',
         '-c', 'credential.helper=',
-        '-c', 'http.proxy=',
+        '-c', `http.proxy=${process.env.HTTPS_PROXY ?? ''}`,
         ...args,
       ]
     : args;

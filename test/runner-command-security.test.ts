@@ -25,6 +25,7 @@ describe('isolated-runner trusted command boundary', () => {
       GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',
       OPENAI_API_KEY: 'provider-secret',
       ANTHROPIC_API_KEY: 'other-provider-secret',
+      CODEX_HOME: '/run/agentops-credentials/codex',
       AGENTOPS_RUNNER_DATABASE_URL: 'postgresql://db-secret',
     };
     expect(commandEnvironment('github', source)).toMatchObject({
@@ -33,6 +34,7 @@ describe('isolated-runner trusted command boundary', () => {
     });
     expect(commandEnvironment('github', source)).not.toHaveProperty('OPENAI_API_KEY');
     expect(commandEnvironment('github', source)).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(commandEnvironment('github', source)).not.toHaveProperty('CODEX_HOME');
     expect(commandEnvironment('github', source))
       .not.toHaveProperty('AGENTOPS_RUNNER_DATABASE_URL');
     expect(commandEnvironment('none', source)).not.toHaveProperty('GH_TOKEN');
