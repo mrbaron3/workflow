@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0",
+  "decisionId": "workflow-ciso05-dashboard-r01-request-changes",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "revisionId": "workflow-ciso05-dashboard-r01",
+  "bundleDigest": "sha256:56eb4d7283d6f1e2dd72cc931c48af2cee98c88103fc1709a106dd192725ba95",
+  "verdict": "request-changes",
+  "rationale": "Human request-changes returned through Orca decision message msg_59eb810e6bdd: (1) reconcile all seven authored capabilities to concrete Control API, system, and AC elements before approval; (2) define a same-origin loopback operator session, exact Origin validation, and CSRF lifecycle without exposing bearer secrets to browser code; (3) add authoritative MONITOR_ONLY/ACTIVE mode and truthful desired/actual/freshness/last-good/recovery semantics for Issue Monitor, PR Monitor, Forwarder, Execution, and Queue; (4) make update, disable, and retry outcomes duplicate-safe, version-fenced, structured, and show verified success only after authoritative re-query; and (5) remove all remaining ambiguities while preserving the anomaly-first attention hierarchy and Effort Budgets. A new revisionId and bundleDigest with a precise revision diff are required, and product implementation remains blocked until the revised bundle receives separate explicit human approval.",
+  "decidedBy": {
+    "provider": "orca-human-decision-gate",
+    "subject": "coordinator-human",
+    "displayName": "Human coordinator"
+  },
+  "decidedAt": "2026-07-25T23:38:00Z",
+  "supersedesDecisionId": null
+}

@@ -5,6 +5,6 @@ import { defineConfig, configDefaults } from 'vitest/config';
 // are graded by the execution layer, not part of the harness's own suite.
 export default defineConfig({
   test: {
-    exclude: [...configDefaults.exclude, '.harness/**'],
+    exclude: [...configDefaults.exclude, '.harness/**', 'test/dashboard/**'],
   },
 });

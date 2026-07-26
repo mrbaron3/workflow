@@ -1,0 +1,139 @@
+{
+  "schemaVersion": "1.0",
+  "round": 2,
+  "finalFormalRound": true,
+  "frozenHead": "b36c480c163b3e8a1289ff0c8b0cb1834e4cd806",
+  "reviewers": [
+    {
+      "provider": "codex",
+      "providerResolution": "actual Codex CLI behavior and terminal command, overriding the swapped task label metadata",
+      "terminalHandle": "term_661110dd-ebc5-4402-a32b-58554746310f",
+      "taskId": "task_a0d8dc6ea4db",
+      "dispatchId": "ctx_08d829fa9275",
+      "workerDoneMessageId": "msg_fbc9d64a6bee",
+      "independent": true,
+      "readOnly": true,
+      "findingCount": 11
+    },
+    {
+      "provider": "claude",
+      "providerResolution": "actual Claude CLI behavior and terminal command, overriding the swapped task label metadata",
+      "terminalHandle": "term_ab29e590-d9a4-4256-8d1a-c51133aae672",
+      "taskId": "task_1f3b6ad1fcdb",
+      "dispatchId": "ctx_96e557562931",
+      "workerDoneMessageId": "msg_2b56d0b9f27c",
+      "independent": true,
+      "readOnly": true,
+      "findingCount": 3
+    }
+  ],
+  "providerMetadataCorrectionMessageId": "msg_fd9875fc4d87",
+  "ownerDisposition": [
+    {
+      "id": "R2-CODEX-001",
+      "severity": "high",
+      "finding": "Missing runtime evidence was fabricated as stopped/fresh and Registration updatedAt was fabricated as Execution last-good evidence.",
+      "confirmed": true,
+      "repair": "Monitor, Forwarder, and Execution projections now remain unknown with no observedAt or lastGoodAt until authoritative runtime evidence exists; PostgreSQL integration covers desired-off missing evidence."
+    },
+    {
+      "id": "R2-CODEX-002",
+      "severity": "high",
+      "finding": "Delivery retry did not fence on current executionEnabled and could be accepted before the router ignored it.",
+      "confirmed": true,
+      "repair": "Retry now locks and checks enabled, executionEnabled, and version, persists an execution_disabled rejection and audit, and the dashboard disables retry when execution is disabled."
+    },
+    {
+      "id": "R2-CODEX-003",
+      "severity": "medium",
+      "finding": "Retry idempotency was scoped per delivery while command identity was global.",
+      "confirmed": true,
+      "repair": "Retry request locking and durable response storage use the global delivery:retry scope, so one key reused for another delivery conflicts before mutation."
+    },
+    {
+      "id": "R2-CODEX-004",
+      "severity": "medium",
+      "finding": "The dashboard verified only an accepted attempt ID after retry.",
+      "confirmed": true,
+      "repair": "Authoritative verification now binds response and re-query delivery identity, Registration identity/version, route-attempt floor, accepted attempt observed-attempt fence, and current durable delivery state."
+    },
+    {
+      "id": "R2-CODEX-005",
+      "severity": "medium",
+      "finding": "Mutation-time 401 and network failures left connected state and mutation controls enabled.",
+      "confirmed": true,
+      "repair": "A shared operational failure classifier now invalidates memory-only CSRF state on 401 and marks store/network failures disconnected across create/update/disable/delivery/retry paths."
+    },
+    {
+      "id": "R2-CODEX-006",
+      "severity": "medium",
+      "finding": "Healthy queued and leased Queue states were classified as divergent using Execution vocabulary.",
+      "confirmed": true,
+      "repair": "Backend sorting and browser filtering now use component-specific desired and stopped vocabularies; queued and leased are healthy desired Queue states.",
+      "crossReviewerConfirmation": "R2-CLAUDE-001"
+    },
+    {
+      "id": "R2-CODEX-007",
+      "severity": "medium",
+      "finding": "The webhook route was dispatched before exact Host enforcement.",
+      "confirmed": true,
+      "repair": "Exact configured Host is enforced before webhook signature parsing or persistence, with a valid-signature wrong-Host regression test."
+    },
+    {
+      "id": "R2-CODEX-008",
+      "severity": "medium",
+      "finding": "Design-gate reconciliation searched unrelated global path/method substrings and ignored x-designflow-capability.",
+      "confirmed": true,
+      "repair": "The startup gate parses exact OpenAPI method/path operations and requires the operation's x-designflow-capability to equal the reconciled capability."
+    },
+    {
+      "id": "R2-CODEX-009",
+      "severity": "medium",
+      "finding": "The dashboard stayed two-column through 767px and the details summary target was only about 22px.",
+      "confirmed": true,
+      "repair": "The single-column breakpoint is 767px and details summary is an aligned 44px minimum target, both measured in headless Chromium."
+    },
+    {
+      "id": "R2-CODEX-010",
+      "severity": "low",
+      "finding": "Repository uniqueness conflict omitted the existing Registration identity.",
+      "confirmed": true,
+      "repair": "Create uses conflict-safe lookup and the 409 structured outcome returns the existing Registration ID/version fence and ETag."
+    },
+    {
+      "id": "R2-CODEX-011",
+      "severity": "low",
+      "finding": "Session creation and bootstrap rejection lacked complete audit.",
+      "confirmed": true,
+      "repair": "Session creation fails closed unless runtime audit persists; creation, logout, expiry, bootstrap and browser-boundary rejections record actor/reason/request metadata without token, session ID, or CSRF proof."
+    },
+    {
+      "id": "R2-CLAUDE-001",
+      "severity": "high",
+      "finding": "Healthy queued and leased Queue states were classified as anomalies.",
+      "confirmed": true,
+      "duplicateOf": "R2-CODEX-006",
+      "repair": "The shared component-specific vocabulary repair covers backend and browser anomaly behavior."
+    },
+    {
+      "id": "R2-CLAUDE-002",
+      "severity": "medium",
+      "finding": "The light-surface eyebrow color failed WCAG 2.2 AA contrast.",
+      "confirmed": true,
+      "repair": "Light surfaces use #365d62 at 7.24:1 on white and at least 6.47:1 on the other approved light surfaces; the dark topbar retains its distinct light label color."
+    },
+    {
+      "id": "R2-CLAUDE-003",
+      "severity": "low",
+      "finding": "Pure unknown anomalies matched none of the exposed filters.",
+      "confirmed": true,
+      "repair": "Pure unknown remains visibly actual: unknown and maps into the approved divergent count/filter and legend, preserving the exact failed/disconnected/stale/divergent element contract."
+    }
+  ],
+  "roundPolicy": {
+    "formalRoundsRequired": 2,
+    "formalRoundsCompleted": 2,
+    "roundThreeAllowed": false,
+    "postRoundTwoRepairsOwnedBy": "sole Codex implementation owner"
+  }
+}

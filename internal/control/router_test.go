@@ -13,6 +13,7 @@ type fakeRouterStore struct {
 	lookupError  error
 	finished     []string
 	enqueued     []WorkItem
+	bound        int
 	bindError    error
 	enqueueError error
 }
@@ -33,6 +34,7 @@ func (store *fakeRouterStore) BindWebhook(
 	ClaimedDelivery,
 	Registration,
 ) error {
+	store.bound++
 	return store.bindError
 }
 
@@ -150,7 +152,7 @@ func TestRouterLeavesFailedWorkForDurableRetry(t *testing.T) {
 		},
 		enqueueError: errors.New("single-flight busy"),
 	}
-	router := Router{Store: store}
+	router := Router{Store: store, Mode: ModeActive}
 	claim := ClaimedDelivery{
 		ID: "delivery-1", DeliveryKey: "delivery-key", Token: "token",
 		Repository: "owner/repo", Event: "issues",
@@ -161,12 +163,34 @@ func TestRouterLeavesFailedWorkForDurableRetry(t *testing.T) {
 	}
 }
 
+func TestRouterMonitorOnlyNeverCreatesExecutableWork(t *testing.T) {
+	store := &fakeRouterStore{registration: Registration{
+		ID: "registration-1", Repository: "owner/repo", Enabled: true,
+		IssueMonitorEnabled: true, ExecutionEnabled: true, Version: 1,
+	}}
+	router := Router{Store: store, Mode: ModeMonitorOnly}
+	claim := ClaimedDelivery{
+		ID: "delivery-1", DeliveryKey: "delivery-key", Token: "token",
+		Repository: "owner/repo", Event: "issues",
+		Payload: issuePayload(1, "2026-07-25T00:00:00Z"),
+	}
+	if err := router.route(context.Background(), claim); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.enqueued) != 0 ||
+		store.bound != 1 ||
+		len(store.finished) != 1 ||
+		store.finished[0] != "ignored:monitor_only" {
+		t.Fatalf("monitor-only route enqueued=%#v finished=%#v", store.enqueued, store.finished)
+	}
+}
+
 func TestCheckAndPushEventsBecomeDurableTypedWork(t *testing.T) {
 	store := &fakeRouterStore{registration: Registration{
 		ID: "registration-1", Repository: "owner/repo", Enabled: true,
 		PRMonitorEnabled: true, ExecutionEnabled: true, Version: 1,
 	}}
-	router := Router{Store: store}
+	router := Router{Store: store, Mode: ModeActive}
 	action := "completed"
 	events := []ClaimedDelivery{
 		{

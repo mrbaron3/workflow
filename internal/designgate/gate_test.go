@@ -20,6 +20,108 @@ func TestValidateApprovedPinnedBundleAndCoverage(t *testing.T) {
 	}
 }
 
+func TestValidateApprovedDashboardRevisionAndReconciliation(t *testing.T) {
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ValidateDashboard(repositoryRoot)
+	if err != nil {
+		t.Fatalf("ValidateDashboard() error = %v", err)
+	}
+	if result.RevisionID != "workflow-ciso05-dashboard-r02" ||
+		result.BundleDigest != ApprovedDashboardBundleDigest ||
+		result.DecisionID != "workflow-ciso05-dashboard-r02-approve" ||
+		result.CoverageBinding != 7 {
+		t.Fatalf("unexpected dashboard result: %#v", result)
+	}
+}
+
+func TestOpenAPICapabilityOperationsRequireExactMethodPathPairing(t *testing.T) {
+	document := []byte(`openapi: 3.1.0
+paths:
+  /v1/registrations:
+    get:
+      x-designflow-capability: cap-list-registration-status
+    post:
+      x-designflow-capability: cap-create-registration
+  /v1/registrations/{registrationId}:
+    patch:
+      x-designflow-capability: cap-update-registration
+`)
+	operations, err := parseOpenAPICapabilityOperations(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]string{
+		"GET /v1/registrations":                    "cap-list-registration-status",
+		"POST /v1/registrations":                   "cap-create-registration",
+		"PATCH /v1/registrations/{registrationId}": "cap-update-registration",
+	}
+	if len(operations) != len(expected) {
+		t.Fatalf("operations = %#v", operations)
+	}
+	for key, capabilityID := range expected {
+		if operations[key] != capabilityID {
+			t.Fatalf("%s = %q, want %q", key, operations[key], capabilityID)
+		}
+	}
+	if operations["PATCH /v1/registrations"] != "" ||
+		operations["GET /v1/registrations/{registrationId}"] != "" {
+		t.Fatalf("method/path pairing leaked across operations: %#v", operations)
+	}
+}
+
+func TestDashboardPinnedSchemasAndDesignTokenFormatRejectInvalidDocuments(t *testing.T) {
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	experience, err := os.ReadFile(filepath.Join(
+		repositoryRoot,
+		"evidence",
+		"ciso-05",
+		"design",
+		"revision-02",
+		"experience-contract.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invalidExperience map[string]any
+	if err := json.Unmarshal(experience, &invalidExperience); err != nil {
+		t.Fatal(err)
+	}
+	invalidExperience["unapprovedField"] = true
+	invalidExperienceBody, _ := json.Marshal(invalidExperience)
+	if err := validatePinnedSchema(
+		"urn:designflow:schema:v1:experience-contract",
+		invalidExperienceBody,
+	); err == nil {
+		t.Fatal("pinned Experience Contract schema accepted an additional property")
+	}
+
+	tokens, err := os.ReadFile(filepath.Join(
+		repositoryRoot,
+		"evidence",
+		"ciso-05",
+		"design",
+		"revision-02",
+		"design-tokens.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDesignTokens(tokens); err != nil {
+		t.Fatalf("approved design tokens rejected: %v", err)
+	}
+	if err := validateDesignTokens([]byte(
+		`{"group":{"$type":"color","bad":{"$value":"#fff","child":{"$value":"#000"}}}}`,
+	)); err == nil {
+		t.Fatal("token validator accepted a token mixed with a child")
+	}
+}
+
 func TestValidateFailsClosedForApprovalAndCoverageDefects(t *testing.T) {
 	tests := []struct {
 		name   string

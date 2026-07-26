@@ -18,12 +18,26 @@ import (
 type fakeAPIStore struct {
 	webhooks        int
 	creates         int
+	createResult    Registration
+	createDuplicate bool
+	createError     error
 	projections     []RegistrationProjection
 	projectionError error
 	retryError      error
+	updateError     error
+	updateDuplicate bool
+	updated         Registration
 	deliveryStatus  DeliveryStatus
 	deliveryError   error
+	auditEvents     []string
+	auditDetails    []map[string]any
+	auditError      error
 }
+
+const (
+	testRegistrationID = "11111111-1111-4111-8111-111111111111"
+	testDeliveryID     = "22222222-2222-4222-8222-222222222222"
+)
 
 func (store *fakeAPIStore) Ping(context.Context) error { return nil }
 
@@ -33,21 +47,25 @@ func (store *fakeAPIStore) CreateRegistration(
 	_, _ string,
 ) (Registration, bool, error) {
 	store.creates++
+	if store.createError != nil {
+		return store.createResult, store.createDuplicate, store.createError
+	}
 	validated, err := input.Validated()
-	validated.ID = "registration-1"
+	validated.ID = testRegistrationID
 	validated.Version = 1
 	return validated, false, err
 }
 
-func (store *fakeAPIStore) UpdateRegistration(
+func (store *fakeAPIStore) UpdateRegistrationCommand(
 	context.Context,
 	string,
 	int64,
 	RegistrationPatch,
 	string,
 	string,
-) (Registration, error) {
-	return Registration{}, nil
+	string,
+) (Registration, bool, error) {
+	return store.updated, store.updateDuplicate, store.updateError
 }
 
 func (store *fakeAPIStore) Projections(
@@ -67,7 +85,7 @@ func (store *fakeAPIStore) ReceiveWebhook(
 	map[string]any,
 ) (WebhookReceipt, error) {
 	store.webhooks++
-	return WebhookReceipt{DeliveryID: "delivery-1", Status: "pending"}, nil
+	return WebhookReceipt{DeliveryID: testDeliveryID, Status: "pending"}, nil
 }
 
 func (store *fakeAPIStore) RetryWebhook(
@@ -76,6 +94,8 @@ func (store *fakeAPIStore) RetryWebhook(
 	string,
 	string,
 	int,
+	string,
+	int64,
 ) (RetryResult, bool, error) {
 	return RetryResult{}, false, store.retryError
 }
@@ -85,6 +105,17 @@ func (store *fakeAPIStore) DeliveryStatus(
 	string,
 ) (DeliveryStatus, error) {
 	return store.deliveryStatus, store.deliveryError
+}
+
+func (store *fakeAPIStore) AppendAudit(
+	_ context.Context,
+	_, eventType string,
+	_, _ *string,
+	details map[string]any,
+) error {
+	store.auditEvents = append(store.auditEvents, eventType)
+	store.auditDetails = append(store.auditDetails, details)
+	return store.auditError
 }
 
 func TestControlAPIRequiresAuthorizationAndOptimisticContractHeaders(t *testing.T) {
@@ -131,6 +162,15 @@ func TestControlAPIRequiresAuthorizationAndOptimisticContractHeaders(t *testing.
 	if response.Header().Get("ETag") != `"1"` {
 		t.Fatalf("ETag = %q", response.Header().Get("ETag"))
 	}
+	for _, field := range []string{
+		`"resourceIdentity":"` + testRegistrationID + `"`,
+		`"resultVersionOrAttemptIdentity":"1"`,
+		`"recoverability":"none"`,
+	} {
+		if !bytes.Contains(response.Body.Bytes(), []byte(field)) {
+			t.Fatalf("create outcome missing %s: %s", field, response.Body)
+		}
+	}
 }
 
 func TestWebhookPersistsOnlyAfterValidSignatureAndIdentity(t *testing.T) {
@@ -161,7 +201,7 @@ func TestWebhookPersistsOnlyAfterValidSignatureAndIdentity(t *testing.T) {
 	}
 	var receipt WebhookReceipt
 	if err := json.Unmarshal(response.Body.Bytes(), &receipt); err != nil ||
-		receipt.DeliveryID != "delivery-1" {
+		receipt.DeliveryID != testDeliveryID {
 		t.Fatalf("receipt = %#v error=%v", receipt, err)
 	}
 
@@ -177,12 +217,57 @@ func TestWebhookPersistsOnlyAfterValidSignatureAndIdentity(t *testing.T) {
 	}
 }
 
+func TestWebhookRejectsAlternateHostBeforeSignatureOrPersistence(t *testing.T) {
+	store := &fakeAPIStore{}
+	handler := browserTestAPI(store).Handler()
+	payload := []byte(`{"repository":{"full_name":"owner/repo"}}`)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://localhost:8080/v1/webhooks/github",
+		bytes.NewReader(payload),
+	)
+	request.Host = "localhost:8080"
+	request.Header.Set("X-GitHub-Delivery", "wrong-host-delivery")
+	request.Header.Set("X-GitHub-Event", "push")
+	request.Header.Set("X-Hub-Signature-256", sign(payload, "webhook-secret"))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || store.webhooks != 0 {
+		t.Fatalf("wrong Host webhook status=%d persisted=%d body=%s", response.Code, store.webhooks, response.Body)
+	}
+}
+
+func TestCreateConflictIdentifiesExistingRegistration(t *testing.T) {
+	existing := Registration{
+		ID:         testRegistrationID,
+		Repository: "owner/repo",
+		Version:    7,
+	}
+	store := &fakeAPIStore{createResult: existing, createError: ErrConflict}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/registrations",
+		bytes.NewBufferString(`{"repository":"owner/repo"}`),
+	)
+	request.Header.Set("Authorization", "Bearer control-token")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "create-existing")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusConflict ||
+		response.Header().Get("ETag") != `"7"` ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"resourceIdentity":"`+testRegistrationID+`"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"registrationVersion":7`)) {
+		t.Fatalf("create conflict status=%d headers=%v body=%s", response.Code, response.Header(), response.Body)
+	}
+}
+
 func TestExpectedVersionRequiresStrongQuotedVersion(t *testing.T) {
 	for _, value := range []string{"1", `W/"1"`, `"0"`, `"invalid"`} {
 		t.Run(value, func(t *testing.T) {
 			request := httptest.NewRequest(
 				http.MethodPatch,
-				"/v1/registrations/registration-1",
+				"/v1/registrations/"+testRegistrationID,
 				bytes.NewBufferString(`{"enabled":false}`),
 			)
 			request.Header.Set("Content-Type", "application/json")
@@ -194,6 +279,62 @@ func TestExpectedVersionRequiresStrongQuotedVersion(t *testing.T) {
 				t.Fatalf("If-Match %q status=%d", value, response.Code)
 			}
 		})
+	}
+}
+
+func TestVersionConflictReturnsStructuredCurrentFence(t *testing.T) {
+	recordedAt := time.Date(2026, 7, 26, 2, 0, 0, 0, time.UTC)
+	store := &fakeAPIStore{
+		updateError: &RegistrationCommandRejection{
+			Cause:      ErrConflict,
+			Reason:     "registration_version_mismatch",
+			RecordedAt: recordedAt,
+		},
+		updateDuplicate: true,
+		updated: Registration{
+			ID:         testRegistrationID,
+			Repository: "owner/repo",
+			Version:    4,
+		},
+	}
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/registrations/"+testRegistrationID,
+		bytes.NewBufferString(`{"enabled":false}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer control-token")
+	request.Header.Set("If-Match", `"3"`)
+	request.Header.Set("Idempotency-Key", "update-version-conflict")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusConflict ||
+		response.Header().Get("ETag") != `"4"` ||
+		response.Header().Get("Idempotent-Replay") != "true" ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"outcome":"version_conflict"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"registrationVersion":4`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"recordedAt":"2026-07-26T02:00:00Z"`)) {
+		t.Fatalf("version conflict = %d headers=%v body=%s", response.Code, response.Header(), response.Body)
+	}
+}
+
+func TestEmptyRegistrationPatchReturnsStructuredRejection(t *testing.T) {
+	request := httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/registrations/"+testRegistrationID,
+		bytes.NewBufferString(`{}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer control-token")
+	request.Header.Set("If-Match", `"3"`)
+	request.Header.Set("Idempotency-Key", "empty-update")
+	response := httptest.NewRecorder()
+	testAPI(&fakeAPIStore{}).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"outcome":"rejected"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"reason":"invalid_registration_patch"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"resourceIdentity":"`+testRegistrationID+`"`)) {
+		t.Fatalf("empty patch = %d: %s", response.Code, response.Body)
 	}
 }
 
@@ -234,14 +375,91 @@ func TestStatusQueryFiltersAndFailsClosedWithLastSuccessfulTime(t *testing.T) {
 	}
 }
 
+func TestMonitorOnlyModeDoesNotMaskStaleExecutionEvidence(t *testing.T) {
+	store := &fakeAPIStore{projections: []RegistrationProjection{{
+		Registration: Registration{
+			Repository:       "owner/stale",
+			ExecutionEnabled: true,
+			Enabled:          true,
+		},
+		Components: map[string]ComponentProjection{
+			ComponentExecution: {
+				Desired: true, Actual: "stale", Freshness: "stale",
+				RecoveryState: "blocked",
+			},
+			ComponentQueue: {
+				Desired: true, Actual: "failed", Freshness: "fresh",
+				RecoveryState: "scheduled",
+			},
+		},
+	}}}
+	request := httptest.NewRequest(http.MethodGet, "/v1/registrations", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"actual":"stale"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"actual":"failed"`)) {
+		t.Fatalf("MONITOR_ONLY masked anomaly = %d: %s", response.Code, response.Body)
+	}
+}
+
+func TestOpaqueContinuationRemainsBoundToFirstSnapshot(t *testing.T) {
+	store := &fakeAPIStore{projections: []RegistrationProjection{
+		{Registration: Registration{Repository: "owner/one"}},
+		{Registration: Registration{Repository: "owner/two"}},
+	}}
+	api := testAPI(store)
+	request := httptest.NewRequest(http.MethodGet, "/v1/registrations?limit=1", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, request)
+	var first struct {
+		Items         []RegistrationProjection `json:"items"`
+		NextPageToken string                   `json:"nextPageToken"`
+		ObservedAt    time.Time                `json:"observedAt"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &first); err != nil ||
+		len(first.Items) != 1 ||
+		first.NextPageToken == "" {
+		t.Fatalf("first page = %#v error=%v body=%s", first, err, response.Body)
+	}
+
+	store.projections = []RegistrationProjection{
+		{Registration: Registration{Repository: "owner/one"}},
+		{Registration: Registration{Repository: "owner/replaced"}},
+	}
+	request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/registrations?limit=1&pageToken="+first.NextPageToken,
+		nil,
+	)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response = httptest.NewRecorder()
+	api.Handler().ServeHTTP(response, request)
+	var second struct {
+		Items      []RegistrationProjection `json:"items"`
+		ObservedAt time.Time                `json:"observedAt"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &second); err != nil ||
+		len(second.Items) != 1 ||
+		second.Items[0].Registration.Repository != "owner/two" ||
+		!second.ObservedAt.Equal(first.ObservedAt) {
+		t.Fatalf("second page escaped snapshot = %#v error=%v body=%s", second, err, response.Body)
+	}
+}
+
 func TestRetryConflictReturnsCurrentStateAndReason(t *testing.T) {
 	store := &fakeAPIStore{retryError: &DeliveryRetryConflict{
 		Reason: "delivery_not_retryable", State: "processing", RouteAttempts: 2,
 	}}
 	request := httptest.NewRequest(
 		http.MethodPost,
-		"/v1/deliveries/delivery-1/retry",
-		bytes.NewBufferString(`{"observedAttempts":1}`),
+		"/v1/deliveries/"+testDeliveryID+"/retry",
+		bytes.NewBufferString(
+			`{"observedAttempts":1,"expectedRegistrationId":"`+testRegistrationID+`",`+
+				`"expectedRegistrationVersion":1}`,
+		),
 	)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Authorization", "Bearer control-token")
@@ -257,12 +475,12 @@ func TestRetryConflictReturnsCurrentStateAndReason(t *testing.T) {
 
 func TestDeliveryStatusQueryReturnsCurrentDurableState(t *testing.T) {
 	store := &fakeAPIStore{deliveryStatus: DeliveryStatus{
-		ID: "delivery-1", Status: "processed", RouteAttempts: 2,
+		ID: testDeliveryID, Status: "processed", RouteAttempts: 2,
 		RetryAttempts: []DeliveryRetryAttempt{{
 			AttemptID: "attempt-1", Status: "accepted",
 		}},
 	}}
-	request := httptest.NewRequest(http.MethodGet, "/v1/deliveries/delivery-1", nil)
+	request := httptest.NewRequest(http.MethodGet, "/v1/deliveries/"+testDeliveryID, nil)
 	request.Header.Set("Authorization", "Bearer control-token")
 	response := httptest.NewRecorder()
 	testAPI(store).Handler().ServeHTTP(response, request)

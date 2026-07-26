@@ -1,0 +1,153 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#15",
+  "acceptanceCriterion": "AC-CISO-010",
+  "baseCommit": "af16c6ac9e75aac949c9a4e81d6f1877a292e313",
+  "recordedAt": "2026-07-26T02:44:05Z",
+  "designLineage": {
+    "requestChangesDecisionId": "workflow-ciso05-dashboard-r01-request-changes",
+    "requestChangesMessageId": "msg_59eb810e6bdd",
+    "requestChangesRevisionId": "workflow-ciso05-dashboard-r01",
+    "requestChangesBundleDigest": "sha256:56eb4d7283d6f1e2dd72cc931c48af2cee98c88103fc1709a106dd192725ba95",
+    "providerTaskId": "task_da045ec60918",
+    "providerDispatchId": "ctx_830948d0618e",
+    "providerWorkerDoneMessageId": "msg_905012fdf368",
+    "correctionTaskId": "task_9bcf4a5422b6",
+    "correctionDispatchId": "ctx_26c26176794c",
+    "correctionWorkerDoneMessageId": "msg_0516463f06bd",
+    "approvedDecisionId": "workflow-ciso05-dashboard-r02-approve",
+    "approvalMessageId": "msg_0a870fc115e3",
+    "approvalDecisionGateMessageId": "msg_bd36617cc1f5",
+    "approvedRevisionId": "workflow-ciso05-dashboard-r02",
+    "approvedBundleDigest": "sha256:4f7357e099985d2dce5c1941b8ee25231e3208808727362b9f87d725084b70fa",
+    "capabilityReconciliationDigest": "sha256:f67fed2c8de6836072cd8fb34ce53e70bf3801717989ba9c1dc25a1793d5a1db",
+    "capabilityCount": 7
+  },
+  "formalReviews": {
+    "roundsRequired": 2,
+    "roundsCompleted": 2,
+    "roundThreeRun": false,
+    "round1": {
+      "frozenHead": "b79b4e82d462fa2925d9cd6ec7042ac7d4d2032f",
+      "codexTaskId": "task_355e299b7abf",
+      "codexDispatchId": "ctx_ac98278a1e96",
+      "codexWorkerDoneMessageId": "msg_9375cde58b14",
+      "claudeTaskId": "task_ffefe8459344",
+      "claudeDispatchId": "ctx_08950b0b0ffa",
+      "claudeWorkerDoneMessageId": "msg_50acd5753a76",
+      "evidencePath": "evidence/ciso-05/reviews/round-1.json"
+    },
+    "round2": {
+      "frozenHead": "b36c480c163b3e8a1289ff0c8b0cb1834e4cd806",
+      "codexTaskId": "task_a0d8dc6ea4db",
+      "codexDispatchId": "ctx_08d829fa9275",
+      "codexWorkerDoneMessageId": "msg_fbc9d64a6bee",
+      "claudeTaskId": "task_1f3b6ad1fcdb",
+      "claudeDispatchId": "ctx_96e557562931",
+      "claudeWorkerDoneMessageId": "msg_2b56d0b9f27c",
+      "providerMetadataCorrectionMessageId": "msg_fd9875fc4d87",
+      "evidencePath": "evidence/ciso-05/reviews/round-2.json"
+    }
+  },
+  "validation": [
+    {
+      "boundary": "design schema, digest, decision, seven-capability reconciliation, and exact OpenAPI method/path/capability pairing",
+      "command": "go test ./internal/designgate",
+      "result": "passed"
+    },
+    {
+      "boundary": "focused and full Go control API, security, model, and owner tests",
+      "command": "go test ./...",
+      "result": "passed"
+    },
+    {
+      "boundary": "Go race with real PostgreSQL Registration integration",
+      "command": "AGENTOPS_TEST_DATABASE_URL=<loopback-test-dsn> go test -race ./...",
+      "result": "passed"
+    },
+    {
+      "boundary": "Go static analysis",
+      "command": "go vet ./...",
+      "result": "passed"
+    },
+    {
+      "boundary": "TypeScript typecheck and full unit suite",
+      "command": "npm test",
+      "result": "passed",
+      "details": {
+        "filesPassed": 98,
+        "filesSkipped": 1,
+        "testsPassed": 820,
+        "testsSkipped": 25
+      }
+    },
+    {
+      "boundary": "Registration store integration",
+      "command": "AGENTOPS_TEST_DATABASE_URL=<loopback-test-dsn> npm run test:postgres",
+      "result": "passed",
+      "details": {
+        "testsPassed": 24
+      }
+    },
+    {
+      "boundary": "headless Chromium dashboard CRUD/restart, desired/actual divergence, component-specific Queue truth, truthful unknown-to-divergent filtering, execution-disabled and authoritative retry, mutation/session/network failures, keyboard/focus/labels/live announcements, 320px/767px layout, 44px targets, contrast, and same-origin network allowlist",
+      "command": "AGENTOPS_TEST_DATABASE_URL=<loopback-test-dsn> npm run test:dashboard",
+      "result": "passed",
+      "details": {
+        "testsPassed": 1,
+        "browser": "Chromium"
+      }
+    },
+    {
+      "boundary": "TypeScript build",
+      "command": "npm run build",
+      "result": "passed"
+    },
+    {
+      "boundary": "high-severity dependency audit",
+      "command": "npm audit --audit-level=high",
+      "result": "passed",
+      "details": {
+        "vulnerabilities": 0
+      }
+    },
+    {
+      "boundary": "standard OCI control image",
+      "command": "docker build --target control -t agentops-control:ciso05-final -f deploy/Containerfile .",
+      "result": "passed",
+      "details": {
+        "manifestDigest": "sha256:4684227239a995730e4fc4cda5833cbd8b040e4a2848ce6375d82087a561e47d",
+        "runtimeUser": "agentops",
+        "runtimeUid": 65532,
+        "exposedPorts": [
+          "8080/tcp"
+        ],
+        "controlBackend": "127.0.0.1:8081",
+        "publicationProxy": "0.0.0.0:8080"
+      }
+    },
+    {
+      "boundary": "smallest necessary Apple Container publish, session, PostgreSQL disconnect/reconnect, CRUD, desired/actual, and restart persistence",
+      "command": "npm run smoke:dashboard:apple",
+      "result": "passed",
+      "evidencePath": "evidence/ciso-05/dashboard-apple-container-smoke.json",
+      "evidenceSha256": "48ac2054be09018fa2a8fa17d7067c4538b7f5be64f0eadfa50be7ce1c931120",
+      "details": {
+        "readOnlyRootFilesystem": true,
+        "capabilitiesDropped": "ALL",
+        "hostFilesystemMounts": 0,
+        "containerSocketMounts": 0
+      }
+    }
+  ],
+  "browserNetworkPolicy": {
+    "allowedOrigin": "the exact configured Control API origin",
+    "observedExternalOrigins": 0,
+    "bearerExposedToBrowser": false,
+    "persistentBrowserCredentialStorage": false
+  },
+  "residualRisk": [
+    "Apple Container smoke grounds the smallest arm64 host boundary; CI and standard OCI build cover the repository's normal Linux matrix.",
+    "The operator session is intentionally process-memory scoped and must be bootstrapped again after a control restart."
+  ]
+}

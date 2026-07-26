@@ -24,6 +24,7 @@ jobs:
           go-version: '1.24.x'
           cache: true
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: go test -race ./...
       - run: npm test
       - run: npm run build
@@ -56,7 +57,10 @@ jobs:
           go-version: '1.24.x'
           cache: true
       - run: npm ci
+      - run: npm audit --audit-level=high
       - run: npm run typecheck
       - run: npm run test:postgres
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:dashboard
       - run: go test -race ./...
       - run: docker build --target control -t agentops-control:ci -f deploy/Containerfile .

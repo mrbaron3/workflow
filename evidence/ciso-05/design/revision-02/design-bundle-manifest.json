@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1.0",
+  "bundleId": "workflow-ciso05-dashboard-bundle-r02",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "revisionId": "workflow-ciso05-dashboard-r02",
+  "previousRevisionId": "workflow-ciso05-dashboard-r01",
+  "sourceDigest": "sha256:77629d9a1031fd7b7a26f6fe21b00f41e60d7bcb4247b5a5e7cc6fdb964f1099",
+  "designSystemBaseRevision": {
+    "provider": "git",
+    "externalId": "workflow-designflow-dashboard-baseline",
+    "uri": "https://github.com/mrbaron3/workflow/tree/af16c6ac9e75aac949c9a4e81d6f1877a292e313/contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/examples",
+    "revision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313",
+    "digest": "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97"
+  },
+  "artifacts": {
+    "experience": {
+      "path": "evidence/ciso-05/design/revision-02/experience-contract.json",
+      "digest": "sha256:155483ed586bb35ac58f9f7d814e52a9e2d902fdca01b3f23bf2795f8e3d21ee",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:experience-contract"
+    },
+    "designSystemDelta": {
+      "path": "evidence/ciso-05/design/revision-02/design-system-delta.json",
+      "digest": "sha256:51755c6165c2872c51524116b8b6c4dc17f0fd5f4d376b782142aeefd769cbba",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:design-system-delta"
+    },
+    "designTokens": {
+      "path": "evidence/ciso-05/design/revision-02/design-tokens.json",
+      "digest": "sha256:e24a64c7294d3b519d97c31db479060d8bbe30b08281bc7b07f91620a804406d",
+      "mediaType": "application/design-tokens+json",
+      "schemaRef": "https://www.designtokens.org/TR/2025.10/format/"
+    },
+    "capabilityRequirements": {
+      "path": "evidence/ciso-05/design/revision-02/capability-requirements.json",
+      "digest": "sha256:293006cc7b96b8e93155b3137b511bf49478dd06498690804bedd6a1efb51c12",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:capability-requirements"
+    },
+    "preview": {
+      "path": "evidence/ciso-05/design/revision-02/preview.html",
+      "digest": "sha256:f5860933f40de1e65811375a6261036793af6a0036a45bd0d65c5175a9ebffce",
+      "mediaType": "text/html",
+      "schemaRef": "none"
+    }
+  },
+  "authorInvocationRefs": [
+    {
+      "provider": "orca-orchestration",
+      "externalId": "task_da045ec60918",
+      "revision": "ctx_830948d0618e"
+    },
+    {
+      "provider": "orca-orchestration",
+      "externalId": "task_9bcf4a5422b6",
+      "revision": "ctx_26c26176794c"
+    }
+  ],
+  "bundleDigest": "sha256:4f7357e099985d2dce5c1941b8ee25231e3208808727362b9f87d725084b70fa",
+  "createdAt": "2026-07-26T08:52:34+09:00"
+}

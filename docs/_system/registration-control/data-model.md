@@ -14,6 +14,14 @@
   GitHub observation と logical idempotency identity を保持し、webhook/poll の重複を DB unique 制約で収束させる。
 - **DATA-registration-control-007 Experience evidence** — pinned provider bundle、
   `PROVENANCE.json`、Capability-to-API/system/AC trace。runtime mutable stateではなく、build input と監査証跡である。
+- **DATA-registration-control-008 Component projection** — repeatable-read transaction内のDB clock、
+  Registration version、actual row、cursor、delivery、job/leaseを結合し、Issue/PR=300秒、Forwarder=60秒、
+  Execution=30秒、Queue=15秒でfreshnessを算出する。API success clockをcomponent last-goodへ複製しない。
+- **DATA-registration-control-009 Browser session memory** — opaque session ID、CSRF proof、expiryはcontrol process
+  memoryだけに置き、再起動でfail-closed失効する。Registration、command、auditのrestart persistenceとは分離し、
+  bearer、credential、tokenをPostgreSQL/HTML/DOM/URL/storageへ保存しない。
+- **DATA-registration-control-010 Stable continuation** — opaque page tokenはserver-sideにbounded TTLで保存した
+  anomaly-first ordered snapshotとfilter/offsetへ束縛し、同じcontinuationの再読込でpage間の重複・欠落を作らない。
 
 Durable control-plane 配置はすべて `agentops_control` schema に限定する。evaluation-domain
 `.harness/db.json` は変更・複製せず、旧 TypeScript webhook model は非永続 compatibility oracle のままにする。

@@ -13,9 +13,17 @@ const (
 	ComponentIssueMonitor = "issue_monitor"
 	ComponentPRMonitor    = "pr_monitor"
 	ComponentForwarder    = "forwarder"
+	ComponentExecution    = "execution"
+	ComponentQueue        = "queue"
 )
 
-var repositoryPattern = regexp.MustCompile(`^[a-z0-9_.-]+/[a-z0-9_.-]+$`)
+var repositoryPattern = regexp.MustCompile(
+	`^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$`,
+)
+var idempotencyKeyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+var uuidPattern = regexp.MustCompile(
+	`^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
+)
 
 var (
 	ErrNotFound            = errors.New("not found")
@@ -24,19 +32,36 @@ var (
 	ErrStaleRegistration   = errors.New("registration is stale or disabled")
 	ErrStoreUnavailable    = errors.New("control store unavailable")
 	ErrIdempotencyConflict = errors.New("idempotency key was reused for a different request")
+	ErrNoChange            = errors.New("registration patch does not change desired state")
 )
 
+type RegistrationCommandRejection struct {
+	Cause      error
+	Reason     string
+	RecordedAt time.Time
+}
+
+func (rejection *RegistrationCommandRejection) Error() string {
+	return rejection.Cause.Error()
+}
+
+func (rejection *RegistrationCommandRejection) Unwrap() error {
+	return rejection.Cause
+}
+
 type Registration struct {
-	ID                  string          `json:"id"`
-	Repository          string          `json:"repository"`
-	Enabled             bool            `json:"enabled"`
-	IssueMonitorEnabled bool            `json:"issueMonitorEnabled"`
-	PRMonitorEnabled    bool            `json:"prMonitorEnabled"`
-	ExecutionEnabled    bool            `json:"executionEnabled"`
-	Configuration       json.RawMessage `json:"configuration"`
-	Version             int64           `json:"version"`
-	CreatedAt           time.Time       `json:"createdAt"`
-	UpdatedAt           time.Time       `json:"updatedAt"`
+	ID                  string `json:"id"`
+	Repository          string `json:"repository"`
+	Enabled             bool   `json:"enabled"`
+	IssueMonitorEnabled bool   `json:"issueMonitorEnabled"`
+	PRMonitorEnabled    bool   `json:"prMonitorEnabled"`
+	ExecutionEnabled    bool   `json:"executionEnabled"`
+	// Configuration remains an internal, schema-constrained empty object. The
+	// Control API never accepts it as command input.
+	Configuration json.RawMessage `json:"configuration"`
+	Version       int64           `json:"version"`
+	CreatedAt     time.Time       `json:"createdAt"`
+	UpdatedAt     time.Time       `json:"updatedAt"`
 }
 
 type CreateRegistration struct {
@@ -58,7 +83,7 @@ type RegistrationPatch struct {
 
 func (input CreateRegistration) Validated() (Registration, error) {
 	repository := strings.ToLower(strings.TrimSpace(input.Repository))
-	if !repositoryPattern.MatchString(repository) {
+	if !safeRepositoryIdentity(repository) {
 		return Registration{}, fmt.Errorf("repository must be canonical owner/name")
 	}
 	enabled, issue, pr, execution := true, true, true, true
@@ -88,6 +113,14 @@ func (input CreateRegistration) Validated() (Registration, error) {
 	}, nil
 }
 
+func safeRepositoryIdentity(repository string) bool {
+	if !repositoryPattern.MatchString(repository) {
+		return false
+	}
+	_, name, present := strings.Cut(repository, "/")
+	return present && name != "." && name != ".."
+}
+
 func (patch RegistrationPatch) Validate() error {
 	if patch.Enabled == nil && patch.IssueMonitorEnabled == nil &&
 		patch.PRMonitorEnabled == nil && patch.ExecutionEnabled == nil &&
@@ -115,9 +148,29 @@ func (registration Registration) Desired(component string) bool {
 	case ComponentPRMonitor:
 		return registration.PRMonitorEnabled
 	case ComponentForwarder:
-		return registration.IssueMonitorEnabled || registration.PRMonitorEnabled
+		return registration.Enabled
+	case ComponentExecution, ComponentQueue:
+		return registration.ExecutionEnabled
 	default:
 		return false
+	}
+}
+
+type OperatingMode string
+
+const (
+	ModeMonitorOnly OperatingMode = "MONITOR_ONLY"
+	ModeActive      OperatingMode = "ACTIVE"
+)
+
+func ParseOperatingMode(raw string) (OperatingMode, error) {
+	switch OperatingMode(strings.ToUpper(strings.TrimSpace(raw))) {
+	case ModeMonitorOnly:
+		return ModeMonitorOnly, nil
+	case ModeActive:
+		return ModeActive, nil
+	default:
+		return "", fmt.Errorf("operating mode must be MONITOR_ONLY or ACTIVE")
 	}
 }
 
@@ -133,22 +186,63 @@ type ActualState struct {
 
 type ComponentProjection struct {
 	Desired       bool       `json:"desired"`
-	State         string     `json:"state"`
+	Actual        string     `json:"actual"`
 	ObservedAt    *time.Time `json:"observedAt"`
-	LastHealthyAt *time.Time `json:"lastHealthyAt"`
+	Freshness     string     `json:"freshness"`
+	StaleReason   *string    `json:"staleReason"`
+	LastGoodAt    *time.Time `json:"lastGoodAt"`
 	LastError     *string    `json:"lastError"`
-	Stale         bool       `json:"stale"`
+	RecoveryState string     `json:"recoveryState"`
+
+	// Legacy in-process aliases keep the existing control-plane tests and
+	// supervisor helpers source compatible without weakening the API schema.
+	State         string     `json:"-"`
+	LastHealthyAt *time.Time `json:"-"`
+	Stale         bool       `json:"-"`
 }
 
 type RegistrationProjection struct {
-	Registration           Registration                   `json:"registration"`
-	Components             map[string]ComponentProjection `json:"components"`
-	LastPoll               map[string]*time.Time          `json:"lastPoll"`
-	LastDelivery           *time.Time                     `json:"lastDelivery"`
-	QueueDepth             int64                          `json:"queueDepth"`
-	ActiveJobID            *string                        `json:"activeJobId"`
-	LastJobFailure         *JobFailureProjection          `json:"lastJobFailure"`
-	RecentDeliveryFailures []DeliveryFailureProjection    `json:"recentDeliveryFailures"`
+	Registration                 Registration                   `json:"registration"`
+	Mode                         OperatingMode                  `json:"mode"`
+	Components                   map[string]ComponentProjection `json:"components"`
+	LastPoll                     map[string]*time.Time          `json:"lastPoll"`
+	LastDelivery                 *time.Time                     `json:"lastDelivery"`
+	QueueDepth                   int64                          `json:"queueDepth"`
+	ActiveJobID                  *string                        `json:"activeJobId"`
+	ActiveJobState               *string                        `json:"activeJobState"`
+	ActiveJobRegistrationVersion *int64                         `json:"activeJobRegistrationVersion"`
+	LastJobFailure               *JobFailureProjection          `json:"lastJobFailure"`
+	RecentDeliveryFailures       []DeliveryFailureProjection    `json:"recentDeliveryFailures"`
+}
+
+type CommandFence struct {
+	RegistrationID      string `json:"registrationId"`
+	RegistrationVersion int64  `json:"registrationVersion"`
+	RouteAttempts       *int   `json:"routeAttempts,omitempty"`
+}
+
+type CommandOutcome struct {
+	CommandID                      string        `json:"commandId"`
+	CommandIdentityDigest          string        `json:"commandIdentityDigest"`
+	ResourceIdentity               string        `json:"resourceIdentity"`
+	Outcome                        string        `json:"outcome"`
+	Reason                         *string       `json:"reason"`
+	ObservedFence                  *CommandFence `json:"observedFence"`
+	CurrentFence                   *CommandFence `json:"currentFence"`
+	ResultVersionOrAttemptIdentity *string       `json:"resultVersionOrAttemptIdentity"`
+	Recoverability                 string        `json:"recoverability"`
+	RecordedAt                     time.Time     `json:"recordedAt"`
+	Cancellable                    bool          `json:"cancellable"`
+}
+
+type RegistrationCommandResponse struct {
+	Outcome      CommandOutcome `json:"outcome"`
+	Registration Registration   `json:"registration"`
+}
+
+type RetryCommandResponse struct {
+	Outcome CommandOutcome `json:"outcome"`
+	Retry   RetryResult    `json:"retry"`
 }
 
 type JobFailureProjection struct {
@@ -230,7 +324,7 @@ func (item WorkItem) RunnerPayload(sourceKind string) (map[string]any, error) {
 	canonicalRepository := strings.ToLower(strings.TrimSpace(item.Repository))
 	repository := strings.Split(canonicalRepository, "/")
 	if len(repository) != 2 || canonicalRepository != item.Repository ||
-		!repositoryPattern.MatchString(canonicalRepository) {
+		!safeRepositoryIdentity(canonicalRepository) {
 		return nil, fmt.Errorf("runner work repository must be canonical owner/name")
 	}
 	event := map[string]any{}
@@ -306,10 +400,11 @@ type ClaimedDelivery struct {
 }
 
 type RetryResult struct {
-	AttemptID   string `json:"attemptId"`
-	DeliveryID  string `json:"deliveryId"`
-	State       string `json:"state"`
-	Cancellable bool   `json:"cancellable"`
+	AttemptID   string    `json:"attemptId"`
+	DeliveryID  string    `json:"deliveryId"`
+	State       string    `json:"state"`
+	Cancellable bool      `json:"cancellable"`
+	RecordedAt  time.Time `json:"recordedAt"`
 }
 
 type DeliveryStatus struct {
@@ -338,10 +433,13 @@ type DeliveryRetryAttempt struct {
 }
 
 type DeliveryRetryConflict struct {
-	Reason        string `json:"reason"`
-	State         string `json:"state"`
-	RouteAttempts int    `json:"routeAttempts"`
-	AttemptID     string `json:"attemptId"`
+	Reason              string    `json:"reason"`
+	State               string    `json:"state"`
+	RouteAttempts       int       `json:"routeAttempts"`
+	AttemptID           string    `json:"attemptId"`
+	RegistrationID      string    `json:"registrationId"`
+	RegistrationVersion int64     `json:"registrationVersion"`
+	RecordedAt          time.Time `json:"recordedAt"`
 }
 
 func (conflict *DeliveryRetryConflict) Error() string {

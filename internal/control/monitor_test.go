@@ -112,6 +112,7 @@ func TestMonitorDoesNotAdvanceCursorWhenSingleFlightIsBusy(t *testing.T) {
 	store := &fakeMonitorStore{enqueueError: ErrRepositoryBusy}
 	runner := &ProductionRunner{
 		Store: store,
+		Mode:  ModeActive,
 		Source: fakeMonitorSource{items: []WorkItem{{
 			Repository: "owner/repo",
 			Kind:       "issue",
@@ -139,7 +140,7 @@ func TestMonitorDoesNotAdvanceCursorWhenSingleFlightIsBusy(t *testing.T) {
 	}
 }
 
-func TestExecutionDisabledMonitorStillObservesWithoutAdvancingCursor(t *testing.T) {
+func TestExecutionDisabledMonitorPersistsObservationWithoutEnqueue(t *testing.T) {
 	store := &fakeMonitorStore{}
 	polls := 0
 	runner := &ProductionRunner{
@@ -166,7 +167,47 @@ func TestExecutionDisabledMonitorStillObservesWithoutAdvancingCursor(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if polls != 1 || store.enqueued != 0 || store.savedCursors != 0 ||
+	if polls != 1 || store.enqueued != 0 || store.savedCursors != 1 ||
+		store.actualStates != 1 {
+		t.Fatalf(
+			"polls=%d enqueued=%d cursors=%d actual=%d",
+			polls,
+			store.enqueued,
+			store.savedCursors,
+			store.actualStates,
+		)
+	}
+}
+
+func TestMonitorOnlyPersistsObservationWithoutEnqueue(t *testing.T) {
+	store := &fakeMonitorStore{}
+	polls := 0
+	runner := &ProductionRunner{
+		Store: store,
+		Source: fakeMonitorSource{
+			calls: &polls,
+			items: []WorkItem{{
+				Repository: "owner/repo",
+				Kind:       "issue",
+				Number:     1,
+				UpdatedAt:  time.Now(),
+			}},
+		},
+		Mode:         ModeMonitorOnly,
+		SupervisorID: "test",
+	}
+	err := runner.pollOnce(context.Background(), Registration{
+		ID:                  "registration-1",
+		Repository:          "owner/repo",
+		Enabled:             true,
+		IssueMonitorEnabled: true,
+		ExecutionEnabled:    true,
+		Version:             1,
+	}, "issue", ComponentIssueMonitor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if polls != 1 || store.enqueued != 0 || store.savedCursors != 1 ||
 		store.actualStates != 1 {
 		t.Fatalf(
 			"polls=%d enqueued=%d cursors=%d actual=%d",

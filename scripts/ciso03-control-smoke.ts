@@ -11,13 +11,18 @@ const postgres = `agentops-ciso03-pg-${suffix}`;
 const control = `agentops-ciso03-control-${suffix}`;
 const githubStub = `agentops-ciso03-github-${suffix}`;
 const postgresNetwork = `${network},mac=02:42:ac:11:00:02`;
-const runnerImage = `agentops-runner:ciso03-${suffix}`;
+const githubStubImage = 'node:22-bookworm-slim';
 const controlImage = `agentops-control:ciso03-${suffix}`;
 const controlTestImage = `agentops-control-test:ciso03-${suffix}`;
 const databasePassword = `ciso03-${suffix}`;
 const controlDatabasePassword = `control-db-${suffix}`;
-const controlToken = `control-${suffix}`;
-const evidencePath = path.join(root, 'evidence', 'ciso-03', 'apple-container-smoke.json');
+const controlToken = `control-${suffix}-grounded-boundary`;
+const evidencePath = path.join(
+  root,
+  'evidence',
+  'ciso-05',
+  'dashboard-apple-container-smoke.json',
+);
 
 interface Inspection {
   configuration: {
@@ -120,7 +125,6 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => process.exit(143));
   const hostPort = await freePort();
 
-  run(['build', '--target', 'runtime', '-t', runnerImage, '-f', 'deploy/Containerfile', '.']);
   run(['build', '--target', 'control', '-t', controlImage, '-f', 'deploy/Containerfile', '.']);
   run(['build', '--target', 'control-test', '-t', controlTestImage, '-f', 'deploy/Containerfile', '.']);
   run(['run', '--rm', '--entrypoint', 'gh', controlImage, 'webhook', '--help']);
@@ -128,7 +132,7 @@ async function main(): Promise<void> {
   run(['volume', 'create', volume]);
   run([
     'run', '--detach', '--name', githubStub, '--network', network,
-    '--entrypoint', 'node', runnerImage,
+    '--entrypoint', 'node', githubStubImage,
     '-e',
     "require('node:http').createServer((_,response)=>{response.setHeader('content-type','application/json');response.end('[]')}).listen(8081,'0.0.0.0')",
   ]);
@@ -158,12 +162,6 @@ async function main(): Promise<void> {
     controlTestImage,
   ]);
   run([
-    'run', '--rm', '--network', network,
-    '--env', `AGENTOPS_DATABASE_URL=${migrationDatabaseURL}`,
-    runnerImage,
-    'npm', 'run', 'control-store:migrate',
-  ]);
-  run([
     'exec', postgres, 'psql', '-U', 'postgres', '-d', 'agentops',
     '-v', 'ON_ERROR_STOP=1',
     '-c',
@@ -182,9 +180,13 @@ async function main(): Promise<void> {
   const githubAPIURL = `http://${githubStubIP}:8081`;
   run([
     'run', '--detach', '--name', control, '--network', network,
+    '--read-only', '--cap-drop', 'ALL', '--tmpfs', '/tmp',
     '--publish', `127.0.0.1:${hostPort}:8080`,
     '--env', `AGENTOPS_DATABASE_URL=${databaseURL}`,
     '--env', `AGENTOPS_CONTROL_TOKEN=${controlToken}`,
+    '--env', 'AGENTOPS_OPERATING_MODE=MONITOR_ONLY',
+    '--env', `AGENTOPS_DASHBOARD_ORIGIN=http://127.0.0.1:${hostPort}`,
+    '--env', `AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN=dashboard-bootstrap-${suffix}-grounded`,
     '--env', 'AGENTOPS_RECONCILIATION_INTERVAL=500ms',
     '--env', 'AGENTOPS_GITHUB_POLL_INTERVAL=1s',
     '--env', `AGENTOPS_GITHUB_API_URL=${githubAPIURL}`,
@@ -194,25 +196,71 @@ async function main(): Promise<void> {
   await waitFor('control health', async () =>
     (await api(baseURL, 'GET', '/healthz')).status === 200);
 
+  const bootstrapURL =
+    `${baseURL}/dashboard/bootstrap?token=${
+      encodeURIComponent(`dashboard-bootstrap-${suffix}-grounded`)
+    }`;
+  const bootstrap = await fetch(bootstrapURL, { redirect: 'manual' });
+  const setCookie = bootstrap.headers.get('set-cookie') ?? '';
+  if (
+    bootstrap.status !== 303
+    || bootstrap.headers.get('location') !== '/'
+    || !setCookie.includes('HttpOnly')
+    || !setCookie.includes('SameSite=Strict')
+  ) {
+    throw new Error(`dashboard bootstrap boundary failed: ${bootstrap.status} ${setCookie}`);
+  }
+  const cookie = setCookie.split(';', 1)[0] ?? '';
+  if (!cookie) throw new Error('dashboard bootstrap did not issue a session cookie');
+  const replayedBootstrap = await fetch(bootstrapURL, { redirect: 'manual' });
+  if (replayedBootstrap.status !== 401) {
+    throw new Error(`dashboard bootstrap replay was not rejected: ${replayedBootstrap.status}`);
+  }
+  const dashboard = await fetch(`${baseURL}/`, { headers: { cookie } });
+  const dashboardHTML = await dashboard.text();
+  if (
+    dashboard.status !== 200
+    || dashboard.headers.get('access-control-allow-origin') !== null
+    || !dashboard.headers.get('content-security-policy')?.includes("connect-src 'self'")
+    || dashboardHTML.includes(controlToken)
+    || dashboardHTML.includes('Bearer ')
+  ) {
+    throw new Error('dashboard asset/session/security-header boundary failed');
+  }
+  const browserSession = await fetch(`${baseURL}/v1/browser-session`, {
+    headers: { cookie },
+  });
+  const browserSessionBody = await browserSession.json() as Record<string, unknown>;
+  if (
+    browserSession.status !== 200
+    || typeof browserSessionBody.csrfToken !== 'string'
+    || browserSessionBody.origin !== baseURL
+  ) {
+    throw new Error(`browser session contract failed: ${JSON.stringify(browserSessionBody)}`);
+  }
+
   const created = await api(baseURL, 'POST', '/v1/registrations', {
     repository: 'example/grounded-control',
     enabled: false,
     issueMonitorEnabled: true,
     prMonitorEnabled: false,
     executionEnabled: false,
-    configuration: {},
   }, { 'idempotency-key': 'apple-smoke-registration' });
   if (created.status !== 201) {
     throw new Error(`Registration create failed: ${created.status} ${JSON.stringify(created.json)}`);
   }
-  const registrationId = String(created.json.id);
-  const createdVersion = Number(created.json.version);
+  const createdRegistration = created.json.registration as Record<string, unknown>;
+  const registrationId = String(createdRegistration.id);
+  const createdVersion = Number(createdRegistration.version);
   const enabled = await api(
     baseURL,
     'PATCH',
     `/v1/registrations/${registrationId}`,
     { enabled: true },
-    { 'if-match': `"${createdVersion}"` },
+    {
+      'if-match': `"${createdVersion}"`,
+      'idempotency-key': 'apple-smoke-enable',
+    },
   );
   if (enabled.status !== 200) {
     throw new Error(`Registration enable failed: ${enabled.status} ${JSON.stringify(enabled.json)}`);
@@ -223,15 +271,20 @@ async function main(): Promise<void> {
     const row = items?.find((item) =>
       (item.registration as Record<string, unknown> | undefined)?.id === registrationId);
     const components = row?.components as Record<string, Record<string, unknown>> | undefined;
-    return components?.issue_monitor?.state === 'running';
+    return components?.issue_monitor?.actual === 'running';
   });
-  const enabledVersion = Number(enabled.json.version);
+  const enabledVersion = Number(
+    (enabled.json.registration as Record<string, unknown> | undefined)?.version,
+  );
   const disabled = await api(
     baseURL,
     'POST',
     `/v1/registrations/${registrationId}/disable`,
-    undefined,
-    { 'if-match': `"${enabledVersion}"` },
+    {},
+    {
+      'if-match': `"${enabledVersion}"`,
+      'idempotency-key': 'apple-smoke-disable',
+    },
   );
   if (disabled.status !== 200) {
     throw new Error(`Registration disable failed: ${disabled.status} ${JSON.stringify(disabled.json)}`);
@@ -242,7 +295,7 @@ async function main(): Promise<void> {
     const row = items?.find((item) =>
       (item.registration as Record<string, unknown> | undefined)?.id === registrationId);
     const components = row?.components as Record<string, Record<string, unknown>> | undefined;
-    return components?.issue_monitor?.state === 'stopped';
+    return components?.issue_monitor?.actual === 'stopped';
   });
   const disabledVersion = Number(
     (disabled.json.registration as Record<string, unknown> | undefined)?.version,
@@ -252,21 +305,26 @@ async function main(): Promise<void> {
     'PATCH',
     `/v1/registrations/${registrationId}`,
     { enabled: true },
-    { 'if-match': `"${disabledVersion}"` },
+    {
+      'if-match': `"${disabledVersion}"`,
+      'idempotency-key': 'apple-smoke-restore',
+    },
   );
   if (restored.status !== 200) {
     throw new Error(
       `Registration restore failed: ${restored.status} ${JSON.stringify(restored.json)}`,
     );
   }
-  const restoredVersion = Number(restored.json.version);
+  const restoredVersion = Number(
+    (restored.json.registration as Record<string, unknown> | undefined)?.version,
+  );
   await waitFor('restored monitor before DB disconnect', async () => {
     const page = await api(baseURL, 'GET', '/v1/registrations');
     const items = page.json.items as Array<Record<string, unknown>> | undefined;
     const row = items?.find((item) =>
       (item.registration as Record<string, unknown> | undefined)?.id === registrationId);
     const components = row?.components as Record<string, Record<string, unknown>> | undefined;
-    return components?.issue_monitor?.state === 'running';
+    return components?.issue_monitor?.actual === 'running';
   });
 
   run([
@@ -295,16 +353,21 @@ async function main(): Promise<void> {
     const components = row?.components as Record<string, Record<string, unknown>> | undefined;
     return registration?.version === restoredVersion
       && registration?.enabled === true
-      && components?.issue_monitor?.state === 'running';
+      && components?.issue_monitor?.actual === 'running';
   });
 
   run(['delete', '--force', control]);
   run([
     'run', '--detach', '--name', control, '--network', network,
+    '--read-only', '--cap-drop', 'ALL', '--tmpfs', '/tmp',
     '--publish', `127.0.0.1:${hostPort}:8080`,
     '--env', `AGENTOPS_DATABASE_URL=${databaseURL}`,
     '--env', `AGENTOPS_CONTROL_TOKEN=${controlToken}`,
+    '--env', 'AGENTOPS_OPERATING_MODE=MONITOR_ONLY',
+    '--env', `AGENTOPS_DASHBOARD_ORIGIN=http://127.0.0.1:${hostPort}`,
+    '--env', `AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN=restart-dashboard-bootstrap-${suffix}-grounded`,
     '--env', 'AGENTOPS_RECONCILIATION_INTERVAL=500ms',
+    '--env', 'AGENTOPS_GITHUB_POLL_INTERVAL=1s',
     '--env', `AGENTOPS_GITHUB_API_URL=${githubAPIURL}`,
     controlImage,
   ]);
@@ -319,7 +382,7 @@ async function main(): Promise<void> {
     const components = row?.components as Record<string, Record<string, unknown>> | undefined;
     return registration?.version === restoredVersion
       && registration?.enabled === true
-      && components?.issue_monitor?.state === 'running';
+      && components?.issue_monitor?.actual === 'running';
   });
 
   const controlInspection = inspect(control);
@@ -342,18 +405,22 @@ async function main(): Promise<void> {
 
   const evidence = {
     schemaVersion: '1.0',
-    issue: 'mrbaron3/workflow#13',
+    issue: 'mrbaron3/workflow#15',
     runtime: 'Apple Container',
     runtimeVersion: run(['--version'], { capture: true }),
-    images: { runnerImage, controlImage, controlTestImage },
+    images: { githubStubImage, controlImage, controlTestImage },
     checks: {
       standardOciControlBuild: 'passed',
       pinnedForwarderExtensionReady: 'passed',
       githubStubInternalOnly: 'passed',
       goRacePostgresIntegration: 'passed',
       designGateAtControlStartup: 'passed',
+      loopbackBrowserSessionBoundary: 'passed',
+      exactOriginCsrfAndSecurityHeaders: 'passed',
       postgresInternalOnly: 'passed',
       controlLoopbackOnly: 'passed',
+      controlReadOnlyRootAndCapabilitiesDropped: 'passed',
+      noContainerRuntimeSocketOrHostFilesystemMount: 'passed',
       registrationCreateEnableDisableWithoutRestart: 'passed',
       desiredActualProjection: 'passed',
       databaseDisconnectFailClosed: 'passed',

@@ -1,0 +1,733 @@
+{
+  "schemaVersion": "1.0",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "revisionId": "workflow-ciso05-dashboard-r02",
+  "baseRevisionRef": {
+    "provider": "git",
+    "externalId": "workflow-designflow-dashboard-baseline",
+    "uri": "https://github.com/mrbaron3/workflow/tree/af16c6ac9e75aac949c9a4e81d6f1877a292e313/contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/examples",
+    "revision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313",
+    "digest": "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97"
+  },
+  "decisions": [
+    {
+      "id": "decision-reuse-alert",
+      "action": "reuse",
+      "targetType": "component",
+      "targetId": "component.alert",
+      "rationale": "baselineの原因・影響を操作より先に提示するalert semanticsは、last error、disconnect、rejectionの表示にそのまま適用できる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "decision-extend-registration-card",
+      "action": "extend",
+      "targetType": "component",
+      "targetId": "component.repository-status-card",
+      "rationale": "baselineのdesired／actual cardへRegistration version、mode impact、component anomaly、last-good、selection、loading／empty／disconnected truthfulnessを追加する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "decision-create-connection-banner",
+      "action": "create",
+      "targetType": "component",
+      "targetId": "component.connection-freshness-banner",
+      "rationale": "個別componentより上位のControl API接続、snapshot鮮度、last successful read、mutation可否を一貫して伝える共有componentがbaselineにない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "decision-create-desired-actual-matrix",
+      "action": "create",
+      "targetType": "component",
+      "targetId": "component.desired-actual-matrix",
+      "rationale": "Issue、PR、Forwarder、Execution、Queueをdesired、actual、freshness、last-good、impactの同一column contractで比較する必要がある",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "decision-create-delivery-recovery-panel",
+      "action": "create",
+      "targetType": "component",
+      "targetId": "component.delivery-recovery-panel",
+      "rationale": "delivery reason、route attempts、Registration version、retry attempts、idempotent command outcomeを同じcontextで扱うcompound componentが必要である",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "decision-create-command-verification-status",
+      "action": "create",
+      "targetType": "component",
+      "targetId": "component.command-verification-status",
+      "rationale": "create、update、disable、retryのstructured command outcomeとauthoritative re-query verificationを同じ語彙、focus、live announcementで表す共有componentが必要である",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "decision-feature-local-registration-editor",
+      "action": "feature-local",
+      "targetType": "component",
+      "targetId": "component.registration-editor",
+      "rationale": "Registration専用field、version fence、禁止field境界、disable impactは他featureへ一般化せず、このDashboardの安全契約内に閉じる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "decision-extend-failure-recovery",
+      "action": "extend",
+      "targetType": "pattern",
+      "targetId": "pattern.failure-recovery",
+      "rationale": "baselineの原因→影響→許可操作→結果の順序へlast-good、Registration version、attempt conflict、acceptedとverified successの分離を追加する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "decision-create-anomaly-first-dashboard",
+      "action": "create",
+      "targetType": "pattern",
+      "targetId": "pattern.anomaly-first-dashboard",
+      "rationale": "global mode／connectionから異常summary、Registration card、detailへ進むattention hierarchyを反復可能なpage compositionとして固定する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "decision-create-truthful-async-state",
+      "action": "create",
+      "targetType": "pattern",
+      "targetId": "pattern.truthful-async-state",
+      "rationale": "loading、empty、stale、disconnected、rejected、conflict、accepted、verified successを全query／commandで同じ意味に保つ必要がある",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "decision-feature-local-safe-mutation",
+      "action": "feature-local",
+      "targetType": "pattern",
+      "targetId": "pattern.safe-registration-mutation",
+      "rationale": "same-origin session、CSRF、strict fields、version fence、authoritative re-queryをRegistration create／update／disableに限定した安全なmutation sequenceとして定義する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "decision-create-loopback-session-pattern",
+      "action": "create",
+      "targetType": "pattern",
+      "targetId": "pattern.loopback-operator-session",
+      "rationale": "script-free one-time bootstrap、server-side opaque session、exact Host／Origin、memory-only CSRF proof、logout／expiryをbearer非露出の一続きのbrowser security patternとして固定する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "decision-create-status-token-family",
+      "action": "create",
+      "targetType": "token",
+      "targetId": "color.status",
+      "rationale": "critical、stale、disconnected、healthy、neutralをforeground／background／borderの組で表し、色以外のlabelと併用するsemantic familyが必要である",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "decision-extend-layout-focus-tokens",
+      "action": "extend",
+      "targetType": "token",
+      "targetId": "component.focusRing",
+      "rationale": "baselineの単一failed colorから、44px target、3px focus ring、responsive panel spacingを含む操作可能なDashboard token deltaへ拡張する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-006"
+      ]
+    }
+  ],
+  "tokenDocuments": [
+    {
+      "path": "evidence/ciso-05/design/revision-02/design-tokens.json",
+      "digest": "sha256:e24a64c7294d3b519d97c31db479060d8bbe30b08281bc7b07f91620a804406d",
+      "format": "dtcg-2025.10",
+      "purpose": "anomaly-first hierarchy、truthful async states、focus、responsive spacingに必要なprimitive／semantic／component token delta"
+    }
+  ],
+  "componentDeltas": [
+    {
+      "id": "component.alert",
+      "action": "reuse",
+      "name": "Alert",
+      "purpose": "failure、disconnect、rejection、conflictの原因、影響、last-good、次の許可行動を操作より先に伝える",
+      "variants": [
+        "critical",
+        "warning",
+        "information",
+        "verified-success"
+      ],
+      "states": [
+        "default",
+        "expanded",
+        "dismissed-when-nonblocking"
+      ],
+      "slots": [
+        "status-label",
+        "summary",
+        "impact",
+        "last-good",
+        "recovery",
+        "debug-disclosure"
+      ],
+      "keyboardBehavior": "alert自体は非interactiveとし、内部detailsとactionはdocument orderでTab移動する。critical alertを自動dismissしない",
+      "focusBehavior": "query failureではfocusを奪わずlive announcementする。form submission rejectionではdialog内error summaryへfocusを移す",
+      "responsiveRules": [
+        "320px幅でstatus label、summary、time、actionを縦積みにする",
+        "長いerrorとrepository identityを省略せず折り返す"
+      ],
+      "contentConstraints": [
+        "error codeだけでなく原因、影響、recoverabilityを平文で示す",
+        "verified-success variantはauthoritative re-query後だけ使用する",
+        "criticalとwarningを色だけで区別しない"
+      ],
+      "tokenRefs": [
+        "color.status.critical.foreground",
+        "color.status.critical.background",
+        "color.status.critical.border",
+        "color.status.stale.foreground",
+        "color.status.stale.background",
+        "color.status.stale.border",
+        "color.status.healthy.foreground",
+        "color.status.healthy.background"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "component.repository-status-card",
+      "action": "extend",
+      "name": "Repository Status Card",
+      "purpose": "Registration identity、version、最重要のdesired／actual差、last-goodを異常優先listで比較・選択可能にする",
+      "variants": [
+        "failed",
+        "disconnected",
+        "stale",
+        "divergent",
+        "converging",
+        "healthy",
+        "disabled"
+      ],
+      "states": [
+        "default",
+        "hover",
+        "focused",
+        "selected",
+        "loading",
+        "empty-list",
+        "last-known"
+      ],
+      "slots": [
+        "repository-name",
+        "registration-id",
+        "registration-version",
+        "desired-summary",
+        "actual-summary",
+        "mode-impact",
+        "anomaly-label",
+        "last-good",
+        "updated-time"
+      ],
+      "keyboardBehavior": "card全体をnative button相当としEnter／Spaceで選択する。内部にnested interactive controlを置かない",
+      "focusBehavior": "選択後もcardへfocusを維持し、detail headingと異常summaryをpolite live regionで通知する。pagination追加後も既存focusを維持する",
+      "responsiveRules": [
+        "768px以上は固定幅list、未満はfull-width cardにする",
+        "狭幅ではidentity→anomaly→version→last-goodの順に縦積みし、errorをellipsisで隠さない",
+        "touch targetは44px以上を保つ"
+      ],
+      "contentConstraints": [
+        "canonical owner/nameを完全に識別可能に表示する",
+        "desiredとactualを同一labelまたは単一toggleへ結合しない",
+        "stale、unknown、disabled、healthyをtext labelで区別する",
+        "loading skeletonに実データ風のstatus色を使わない"
+      ],
+      "tokenRefs": [
+        "component.registrationCard.selectedBackground",
+        "component.registrationCard.selectedBorder",
+        "component.focusRing.color",
+        "component.focusRing.width",
+        "color.status.critical.foreground",
+        "color.status.stale.foreground",
+        "color.status.disconnected.foreground",
+        "color.status.healthy.foreground",
+        "color.status.neutral.foreground",
+        "size.target.minimum"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "component.connection-freshness-banner",
+      "action": "create",
+      "name": "Connection and Freshness Banner",
+      "purpose": "Control API接続、opaque browser session／expiry、snapshot observed time、last successful read、mutation可否を全Registrationより先に伝える",
+      "variants": [
+        "loading",
+        "fresh",
+        "stale",
+        "disconnected",
+        "session-rejected"
+      ],
+      "states": [
+        "idle",
+        "refreshing",
+        "retry-scheduled",
+        "recovered"
+      ],
+      "slots": [
+        "connection-label",
+        "session-label",
+        "session-expiry",
+        "mode",
+        "observed-time",
+        "last-successful-time",
+        "retry-hint",
+        "refresh-action",
+        "mutation-disabled-reason"
+      ],
+      "keyboardBehavior": "Refreshはnative buttonでEnter／Spaceから利用でき、pending中だけdisabledにする",
+      "focusBehavior": "refresh結果でfocusを動かさずvisible live regionへ通知する。session rejectionはpage headingの後でassertiveに通知する",
+      "responsiveRules": [
+        "広幅はmode、connection、time、actionを同一rowにする",
+        "狭幅はlabel/valueを縦積みし、last successful timeとdisabled reasonを省略しない"
+      ],
+      "contentConstraints": [
+        "disconnected時のlast known dataをfreshと表現しない",
+        "staleとdisconnectedを同じ文言にしない",
+        "modeが取得不能ならunknownと明記する",
+        "bearer、session ID、CSRF proof自体は表示せず、authenticated／expired／rejectedとexpiryだけを表示する"
+      ],
+      "tokenRefs": [
+        "component.connectionBanner.criticalBackground",
+        "component.connectionBanner.staleBackground",
+        "color.status.disconnected.foreground",
+        "color.status.disconnected.border",
+        "color.status.stale.foreground",
+        "color.status.healthy.foreground",
+        "component.focusRing.color",
+        "size.target.minimum"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "component.desired-actual-matrix",
+      "action": "create",
+      "name": "Desired / Actual Matrix",
+      "purpose": "Issue Monitor、PR Monitor、Forwarder、Execution、Queueのintentと観測を同じ読取順で比較する",
+      "variants": [
+        "failed",
+        "disconnected",
+        "stale",
+        "divergent",
+        "converging",
+        "healthy",
+        "stopped-by-desire",
+        "unknown",
+        "paused-by-mode"
+      ],
+      "states": [
+        "loading",
+        "populated",
+        "last-known",
+        "unavailable"
+      ],
+      "slots": [
+        "component-name",
+        "desired-state",
+        "actual-state",
+        "freshness",
+        "observed-at",
+        "last-good",
+        "last-error",
+        "mode-impact",
+        "recovery-state",
+        "freshness-budget",
+        "stale-reason"
+      ],
+      "keyboardBehavior": "matrix自体は非interactiveとし、semantic tableまたはdefinition groupsでscreen readerのrow／column relationを保つ。debug disclosureだけをTab順に含める",
+      "focusBehavior": "Registration選択でfocusを移さず、matrix summaryをpolite live regionへ通知する",
+      "responsiveRules": [
+        "768px以上はsemantic tableとしてcomponent rowを揃える",
+        "767px以下はcomponentごとのdefinition groupへ変換し、column labelを各valueへ繰り返す",
+        "二方向scrollを必須にせずerrorとtimestampを折り返す"
+      ],
+      "contentConstraints": [
+        "desiredとactualは別column／labelを持つ",
+        "観測がない場合は空欄ではなくUnknownまたはNever observedと表示する",
+        "last-goodはcurrent stateと同じ視覚weightにしない",
+        "MONITOR_ONLYでenabledかつexecution-enabledのExecution actualはpaused_by_modeとし、failedやrunningへ推測しない",
+        "Issue Monitor 300秒、PR Monitor 300秒、Forwarder 60秒、Execution 30秒、Queue 15秒のbudgetを各rowに明示する",
+        "last-goodはhistorical evidenceでありcurrent failureのhealthy stylingへ使用しない"
+      ],
+      "tokenRefs": [
+        "color.status.critical.foreground",
+        "color.status.critical.background",
+        "color.status.stale.foreground",
+        "color.status.stale.background",
+        "color.status.disconnected.foreground",
+        "color.status.healthy.foreground",
+        "color.status.neutral.foreground",
+        "color.border.default",
+        "space.150",
+        "space.200"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "component.command-verification-status",
+      "action": "create",
+      "name": "Command Verification Status",
+      "purpose": "mutationのdurable command outcomeとauthoritative verificationを混同せず、対象identity、fence、次の行動とともに提示する",
+      "variants": [
+        "applied",
+        "duplicate",
+        "version-conflict",
+        "rejected",
+        "indeterminate",
+        "verifying",
+        "verified-success"
+      ],
+      "states": [
+        "idle",
+        "submitting",
+        "outcome-received",
+        "re-querying",
+        "verified",
+        "verification-mismatch"
+      ],
+      "slots": [
+        "outcome-label",
+        "command-identity-digest",
+        "resource-identity",
+        "observed-fence",
+        "result-version-or-attempt",
+        "verification-target",
+        "recovery-action"
+      ],
+      "keyboardBehavior": "status自体は非interactiveとし、Retry same key、Reload、Close等の許可actionだけをdocument orderへ置く。submitting／re-querying中は新しいcommandを発火させない",
+      "focusBehavior": "applied／duplicate／verifyingではfocusを動かさずpoliteに通知する。rejected／version conflict／indeterminate／verification mismatchでは同じdialogまたはpanelのsummaryへfocusを移す。verified後はtriggerまたはselected cardへ戻す",
+      "responsiveRules": [
+        "広幅はoutcome、fence、verificationを横に比較する",
+        "狭幅はoutcome→identity→fence→verification→actionの順に縦積みする",
+        "identityとreasonをellipsisで隠さない"
+      ],
+      "contentConstraints": [
+        "2xx／202、applied、duplicateを単独でverified successと表現しない",
+        "version conflictはobserved／current version、retry conflictはobserved／current attemptsを示す",
+        "indeterminateは同じIdempotency-Key／同じinputの再送またはauthoritative re-queryだけを案内する",
+        "verified successはresource identity、version／attempt identity、desired／delivery／recovery fieldsの一致後だけ使う"
+      ],
+      "tokenRefs": [
+        "color.status.critical.foreground",
+        "color.status.stale.foreground",
+        "color.status.healthy.foreground",
+        "color.status.neutral.foreground",
+        "component.focusRing.color",
+        "size.target.minimum"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "component.delivery-recovery-panel",
+      "action": "create",
+      "name": "Delivery Recovery Panel",
+      "purpose": "failure identity、原因、attempt、Registration version、retry可否、command outcomeを同じ文脈で提示する",
+      "variants": [
+        "failed-retryable",
+        "failed-blocked",
+        "ignored",
+        "processing",
+        "processed",
+        "registration-stale",
+        "registration-disabled"
+      ],
+      "states": [
+        "loading-detail",
+        "ready",
+        "submitting",
+        "accepted",
+        "rejected",
+        "conflict",
+        "outcome-unknown",
+        "verified-success",
+        "disconnected"
+      ],
+      "slots": [
+        "delivery-identity",
+        "failure-reason",
+        "route-attempts",
+        "registration-version",
+        "retry-attempt-history",
+        "retry-action",
+        "command-outcome",
+        "recovery-progress"
+      ],
+      "keyboardBehavior": "failure itemとRetryはnative button semanticsを使い、Retry pending中の二重発火を防ぐ。attempt historyはdocument orderで読む",
+      "focusBehavior": "failure item選択後もitem focusを維持してdetail更新を通知する。rejection／conflictではoutcome summaryへfocusを移し、acceptedではfocusを動かさない",
+      "responsiveRules": [
+        "広幅はfailure listとdetailを2 columnにする",
+        "狭幅は選択failure直後にdetailを展開し、identity、reason、actionを省略しない",
+        "Retry targetは44px以上にする"
+      ],
+      "contentConstraints": [
+        "acceptedをprocessedまたはsuccessと表現しない",
+        "retry対象delivery IDとobserved attemptsを手入力させない",
+        "rejected attemptもattempt identity、reason、timeを表示する",
+        "disconnected時はRetryを無効化しlast known detailを明示する"
+      ],
+      "tokenRefs": [
+        "color.status.critical.foreground",
+        "color.status.stale.foreground",
+        "color.status.disconnected.foreground",
+        "color.status.healthy.foreground",
+        "color.status.neutral.foreground",
+        "component.focusRing.color",
+        "size.target.minimum",
+        "radius.panel"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "component.registration-editor",
+      "action": "feature-local",
+      "name": "Registration Editor",
+      "purpose": "Registration create／update／disableをstrict field、version fence、impact confirmationの内側で完了する",
+      "variants": [
+        "create",
+        "update",
+        "disable-confirmation"
+      ],
+      "states": [
+        "pristine",
+        "dirty",
+        "invalid",
+        "submitting",
+        "rejected",
+        "conflict",
+        "outcome-unknown",
+        "verified-success"
+      ],
+      "slots": [
+        "dialog-heading",
+        "repository-identity",
+        "registration-version",
+        "desired-switches",
+        "change-summary",
+        "impact-summary",
+        "error-summary",
+        "cancel-action",
+        "submit-action"
+      ],
+      "keyboardBehavior": "Tabをdialog内に閉じ、Escape／Cancelで閉じる。checkboxはSpace、buttonはEnter／Spaceで操作する。destructive actionへinitial focusを置かない",
+      "focusBehavior": "open時はheadingまたは最初のfieldへ、validation／rejection／conflict時はerror summaryへ、close時はtriggerへ戻す",
+      "responsiveRules": [
+        "広幅は最大560pxのcentered dialogにする",
+        "狭幅はviewport sheetにしてheading、error summary、actionへ到達可能な縦scrollを提供する",
+        "labelをplaceholderだけで表現しない"
+      ],
+      "contentConstraints": [
+        "createだけrepository identityを編集可能にし、update／disableではread-onlyにする",
+        "enabled、issueMonitorEnabled、prMonitorEnabled、executionEnabled以外のproduct fieldを表示しない",
+        "command、host path、credential、image、mount、URL、任意configuration fieldを提供しない",
+        "version conflict時はcurrent snapshot再読込までSaveを無効化する",
+        "successはpersisted versionのauthoritative re-query後だけ表示する"
+      ],
+      "tokenRefs": [
+        "color.surface.panel",
+        "color.border.default",
+        "color.border.critical",
+        "color.border.focus",
+        "color.text.primary",
+        "color.text.critical",
+        "component.focusRing.color",
+        "component.focusRing.width",
+        "size.target.minimum",
+        "radius.panel",
+        "space.200",
+        "space.300"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    }
+  ],
+  "patternDeltas": [
+    {
+      "id": "pattern.failure-recovery",
+      "action": "extend",
+      "name": "Failure Recovery",
+      "purpose": "原因、影響、last-good、version、許可された回復操作、受付／拒否／競合、verified resultを同じcontextで提示する",
+      "compositionRules": [
+        "failure summaryを回復操作より先に置く",
+        "current durable state、observed attempts、Registration versionをRetry直前に表示する",
+        "applied、duplicate、pending、processed、rejected、version conflict、indeterminate、verified successを別stateとして扱う",
+        "command outcomeをaction直後とvisible live regionの両方へ同じ文言で表示する",
+        "debug detailはprogressive disclosureへ置き、原因とrecoverabilityは常時表示する",
+        "disconnectedまたはstaleな判断材料ではRetryを無効化する"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "pattern.anomaly-first-dashboard",
+      "action": "create",
+      "name": "Anomaly-first Operations Dashboard",
+      "purpose": "global contextから異常対象、component原因、安全な次操作へattentionを段階的に導く",
+      "compositionRules": [
+        "mode、connection、snapshot freshnessを全Registrationより先に置く",
+        "failed、disconnected、stale、desired／actual divergenceをfresh healthyより先に並べる",
+        "Registration card選択で同一pageのdetailを更新し別routeへ遷移しない",
+        "component matrixの後にlast poll、last delivery、queue、active job、last error、recoveryを置く",
+        "mutation actionは診断情報より低いprominenceにし、disableは通常editから分離する",
+        "emptyはzero Registration、disconnectedはauthoritative source unavailableとして別stateにする"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "pattern.truthful-async-state",
+      "action": "create",
+      "name": "Truthful Async State",
+      "purpose": "queryとcommandの不確実性を成功styleへ丸めず、利用者がcurrent truthと次行動を判断できるようにする",
+      "compositionRules": [
+        "loadingは結果領域にaria-busyと明示labelを出し、skeletonをhealthy dataに見せない",
+        "emptyはfresh authoritative responseでzero itemsの場合だけ表示する",
+        "staleはobserved time、last-good、freshness reasonを表示し、current healthyとしない",
+        "disconnectedはcurrent stateを返さずlast successful readとlast known dataを区別する",
+        "rejectedは理由とrecoverabilityをaction近傍へ表示し、入力とfocus contextを保持する",
+        "conflictはcurrent versionまたはattemptを示し、人間の再判断なしに自動再送しない",
+        "applied／duplicateはdurable command outcome、pendingは処理中として表示し、verified successはauthoritative re-query後だけ使う",
+        "live announcementは視覚statusと同じ文言を使い、pollごとに同一errorを反復しない"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "pattern.safe-registration-mutation",
+      "action": "feature-local",
+      "name": "Safe Registration Mutation",
+      "purpose": "create、update、disableをsame-origin security boundary、strict schema、version／idempotency fence、authoritative verificationへ通す",
+      "compositionRules": [
+        "mutation前にopaque HttpOnly same-origin operator session、exact Host、byte-for-byte exact Origin、same-origin Sec-Fetch-Site、memory-only X-CSRF-Tokenを要求する",
+        "create inputはcanonical owner/nameと4 desired switchesだけ、updateはimmutable identityと許可switch差分だけにする",
+        "全mutationへrequest-specific Idempotency-Keyを付け、update／disableはoperatorが確認したcurrent versionへIf-Matchで束縛し、retryはobserved attemptsとcurrent Registration versionへ束縛する",
+        "unknown field、command、host path、credential、image、mount、URL、任意configurationをUIにもpayloadにも含めない",
+        "同じkey／同じnormalized inputは同じdurable outcomeへ収束し、同じkey／異inputは拒否する。pending中の二重submitを防ぎ、transport outcome unknownは同じkey／同じinputでのみ再送する",
+        "conflict時はauthoritative snapshotを再取得して差分と影響を再判断する",
+        "successはpersisted Registration identity、version、desired valuesをre-queryで確認後に通知する",
+        "disable後はactual stopped／rejected workが未観測ならconvergingと表示し、古いjobをsuccess扱いしない"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "pattern.loopback-operator-session",
+      "action": "create",
+      "name": "Loopback Operator Session",
+      "purpose": "既存long-lived bearerをbrowserへ露出せず、1つのexact configured loopback originでsessionとCSRF lifecycleを完結する",
+      "compositionRules": [
+        "script-free GET bootstrapだけをno-Origin例外とし、loopback peer、exact Host、expiry、single use、constant-time token comparisonを要求する",
+        "bootstrap成功はapplication assetsより前にclean URLへredirectし、one-time tokenをhistoryとsubresource requestへ残さない",
+        "opaque session IDはserver-sideに保持し、HttpOnly、SameSite=Strict、path-scoped、expiring、HTTPS時Secure cookieだけをbrowserへ渡す",
+        "GET browser-sessionはauthenticated、expiry、non-secret CSRF proofだけを返し、proofはmemoryだけに保持してrenewal時rotate、logout／expiry時invalidateする",
+        "unsafe requestはbusiness inputより前にexact Host、byte-for-byte exact Origin、same-origin Sec-Fetch-Site、X-CSRF-Tokenを検証する",
+        "missing、null、alternate loopback spelling、scheme／port／user-info／suffix／prefix variantはfail closedにする",
+        "bearer、session ID、CSRF proofをHTML、JavaScript bundle、DOM、URL、persistent storage、response body、logへ置かない",
+        "CSPはdefault-src／connect-srcをselfへ限定しobject／frame／baseを禁止し、frame-ancestors none、nosniff、strict referrer、no-store、no permissive CORSを適用する"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    }
+  ]
+}

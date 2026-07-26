@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0",
+  "decisionId": "workflow-ciso05-dashboard-r02-approve",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "revisionId": "workflow-ciso05-dashboard-r02",
+  "bundleDigest": "sha256:4f7357e099985d2dce5c1941b8ee25231e3208808727362b9f87d725084b70fa",
+  "verdict": "approve",
+  "rationale": "Human approval returned through Orca decision response msg_0a870fc115e3 and is bound exactly to workflow-ciso05-dashboard-r02 at sha256:4f7357e099985d2dce5c1941b8ee25231e3208808727362b9f87d725084b70fa. The approval authorizes product implementation only against this exact revision and digest; any mismatch fails closed. Codex remains the sole implementation, fix, commit, push, pull-request, and merge owner, with exactly two formal review rounds and expected-head merge after final CI is green.",
+  "decidedBy": {
+    "provider": "orca-human-decision-gate",
+    "subject": "coordinator-human",
+    "displayName": "Human coordinator"
+  },
+  "decidedAt": "2026-07-26T00:45:11Z",
+  "supersedesDecisionId": "workflow-ciso05-dashboard-r01-request-changes"
+}

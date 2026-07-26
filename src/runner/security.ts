@@ -22,6 +22,7 @@ export const RunnerStartupInput = z.object({
   workspaceRoot: z.string().min(1),
   databaseUrl: z.string().url(),
   provider: z.enum(['codex', 'claude']),
+  operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE']),
   leaseDurationMs: z.number().int().min(5_000).max(60 * 60_000),
   heartbeatIntervalMs: z.number().int().min(500).max(10 * 60_000),
   reconciliationIntervalMs: z.number().int().min(250).max(10 * 60_000),
@@ -400,6 +401,9 @@ export function loadRunnerStartup(
     workspaceRoot,
     databaseUrl,
     provider,
+    operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE']).parse(
+      env.AGENTOPS_OPERATING_MODE ?? 'MONITOR_ONLY',
+    ),
     leaseDurationMs: integerEnv(env, 'AGENTOPS_RUNNER_LEASE_MS', 60_000),
     heartbeatIntervalMs: integerEnv(env, 'AGENTOPS_RUNNER_HEARTBEAT_MS', 15_000),
     reconciliationIntervalMs: integerEnv(

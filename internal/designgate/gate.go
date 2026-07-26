@@ -9,6 +9,7 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
@@ -22,7 +23,9 @@ const (
 	// human-approved contract-v1.0.0-rc.1 Design Bundle. Recomputing internally
 	// consistent digests is insufficient: an attacker must not be able to
 	// replace the bundle, approval, and coverage as one self-consistent set.
-	ApprovedBundleDigest = "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97"
+	ApprovedBundleDigest                  = "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97"
+	ApprovedDashboardBundleDigest         = "sha256:4f7357e099985d2dce5c1941b8ee25231e3208808727362b9f87d725084b70fa"
+	ApprovedDashboardReconciliationDigest = "sha256:f67fed2c8de6836072cd8fb34ce53e70bf3801717989ba9c1dc25a1793d5a1db"
 )
 
 type GateResult struct {
@@ -32,6 +35,310 @@ type GateResult struct {
 	DecisionID      string   `json:"decisionId"`
 	CapabilityIDs   []string `json:"capabilityIds"`
 	CoverageBinding int      `json:"coverageBindingCount"`
+}
+
+type reconciliationCapability struct {
+	CapabilityID          string `json:"capabilityId"`
+	PlannedHTTPOperations []struct {
+		Method string `json:"method"`
+		Path   string `json:"path"`
+	} `json:"plannedHttpOperations"`
+	ArchitectureElementIDs []string `json:"architectureElementIds"`
+	Ownership              struct {
+		Issue               string `json:"issue"`
+		AcceptanceCriterion string `json:"acceptanceCriterion"`
+	} `json:"ownership"`
+	ReconciliationState string `json:"reconciliationState"`
+}
+
+type dashboardReconciliation struct {
+	SchemaVersion string                     `json:"schemaVersion"`
+	RequestID     string                     `json:"requestId"`
+	RevisionID    string                     `json:"revisionId"`
+	Ambiguities   []string                   `json:"ambiguities"`
+	Capabilities  []reconciliationCapability `json:"capabilities"`
+}
+
+func ValidateDashboard(repositoryRoot string) (GateResult, error) {
+	bundleRoot := filepath.Join(repositoryRoot, "evidence", "ciso-05", "design", "revision-02")
+	manifestPath := filepath.Join(bundleRoot, "design-bundle-manifest.json")
+	decisionPath := filepath.Join(
+		repositoryRoot,
+		"evidence",
+		"ciso-05",
+		"design",
+		"decisions",
+		"approve-r02.json",
+	)
+	sourcePath := filepath.Join(
+		repositoryRoot,
+		"evidence",
+		"ciso-05",
+		"design",
+		"design-request.json",
+	)
+	reconciliationPath := filepath.Join(bundleRoot, "capability-reconciliation.json")
+
+	var bundle manifest
+	manifestRaw, err := readStrict(manifestPath, &bundle)
+	if err != nil {
+		return GateResult{}, fmt.Errorf("dashboard manifest: %w", err)
+	}
+	if err := validatePinnedSchema(
+		"urn:designflow:schema:v1:design-bundle-manifest",
+		manifestRaw,
+	); err != nil {
+		return GateResult{}, fmt.Errorf("dashboard manifest schema: %w", err)
+	}
+	if bundle.SchemaVersion != "1.0" ||
+		bundle.RevisionID != "workflow-ciso05-dashboard-r02" ||
+		bundle.BundleDigest != ApprovedDashboardBundleDigest {
+		return GateResult{}, fmt.Errorf("dashboard manifest does not match the compiled approved revision")
+	}
+	computedBundleDigest, err := manifestDigest(manifestRaw)
+	if err != nil || computedBundleDigest != bundle.BundleDigest {
+		return GateResult{}, fmt.Errorf("dashboard bundleDigest mismatch")
+	}
+	sourceRaw, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Design Request: %w", err)
+	}
+	if err := validatePinnedSchema(
+		"urn:designflow:schema:v1:design-request",
+		sourceRaw,
+	); err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Design Request schema: %w", err)
+	}
+	sourceDigest, err := digestArtifact(sourceRaw, "application/json")
+	if err != nil || sourceDigest != bundle.SourceDigest {
+		return GateResult{}, fmt.Errorf("dashboard sourceDigest mismatch")
+	}
+	for key, artifact := range bundle.Artifacts {
+		if empty(artifact.Path, artifact.Digest, artifact.MediaType, artifact.SchemaRef) {
+			return GateResult{}, fmt.Errorf("dashboard artifact %s is incomplete", key)
+		}
+		artifactPath, err := safeArtifactPath(repositoryRoot, artifact.Path)
+		if err != nil {
+			return GateResult{}, fmt.Errorf("dashboard artifact %s: %w", key, err)
+		}
+		body, err := os.ReadFile(artifactPath)
+		if err != nil {
+			return GateResult{}, fmt.Errorf("dashboard artifact %s: %w", key, err)
+		}
+		digest, err := digestArtifact(body, artifact.MediaType)
+		if err != nil || digest != artifact.Digest {
+			return GateResult{}, fmt.Errorf("dashboard artifact %s digest mismatch", key)
+		}
+		switch artifact.SchemaRef {
+		case "urn:designflow:schema:v1:experience-contract",
+			"urn:designflow:schema:v1:design-system-delta",
+			"urn:designflow:schema:v1:capability-requirements":
+			if err := validatePinnedSchema(artifact.SchemaRef, body); err != nil {
+				return GateResult{}, fmt.Errorf("dashboard artifact %s schema: %w", key, err)
+			}
+		case designTokensSchemaRef:
+			if err := validateDesignTokens(body); err != nil {
+				return GateResult{}, fmt.Errorf("dashboard artifact %s token format: %w", key, err)
+			}
+		case "none":
+			if artifact.MediaType != "text/html" {
+				return GateResult{}, fmt.Errorf("dashboard artifact %s has no schema for non-preview media", key)
+			}
+		default:
+			return GateResult{}, fmt.Errorf(
+				"dashboard artifact %s references an unpinned schema %s",
+				key,
+				artifact.SchemaRef,
+			)
+		}
+	}
+
+	var approval decision
+	approvalRaw, err := readStrict(decisionPath, &approval)
+	if err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Human Design Decision: %w", err)
+	}
+	if err := validatePinnedSchema(
+		"urn:designflow:schema:v1:human-design-decision",
+		approvalRaw,
+	); err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Human Design Decision schema: %w", err)
+	}
+	if approval.DecisionID != "workflow-ciso05-dashboard-r02-approve" ||
+		approval.Verdict != "approve" ||
+		approval.RequestID != bundle.RequestID ||
+		approval.RevisionID != bundle.RevisionID ||
+		approval.BundleDigest != bundle.BundleDigest ||
+		empty(approval.Rationale, approval.DecidedAt) {
+		return GateResult{}, fmt.Errorf("dashboard approval is missing or bound to a different revision")
+	}
+
+	capabilityRef, present := bundle.Artifacts["capabilityRequirements"]
+	if !present {
+		return GateResult{}, fmt.Errorf("dashboard bundle has no capability requirements")
+	}
+	capabilityPath, err := safeArtifactPath(repositoryRoot, capabilityRef.Path)
+	if err != nil {
+		return GateResult{}, err
+	}
+	var requirements capabilityDocument
+	if _, err := readStrict(capabilityPath, &requirements); err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Capability Requirements: %w", err)
+	}
+	if requirements.RequestID != bundle.RequestID ||
+		requirements.RevisionID != bundle.RevisionID ||
+		len(requirements.Ambiguities) != 0 ||
+		len(requirements.Capabilities) != 7 {
+		return GateResult{}, fmt.Errorf("dashboard capability requirements are incomplete or ambiguous")
+	}
+	requiredCapabilities := make(map[string]bool, len(requirements.Capabilities))
+	for _, item := range requirements.Capabilities {
+		if err := validateCapability(item); err != nil {
+			return GateResult{}, err
+		}
+		if requiredCapabilities[item.ID] {
+			return GateResult{}, fmt.Errorf("duplicate dashboard capability %s", item.ID)
+		}
+		requiredCapabilities[item.ID] = true
+	}
+
+	var trace dashboardReconciliation
+	reconciliationRaw, err := os.ReadFile(reconciliationPath)
+	if err != nil {
+		return GateResult{}, fmt.Errorf("dashboard capability reconciliation: %w", err)
+	}
+	if err := json.Unmarshal(reconciliationRaw, &trace); err != nil {
+		return GateResult{}, fmt.Errorf("dashboard capability reconciliation: %w", err)
+	}
+	reconciliationDigest, err := digestArtifact(reconciliationRaw, "application/json")
+	if err != nil || reconciliationDigest != ApprovedDashboardReconciliationDigest {
+		return GateResult{}, fmt.Errorf("dashboard capability reconciliation does not match its compiled trust anchor")
+	}
+	if trace.SchemaVersion != "1.0" ||
+		trace.RequestID != bundle.RequestID ||
+		trace.RevisionID != bundle.RevisionID ||
+		len(trace.Ambiguities) != 0 ||
+		len(trace.Capabilities) != len(requiredCapabilities) {
+		return GateResult{}, fmt.Errorf("dashboard capability reconciliation is incomplete or ambiguous")
+	}
+	openAPI, err := os.ReadFile(filepath.Join(
+		repositoryRoot,
+		"contracts",
+		"control-api",
+		"v1",
+		"openapi.yaml",
+	))
+	if err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Control API contract: %w", err)
+	}
+	publishedOperations, err := parseOpenAPICapabilityOperations(openAPI)
+	if err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Control API capability operations: %w", err)
+	}
+	system, err := os.ReadFile(filepath.Join(
+		repositoryRoot,
+		"docs",
+		"_system",
+		"registration-control",
+		"architecture.md",
+	))
+	if err != nil {
+		return GateResult{}, fmt.Errorf("dashboard system contract: %w", err)
+	}
+	seen := make(map[string]bool, len(trace.Capabilities))
+	for _, binding := range trace.Capabilities {
+		if !requiredCapabilities[binding.CapabilityID] || seen[binding.CapabilityID] {
+			return GateResult{}, fmt.Errorf("dashboard capability %s is missing or duplicated", binding.CapabilityID)
+		}
+		seen[binding.CapabilityID] = true
+		if binding.ReconciliationState != "proposed-complete" ||
+			binding.Ownership.Issue != "mrbaron3/workflow#15" ||
+			binding.Ownership.AcceptanceCriterion != "AC-CISO-010" ||
+			len(binding.PlannedHTTPOperations) == 0 ||
+			len(binding.ArchitectureElementIDs) == 0 {
+			return GateResult{}, fmt.Errorf("dashboard capability %s is not completely reconciled", binding.CapabilityID)
+		}
+		for _, operation := range binding.PlannedHTTPOperations {
+			key := strings.ToUpper(operation.Method) + " " + operation.Path
+			if publishedOperations[key] != binding.CapabilityID {
+				return GateResult{}, fmt.Errorf(
+					"dashboard capability %s has ungrounded or mismatched API operation %s %s",
+					binding.CapabilityID,
+					operation.Method,
+					operation.Path,
+				)
+			}
+		}
+		for _, element := range binding.ArchitectureElementIDs {
+			if !strings.Contains(string(system), "**"+element+" ") {
+				return GateResult{}, fmt.Errorf(
+					"dashboard capability %s has ungrounded system element %s",
+					binding.CapabilityID,
+					element,
+				)
+			}
+		}
+	}
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return GateResult{
+		RequestID:       bundle.RequestID,
+		RevisionID:      bundle.RevisionID,
+		BundleDigest:    bundle.BundleDigest,
+		DecisionID:      approval.DecisionID,
+		CapabilityIDs:   ids,
+		CoverageBinding: len(trace.Capabilities),
+	}, nil
+}
+
+func parseOpenAPICapabilityOperations(document []byte) (map[string]string, error) {
+	operations := make(map[string]string)
+	currentPath := ""
+	currentMethod := ""
+	for lineNumber, line := range strings.Split(string(document), "\n") {
+		trimmed := strings.TrimSpace(line)
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if indent == 2 && strings.HasPrefix(trimmed, "/") &&
+			strings.HasSuffix(trimmed, ":") {
+			currentPath = strings.TrimSuffix(trimmed, ":")
+			currentMethod = ""
+			continue
+		}
+		if indent == 4 && currentPath != "" && strings.HasSuffix(trimmed, ":") {
+			method := strings.TrimSuffix(trimmed, ":")
+			switch method {
+			case "get", "post", "put", "patch", "delete", "head", "options", "trace":
+				currentMethod = strings.ToUpper(method)
+			default:
+				currentMethod = ""
+			}
+			continue
+		}
+		if indent == 6 && currentPath != "" && currentMethod != "" &&
+			strings.HasPrefix(trimmed, "x-designflow-capability:") {
+			capabilityID := strings.TrimSpace(strings.TrimPrefix(
+				trimmed,
+				"x-designflow-capability:",
+			))
+			if capabilityID == "" {
+				return nil, fmt.Errorf("line %d has an empty capability id", lineNumber+1)
+			}
+			key := currentMethod + " " + currentPath
+			if previous, duplicate := operations[key]; duplicate {
+				return nil, fmt.Errorf(
+					"operation %s declares duplicate capabilities %s and %s",
+					key,
+					previous,
+					capabilityID,
+				)
+			}
+			operations[key] = capabilityID
+		}
+	}
+	return operations, nil
 }
 
 type provenance struct {

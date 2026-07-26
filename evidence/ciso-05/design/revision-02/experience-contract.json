@@ -1,0 +1,1174 @@
+{
+  "schemaVersion": "1.0",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "revisionId": "workflow-ciso05-dashboard-r02",
+  "pagePurposes": [
+    {
+      "id": "purpose-registration-operations",
+      "name": "Repository Registration operations",
+      "primaryPurpose": "異常のあるRepositoryを発見し、desired stateとactual stateの差、原因、影響、最終正常時刻を理解して安全な次の操作を選ぶ",
+      "successOutcome": "運用者が同一画面内で対象Repository、異常component、観測鮮度、影響、回復候補を特定し、状態が不明な場合は成功と誤認せずに待機・再取得・安全な変更のいずれかを選べる",
+      "secondaryPurposes": [
+        "Repository Registrationを作成・更新・無効化し、永続化されたversionと結果を確認する",
+        "現在の運転modeとIssue Monitor、PR Monitor、Forwarder、Execution、Queueへの影響を確認する",
+        "原因を確認した失敗deliveryを同じ文脈で安全にretryする",
+        "操作と観測がloopbackのControl API境界内に限定されていることを理解する"
+      ],
+      "outOfScope": [
+        "monitor、queue、runner内部の直接操作",
+        "Mac上のcontainer start、stop、drainまたはApple Container socket操作",
+        "PostgreSQLへのbrowserからの直接接続",
+        "任意command、host path、image、mount、credential、clone URLまたは任意environmentの登録",
+        "Dashboardからの運転mode変更"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task-triage-anomaly",
+      "pagePurposeId": "purpose-registration-operations",
+      "goal": "異常を優先して発見し、desired／actual差、鮮度、最終正常時刻、影響、回復候補を判断する",
+      "criticality": "primary",
+      "frequency": "frequent",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "task-create-registration",
+      "pagePurposeId": "purpose-registration-operations",
+      "goal": "許可されたrepository identityとdesired switchesだけでRegistrationを作成し、永続versionを確認する",
+      "criticality": "secondary",
+      "frequency": "occasional",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "task-update-registration",
+      "pagePurposeId": "purpose-registration-operations",
+      "goal": "確認済みversionに対してmonitorとexecutionのdesired switchesを更新し、競合を誤って成功表示しない",
+      "criticality": "secondary",
+      "frequency": "occasional",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "task-disable-registration",
+      "pagePurposeId": "purpose-registration-operations",
+      "goal": "影響とcurrent versionを確認してRegistrationを無効化し、古いjobが有効にならない結果を確認する",
+      "criticality": "safety",
+      "frequency": "rare",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "task-recover-delivery",
+      "pagePurposeId": "purpose-registration-operations",
+      "goal": "失敗deliveryの原因、attempt、Registration versionを確認し、許可された場合だけidempotentにretryする",
+      "criticality": "safety",
+      "frequency": "occasional",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    }
+  ],
+  "flows": [
+    {
+      "id": "flow-triage-anomaly",
+      "taskId": "task-triage-anomaly",
+      "name": "Anomaly-first diagnosis",
+      "steps": [
+        {
+          "id": "interaction-open-dashboard",
+          "actorAction": "loopbackのDashboardを開く",
+          "systemResponse": "exact configured loopback Hostへのscript-free one-time bootstrap navigationを消費し、clean URLへredirectしてからopaque HttpOnly server-side sessionを確立する。GET /v1/browser-sessionでexpiryとmemory-only CSRF proofを取得し、authoritative mode、接続状態、異常優先snapshotを読み込む。既存bearer secretはHTML、JavaScript、DOM、URL、storage、responseへ一切返さない",
+          "resultingState": "dashboard-loading-or-auth-rejected",
+          "capabilityRequirementIds": [
+            "cap-establish-browser-control-session",
+            "cap-list-registration-status"
+          ]
+        },
+        {
+          "id": "interaction-scan-anomalies",
+          "actorAction": "最上段の全体状態と異常summaryを読み、異常優先のRegistration一覧を走査する",
+          "systemResponse": "authoritative modeをMONITOR_ONLYまたはACTIVEとして示し、disconnected、stale、failed、desired／actual divergenceをhealthyより先に、text label、observed-at、freshness reason、last-good付きで表示する",
+          "resultingState": "anomalies-ranked",
+          "capabilityRequirementIds": [
+            "cap-list-registration-status"
+          ]
+        },
+        {
+          "id": "interaction-inspect-registration",
+          "actorAction": "対象Registrationを選択する",
+          "systemResponse": "同一Registration-version-bound snapshotからIssue Monitor、PR Monitor、Forwarder、Execution、Queueそれぞれのdesired、actual、fresh|stale|unknown、observed-at、stale reason、last-good、last error、recovery stateを表示する。MONITOR_ONLYでenabledかつexecution-enabledならExecution actualはpaused_by_modeとし、Queueはdurable depthとleased job/versionを別途示す",
+          "resultingState": "registration-detail-visible",
+          "capabilityRequirementIds": [
+            "cap-list-registration-status"
+          ]
+        },
+        {
+          "id": "interaction-refresh-status",
+          "actorAction": "観測がstaleまたはdisconnectedのとき再取得を選ぶ",
+          "systemResponse": "進行中を通知し、成功時は新しいobserved timeを表示し、失敗時は既存値をlast knownとして明示したまま理由を表示する",
+          "resultingState": "fresh-snapshot-or-disconnected",
+          "capabilityRequirementIds": [
+            "cap-list-registration-status"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow-create-registration",
+      "taskId": "task-create-registration",
+      "name": "Create Registration",
+      "steps": [
+        {
+          "id": "interaction-open-create",
+          "actorAction": "「Repositoryを登録」を選ぶ",
+          "systemResponse": "repository identityと4つの許可済みswitchだけを持つdialogを開き、見出しへfocusを移す",
+          "resultingState": "create-dialog-open",
+          "capabilityRequirementIds": []
+        },
+        {
+          "id": "interaction-submit-create",
+          "actorAction": "canonical owner/nameとdesired switchesを確認して保存する",
+          "systemResponse": "strict validation、exact Origin、same-origin Sec-Fetch-Site、memory-only CSRF proofを検証し、request-specific Idempotency-Keyで重複なく実行する。applied、duplicate、rejected、indeterminateのstructured outcomeと永続Registration ID／versionを表示するが、2xxだけでは成功と通知しない",
+          "resultingState": "create-applied-duplicate-rejected-or-indeterminate",
+          "capabilityRequirementIds": [
+            "cap-create-registration"
+          ]
+        },
+        {
+          "id": "interaction-verify-create",
+          "actorAction": "作成結果のRegistrationを確認する",
+          "systemResponse": "GET /v1/registrationsを再取得し、repository identity、Registration ID、初期version、全desired fieldsがcommand outcomeと一致した場合だけverified successを通知する。一致しなければpending、conflict、rejected、unknownを維持する",
+          "resultingState": "created-registration-visible",
+          "capabilityRequirementIds": [
+            "cap-list-registration-status"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow-update-registration",
+      "taskId": "task-update-registration",
+      "name": "Update Registration desired state",
+      "steps": [
+        {
+          "id": "interaction-open-update",
+          "actorAction": "選択中Registrationの「設定を編集」を選ぶ",
+          "systemResponse": "immutable repository identityとcurrent versionを示し、変更可能なdesired switchesだけをdialogへ表示する",
+          "resultingState": "update-dialog-open",
+          "capabilityRequirementIds": []
+        },
+        {
+          "id": "interaction-submit-update",
+          "actorAction": "差分と影響を確認して保存する",
+          "systemResponse": "request-specific Idempotency-KeyとIf-Matchのobserved versionへ束縛して更新し、applied、duplicate、version_conflict、rejected、indeterminateを構造化して示す。同じkey／同じ入力は同一outcomeへ収束し、同じkey／異入力は拒否する",
+          "resultingState": "update-applied-duplicate-conflicted-rejected-or-indeterminate",
+          "capabilityRequirementIds": [
+            "cap-update-registration"
+          ]
+        },
+        {
+          "id": "interaction-verify-update",
+          "actorAction": "保存後のversionとcomponent収束を確認する",
+          "systemResponse": "GET /v1/registrationsを再取得し、Registration identity、新version、全desired fieldsがcommand outcomeと一致した場合だけverified successを通知する。actual stateは別のauthoritative evidenceとしてconverging、fresh、stale、failed、unknownを表示する",
+          "resultingState": "updated-registration-visible",
+          "capabilityRequirementIds": [
+            "cap-list-registration-status"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow-disable-registration",
+      "taskId": "task-disable-registration",
+      "name": "Disable Registration safely",
+      "steps": [
+        {
+          "id": "interaction-open-disable",
+          "actorAction": "選択中Registrationの「無効化」を選ぶ",
+          "systemResponse": "停止対象、current version、monitor／forwarder／execution／queueへの影響を確認dialogに表示する",
+          "resultingState": "disable-confirmation-open",
+          "capabilityRequirementIds": []
+        },
+        {
+          "id": "interaction-confirm-disable",
+          "actorAction": "明示的に無効化を確定する",
+          "systemResponse": "request-specific Idempotency-KeyとIf-Matchのobserved versionへ束縛して無効化し、applied、duplicate、version_conflict、rejected、indeterminateを構造化して示す。versionは一度だけ増え、queued old-version workとleased old-version workの次side-effect fence outcomeを監査可能にする",
+          "resultingState": "disable-applied-duplicate-conflicted-rejected-or-indeterminate",
+          "capabilityRequirementIds": [
+            "cap-disable-registration"
+          ]
+        },
+        {
+          "id": "interaction-verify-disable",
+          "actorAction": "無効化後のRegistrationとwork状態を確認する",
+          "systemResponse": "GET /v1/registrationsを再取得し、同一identity、新version、enabled=false、old-version workのrejected／blocked-at-fence／recovery projectionを確認した場合だけverified successを通知する。未確認ならacceptedまたはpendingのままにする",
+          "resultingState": "disabled-registration-visible",
+          "capabilityRequirementIds": [
+            "cap-list-registration-status"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "flow-recover-delivery",
+      "taskId": "task-recover-delivery",
+      "name": "Inspect and retry failed delivery",
+      "steps": [
+        {
+          "id": "interaction-open-delivery",
+          "actorAction": "選択中Registrationの失敗deliveryを選ぶ",
+          "systemResponse": "delivery state、failure reason、route attempts、Registration version、過去のretry結果を同じrecovery panelへ表示する",
+          "resultingState": "delivery-detail-visible",
+          "capabilityRequirementIds": [
+            "cap-inspect-delivery-status"
+          ]
+        },
+        {
+          "id": "interaction-retry-delivery",
+          "actorAction": "原因とobserved attemptsを確認して「Retry」を選ぶ",
+          "systemResponse": "request-specific Idempotency-Key、observed route attempts、current Registration versionを送信し、同じkey／同じ入力を同一attemptへ収束させる。applied、duplicate、version_conflict、rejected、indeterminateとattempt identityを表示し、202を完了としない",
+          "resultingState": "retry-applied-duplicate-conflicted-rejected-or-indeterminate",
+          "capabilityRequirementIds": [
+            "cap-retry-delivery"
+          ]
+        },
+        {
+          "id": "interaction-verify-retry",
+          "actorAction": "retry後のdeliveryとRegistration状態を確認する",
+          "systemResponse": "GET /v1/deliveries/{deliveryId}とGET /v1/registrationsを再取得し、attempt identity、observed attempts、Registration identity／version、delivery結果、recovery stateがcommand outcomeと一致した場合だけverified successを通知する。pending、conflict、rejected、unknownは固有stateとして残す",
+          "resultingState": "retry-progress-visible",
+          "capabilityRequirementIds": [
+            "cap-inspect-delivery-status",
+            "cap-list-registration-status"
+          ]
+        }
+      ]
+    }
+  ],
+  "effortBudgets": [
+    {
+      "id": "effort-triage-anomaly",
+      "taskId": "task-triage-anomaly",
+      "maxPrimaryActions": 2,
+      "maxDecisions": 1,
+      "maxContextSwitches": 0,
+      "repeatedInputAllowed": false,
+      "rationale": "初期表示で異常を露出し、対象選択だけで原因と回復候補へ到達する。stale時の明示refreshを含めても同一page内2 actionに収める"
+    },
+    {
+      "id": "effort-create-registration",
+      "taskId": "task-create-registration",
+      "maxPrimaryActions": 2,
+      "maxDecisions": 1,
+      "maxContextSwitches": 0,
+      "repeatedInputAllowed": false,
+      "rationale": "dialogを開き保存する2 actionとし、repository identityを再入力させない。入力validationは送信前と同じdialog内で完了する"
+    },
+    {
+      "id": "effort-update-registration",
+      "taskId": "task-update-registration",
+      "maxPrimaryActions": 2,
+      "maxDecisions": 1,
+      "maxContextSwitches": 0,
+      "repeatedInputAllowed": false,
+      "rationale": "編集開始と保存の2 actionで完了し、immutable identityとcurrent valuesを事前入力する。version conflict時だけ安全のため再読込後の再判断を要求する"
+    },
+    {
+      "id": "effort-disable-registration",
+      "taskId": "task-disable-registration",
+      "maxPrimaryActions": 2,
+      "maxDecisions": 2,
+      "maxContextSwitches": 0,
+      "repeatedInputAllowed": false,
+      "rationale": "無効化開始と確認の2 actionを必要な安全摩擦として残し、停止影響とversionを確認する2つの判断を保護する"
+    },
+    {
+      "id": "effort-recover-delivery",
+      "taskId": "task-recover-delivery",
+      "maxPrimaryActions": 2,
+      "maxDecisions": 1,
+      "maxContextSwitches": 0,
+      "repeatedInputAllowed": false,
+      "rationale": "failure選択とretryの2 actionにし、delivery ID、attempt数、idempotency identityの再入力を求めず、原因確認から結果追跡まで同じpanelに留める"
+    }
+  ],
+  "regions": [
+    {
+      "id": "region-global-status",
+      "pagePurposeId": "purpose-registration-operations",
+      "purpose": "運転mode、Control API接続、snapshot鮮度、page purposeを全Repository情報より先に伝える",
+      "order": 1,
+      "groupingRationale": "Placement: page heading直後かつ全Registrationより前に置く。Interaction: modeとconnectionは表示専用、refreshだけを近接actionとして提供する。Removal impact: 全表示値の信頼性とmutation可否を判断できず、stale／disconnectedをhealthyと誤認する",
+      "prominence": "primary",
+      "responsiveBehavior": "全viewportでpage先頭に維持し、mode、接続、last successful readを省略しない。狭幅ではlabel/valueを縦積みにする",
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-create-registration",
+        "task-update-registration",
+        "task-disable-registration",
+        "task-recover-delivery"
+      ]
+    },
+    {
+      "id": "region-anomaly-overview",
+      "pagePurposeId": "purpose-registration-operations",
+      "purpose": "異常件数と種類を要約し、探索範囲を絞る",
+      "order": 2,
+      "groupingRationale": "Placement: global truthの直後、Registration一覧の直前に置く。Interaction: anomaly分類とrepository filterで一覧を絞り、legendはdetailsで開く。Removal impact: 全件走査が必要になり、異常発見のEffort Budgetと非色依存の状態理解を満たせない",
+      "prominence": "primary",
+      "responsiveBehavior": "summaryは2列から1列へ折り返し、異常labelと件数を常に表示する。filterはfull widthにする",
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ]
+    },
+    {
+      "id": "region-registration-list",
+      "pagePurposeId": "purpose-registration-operations",
+      "purpose": "Registrationを異常優先で比較し、対象選択または新規登録を行う",
+      "order": 3,
+      "groupingRationale": "Placement: anomaly overview直後、detailより前に置く。Interaction: 異常優先cardをEnter／Space／clickで選択し、createとpaginationを同じlist contextに保つ。Removal impact: 対象Repositoryを発見・選択・新規登録できずprimary purposeとRegistration lifecycleを達成できない",
+      "prominence": "primary",
+      "responsiveBehavior": "広幅はcompact list、狭幅は1列cardとし、異常理由、version、last-goodを切り捨てない。pagination操作は末尾に残す",
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-create-registration"
+      ]
+    },
+    {
+      "id": "region-registration-detail",
+      "pagePurposeId": "purpose-registration-operations",
+      "purpose": "選択したRegistrationのdesired／actual、時間、error、recovery、変更操作を1つの判断面へ集約する",
+      "order": 4,
+      "groupingRationale": "Placement: 選択listの後または広幅の右側に置き、identity→desired→actual→time→error→actionの順にする。Interaction: list selectionで同一page内を更新し、edit／disableはdialogへ分離する。Removal impact: desired／actual差、last-good、queue／job、対象versionを同時に判断できず誤対象操作が起きる",
+      "prominence": "primary",
+      "responsiveBehavior": "広幅は一覧右側のdetail、狭幅は選択card直後へ展開する。component matrixは列を隠さず各componentを縦積みにする",
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-update-registration",
+        "task-disable-registration",
+        "task-recover-delivery"
+      ]
+    },
+    {
+      "id": "region-delivery-recovery",
+      "pagePurposeId": "purpose-registration-operations",
+      "purpose": "失敗deliveryの原因、version、attempt履歴、retry可否と結果を同じ文脈で提示する",
+      "order": 5,
+      "groupingRationale": "Placement: Registration error/recoveryの後に置く。Interaction: failure item選択でdelivery detailを更新し、current attemptsとversion確認後だけRetryを有効にする。Removal impact: retry対象と原因を確認できず、CLIへのcontext switchまたは重複／stale retryが生じる",
+      "prominence": "secondary",
+      "responsiveBehavior": "detail内の全幅panelとして表示し、狭幅では時刻とidentityを折り返す。actionは44px以上のtargetを保つ",
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-recover-delivery"
+      ]
+    },
+    {
+      "id": "region-registration-editor",
+      "pagePurposeId": "purpose-registration-operations",
+      "purpose": "作成、更新、無効化の入力と安全確認をmodal dialogへ限定する",
+      "order": 6,
+      "groupingRationale": "Placement: create／edit／disable triggerからmodal dialogとしてprogressiveに開く。Interaction: focus trap、Escape／Cancel、strict field validation、version conflict summary、triggerへのfocus returnを提供する。Removal impact: 閲覧とmutationが混在し、unsafe field、誤version、意図しないdisable、keyboard focus lossを防げない",
+      "prominence": "progressive",
+      "responsiveBehavior": "広幅は中央dialog、狭幅はviewport内sheetとし、見出し、error summary、primary actionをscroll中も到達可能にする",
+      "supportsTaskIds": [
+        "task-create-registration",
+        "task-update-registration",
+        "task-disable-registration"
+      ]
+    }
+  ],
+  "elements": [
+    {
+      "id": "element-page-purpose",
+      "regionId": "region-global-status",
+      "kind": "heading-and-purpose",
+      "label": "Repository Operations",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "always",
+      "placementRationale": "pageの判断目的をglobal statusの先頭で明示し、単なる稼働率一覧と誤認させない",
+      "interactionRationale": "表示専用のh1と短いpurpose文にし、最初のlandmark navigation targetにする",
+      "removalImpact": "利用者が異常診断より設定操作を優先し、pageの成功条件を判断できなくなる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-mode-status",
+      "regionId": "region-global-status",
+      "kind": "status-badge",
+      "label": "Current operating mode",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-update-registration",
+        "task-disable-registration"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "always; unknown when authoritative mode is unavailable",
+      "placementRationale": "Executionのactual state解釈を左右するため全体接続状態と同じ最上段に置く",
+      "interactionRationale": "表示専用とし、authoritative valueはMONITOR_ONLYまたはACTIVEのexact enumだけを受け入れる。projection取得不能時は値を推測せずUnknownと表示する。Dashboardからmode変更は提供しない",
+      "removalImpact": "MONITOR_ONLYによる意図的なexecution停止を障害と誤認し、危険な設定変更を誘発する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-004"
+      ]
+    },
+    {
+      "id": "element-connection-freshness",
+      "regionId": "region-global-status",
+      "kind": "connection-status-banner",
+      "label": "Control API connection and snapshot freshness",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-create-registration",
+        "task-update-registration",
+        "task-disable-registration",
+        "task-recover-delivery"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "always",
+      "placementRationale": "全表示値とmutationの信頼性に影響するためmodeと並べ、個別healthy表示より先に読ませる",
+      "interactionRationale": "loading、fresh、stale、disconnected、auth-rejectedをlabel、observed time、last successful read、session expiryで示す。browserはopaque HttpOnly session cookieだけで認証し、CSRF proofはmemory-only、unsafe methodはexact Originとsame-origin Sec-Fetch-Siteを要求する。disconnected／expired時はmutationを無効化する",
+      "removalImpact": "古いsnapshotまたはDB不達時の値を現在のhealthy stateとして誤認し、失敗commandを成功と扱う",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-refresh-status",
+      "regionId": "region-global-status",
+      "kind": "button",
+      "label": "Refresh status",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "always; disabled only while the same refresh is pending",
+      "placementRationale": "stale／disconnectedの説明に近接させ、回復行動を探させない",
+      "interactionRationale": "再取得中はbusyを通知し、旧snapshotをlast knownと明示して保持する。失敗時もsuccess styleへ変えない",
+      "removalImpact": "自動poll失敗時に同一pageで鮮度を回復できず、診断のEffort Budgetを超える",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-live-status",
+      "regionId": "region-global-status",
+      "kind": "visible-live-region",
+      "label": "Status announcements",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-create-registration",
+        "task-update-registration",
+        "task-disable-registration",
+        "task-recover-delivery"
+      ],
+      "informationPriority": 3,
+      "visibleWhen": "a load, selection, command, conflict, rejection, disconnect, or recovery state changes",
+      "placementRationale": "global status内に視覚表示し、screen readerのpoliteまたはassertive announcementと同じ文言を共有する",
+      "interactionRationale": "進捗とsuccessはpolite、操作不能のdisconnectとrejectionはassertiveに一度だけ通知し、focusを自動移動しない",
+      "removalImpact": "非視覚利用者が非同期結果、選択detail更新、失敗を認識できない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "element-anomaly-summary",
+      "regionId": "region-anomaly-overview",
+      "kind": "status-summary",
+      "label": "Needs attention",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "status snapshot is available, including zero anomalies",
+      "placementRationale": "一覧直前にfailed、disconnected、stale、divergent件数を表示し、主目的の探索開始点にする",
+      "interactionRationale": "各分類をfilter buttonとして利用でき、件数0でも「異常なし」ではなくsnapshot時刻とともに示す",
+      "removalImpact": "異常Repositoryを全件走査する必要があり、発見Effort Budgetを超える",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-status-legend",
+      "regionId": "region-anomaly-overview",
+      "kind": "legend",
+      "label": "State meaning",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 4,
+      "visibleWhen": "always",
+      "placementRationale": "status summaryとcardに共通するlabelの意味を一覧の前に説明する",
+      "interactionRationale": "色、icon、text labelの3要素を対応付け、詳細説明はdetails disclosureで開閉する",
+      "removalImpact": "stale、disconnected、failed、desired-offを色だけで判別する利用者が増え、状態を誤解する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-repository-filter",
+      "regionId": "region-anomaly-overview",
+      "kind": "search-field",
+      "label": "Filter repositories",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 3,
+      "visibleWhen": "more than one Registration exists",
+      "placementRationale": "summaryと一覧の間に置き、filterのscopeを明確にする",
+      "interactionRationale": "owner/nameの部分一致で既に取得済みのsnapshotを絞り、結果件数をlive regionへ通知する",
+      "removalImpact": "多数Registrationで対象探索が遅くなり、frequent taskの労力が増える",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-create-registration",
+      "regionId": "region-registration-list",
+      "kind": "button",
+      "label": "Register repository",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-create-registration"
+      ],
+      "informationPriority": 3,
+      "visibleWhen": "operator session permits mutation and Control API is connected",
+      "placementRationale": "一覧headingの末尾に置き、既存対象選択と新規追加を区別しつつ空状態からも同じactionへ到達させる",
+      "interactionRationale": "create dialogを開き、任意設定fieldは提供しない。disconnectedまたはsession拒否時は理由付きでdisabledにする",
+      "removalImpact": "Dashboard内でRegistration作成を完了できず、scope要件を満たせない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-registration-card",
+      "regionId": "region-registration-list",
+      "kind": "repository-status-card",
+      "label": "Registration desired and actual summary",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-update-registration",
+        "task-disable-registration",
+        "task-recover-delivery"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "at least one Registration is present in the current page",
+      "placementRationale": "異常優先で反復表示し、identity、version、重大差分、last-goodを同じ位置で比較する",
+      "interactionRationale": "button semanticsを持つcardとしてEnter／Space／clickでdetailを選択し、選択後もcard focusを維持する",
+      "removalImpact": "対象Repositoryを発見・選択できずpageのprimary purposeを達成できない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-list-loading",
+      "regionId": "region-registration-list",
+      "kind": "loading-state",
+      "label": "Loading Registration status",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "initial authoritative status request is pending",
+      "placementRationale": "結果が現れる一覧領域にskeletonと明示labelを置き、page全体のblank stateを避ける",
+      "interactionRationale": "aria-busyを一覧に付け、初期load失敗時はdisconnected stateへ置換する。skeletonをhealthy dataに見せない",
+      "removalImpact": "無反応に見え、利用者が重複refreshまたはmutationを試みる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-list-empty",
+      "regionId": "region-registration-list",
+      "kind": "empty-state",
+      "label": "No repositories registered",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-create-registration",
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "a fresh authoritative snapshot contains zero Registrations",
+      "placementRationale": "空の一覧位置に理由と安全なcreate actionを置き、loading／disconnectedと区別する",
+      "interactionRationale": "「異常なし」ではなく「登録なし」と明記し、許可があれば同じcreate dialogを開く",
+      "removalImpact": "zero resultsをload失敗または全Repository healthyと誤認する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-list-pagination",
+      "regionId": "region-registration-list",
+      "kind": "pagination-control",
+      "label": "Load more Registrations",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 4,
+      "visibleWhen": "the authoritative query indicates more Registrations",
+      "placementRationale": "現在pageの異常優先list末尾に置き、最初の異常探索を妨げない",
+      "interactionRationale": "次pageを追加後もfocusをcontrolへ維持し、追加件数と異常件数をlive regionへ通知する",
+      "removalImpact": "viewport budgetを超えるRegistrationが探索不能になる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-registration-identity-version",
+      "regionId": "region-registration-detail",
+      "kind": "definition-list",
+      "label": "Repository identity and Registration version",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-update-registration",
+        "task-disable-registration",
+        "task-recover-delivery"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "a Registration is selected",
+      "placementRationale": "detail heading直下にimmutable identity、ID、current version、updated timeを固定表示し、誤対象操作を防ぐ",
+      "interactionRationale": "表示専用とし、repository identityはupdate formで編集させない",
+      "removalImpact": "別Repositoryまたは古いversionへ変更・retryする危険が生じる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-002",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "element-desired-state",
+      "regionId": "region-registration-detail",
+      "kind": "desired-state-summary",
+      "label": "Desired Registration state",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-update-registration",
+        "task-disable-registration"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "a Registration is selected",
+      "placementRationale": "actual matrixの直前にenabled、Issue、PR、Execution intentを分離表示し、比較の左辺を固定する",
+      "interactionRationale": "read-only summaryとし、変更は明示的なedit dialogへ分離する",
+      "removalImpact": "actual停止が意図か障害かを区別できず、desired／actual divergenceを判断できない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-002",
+        "REQ-CISO05-004"
+      ]
+    },
+    {
+      "id": "element-component-matrix",
+      "regionId": "region-registration-detail",
+      "kind": "desired-actual-matrix",
+      "label": "Issue, PR, Forwarder, Execution, and Queue state",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "a Registration is selected, including unknown actual states",
+      "placementRationale": "identityとdesired summaryの直後に5 componentを同じcolumn contractで並べ、差分を最短の視線移動で比較する",
+      "interactionRationale": "各行にdesired、actual、fresh|stale|unknown、observed-at、freshness budget／stale reason、last-good、last error、recovery stateを別labelで表示し、unknown欄を空白にしない。freshness budgetはIssue Monitor 300秒、PR Monitor 300秒、Forwarder 60秒、Execution 30秒、Queue 15秒とし、last-goodをcurrent healthの代用にしない",
+      "removalImpact": "AC-CISO-010の中心であるdesired／actual分離と異常原因の特定ができない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-observation-timeline",
+      "regionId": "region-registration-detail",
+      "kind": "timestamp-metrics",
+      "label": "Last poll, last delivery, observed, and last-good times",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "a Registration is selected; unavailable values remain explicitly unknown or never",
+      "placementRationale": "component matrixの直後に観測時間をまとめ、state labelの鮮度をすぐ検証できる",
+      "interactionRationale": "absolute timestampとrelative ageを併記し、未観測は「Never observed」、取得不能は「Unknown」と区別する",
+      "removalImpact": "stale observationと現在障害を区別できず、失敗をhealthyまたは回復済みと誤認する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003"
+      ]
+    },
+    {
+      "id": "element-queue-active-job",
+      "regionId": "region-registration-detail",
+      "kind": "queue-and-job-summary",
+      "label": "Queue depth and active job",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-disable-registration"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "a Registration is selected, including unknown queue state",
+      "placementRationale": "Execution rowの下にqueue depth、active job identity、job state、Registration versionを置き、実行影響を連続して読む",
+      "interactionRationale": "表示専用とし、Dashboardからjob cancel、lease、runner操作は提供しない",
+      "removalImpact": "execution_enabledと実workの差、無効化の影響、queue異常を判断できない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004"
+      ]
+    },
+    {
+      "id": "element-error-recovery",
+      "regionId": "region-registration-detail",
+      "kind": "alert",
+      "label": "Last error and recovery state",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-disable-registration",
+        "task-recover-delivery"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "a component, job, delivery, connection, or command has an error, stale state, conflict, rejection, or recovery in progress",
+      "placementRationale": "影響を受けるcomponent情報の直後、mutationとretry操作より前に置く",
+      "interactionRationale": "原因、影響、last-good、current recovery、許可された次の行動を平文で示し、debug detailはdisclosureへ置く",
+      "removalImpact": "原因未確認のretry／設定変更、または回復中を成功とする誤判断が起きる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "element-update-registration",
+      "regionId": "region-registration-detail",
+      "kind": "button",
+      "label": "Edit desired state",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-update-registration"
+      ],
+      "informationPriority": 3,
+      "visibleWhen": "a Registration is selected and connected operator session permits mutation",
+      "placementRationale": "desired summaryの後、危険度の高いdisableより前に置き、観測とmutationを分ける",
+      "interactionRationale": "current versionを持つedit dialogを開き、immutable identityと任意configurationを編集させない",
+      "removalImpact": "Dashboard内でmonitor／execution intentを更新できずscope要件を満たせない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-disable-registration",
+      "regionId": "region-registration-detail",
+      "kind": "destructive-button",
+      "label": "Disable Registration",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-disable-registration"
+      ],
+      "informationPriority": 3,
+      "visibleWhen": "an enabled Registration is selected and connected operator session permits mutation",
+      "placementRationale": "通常editと視覚的に分離したdetail末尾に置き、先に影響とerror contextを読ませる",
+      "interactionRationale": "対象identity、version、停止影響を示す確認dialogを必須とし、Enterの誤連打で確定しない",
+      "removalImpact": "Dashboardから安全に無効化できず、Registration lifecycle要件を満たせない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-delivery-failure-list",
+      "regionId": "region-delivery-recovery",
+      "kind": "failure-list",
+      "label": "Recent failed or ignored deliveries",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-triage-anomaly",
+        "task-recover-delivery"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "the selected Registration has recent failed or ignored deliveries",
+      "placementRationale": "last errorの後にbounded listを置き、retry対象identityを手入力させない",
+      "interactionRationale": "各itemはstatus、reason、event、route attempts、updated timeを持つbuttonとしてdelivery detailを開く",
+      "removalImpact": "last delivery timestampだけでは原因・retry対象を特定できず回復taskを開始できない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "element-delivery-detail",
+      "regionId": "region-delivery-recovery",
+      "kind": "delivery-detail",
+      "label": "Delivery failure details and attempts",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-recover-delivery"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "a failed or ignored delivery is selected",
+      "placementRationale": "failure listの直後、Retry操作より前に置き、対象と原因を固定する",
+      "interactionRationale": "delivery identity、status、reason、Registration version、route attempts、retry attemptsをread-onlyで表示する",
+      "removalImpact": "observed attemptsとversionを確認できず、安全なretry条件を満たせない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "element-retry-delivery",
+      "regionId": "region-delivery-recovery",
+      "kind": "button",
+      "label": "Retry failed delivery",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-recover-delivery"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "selected delivery is failed, current status permits retry, and connected operator session permits recovery",
+      "placementRationale": "delivery detailとrejection reasonsの直後に置き、原因確認から操作までのcontext switchをなくす",
+      "interactionRationale": "UIが生成・操作完了までmemoryで保持するIdempotency-Key、observed route attempts、current Registration versionで送信し、pending中は新しいkeyで同じactionを再発火しない。transport uncertaintyだけ同じkey／同じ入力で再送する",
+      "removalImpact": "Dashboard内のrecovery flowを完了できずCLIへcontext switchが必要になる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "element-command-outcome",
+      "regionId": "region-delivery-recovery",
+      "kind": "inline-status",
+      "label": "Command result",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-create-registration",
+        "task-update-registration",
+        "task-disable-registration",
+        "task-recover-delivery"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "a command is pending, accepted, rejected, conflicted, failed, or verified successful",
+      "placementRationale": "発火したactionの直後とglobal live statusの双方に同じ結果を出し、対象contextを維持する",
+      "interactionRationale": "structured outcomeのapplied、duplicate、version_conflict、rejected、indeterminateを別labelにし、2xx／202はaccepted evidenceとしてだけ表示する。successはauthoritative re-queryでidentity、version、desired fieldsまたはattempt identity、delivery state、recovery stateを確認後だけverifiedとして表示する",
+      "removalImpact": "受付を完了と誤認し、拒否・競合・通信切断後の結果が不明になる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ]
+    },
+    {
+      "id": "element-registration-form",
+      "regionId": "region-registration-editor",
+      "kind": "form-dialog",
+      "label": "Registration fields",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-create-registration",
+        "task-update-registration"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "create or update dialog is open",
+      "placementRationale": "dialog見出しと対象versionの直後にrepository identityと許可済みswitchだけを配置する",
+      "interactionRationale": "createではcanonical owner/nameをrequired text field、updateではread-onlyにし、enabled、Issue、PR、Executionは明示label付きcheckboxにする。update／disable dialogはIf-Match対象version、retry panelはroute attemptsとRegistration versionを常時表示し、Idempotency-Keyは利用者に入力させない",
+      "removalImpact": "Registration desired stateを作成・更新できない、またはunsafe fieldが混入する",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-validation-summary",
+      "regionId": "region-registration-editor",
+      "kind": "error-summary",
+      "label": "Validation and rejection summary",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-create-registration",
+        "task-update-registration",
+        "task-disable-registration"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "client validation, authorization rejection, API rejection, store failure, or version conflict occurs",
+      "placementRationale": "dialog heading直後にsummaryを置き、各field errorへのlinkとcurrent versionを提供する",
+      "interactionRationale": "送信失敗時にfocusをsummaryへ移し、入力値を保持する。conflict時は再読込を選ぶまで保存を無効化する",
+      "removalImpact": "失敗理由と修正箇所を特定できず、拒否を成功と誤認または入力を失う",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-editor-actions",
+      "regionId": "region-registration-editor",
+      "kind": "button-group",
+      "label": "Cancel and save Registration",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-create-registration",
+        "task-update-registration"
+      ],
+      "informationPriority": 2,
+      "visibleWhen": "create or update dialog is open",
+      "placementRationale": "form末尾にCancel、primary Saveの順で置き、狭幅でも両方を常時識別可能にする",
+      "interactionRationale": "EscapeとCancelは送信前の変更を破棄してtriggerへfocusを戻す。Saveはcommand acceptanceとauthoritative verificationの間もdisabledになり、applied／duplicateだけではdialogを成功として閉じない。rejected、conflict、indeterminateではcontextを保持する",
+      "removalImpact": "mutationを確定または安全に中止できずtaskを完了できない",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    },
+    {
+      "id": "element-disable-confirmation",
+      "regionId": "region-registration-editor",
+      "kind": "confirmation-dialog",
+      "label": "Confirm Registration disable",
+      "supportsPurposeIds": [
+        "purpose-registration-operations"
+      ],
+      "supportsTaskIds": [
+        "task-disable-registration"
+      ],
+      "informationPriority": 1,
+      "visibleWhen": "disable action is invoked",
+      "placementRationale": "通常editorと別の短いconfirmationを最前面に置き、identity、version、影響、Cancel、Disableを集約する",
+      "interactionRationale": "initial focusは見出しまたはCancelに置き、destructive actionへ自動focusしない。確認面にIf-Match version、Idempotency-Keyのduplicate-safe semantics、queued／leased old-version workへのfenceを示す。verified re-query後にselected cardへfocusを戻す",
+      "removalImpact": "意図しない無効化と古いversionへの操作を防ぐ安全摩擦が失われる",
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ]
+    }
+  ],
+  "attentionHierarchies": [
+    {
+      "pagePurposeId": "purpose-registration-operations",
+      "levels": [
+        {
+          "level": 1,
+          "reason": "全体mode／接続、異常対象、desired／actual差、error／recoveryは安全な最初の判断に必須",
+          "regionIds": [
+            "region-global-status",
+            "region-anomaly-overview",
+            "region-registration-list",
+            "region-registration-detail",
+            "region-delivery-recovery"
+          ],
+          "elementIds": [
+            "element-mode-status",
+            "element-connection-freshness",
+            "element-anomaly-summary",
+            "element-registration-card",
+            "element-registration-identity-version",
+            "element-component-matrix",
+            "element-error-recovery",
+            "element-delivery-detail",
+            "element-command-outcome"
+          ]
+        },
+        {
+          "level": 2,
+          "reason": "対象選択後にdesired、時刻、queue／job、delivery履歴から原因と影響を検証する",
+          "regionIds": [
+            "region-registration-detail",
+            "region-delivery-recovery"
+          ],
+          "elementIds": [
+            "element-page-purpose",
+            "element-refresh-status",
+            "element-list-loading",
+            "element-list-empty",
+            "element-desired-state",
+            "element-observation-timeline",
+            "element-queue-active-job",
+            "element-delivery-failure-list",
+            "element-retry-delivery"
+          ]
+        },
+        {
+          "level": 3,
+          "reason": "十分なcontextを読んだ後にRegistration mutationと安全確認を提示する",
+          "regionIds": [
+            "region-registration-list",
+            "region-registration-detail",
+            "region-registration-editor"
+          ],
+          "elementIds": [
+            "element-create-registration",
+            "element-update-registration",
+            "element-disable-registration",
+            "element-registration-form",
+            "element-validation-summary",
+            "element-editor-actions",
+            "element-disable-confirmation"
+          ]
+        },
+        {
+          "level": 4,
+          "reason": "legend、filter、pagination、status announcementは主判断を支えるが異常情報より前へ出さない",
+          "regionIds": [
+            "region-global-status",
+            "region-anomaly-overview",
+            "region-registration-list"
+          ],
+          "elementIds": [
+            "element-live-status",
+            "element-status-legend",
+            "element-repository-filter",
+            "element-list-pagination"
+          ]
+        }
+      ]
+    }
+  ],
+  "accessibilityTarget": {
+    "standard": "WCAG 2.2",
+    "level": "AA",
+    "requirements": [
+      "状態は色だけで伝えず、text label、iconまたはshape、必要な時刻を併用する",
+      "skip link、landmark、論理的なheading階層を提供し、一覧、detail、dialogへkeyboardで移動できる",
+      "Registration cardはnative button相当としてEnterとSpaceで選択でき、選択後もcard focusを維持してdetail更新をpolite live regionで通知する",
+      "dialogは見出しへfocusを移し、Tabをdialog内に閉じ、Escape／Cancelでtriggerへ戻す。destructive confirmationではDisableへinitial focusを置かない",
+      "初期load、refresh、filter、command pending／accepted／rejected／conflict／verified successをvisible statusとARIA live regionへ同じ平文で通知する",
+      "disconnect、session expiry／rejection、Origin／CSRF rejection、保存失敗など操作不能の変化はassertiveに一度だけ通知し、継続pollで同じ文言を反復しない",
+      "field errorはprogrammatic label、description、error associationを持ち、error summaryからfieldへ移動できる",
+      "focus indicatorは背景に対して3:1以上を保ち、pointer targetは原則44×44 CSS px以上にする",
+      "320 CSS px幅で二方向scrollを要求せず、component matrixはrow単位へ変換し、identity、status、error、actionを省略しない",
+      "200% text zoomで情報または操作を失わず、長いrepository identityとerrorは折り返す",
+      "prefers-reduced-motionではskeleton shimmerやstate transition animationを停止する",
+      "loading、empty、stale、disconnected、applied、duplicate、rejected、version conflict、indeterminate、verified successの各stateをscreen readerから区別できる名前と説明で提供する"
+    ]
+  },
+  "ambiguities": []
+}

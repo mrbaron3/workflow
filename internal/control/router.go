@@ -30,6 +30,7 @@ type RouterStore interface {
 
 type Router struct {
 	Store    RouterStore
+	Mode     OperatingMode
 	Interval time.Duration
 	Lease    time.Duration
 	Wake     chan struct{}
@@ -128,14 +129,6 @@ func (router *Router) route(ctx context.Context, claim ClaimedDelivery) error {
 			"monitor_capability_disabled",
 		)
 	}
-	if !registration.ExecutionEnabled {
-		return router.Store.FinishWebhook(
-			ctx,
-			claim,
-			"ignored",
-			"execution_disabled",
-		)
-	}
 	if err := router.Store.BindWebhook(ctx, claim, registration); err != nil {
 		if errors.Is(err, ErrStaleRegistration) {
 			return router.Store.FinishWebhook(
@@ -146,6 +139,22 @@ func (router *Router) route(ctx context.Context, claim ClaimedDelivery) error {
 			)
 		}
 		return err
+	}
+	if !registration.ExecutionEnabled {
+		return router.Store.FinishWebhook(
+			ctx,
+			claim,
+			"ignored",
+			"execution_disabled",
+		)
+	}
+	if router.Mode != ModeActive {
+		return router.Store.FinishWebhook(
+			ctx,
+			claim,
+			"ignored",
+			"monitor_only",
+		)
 	}
 	item, ok := workItemFromWebhook(claim)
 	if !ok {

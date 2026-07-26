@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1.0",
+  "provider": "mrbaron3/designflow@contract-v1.0.0-rc.1",
+  "providerCommit": "ce732a80a8c3867b4ac881531ce8f7546e001dbb",
+  "providerTagObject": "a5598951bbc405f9d83ebbccc184c7994844715b",
+  "sourceDirectory": "contracts/v1",
+  "normalization": "Trailing blank lines are removed; JSON values are otherwise byte-for-byte identical.",
+  "files": {
+    "capability-requirements.schema.json": "sha256:a8c2f5270b1839fdd81c701b25ee3e09ad2e93c43850d55bfcea91093ee71622",
+    "common.schema.json": "sha256:81f243e22e1cf01491748ef2bd819d1827de2dbbb28b895f54e2b0c69f97c86f",
+    "design-bundle-manifest.schema.json": "sha256:dcd52f3402483d1e00d27ec45f619dc2b1006d1c99f2c6fc5e910407ddba42aa",
+    "design-request.schema.json": "sha256:581241ace55da2b2570375a365dcc897d45d2cf32475458fb8f9aae30835256a",
+    "design-system-delta.schema.json": "sha256:849bd066c52acee07736c9f6de4cf6f2661875199d440ccf29704dba3d57c3fa",
+    "experience-contract.schema.json": "sha256:2c59fb85b8dfbce406b0d1b84bd4a5f0b711171eea2dc53b14f7dcb9c8d1861f",
+    "human-design-decision.schema.json": "sha256:943e60948feffc2c6dd82568a30cc8618407aac275e33581065037dec5f24f01"
+  }
+}

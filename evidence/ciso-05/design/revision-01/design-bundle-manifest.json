@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "1.0",
+  "bundleId": "workflow-ciso05-dashboard-bundle-r01",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "revisionId": "workflow-ciso05-dashboard-r01",
+  "previousRevisionId": "design-revision-001",
+  "sourceDigest": "sha256:77629d9a1031fd7b7a26f6fe21b00f41e60d7bcb4247b5a5e7cc6fdb964f1099",
+  "designSystemBaseRevision": {
+    "provider": "git",
+    "externalId": "workflow-designflow-dashboard-baseline",
+    "uri": "https://github.com/mrbaron3/workflow/tree/af16c6ac9e75aac949c9a4e81d6f1877a292e313/contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/examples",
+    "revision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313",
+    "digest": "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97"
+  },
+  "artifacts": {
+    "experience": {
+      "path": "evidence/ciso-05/design/revision-01/experience-contract.json",
+      "digest": "sha256:5d9c832d8d3fb929368e4d6597e1c75a552b1914ec37bcaba9d31f5e819bc573",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:experience-contract"
+    },
+    "designSystemDelta": {
+      "path": "evidence/ciso-05/design/revision-01/design-system-delta.json",
+      "digest": "sha256:3257e579d77b739c1c67ff27fad774ebd869be944f22e00d878be2be05b19749",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:design-system-delta"
+    },
+    "designTokens": {
+      "path": "evidence/ciso-05/design/revision-01/design-tokens.json",
+      "digest": "sha256:e24a64c7294d3b519d97c31db479060d8bbe30b08281bc7b07f91620a804406d",
+      "mediaType": "application/design-tokens+json",
+      "schemaRef": "https://www.designtokens.org/TR/2025.10/format/"
+    },
+    "capabilityRequirements": {
+      "path": "evidence/ciso-05/design/revision-01/capability-requirements.json",
+      "digest": "sha256:ec17b7cf746d4a60b1036c6487fbea2cb2317c903969d8493e400316694a7cca",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:capability-requirements"
+    },
+    "preview": {
+      "path": "evidence/ciso-05/design/revision-01/preview.html",
+      "digest": "sha256:f7fdc337508c51df13c794f4e636f0008027ee659005877358658820f893d1f9",
+      "mediaType": "text/html",
+      "schemaRef": "none"
+    }
+  },
+  "authorInvocationRefs": [
+    {
+      "provider": "orca-orchestration",
+      "externalId": "task_0330f09ab080",
+      "revision": "ctx_0fdf96f95583"
+    }
+  ],
+  "bundleDigest": "sha256:56eb4d7283d6f1e2dd72cc931c48af2cee98c88103fc1709a106dd192725ba95",
+  "createdAt": "2026-07-25T15:21:32Z"
+}

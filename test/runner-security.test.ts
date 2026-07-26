@@ -45,6 +45,7 @@ describe('runner startup isolation', () => {
     expect(loaded.config).toMatchObject({
       workspaceRoot: '/workspace',
       provider: 'codex',
+      operatingMode: 'MONITOR_ONLY',
       publishedPorts: [],
       mounts: [{
         source: 'agentops-runner-workspace',
@@ -52,6 +53,15 @@ describe('runner startup isolation', () => {
         readOnly: false,
       }],
     });
+  });
+
+  it('accepts ACTIVE only when explicitly configured', () => {
+    const loaded = loadRunnerStartup(
+      { ...safeEnv(), AGENTOPS_OPERATING_MODE: 'ACTIVE' },
+      '/app',
+      safeRuntimeBoundary(),
+    );
+    expect(loaded.config.operatingMode).toBe('ACTIVE');
   });
 
   it.each([

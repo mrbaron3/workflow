@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:designflow:schema:v1:design-bundle-manifest",
+  "title": "Design Bundle Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "bundleId",
+    "requestId",
+    "revisionId",
+    "previousRevisionId",
+    "sourceDigest",
+    "designSystemBaseRevision",
+    "artifacts",
+    "authorInvocationRefs",
+    "bundleDigest",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "bundleId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "requestId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "revisionId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "previousRevisionId": {
+      "anyOf": [
+        {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sourceDigest": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/sha256"
+    },
+    "designSystemBaseRevision": {
+      "anyOf": [
+        {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/externalRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experience",
+        "designSystemDelta",
+        "capabilityRequirements",
+        "preview"
+      ],
+      "properties": {
+        "experience": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/artifactRef"
+        },
+        "designSystemDelta": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/artifactRef"
+        },
+        "designTokens": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/artifactRef"
+        },
+        "capabilityRequirements": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/artifactRef"
+        },
+        "preview": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/artifactRef"
+        }
+      }
+    },
+    "authorInvocationRefs": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/externalRef"
+      }
+    },
+    "bundleDigest": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/sha256"
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -1,0 +1,186 @@
+{
+  "schemaVersion": "1.0",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "sourceRef": {
+    "provider": "github",
+    "externalId": "mrbaron3/workflow#15",
+    "uri": "https://github.com/mrbaron3/workflow/issues/15",
+    "revision": "2026-07-25T07:10:01Z",
+    "digest": "sha256:3293a23b56229c7c135eb9199bb0927ad46f0c6d22793ad326c9c554966b6d99"
+  },
+  "productIntent": {
+    "primaryOutcome": "運用者が異常のあるRepositoryを発見し、原因を理解して安全な次の操作を選べる",
+    "users": [
+      "ローカルAgentOps運用者"
+    ],
+    "usageContext": "loopbackで公開されたcontrol containerのDashboardから、複数Repositoryの登録、監視、転送、実行、queue状態を日常的に管理・観測する"
+  },
+  "requirements": [
+    {
+      "id": "REQ-CISO05-001",
+      "statement": "各Registrationについてrepository identityとversion、enabled、Issue Monitor、PR Monitor、Forwarder、Execution、Queueのdesired stateとactual stateを分離して表示する",
+      "priority": "blocker",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "mrbaron3/workflow#15",
+          "uri": "https://github.com/mrbaron3/workflow/issues/15",
+          "revision": "2026-07-25T07:10:01Z"
+        }
+      ]
+    },
+    {
+      "id": "REQ-CISO05-002",
+      "statement": "repository identityとenabled、issue_monitor_enabled、pr_monitor_enabled、execution_enabledを登録・更新・無効化し、version fenceを保った結果を再起動後も確認できる",
+      "priority": "blocker",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "mrbaron3/workflow#15",
+          "uri": "https://github.com/mrbaron3/workflow/issues/15",
+          "revision": "2026-07-25T07:10:01Z"
+        }
+      ]
+    },
+    {
+      "id": "REQ-CISO05-003",
+      "statement": "last poll、last delivery、queue depth、active job、last error、last-good timestamp、recovery stateを表示し、API拒否・DB切断・monitor failure・stale observationを成功として表示しない",
+      "priority": "blocker",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "mrbaron3/workflow#15",
+          "uri": "https://github.com/mrbaron3/workflow/issues/15",
+          "revision": "2026-07-25T07:10:01Z"
+        }
+      ]
+    },
+    {
+      "id": "REQ-CISO05-004",
+      "statement": "現在のMONITOR_ONLYまたはACTIVE等の運転modeと、modeが各RegistrationのExecution actual stateへ与える影響を誤認なく表示する",
+      "priority": "blocker",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "mrbaron3/workflow#15",
+          "uri": "https://github.com/mrbaron3/workflow/issues/15",
+          "revision": "2026-07-25T07:10:01Z"
+        },
+        {
+          "provider": "github",
+          "externalId": "mrbaron3/workflow#10",
+          "uri": "https://github.com/mrbaron3/workflow/issues/10"
+        }
+      ]
+    },
+    {
+      "id": "REQ-CISO05-005",
+      "statement": "browserはsame-originのControl APIだけと通信し、loopback session、exact Origin、CSRF、strict input schema、security headersを通して任意command・host path・image・mount・credential・unsafe repository identityを拒否する",
+      "priority": "blocker",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "mrbaron3/workflow#15",
+          "uri": "https://github.com/mrbaron3/workflow/issues/15",
+          "revision": "2026-07-25T07:10:01Z"
+        }
+      ]
+    },
+    {
+      "id": "REQ-CISO05-006",
+      "statement": "primary taskのEffort Budget、異常優先のAttention Hierarchy、keyboard、focus、label、live status announcement、responsive layoutを満たす",
+      "priority": "blocker",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "mrbaron3/workflow#15",
+          "uri": "https://github.com/mrbaron3/workflow/issues/15",
+          "revision": "2026-07-25T07:10:01Z"
+        }
+      ]
+    },
+    {
+      "id": "REQ-CISO05-007",
+      "statement": "失敗deliveryは原因と現在versionを確認した後に同じcontextでidempotentにretryでき、拒否・競合・受付結果を明示する",
+      "priority": "major",
+      "sourceRefs": [
+        {
+          "provider": "github",
+          "externalId": "mrbaron3/workflow#15",
+          "uri": "https://github.com/mrbaron3/workflow/issues/15",
+          "revision": "2026-07-25T07:10:01Z"
+        },
+        {
+          "provider": "git",
+          "externalId": "contracts/control-api/v1/openapi.yaml",
+          "uri": "https://github.com/mrbaron3/workflow/blob/af16c6ac9e75aac949c9a4e81d6f1877a292e313/contracts/control-api/v1/openapi.yaml",
+          "revision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313"
+        }
+      ]
+    }
+  ],
+  "constraints": [
+    {
+      "id": "CONSTRAINT-CISO05-A11Y",
+      "category": "accessibility",
+      "statement": "WCAG 2.2 AA相当とし、状態を色だけで伝えず、全操作をkeyboardで完了し、focusとlive announcementを予測可能にする"
+    },
+    {
+      "id": "CONSTRAINT-CISO05-SECURITY",
+      "category": "security",
+      "statement": "Dashboardへcontainer lifecycle、Apple Container socket、PostgreSQL、provider、host filesystem、credentialへの権限を与えない"
+    },
+    {
+      "id": "CONSTRAINT-CISO05-CAPABILITY",
+      "category": "technical",
+      "statement": "全Backend Capability Requirementを#13 Control API、registration-control system element、Issue ACへ完全traceできない限り実装へ進めない"
+    },
+    {
+      "id": "CONSTRAINT-CISO05-TRUTHFULNESS",
+      "category": "operational",
+      "statement": "unknown、stale、disconnected、failedをhealthyまたは更新成功として表示せず、利用可能な最終正常時刻を併記する"
+    },
+    {
+      "id": "CONSTRAINT-CISO05-SCOPE",
+      "category": "product",
+      "statement": "monitor・queue内部、runner execution、Mac上のcontainer lifecycle制御は対象外とする"
+    }
+  ],
+  "targetSurfaces": [
+    "web"
+  ],
+  "contextRefs": [
+    {
+      "provider": "git",
+      "externalId": "mrbaron3/designflow@contract-v1.0.0-rc.1",
+      "uri": "https://github.com/mrbaron3/designflow/tree/contract-v1.0.0-rc.1/contracts/v1",
+      "revision": "ce732a80a8c3867b4ac881531ce8f7546e001dbb"
+    },
+    {
+      "provider": "git",
+      "externalId": "workflow-control-api-v1",
+      "uri": "https://github.com/mrbaron3/workflow/blob/af16c6ac9e75aac949c9a4e81d6f1877a292e313/contracts/control-api/v1/openapi.yaml",
+      "revision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313"
+    },
+    {
+      "provider": "git",
+      "externalId": "workflow-ciso03-capability-trace",
+      "uri": "https://github.com/mrbaron3/workflow/blob/af16c6ac9e75aac949c9a4e81d6f1877a292e313/evidence/ciso-03/design-capability-trace.json",
+      "revision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313"
+    },
+    {
+      "provider": "git",
+      "externalId": "workflow-ciso04-runner-contract",
+      "uri": "https://github.com/mrbaron3/workflow/blob/af16c6ac9e75aac949c9a4e81d6f1877a292e313/docs/decisions/ADR-0015-postgresql-fenced-isolated-runner.md",
+      "revision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313"
+    }
+  ],
+  "existingDesignSystemRef": {
+    "provider": "git",
+    "externalId": "workflow-designflow-dashboard-baseline",
+    "uri": "https://github.com/mrbaron3/workflow/tree/af16c6ac9e75aac949c9a4e81d6f1877a292e313/contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/examples",
+    "revision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313",
+    "digest": "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97"
+  },
+  "requestedAt": "2026-07-25T15:04:43Z"
+}

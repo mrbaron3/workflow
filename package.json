@@ -18,8 +18,10 @@
     "build": "tsc",
     "test": "tsc --noEmit && vitest run --configLoader runner",
     "test:postgres": "node -e \"if (!process.env.AGENTOPS_TEST_DATABASE_URL) { console.error('AGENTOPS_TEST_DATABASE_URL is required'); process.exit(1) }\" && vitest run --configLoader runner test/control-store.integration.test.ts",
+    "test:dashboard": "playwright test --config playwright.dashboard.config.ts",
     "smoke:postgres:apple": "tsx scripts/ciso02-postgres-smoke.ts",
     "smoke:control:apple": "tsx scripts/ciso03-control-smoke.ts",
+    "smoke:dashboard:apple": "tsx scripts/ciso03-control-smoke.ts",
     "smoke:runner:apple": "tsx scripts/ciso04-runner-smoke.ts",
     "runner": "tsx src/runner/cli.ts",
     "control-store:migrate": "tsx scripts/control-store-migrate.ts",
@@ -31,7 +33,11 @@
     "yaml": "^2.5.1",
     "zod": "^3.23.8"
   },
+  "overrides": {
+    "postcss": "8.5.23"
+  },
   "devDependencies": {
+    "@playwright/test": "^1.62.0",
     "@types/node": "^22.5.5",
     "@types/pg": "^8.20.0",
     "ajv": "^8.20.0",

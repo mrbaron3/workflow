@@ -124,7 +124,8 @@ RUN apt-get update \
     && apt-get purge -y --auto-remove curl \
     && rm -rf /var/lib/apt/lists/*
 ENV AGENTOPS_APP_ROOT=/app \
-    AGENTOPS_CONTROL_LISTEN=0.0.0.0:8080 \
+    AGENTOPS_CONTROL_LISTEN=127.0.0.1:8081 \
+    AGENTOPS_CONTROL_PROXY_LISTEN=0.0.0.0:8080 \
     HOME=/home/agentops \
     XDG_DATA_HOME=/home/agentops/.local/share
 WORKDIR /app
@@ -132,6 +133,7 @@ COPY --from=control-build /out/agentops-control /usr/local/bin/agentops-control
 COPY --from=control-build /src/contracts /app/contracts
 COPY --from=control-build /src/evidence /app/evidence
 COPY --from=control-build /src/db /app/db
+COPY --from=control-build /src/docs /app/docs
 USER agentops
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/agentops-control"]
