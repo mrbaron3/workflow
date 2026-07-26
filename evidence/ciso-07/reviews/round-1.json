@@ -1,0 +1,144 @@
+{
+  "schemaVersion": "1.0",
+  "round": 1,
+  "reviewedHead": "e13f2ab2fb2c59197eadb603b73ddde58f240d44",
+  "immutableBase": "257dc557753b099a646c94d3e3cc700468ffb32a",
+  "repairImplementationHead": "c61bb46974af7ce5d04d312f2d7b985481641e15",
+  "reviewers": [
+    {
+      "provider": "codex",
+      "taskId": "task_0032319e26f2",
+      "dispatchId": "ctx_0a97baf64cc9",
+      "terminal": "term_a5a9d0e7-5080-49d1-84cc-f51b21d5c7d5",
+      "findingsMessageId": "msg_137551481380",
+      "completionMessageId": "msg_ffa435b39921",
+      "independent": true,
+      "strictlyReadOnly": true,
+      "repositoryMutations": 0,
+      "githubMutations": 0
+    },
+    {
+      "provider": "claude",
+      "taskId": "task_21a680d57a75",
+      "dispatchId": "ctx_0234eddf9465",
+      "terminal": "term_f5a07762-5d92-4718-b5ef-cf9cb0b8bf4b",
+      "findingsMessageId": "msg_f602612be66c",
+      "completionMessageId": "msg_9ce6064cb236",
+      "independent": true,
+      "strictlyReadOnly": true,
+      "repositoryMutations": 0,
+      "githubMutations": 0
+    }
+  ],
+  "dispositions": [
+    {
+      "reviewer": "codex",
+      "severity": "high",
+      "finding": "The Go control still accepted a GitHub credential in broker mode.",
+      "disposition": "repaired",
+      "repair": "agentopsctl no longer injects a control GitHub token, configuration rejects any such token, and broker-mode control rejects GH_TOKEN or GITHUB_TOKEN."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "high",
+      "finding": "Persistent PostgreSQL administrator rotation was not possible.",
+      "disposition": "repaired",
+      "repair": "Added DRAINING-only transactional administrator rotation, zero-work fencing, new-pass/old-fail authentication proof, secret-safe transport, audit, tests, and the volume-preserving restart runbook."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "high",
+      "finding": "A committed schema-v5 migration could not be restarted by the immutable v4 image.",
+      "disposition": "not_confirmed",
+      "repair": "The version gate intentionally rejects v4 after the additive v5 transaction commits. Rollback-safe failure is scoped compensation with volume and broker/audit rows preserved followed by current-image forward recovery; a destructive down migration would violate the durability requirement. This boundary is now explicit in ADR-0017, control-store architecture, and the rotation runbook."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "high",
+      "finding": "The release evidence schema accepted vacuous evidence.",
+      "disposition": "repaired",
+      "repair": "Replaced the permissive schema with closed section-specific contracts and added strict Ajv compilation plus a deliberately incomplete fixture rejection."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "medium",
+      "finding": "A broker failure could overwrite an expired lease.",
+      "disposition": "repaired",
+      "repair": "Failure now requires a live database-clock lease and reports stale/lost ownership; integration coverage proves late failure cannot overwrite the leased row before reclaim."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "medium",
+      "finding": "Go broker request creation and requested audit were not atomic.",
+      "disposition": "repaired",
+      "repair": "Request insert/dedup and the origin audit now commit in one transaction, with injected-audit-failure integration coverage."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "medium",
+      "finding": "Production broker reads lacked explicit pagination and raw-byte bounds.",
+      "disposition": "repaired",
+      "repair": "Production gh reads now use explicit bounded pages, a total deadline, raw stdout byte accounting, strict row/item limits, and no generic paginate or jq transform."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "medium",
+      "finding": "The PostgreSQL mutable tag was not bound to the running image/spec.",
+      "disposition": "repaired",
+      "repair": "PostgreSQL now carries the same sealed image descriptor and full spec digest validation as control/runner and fails closed to the drain/stop/restart path on drift."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "low",
+      "finding": "Codex auth-file Lstat failures could expose the host path.",
+      "disposition": "repaired",
+      "repair": "The error is constant and no longer wraps the path-bearing operating-system error."
+    },
+    {
+      "reviewer": "claude",
+      "severity": "low",
+      "finding": "Broker claim or failure persistence errors could stop the colocated execution service.",
+      "disposition": "repaired",
+      "repair": "Claim failure now yields a retry without rejection; failure persistence is contained and leaves the request for lease-expiry recovery."
+    },
+    {
+      "reviewer": "claude",
+      "severity": "low",
+      "finding": "Dead removeRunner code and an unreachable runner-absence invariant obscured MONITOR_ONLY behavior.",
+      "disposition": "repaired",
+      "repair": "Removed the dead method and documented the intentional MONITOR_ONLY broker runner at the topology branch."
+    },
+    {
+      "reviewer": "claude",
+      "severity": "low",
+      "finding": "Broker fail omitted lease-expiry fencing.",
+      "disposition": "repaired",
+      "repair": "Same repair and regression as the corresponding Codex lease-expiry finding."
+    },
+    {
+      "reviewer": "claude",
+      "severity": "info",
+      "finding": "Pagination had no maximum and pull requests have no provider-side since parameter.",
+      "disposition": "repaired",
+      "repair": "Both provider paths now have an exact page maximum; pull-request rows remain locally cursor-filtered and fail closed at the page/item limit rather than silently advancing past an incomplete set."
+    }
+  ],
+  "validation": {
+    "typescript": {
+      "filesPassed": 100,
+      "testsPassed": 832,
+      "testsSkipped": 27,
+      "typecheck": "passed",
+      "build": "passed",
+      "npmAuditHigh": "passed"
+    },
+    "go": {
+      "unit": "passed",
+      "vet": "passed",
+      "race": "passed"
+    },
+    "evidenceSchemaStrictCompile": "passed",
+    "incompleteEvidenceRejected": "passed"
+  },
+  "result": "completed"
+}
