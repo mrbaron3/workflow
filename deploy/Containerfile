@@ -91,6 +91,7 @@ RUN apt-get update \
          tmux=3.3a-3 \
          openssh-client=1:9.2p1-2+deb12u10 \
     && npm ci --omit=dev --ignore-scripts --prefix /opt/provider-cli \
+    && node /opt/provider-cli/node_modules/@anthropic-ai/claude-code/install.cjs \
     && ln -s /opt/provider-cli/node_modules/.bin/codex /usr/local/bin/codex \
     && ln -s /opt/provider-cli/node_modules/.bin/claude /usr/local/bin/claude \
     && useradd --uid 65532 --create-home --home-dir /home/agentops \
