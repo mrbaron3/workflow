@@ -84,6 +84,9 @@ describe('runner startup isolation', () => {
       kind: 'none',
       provider: 'codex',
     });
+    expect(loaded.credentials.githubToken).toBe('github-secret');
+    expect(minimalExecutionEnvironment(loaded.credentials).GH_TOKEN)
+      .toBe('github-secret');
   });
 
   it('rejects malformed or structurally incomplete private Codex auth files', () => {

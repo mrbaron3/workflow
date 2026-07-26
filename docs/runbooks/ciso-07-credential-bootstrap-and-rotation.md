@@ -29,9 +29,11 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    or credential bytes enter runtime argv/logs; the source path is redacted from errors.
 4. Run `agentopsctl start --mode MONITOR_ONLY --build`, register only
    `mrbaron3/workflow` through the Dashboard/API, verify readiness and repository state, then
-   explicitly run `agentopsctl start --mode ACTIVE`. `MONITOR_ONLY` receives no provider
-   token, Codex credential volume, or provider egress. `ACTIVE` parses the copied Codex
-   credential structure and runs a bounded nonlogging provider-authentication probe before
+   explicitly run `agentopsctl start --mode ACTIVE`. `MONITOR_ONLY` receives the scoped runner-only
+   GitHub credential, private-repository broker allowlist, and GitHub broker egress, but no
+   provider token, Codex credential volume, provider egress, or execution lease. `ACTIVE` keeps
+   that typed GitHub broker boundary, parses the copied Codex credential structure, adds only the
+   execution-provider egress, and runs a bounded nonlogging provider-authentication probe before
    readiness can pass.
 
 ## Rotation

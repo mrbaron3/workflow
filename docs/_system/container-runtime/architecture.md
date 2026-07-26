@@ -45,7 +45,8 @@
   named volumeと既存in-flight topologyを保存する。
 - **ARCH-container-runtime-015 Runner-only monitor credential boundary** — private repository read credentialとCodex credentialは
   runnerだけへ渡す。controlのGitHub credentialは空のまま、runnerはinternal network上のcontrol egress allowlist経由で
-  固定typed monitor endpointへ出る。MONITOR_ONLYでもbrokerは動くがexecution leaseはmode fenceが拒否する。
+  固定typed monitor endpointへ出る。MONITOR_ONLYでもrunner-only GitHub credentialとGitHub broker egressで
+  brokerは動くが、Codex/provider credential・provider egressを持たず、execution leaseはmode fenceが拒否する。
 - **ARCH-container-runtime-016 Sealed PostgreSQL rotation boundary** — PostgreSQL actualはimage descriptorと
   credential-redacted canonical spec digestへsealし、credential値はactual比較とauthentication probeだけで検証する。
   driftはrunningのまま受理せず、DRAINING・zero workでtransactionalにadmin credentialを変更・新旧authenticationを

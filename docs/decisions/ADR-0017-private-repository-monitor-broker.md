@@ -27,8 +27,10 @@ GitHubの404でfail closedした。一方、controlへrunnerと同じGitHub cred
    ともに拒否する。broker DB障害はexecution serviceを停止せず、未保存failureはlease expiryで回収する。
 5. responseは最大256 KiB、1000 itemsとし、auditにはitem countとcanonical response SHA-256だけを残す。
    GitHub credential、credential fingerprint、provider response本文、汎用transport情報は保存しない。
-6. MONITOR_ONLYでもrunner processはbrokerだけを処理するが、既存serviceのoperating-mode fenceにより
-   AgentOps job lease/executionは行わない。ACTIVEだけが既存runner executionへ進む。
+6. MONITOR_ONLYでもrunner processはrunner-only GitHub credentialとGitHub broker egressでtyped brokerだけを
+   処理するが、Codex/provider credential・provider egressは持たず、既存serviceのoperating-mode fenceにより
+   AgentOps job lease/executionは行わない。ACTIVEだけがexecution-provider credential/egressを追加し、既存runner
+   executionへ進む。
 7. version 5 migrationは単一transactionのadditive migrationであり、commit前のfailureはversion 4を保持する。
    commit後のrollbackはvolumeとbroker/audit行を保存したsafe modeへのcompensation＋version 5 imageによる
    forward recoveryである。version 4 consumerはunknown schemaをfail closedし、durable broker証跡を失う
@@ -40,7 +42,8 @@ GitHubの404でfail closedした。一方、controlへrunnerと同じGitHub cred
 
 ## 帰結
 
-- controlは引き続きGitHub credentialを持たず、private repositoryのIssue/PR monitorを同時に収束できる。
+- controlは引き続きGitHub credentialを持たず、runner-only typed brokerでprivate repositoryのIssue/PR monitorを
+  両modeとも同時に収束できる。
 - PostgreSQLはrequest、lease、failure、digest auditの唯一のdurable SoTであり、restart後もpending/expired workを回収する。
 - runner DB roleはbroker responseやterminal stateを直接偽造できず、期限内の自己leaseに対する限定 capabilityだけを持つ。
 - PostgreSQL containerは起動時image digest＋credential-redacted canonical specへsealされ、credential値はactualと

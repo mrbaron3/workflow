@@ -390,6 +390,44 @@ func TestForwarderHeartbeatKeepsActualStateFresh(t *testing.T) {
 	}
 }
 
+func TestPRIntentSignedWebhookIngressNeverExecutesControlSideGH(t *testing.T) {
+	t.Run("PR-INTENT credential-free signed webhook ingress", func(t *testing.T) {
+		store := &fakeMonitorStore{}
+		commands := 0
+		runner := &ProductionRunner{
+			Store:                    store,
+			SupervisorID:             "test",
+			SignedWebhookIngressOnly: true,
+			HealthInterval:           time.Millisecond,
+			Command: func(context.Context, string, ...string) Command {
+				commands++
+				return nil
+			},
+			Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		if err := runner.runForwarder(ctx, Registration{
+			ID:                  "registration-1",
+			Repository:          "owner/repo",
+			Enabled:             true,
+			IssueMonitorEnabled: true,
+			Version:             1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if commands != 0 {
+			t.Fatalf("credential-free control executed %d gh commands", commands)
+		}
+		store.mu.Lock()
+		actualStates := store.actualStates
+		store.mu.Unlock()
+		if actualStates < 2 {
+			t.Fatalf("signed webhook ingress health updates = %d, want initial + heartbeat", actualStates)
+		}
+	})
+}
+
 func TestForwarderStopsWhenHeartbeatCannotBePersisted(t *testing.T) {
 	persistError := errors.New("control store disconnected")
 	store := &fakeMonitorStore{

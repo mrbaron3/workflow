@@ -126,8 +126,9 @@ ENTRYPOINT ["node", "dist/src/runner/cli.js"]
 
 # --- control: credential-free Go control plane ---------------------------------------------------
 # The CISO-07 private-repository topology accepts signed webhook ingress and
-# brokered polls; it intentionally omits the credential-bearing gh forwarder
-# CLI. The fixed nonroot distroless base leaves no shell/package manager.
+# runner-brokered polls in both modes; it intentionally omits the
+# credential-bearing gh forwarder CLI. The fixed nonroot distroless base
+# leaves no shell/package manager.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35 AS control
 ENV AGENTOPS_APP_ROOT=/app \
     AGENTOPS_CONTROL_LISTEN=127.0.0.1:8081 \

@@ -934,6 +934,24 @@ func (manager *manager) controlSpec(
 	mode lifecycle.Mode,
 	databaseHost string,
 ) lifecycle.ContainerSpec {
+	environment := map[string]string{
+		"AGENTOPS_DATABASE_URL":              manager.config.controlDatabaseURL(databaseHost),
+		"AGENTOPS_CONTROL_TOKEN":             manager.config.ControlToken,
+		"AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN": manager.config.DashboardToken,
+		"AGENTOPS_GITHUB_WEBHOOK_SECRET":     manager.config.WebhookSecret,
+		"AGENTOPS_OPERATING_MODE":            string(mode),
+		"AGENTOPS_DASHBOARD_ORIGIN": fmt.Sprintf(
+			"http://127.0.0.1:%d",
+			manager.config.ControlHostPort,
+		),
+		"AGENTOPS_CONTROL_LISTEN":                   "127.0.0.1:8081",
+		"AGENTOPS_CONTROL_PROXY_LISTEN":             "0.0.0.0:8080",
+		"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":       "0.0.0.0:8082",
+		"AGENTOPS_RUNNER_PROVIDER":                  manager.config.Provider,
+		"AGENTOPS_RUNNER_PROVIDER_AUTH":             manager.config.providerAuth(mode),
+		"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY": manager.config.MonitorRepository,
+		"AGENTOPS_APP_ROOT":                         "/app",
+	}
 	return lifecycle.ContainerSpec{
 		Name:  manager.config.ControlContainer,
 		Role:  "control",
@@ -941,25 +959,8 @@ func (manager *manager) controlSpec(
 		// Apple Container assigns the default route to the first network.
 		// Keep public egress on default while retaining the host-only network
 		// solely for runner/PostgreSQL connectivity.
-		Networks: []string{"default", manager.config.Network},
-		Environment: map[string]string{
-			"AGENTOPS_DATABASE_URL":              manager.config.controlDatabaseURL(databaseHost),
-			"AGENTOPS_CONTROL_TOKEN":             manager.config.ControlToken,
-			"AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN": manager.config.DashboardToken,
-			"AGENTOPS_GITHUB_WEBHOOK_SECRET":     manager.config.WebhookSecret,
-			"AGENTOPS_OPERATING_MODE":            string(mode),
-			"AGENTOPS_DASHBOARD_ORIGIN": fmt.Sprintf(
-				"http://127.0.0.1:%d",
-				manager.config.ControlHostPort,
-			),
-			"AGENTOPS_CONTROL_LISTEN":                   "127.0.0.1:8081",
-			"AGENTOPS_CONTROL_PROXY_LISTEN":             "0.0.0.0:8080",
-			"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":       "0.0.0.0:8082",
-			"AGENTOPS_RUNNER_PROVIDER":                  manager.config.Provider,
-			"AGENTOPS_RUNNER_PROVIDER_AUTH":             manager.config.providerAuth(mode),
-			"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY": manager.config.MonitorRepository,
-			"AGENTOPS_APP_ROOT":                         "/app",
-		},
+		Networks:    []string{"default", manager.config.Network},
+		Environment: environment,
 		Publish: []lifecycle.Publication{{
 			HostIP:        "127.0.0.1",
 			HostPort:      manager.config.ControlHostPort,
@@ -1831,10 +1832,18 @@ func validateManagedActual(
 }
 
 func managedNonRootUser(uid int, raw string) bool {
-	return uid == 65532 ||
-		raw == "agentops" ||
-		raw == "65532" ||
-		raw == "65532:65532"
+	raw = strings.TrimSpace(raw)
+	if uid != 0 && uid != 65532 {
+		return false
+	}
+	switch raw {
+	case "":
+		return uid == 65532
+	case "agentops", "65532", "65532:65532":
+		return uid == 0 || uid == 65532
+	default:
+		return false
+	}
 }
 
 func imageReferenceMatches(actual, expected string) bool {

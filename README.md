@@ -254,9 +254,9 @@ values fall back to `DEFAULT_GITHUB_WATCH_INTERVAL_MS` (30000 ms).
 
 Webhook remains an immediate trigger and polling remains the truth-recovery path.
 `agentops-control` is the PostgreSQL Registration-driven production process: it exposes the
-operator Control API, supervises per-Registration Issue/PR monitors and `gh webhook forward`,
-persists webhook deliveries before acknowledgement, and routes webhook/poll observations through
-the same idempotent queue.
+operator Control API, supervises per-Registration Issue/PR monitors and signed HTTP webhook
+ingress, persists webhook deliveries before acknowledgement, and routes webhook/poll observations
+through the same idempotent queue. The standard OCI control process never executes `gh`.
 
 ```bash
 AGENTOPS_DATABASE_URL='postgresql://…' npm run control-store:migrate
@@ -288,9 +288,13 @@ deliveries. Configure `AGENTOPS_GITHUB_POLL_INTERVAL` and
 wake-up: periodic PostgreSQL reconciliation remains the recovery path after missed notifications,
 control restart, forwarder exit, or DB reconnect. Unknown, disabled, stale, or disconnected
 Registrations never create jobs.
-`MONITOR_ONLY` continues Issue/PR/Forwarder observation but neither routing nor the isolated runner
-may enqueue/claim executable work. The runner defaults to the same fail-closed mode and must receive
-`AGENTOPS_OPERATING_MODE=ACTIVE` explicitly when execution is authorized.
+`MONITOR_ONLY` continues private Issue/PR observation through the runner-only typed GitHub broker
+and signed-webhook-ingress observation, but neither routing nor the isolated runner may
+enqueue/claim executable work. Its runner receives the scoped GitHub credential and GitHub-only
+broker egress, but no Codex/provider credential, provider egress, or execution authority; control
+never receives a GitHub credential or executes `gh`. `ACTIVE` adds the execution-provider
+credential/egress and explicit execution authority without moving the GitHub credential into
+control.
 
 The old TypeScript GUI/router types remain as a non-durable PR #9 compatibility oracle. The legacy
 `webhook-daemon` production command remains fail closed; no production entry point reads or writes

@@ -139,7 +139,10 @@ func run() error {
 		PollInterval:   pollInterval,
 		ForwarderRetry: 2 * time.Second,
 		HealthInterval: reconciliationInterval,
-		Log:            log,
+		// Webhook ingress is the signed HTTP API in the standard OCI
+		// topology. GitHub credentials and gh remain runner-only.
+		SignedWebhookIngressOnly: true,
+		Log:                      log,
 	}
 	supervisor := control.NewSupervisor(
 		store,

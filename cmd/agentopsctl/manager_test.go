@@ -185,6 +185,10 @@ func TestManagedNonRootUserAcceptsAppleNumericIdentityWithoutRoot(t *testing.T) 
 		{raw: "root"},
 		{raw: "0:0"},
 		{raw: "65532:0"},
+		{uid: 65532, raw: "root"},
+		{uid: 65532, raw: "0:0"},
+		{uid: 65532, raw: "65532:0"},
+		{uid: 1234, raw: "agentops"},
 	} {
 		if managedNonRootUser(user.uid, user.raw) {
 			t.Fatalf("unsafe identity was accepted: %#v", user)
@@ -265,6 +269,85 @@ func TestPRIntentPinsCredentialAndProviderReadinessBoundaries(t *testing.T) {
 		CredentialSeedReadyTimeout >= CredentialInitializerLifetime {
 		t.Fatal("provider/credential readiness relationships are unsafe")
 	}
+}
+
+func TestCISO07IntegratedModeTopology(t *testing.T) {
+	t.Run("PR-INTENT mode-specific runner and broker boundaries", func(t *testing.T) {
+		cfg := testManagerConfig()
+		cfg.RunnerGitHubToken = "runner-github-token-value-00000001"
+		cfg.RunnerDBPassword = "runner-database-password-value-0001"
+		cfg.ControlDBPassword = "control-database-password-value-001"
+		subject := newManager(cfg, nil)
+
+		monitorControl := subject.controlSpec(lifecycle.ModeMonitorOnly, "192.0.2.10")
+		monitorRunner := subject.runnerSpec(
+			lifecycle.ModeMonitorOnly,
+			"192.0.2.10",
+			"192.0.2.11",
+		)
+		if monitorControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY"] !=
+			cfg.MonitorRepository ||
+			monitorControl.Environment["AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN"] !=
+				"0.0.0.0:8082" {
+			t.Fatalf("MONITOR_ONLY control broker boundary = %#v", monitorControl.Environment)
+		}
+		if monitorRunner.Environment["AGENTOPS_RUNNER_GITHUB_TOKEN"] !=
+			cfg.RunnerGitHubToken ||
+			monitorRunner.Environment["AGENTOPS_MONITOR_REPOSITORY"] !=
+				cfg.MonitorRepository ||
+			monitorRunner.Environment["HTTPS_PROXY"] !=
+				"http://192.0.2.11:8082" {
+			t.Fatal("MONITOR_ONLY runner did not receive its runner-only broker boundary")
+		}
+		for _, key := range []string{"CODEX_HOME", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"} {
+			if _, present := monitorRunner.Environment[key]; present {
+				t.Fatalf("MONITOR_ONLY runner received provider credential %s", key)
+			}
+		}
+		if len(monitorRunner.Mounts) != 1 ||
+			monitorRunner.Mounts[0].Volume != cfg.RunnerVolume {
+			t.Fatalf("MONITOR_ONLY mounts = %#v", monitorRunner.Mounts)
+		}
+		var monitorOutbound []map[string]any
+		if err := json.Unmarshal(
+			[]byte(monitorRunner.Environment["AGENTOPS_RUNNER_OUTBOUND_JSON"]),
+			&monitorOutbound,
+		); err != nil {
+			t.Fatal(err)
+		}
+		if len(monitorOutbound) != 3 ||
+			monitorOutbound[0]["host"] != "192.0.2.10" ||
+			monitorOutbound[1]["host"] != "github.com" ||
+			monitorOutbound[2]["host"] != "api.github.com" {
+			t.Fatalf("MONITOR_ONLY outbound = %#v", monitorOutbound)
+		}
+
+		activeControl := subject.controlSpec(lifecycle.ModeActive, "192.0.2.10")
+		activeRunner := subject.runnerSpec(
+			lifecycle.ModeActive,
+			"192.0.2.10",
+			"192.0.2.11",
+		)
+		if activeControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY"] !=
+			cfg.MonitorRepository ||
+			activeControl.Environment["AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN"] !=
+				"0.0.0.0:8082" {
+			t.Fatalf("ACTIVE control broker boundary = %#v", activeControl.Environment)
+		}
+		if activeRunner.Environment["AGENTOPS_RUNNER_GITHUB_TOKEN"] !=
+			cfg.RunnerGitHubToken ||
+			activeRunner.Environment["AGENTOPS_MONITOR_REPOSITORY"] !=
+				cfg.MonitorRepository ||
+			activeRunner.Environment["CODEX_HOME"] !=
+				"/run/agentops-credentials/codex" {
+			t.Fatal("ACTIVE runner did not receive its exact private broker/provider boundary")
+		}
+		if len(activeRunner.Mounts) != 2 ||
+			activeRunner.Mounts[1].Volume != cfg.CredentialVolume ||
+			!activeRunner.Mounts[1].ReadOnly {
+			t.Fatalf("ACTIVE credential mounts = %#v", activeRunner.Mounts)
+		}
+	})
 }
 
 func TestPRIntentPostgresRotationUsesEnvironmentCapability(t *testing.T) {
