@@ -22,6 +22,10 @@ type manager struct {
 	runtime *lifecycle.AppleRuntime
 }
 
+type mutationReceipt struct {
+	Mutated bool
+}
+
 func newManager(config config, runtime *lifecycle.AppleRuntime) *manager {
 	return &manager{config: config, runtime: runtime}
 }
@@ -73,6 +77,7 @@ func (manager *manager) Start(
 	postgresStarted := false
 	controlChanged := false
 	runnerChanged := false
+	var initialMode *lifecycle.Mode
 	defer func() {
 		if resultErr != nil {
 			_ = manager.recordFailure(
@@ -86,6 +91,8 @@ func (manager *manager) Start(
 				postgresStarted,
 				controlChanged,
 				runnerChanged,
+				initialMode,
+				requestID,
 			)
 		}
 	}()
@@ -101,6 +108,8 @@ func (manager *manager) Start(
 	if err != nil {
 		return err
 	}
+	startingMode := persisted.State.Mode
+	initialMode = &startingMode
 	if err := manager.validateExistingTopology(ctx); err != nil {
 		return err
 	}
@@ -114,9 +123,20 @@ func (manager *manager) Start(
 			return err
 		}
 		if mode == lifecycle.ModeActive &&
+			!build &&
 			actualControl != nil && actualControl.Status.State == "running" &&
 			actualRunner != nil && actualRunner.Status.State == "running" {
-			return manager.verifyPublishedSurface(ctx, true, true)
+			if err := manager.verifyPublishedSurface(
+				ctx,
+				true,
+				true,
+				lifecycle.ModeActive,
+			); err == nil {
+				return nil
+			}
+			// A mutable tag or credential/configuration rotation invalidates
+			// the canonical spec label. Enter the durable drain path before
+			// replacing either process.
 		}
 		if _, err := manager.transition(
 			ctx,
@@ -154,8 +174,9 @@ func (manager *manager) Start(
 	}
 	if persisted.State.Mode == lifecycle.ModeOff ||
 		persisted.State.Mode == lifecycle.ModeMonitorOnly {
-		controlChanged = true
-		if err := manager.replaceControl(ctx, mode); err != nil {
+		receipt, err := manager.replaceControl(ctx, mode)
+		controlChanged = controlChanged || receipt.Mutated
+		if err != nil {
 			return err
 		}
 		if persisted.State.Mode == lifecycle.ModeOff {
@@ -170,11 +191,9 @@ func (manager *manager) Start(
 		}
 	}
 	if mode == lifecycle.ModeActive {
-		if err := manager.ensureRunnerVolumeOwner(ctx); err != nil {
-			return err
-		}
-		runnerChanged = true
-		if err := manager.replaceRunner(ctx, lifecycle.ModeActive); err != nil {
+		receipt, err := manager.replaceRunner(ctx, lifecycle.ModeActive)
+		runnerChanged = runnerChanged || receipt.Mutated
+		if err != nil {
 			return err
 		}
 		current, err := manager.databaseStatus(ctx)
@@ -200,6 +219,7 @@ func (manager *manager) Start(
 		ctx,
 		true,
 		mode == lifecycle.ModeActive,
+		mode,
 	)
 }
 
@@ -224,15 +244,27 @@ func (manager *manager) Drain(
 	default:
 		return fmt.Errorf("unsupported persisted mode %s", status.State.Mode)
 	}
-	deadline := time.Now().UTC().Add(timeout)
-	if _, err := manager.transition(
+	deadline := status.DatabaseTime.UTC().Add(timeout)
+	if status.State.Mode == lifecycle.ModeDraining &&
+		status.State.DrainDeadlineAt != nil {
+		// DRAINING is already authoritative. Preserve its original absolute
+		// deadline so a same-key retry is semantically identical and a new
+		// key cannot extend the audited drain window.
+		deadline = status.State.DrainDeadlineAt.UTC()
+	}
+	drainState, err := manager.transition(
 		ctx,
 		lifecycle.ModeDraining,
 		requestID,
 		deadline,
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
+	if drainState.DrainDeadlineAt == nil {
+		return fmt.Errorf("persisted DRAINING state has no drain deadline")
+	}
+	deadline = drainState.DrainDeadlineAt.UTC()
 	// Keep the existing control process and its current internal address alive.
 	// PostgreSQL fences routing/enqueue/lease after the DRAINING commit, while
 	// the stable CONNECT proxy lets the current attempt reach a natural stop.
@@ -243,6 +275,19 @@ func (manager *manager) Drain(
 	if runner != nil && runner.Status.State == "running" {
 		if err := manager.runtime.SignalTerm(ctx, manager.config.RunnerContainer); err != nil {
 			return err
+		}
+	}
+	active, attempts, err := manager.inFlight(ctx)
+	if err == nil && active == 0 && attempts == 0 {
+		runner, runtimeErr := manager.runtime.Container(
+			ctx,
+			manager.config.RunnerContainer,
+		)
+		if runtimeErr != nil {
+			return runtimeErr
+		}
+		if runner == nil || runner.Status.State != "running" {
+			return nil
 		}
 	}
 	drainContext, cancel := context.WithDeadline(ctx, deadline)
@@ -346,7 +391,7 @@ func (manager *manager) Stop(
 	if err := manager.runtime.Delete(ctx, manager.config.PostgresContainer); err != nil {
 		return err
 	}
-	return manager.verifyPublishedSurface(ctx, false, false)
+	return manager.verifyPublishedSurface(ctx, false, false, lifecycle.ModeOff)
 }
 
 type combinedStatus struct {
@@ -747,22 +792,64 @@ func (manager *manager) recordFailure(
 func (manager *manager) replaceControl(
 	ctx context.Context,
 	mode lifecycle.Mode,
-) error {
+) (mutationReceipt, error) {
 	databaseHost, err := manager.databaseHost(ctx)
 	if err != nil {
-		return err
+		return mutationReceipt{}, err
 	}
+	spec := manager.controlSpec(mode, databaseHost)
+	if err := manager.sealSpec(ctx, &spec); err != nil {
+		return mutationReceipt{}, err
+	}
+	receipt := mutationReceipt{Mutated: true}
 	if err := manager.gracefulStop(
 		ctx,
 		manager.config.ControlContainer,
 		20*time.Second,
 	); err != nil {
-		return err
+		return receipt, err
 	}
 	if err := manager.runtime.Delete(ctx, manager.config.ControlContainer); err != nil {
-		return err
+		return receipt, err
 	}
-	_, err = manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+	_, err = manager.runtime.RunContainer(ctx, spec)
+	if err != nil {
+		return receipt, err
+	}
+	health, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		request, _ := http.NewRequestWithContext(
+			health,
+			http.MethodGet,
+			fmt.Sprintf(
+				"http://127.0.0.1:%d/healthz",
+				manager.config.ControlHostPort,
+			),
+			nil,
+		)
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr == nil {
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK {
+				return receipt, nil
+			}
+		}
+		select {
+		case <-health.Done():
+			return receipt, fmt.Errorf("Control API readiness timeout: %w", health.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func (manager *manager) controlSpec(
+	mode lifecycle.Mode,
+	databaseHost string,
+) lifecycle.ContainerSpec {
+	return lifecycle.ContainerSpec{
 		Name:  manager.config.ControlContainer,
 		Role:  "control",
 		Image: manager.config.ControlImage,
@@ -797,36 +884,6 @@ func (manager *manager) replaceControl(
 		CapDropAll: true,
 		Init:       true,
 		Detach:     true,
-	})
-	if err != nil {
-		return err
-	}
-	health, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	for {
-		request, _ := http.NewRequestWithContext(
-			health,
-			http.MethodGet,
-			fmt.Sprintf(
-				"http://127.0.0.1:%d/healthz",
-				manager.config.ControlHostPort,
-			),
-			nil,
-		)
-		response, requestErr := http.DefaultClient.Do(request)
-		if requestErr == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == http.StatusOK {
-				return nil
-			}
-		}
-		select {
-		case <-health.Done():
-			return fmt.Errorf("Control API readiness timeout: %w", health.Err())
-		case <-ticker.C:
-		}
 	}
 }
 
@@ -863,25 +920,66 @@ func (manager *manager) ensureRunnerVolumeOwner(ctx context.Context) error {
 func (manager *manager) replaceRunner(
 	ctx context.Context,
 	mode lifecycle.Mode,
-) error {
+) (mutationReceipt, error) {
 	databaseHost, err := manager.databaseHost(ctx)
 	if err != nil {
-		return err
+		return mutationReceipt{}, err
 	}
 	controlHost, err := manager.networkHost(ctx, manager.config.ControlContainer)
 	if err != nil {
-		return err
+		return mutationReceipt{}, err
 	}
+	spec := manager.runnerSpec(mode, databaseHost, controlHost)
+	if err := manager.sealSpec(ctx, &spec); err != nil {
+		return mutationReceipt{}, err
+	}
+	receipt := mutationReceipt{Mutated: true}
 	if err := manager.gracefulStop(
 		ctx,
 		manager.config.RunnerContainer,
 		20*time.Second,
 	); err != nil {
-		return err
+		return receipt, err
 	}
 	if err := manager.runtime.Delete(ctx, manager.config.RunnerContainer); err != nil {
-		return err
+		return receipt, err
 	}
+	if err := manager.ensureRunnerVolumeOwner(ctx); err != nil {
+		return receipt, err
+	}
+	_, err = manager.runtime.RunContainer(ctx, spec)
+	if err != nil {
+		return receipt, err
+	}
+	ready, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := manager.runtime.WaitState(
+		ready,
+		manager.config.RunnerContainer,
+		"running",
+		500*time.Millisecond,
+	); err != nil {
+		return receipt, err
+	}
+	select {
+	case <-ready.Done():
+		return receipt, ready.Err()
+	case <-time.After(2 * time.Second):
+	}
+	actual, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
+	if err != nil {
+		return receipt, err
+	}
+	if actual == nil || actual.Status.State != "running" {
+		return receipt, fmt.Errorf("runner exited during readiness stabilization")
+	}
+	return receipt, nil
+}
+
+func (manager *manager) runnerSpec(
+	mode lifecycle.Mode,
+	databaseHost, controlHost string,
+) lifecycle.ContainerSpec {
 	outbound := []map[string]any{
 		{"host": databaseHost, "port": 5432},
 		{"host": "github.com", "port": 443},
@@ -916,7 +1014,7 @@ func (manager *manager) replaceRunner(
 	} else {
 		environment["ANTHROPIC_API_KEY"] = manager.config.ProviderToken
 	}
-	_, err = manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+	return lifecycle.ContainerSpec{
 		Name:        manager.config.RunnerContainer,
 		Role:        "runner",
 		Image:       manager.config.RunnerImage,
@@ -931,32 +1029,22 @@ func (manager *manager) replaceRunner(
 		CapDropAll: true,
 		Init:       true,
 		Detach:     true,
-	})
+	}
+}
+
+func (manager *manager) sealSpec(
+	ctx context.Context,
+	spec *lifecycle.ContainerSpec,
+) error {
+	imageDigest, err := manager.runtime.ImageDigest(ctx, spec.Image)
 	if err != nil {
 		return err
 	}
-	ready, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := manager.runtime.WaitState(
-		ready,
-		manager.config.RunnerContainer,
-		"running",
-		500*time.Millisecond,
-	); err != nil {
-		return err
-	}
-	select {
-	case <-ready.Done():
-		return ready.Err()
-	case <-time.After(2 * time.Second):
-	}
-	actual, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
+	specDigest, err := lifecycle.SpecDigest(*spec, imageDigest)
 	if err != nil {
 		return err
 	}
-	if actual == nil || actual.Status.State != "running" {
-		return fmt.Errorf("runner exited during readiness stabilization")
-	}
+	spec.SpecDigest = specDigest
 	return nil
 }
 
@@ -1043,21 +1131,140 @@ func (manager *manager) inFlight(ctx context.Context) (int64, int64, error) {
 func (manager *manager) compensateStart(
 	ctx context.Context,
 	postgresStarted, controlChanged, runnerChanged bool,
+	initialMode *lifecycle.Mode,
+	requestID string,
 ) error {
-	names := make([]string, 0, 2)
+	target := lifecycle.ModeOff
+	if initialMode != nil {
+		target = *initialMode
+	}
+	current, currentErr := manager.databaseStatus(ctx)
+	if currentErr == nil &&
+		(current.State.Mode == lifecycle.ModeActive ||
+			current.State.Mode == lifecycle.ModeDraining) {
+		// Never skip a drain merely to restore the pre-command mode: a runner
+		// can acquire work between the ACTIVE commit and a later failure.
+		target = lifecycle.ModeDraining
+	} else if target == lifecycle.ModeActive || target == lifecycle.ModeDraining {
+		// A partially replaced execution topology must never be advertised as
+		// ACTIVE. Preserve DRAINING until work is reconciled; if recovery
+		// already reached MONITOR_ONLY, retain that later safe boundary.
+		if currentErr == nil &&
+			(current.State.Mode == lifecycle.ModeMonitorOnly ||
+				current.State.Mode == lifecycle.ModeOff) {
+			target = current.State.Mode
+		} else {
+			target = lifecycle.ModeDraining
+		}
+	}
+	if err := manager.rollbackLifecycle(
+		ctx,
+		target,
+		requestID+":compensate",
+	); err != nil {
+		_ = manager.recordFailure(
+			ctx,
+			"start.compensation.lifecycle",
+			err.Error(),
+			false,
+		)
+	}
+
+	names := make([]string, 0, 1)
 	if runnerChanged {
 		names = append(names, manager.config.RunnerContainer)
 	}
-	if controlChanged {
+	if controlChanged && target == lifecycle.ModeOff {
 		names = append(names, manager.config.ControlContainer)
 	}
 	for _, name := range names {
 		_ = manager.gracefulStop(ctx, name, 10*time.Second)
 		_ = manager.runtime.Delete(ctx, name)
 	}
+	if controlChanged && target != lifecycle.ModeOff {
+		// Recreate the control plane from current credentials and the safe
+		// durable mode; this restores a pre-existing MONITOR_ONLY topology and
+		// retains the recovery proxy for DRAINING.
+		_, _ = manager.replaceControl(ctx, target)
+	}
 	if postgresStarted {
-		_ = manager.gracefulStop(ctx, manager.config.PostgresContainer, 15*time.Second)
-		_ = manager.runtime.Delete(ctx, manager.config.PostgresContainer)
+		if target == lifecycle.ModeOff {
+			_ = manager.gracefulStop(ctx, manager.config.PostgresContainer, 15*time.Second)
+			_ = manager.runtime.Delete(ctx, manager.config.PostgresContainer)
+		}
+	}
+	return nil
+}
+
+func (manager *manager) rollbackLifecycle(
+	ctx context.Context,
+	target lifecycle.Mode,
+	requestID string,
+) error {
+	status, err := manager.databaseStatus(ctx)
+	if err != nil {
+		return err
+	}
+	current := status.State.Mode
+	if current == target {
+		return nil
+	}
+	if current == lifecycle.ModeActive {
+		state, err := manager.transition(
+			ctx,
+			lifecycle.ModeDraining,
+			requestID+":draining",
+			time.Now().UTC().Add(10*time.Minute),
+		)
+		if err != nil {
+			return err
+		}
+		current = state.Mode
+	}
+	if target == lifecycle.ModeDraining {
+		if current != lifecycle.ModeDraining {
+			return fmt.Errorf("cannot compensate %s to DRAINING", current)
+		}
+		return nil
+	}
+	if current == lifecycle.ModeDraining {
+		state, err := manager.transition(
+			ctx,
+			target,
+			requestID+":"+strings.ToLower(string(target)),
+			time.Time{},
+		)
+		if err != nil {
+			return err
+		}
+		current = state.Mode
+	}
+	if current == lifecycle.ModeOff && target == lifecycle.ModeMonitorOnly {
+		state, err := manager.transition(
+			ctx,
+			target,
+			requestID+":monitor",
+			time.Time{},
+		)
+		if err != nil {
+			return err
+		}
+		current = state.Mode
+	}
+	if current == lifecycle.ModeMonitorOnly && target == lifecycle.ModeOff {
+		state, err := manager.transition(
+			ctx,
+			target,
+			requestID+":off",
+			time.Time{},
+		)
+		if err != nil {
+			return err
+		}
+		current = state.Mode
+	}
+	if current != target {
+		return fmt.Errorf("compensation established %s instead of %s", current, target)
 	}
 	return nil
 }
@@ -1065,6 +1272,7 @@ func (manager *manager) compensateStart(
 func (manager *manager) verifyPublishedSurface(
 	ctx context.Context,
 	controlExpected, runnerExpected bool,
+	mode lifecycle.Mode,
 ) error {
 	reachable := tcpReachable(
 		"127.0.0.1",
@@ -1095,7 +1303,7 @@ func (manager *manager) verifyPublishedSurface(
 		return fmt.Errorf("control does not have exactly one loopback-only publication")
 	}
 	if controlExpected {
-		if err := manager.verifyManagedTopology(ctx, runnerExpected); err != nil {
+		if err := manager.verifyManagedTopology(ctx, runnerExpected, mode); err != nil {
 			return err
 		}
 	}
@@ -1119,6 +1327,7 @@ func (manager *manager) verifyPublishedSurface(
 func (manager *manager) verifyManagedTopology(
 	ctx context.Context,
 	runnerExpected bool,
+	mode lifecycle.Mode,
 ) error {
 	control, err := manager.runtime.Container(ctx, manager.config.ControlContainer)
 	if err != nil {
@@ -1135,14 +1344,64 @@ func (manager *manager) verifyManagedTopology(
 	if err := validateControlActual(control, manager.config); err != nil {
 		return err
 	}
+	databaseHost, err := manager.databaseHost(ctx)
+	if err != nil {
+		return err
+	}
+	controlSpec := manager.controlSpec(mode, databaseHost)
+	if err := manager.sealSpec(ctx, &controlSpec); err != nil {
+		return err
+	}
+	if err := validateSpecActual(control, controlSpec); err != nil {
+		return err
+	}
 	if err := validatePostgresActual(postgres, manager.config); err != nil {
 		return err
 	}
 	if runnerExpected {
-		return validateRunnerActual(runner, manager.config)
+		if err := validateRunnerActual(runner, manager.config); err != nil {
+			return err
+		}
+		controlHost, err := manager.networkHost(
+			ctx,
+			manager.config.ControlContainer,
+		)
+		if err != nil {
+			return err
+		}
+		runnerSpec := manager.runnerSpec(mode, databaseHost, controlHost)
+		if err := manager.sealSpec(ctx, &runnerSpec); err != nil {
+			return err
+		}
+		return validateSpecActual(runner, runnerSpec)
 	}
 	if runner != nil {
 		return fmt.Errorf("runner must be absent outside ACTIVE")
+	}
+	return nil
+}
+
+func validateSpecActual(
+	actual *lifecycle.ContainerActual,
+	expected lifecycle.ContainerSpec,
+) error {
+	if actual == nil {
+		return fmt.Errorf("%s container is absent", expected.Name)
+	}
+	imageDigest := actual.Configuration.Image.Descriptor.Digest
+	if !strings.HasPrefix(imageDigest, "sha256:") {
+		return fmt.Errorf("%s has no immutable image descriptor", expected.Name)
+	}
+	expectedDigest, err := lifecycle.SpecDigest(expected, imageDigest)
+	if err != nil {
+		return err
+	}
+	if expected.SpecDigest != expectedDigest {
+		return fmt.Errorf("%s desired specification digest is inconsistent", expected.Name)
+	}
+	if actual.Configuration.Labels["com.mrbaron3.workflow.spec-sha256"] !=
+		expected.SpecDigest {
+		return fmt.Errorf("%s immutable image or runtime specification drifted", expected.Name)
 	}
 	return nil
 }

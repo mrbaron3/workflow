@@ -19,6 +19,7 @@ type Store struct {
 }
 
 var ErrStaleReplay = errors.New("lifecycle transition replay is stale")
+var ErrIdempotencyConflict = errors.New("lifecycle idempotency key conflicts with the original request")
 
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
@@ -69,30 +70,51 @@ func (store *Store) Transition(
 	if _, err := ParseMode(string(to)); err != nil {
 		return Transition{}, State{}, err
 	}
+	if to != ModeDraining {
+		drainDeadline = nil
+	} else if drainDeadline != nil {
+		normalized := drainDeadline.UTC().Round(time.Microsecond)
+		drainDeadline = &normalized
+	}
+	if details == nil {
+		details = map[string]any{}
+	}
+	detailJSON, err := json.Marshal(details)
+	if err != nil {
+		return Transition{}, State{}, fmt.Errorf("encode transition details: %w", err)
+	}
 	transaction, err := store.pool.Begin(ctx)
 	if err != nil {
 		return Transition{}, State{}, err
 	}
 	defer func() { _ = transaction.Rollback(context.Background()) }()
 
+	state, err := scanState(transaction.QueryRow(ctx, `
+		SELECT mode, generation, transition_id, transition_started_at,
+		       drain_deadline_at, drain_timed_out, last_error, updated_at
+		  FROM agentops_control.lifecycle_state
+		 WHERE singleton
+		 FOR UPDATE
+	`))
+	if err != nil {
+		return Transition{}, State{}, err
+	}
 	existing, err := transitionByKey(ctx, transaction, idempotencyKey)
 	if err == nil {
-		if existing.ToMode != to {
+		if !sameTransitionRequest(
+			existing,
+			actorID,
+			to,
+			drainDeadline,
+			detailJSON,
+		) {
 			return Transition{}, State{}, fmt.Errorf(
-				"idempotency key %q was already used for %s",
+				"%w: key %q was already used for a different actor, target, deadline, or details",
+				ErrIdempotencyConflict,
 				idempotencyKey,
-				existing.ToMode,
 			)
 		}
 		existing.Replayed = true
-		state, stateErr := scanState(transaction.QueryRow(ctx, `
-			SELECT mode, generation, transition_id, transition_started_at,
-			       drain_deadline_at, drain_timed_out, last_error, updated_at
-			  FROM agentops_control.lifecycle_state WHERE singleton
-		`))
-		if stateErr != nil {
-			return existing, state, stateErr
-		}
 		if existing.Status == "rejected" {
 			if existing.Error != nil {
 				return existing, state, fmt.Errorf("%s", *existing.Error)
@@ -111,17 +133,6 @@ func (store *Store) Transition(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Transition{}, State{}, err
 	}
-
-	state, err := scanState(transaction.QueryRow(ctx, `
-		SELECT mode, generation, transition_id, transition_started_at,
-		       drain_deadline_at, drain_timed_out, last_error, updated_at
-		  FROM agentops_control.lifecycle_state
-		 WHERE singleton
-		 FOR UPDATE
-	`))
-	if err != nil {
-		return Transition{}, State{}, err
-	}
 	id, err := randomID()
 	if err != nil {
 		return Transition{}, State{}, err
@@ -136,13 +147,6 @@ func (store *Store) Transition(
 		status = "rejected"
 		message := fmt.Sprintf("invalid lifecycle transition %s -> %s", state.Mode, to)
 		transitionError = &message
-	}
-	if to != ModeDraining {
-		drainDeadline = nil
-	}
-	detailJSON, err := json.Marshal(details)
-	if err != nil {
-		return Transition{}, State{}, fmt.Errorf("encode transition details: %w", err)
 	}
 	if _, err := transaction.Exec(ctx, `
 		INSERT INTO agentops_control.lifecycle_transitions(
@@ -204,6 +208,31 @@ func (store *Store) Transition(
 		return result, current, fmt.Errorf("%s", *transitionError)
 	}
 	return result, current, nil
+}
+
+func sameTransitionRequest(
+	existing Transition,
+	actorID string,
+	to Mode,
+	drainDeadline *time.Time,
+	detailJSON []byte,
+) bool {
+	if existing.ActorID != actorID || existing.ToMode != to {
+		return false
+	}
+	switch {
+	case existing.DrainDeadlineAt == nil && drainDeadline != nil,
+		existing.DrainDeadlineAt != nil && drainDeadline == nil:
+		return false
+	case existing.DrainDeadlineAt != nil &&
+		!existing.DrainDeadlineAt.Equal(*drainDeadline):
+		return false
+	}
+	existingJSON, err := json.Marshal(existing.Details)
+	if err != nil {
+		return false
+	}
+	return string(existingJSON) == string(detailJSON)
 }
 
 func (store *Store) ReconcileExpiredRunnerWork(

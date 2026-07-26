@@ -18,17 +18,22 @@ control、runner、PostgreSQLを個別の手操作で起動すると、MacのLis
 2. PostgreSQL schema version 4のsingleton `lifecycle_state`とappend-only
    `lifecycle_transitions`を運転状態の唯一の永続正本とする。状態遷移は
    `OFF → MONITOR_ONLY → ACTIVE → DRAINING → OFF|MONITOR_ONLY`だけを許し、同一idempotency keyの再送は
-   同一transitionを返す。不正遷移とoperation failureもauditへ残す。
+   actor、target、drain deadline、canonical detailsがすべて一致し、かつcurrent transitionである場合だけ
+   同一transitionを返す。semantic conflict/stale replay、不正遷移、operation failureは拒否しauditへ残す。
 3. DRAININGをcommitしてから、新規delivery claim、poll/webhook enqueue、job leaseをDB row lockとtriggerの両方で停止する。
+   direct job INSERTのtrigger自身もsingleton lifecycle rowへ`FOR SHARE`を取り、ACTIVE判定とDRAINING commitを直列化する。
    runnerへSIGTERMを送り、既存attemptはその自然な停止点まで待つ。deadline超過時はrunnerをforce killせず、
-   `drain_timed_out`とlast errorを保存して非0終了する。
+   `drain_timed_out`とlast errorを保存して非0終了する。CLIのwait deadlineはDBが返したpersisted deadlineだけを使う。
 4. 起動時はDB mode、active lease、running attemptとactual containerを照合する。persisted ACTIVEなのにtopologyが欠ける場合は
    まずDRAININGへ移し、in-flightが残る間は再開しない。ゼロならMONITOR_ONLYを経て要求modeへ復旧する。
-   部分start失敗時はその試行が変更したcontainerだけを補償停止し、既存in-flight containerを巻き込まない。
+   部分start失敗時はpreflight後に発行したmutation receiptの対象だけを補償し、ACTIVE/DRAININGを監査付きDRAININGへ、
+   executionを開始していない状態を元のOFF/MONITOR_ONLYへ戻す。既存in-flight containerを巻き込まない。
 5. Apple Container adapterは所有label付きnamed network/volume/containerだけを操作する。controlだけを
    `127.0.0.1:<operator-port>:8080`へexactly one publishし、runner/PostgreSQLはhost-only internal network上で
    publish/socketなしとする。controlはinternal networkとdefault networkのbridgeとしてallowlist済みHTTPS CONNECT
-   （GitHub、GitHub API、選択provider）だけをrunnerへ提供する。
+   （GitHub、GitHub API、選択provider）だけをrunnerへ提供する。control/runnerはimmutable image descriptorと
+   environment/entrypoint/init/security/network/mount/publicationを含むcanonical spec digestをownership labelへ固定し、
+   `--build`またはdigest/config drift時はACTIVEをdrainしてから再作成する。
 6. long-running control/runnerはread-only root、capability drop ALL、named/private mountだけで動く。runner volume初期化は
    network隔離されたremovable one-shot containerへ`CAP_CHOWN`だけを一時付与する。admin/control/runner DB roleと
    control/runner GitHub credential、provider credentialは分離し、runtime errorとargvでは値をredactする。

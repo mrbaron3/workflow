@@ -14,14 +14,19 @@ HTTPSだけをbridgeする。runtime argv/errorはcredential値をredactし、co
 control/runner GitHub credentialを分離する。
 
 schema version 4は`lifecycle_state`と`lifecycle_transitions`を追加した。明示mode graph、unique idempotency key、
-rejected/idempotent/applied audit、drain deadline/timeout/last errorをPostgreSQLへ保存する。DRAINING transitionと
-delivery routing/enqueue/leaseはrow lockで直列化し、job INSERT triggerもACTIVE以外を拒否する。
+rejected/idempotent/applied audit、drain deadline/timeout/last errorをPostgreSQLへ保存する。同一keyはactor、target、
+microsecond-normalized drain deadline、canonical detailsが一致するcurrent transitionだけをreplayし、semantic conflictと
+stale replayを拒否する。DRAINING transitionとdelivery routing/enqueue/leaseはrow lockで直列化し、direct job INSERTの
+trigger自身も同じsingleton rowへ`FOR SHARE`を取ってACTIVE判定とcommitをrace-freeにする。
 
 drainはDRAINING commit後にrunnerへSIGTERMを送り、lease/attemptがゼロかつrunner停止まで待つ。timeout時はforce killせず
 failureを保存する。controlを再作成しないため、runnerが参照中のproxy address/tunnelはdrain完了まで安定する。
 restartはpersisted mode/lease/attemptとactual topologyを照合し、欠損ACTIVEをDRAININGへ寄せる。crash後に期限切れとなった
 leaseはowner-only reconciliationがattemptをtimed_out、leaseをexpired、jobをretry/terminalへ原子的に回収して監査する。
-partial start補償はそのstartが変更したcontainerだけを削除し、通常stopと失敗時のどちらもnamed volumeを保存する。
+partial start補償はpreflight後のmutation receiptだけを対象にし、DBがACTIVE/DRAININGなら監査付きDRAININGを維持し、
+execution前なら元のOFF/MONITOR_ONLYを復元する。control/runnerはimmutable image descriptorとsecret値を含むdesired
+environment、entrypoint/init/security/network/mount/publicationのcanonical digest labelを照合し、`--build`または
+image/config drift時は安全にdrainして再作成する。通常stopと失敗時のどちらもnamed volumeを保存する。
 
 ## grounded境界
 
@@ -30,6 +35,9 @@ ACTIVE→DRAINING、同一drain replay、DRAININGからの復旧、ACTIVE→DRAI
 repeated stop、port conflictによるpartial-start compensation、control address不変drain、stale replay拒否、
 crashed/expired attempt recoveryを実行した。machine-readable結果は
 `evidence/ciso-06/apple-container-smoke.json`に固定した。
+post-Round 2ではimmutable spec/`--build` reconciliation、non-expired active lease/attemptを保持したままの
+stable-proxy drain、persisted deadline replay、trigger/direct INSERT fence、same-key concurrencyも追加でgroundした。
+全検証lineageは`evidence/ciso-06/implementation-validation.json`に固定した。
 
 fake/inert credentialと空queueを使ったためprovider/GitHub外部side effectは発生していない。`open`の実装は
 loopback reachabilityを先に検査してexact Dashboard URLをmacOS `open`へ渡すが、headlessで代替できないheaded browser

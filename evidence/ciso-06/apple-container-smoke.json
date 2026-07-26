@@ -6,7 +6,7 @@
     "AC-CISO-009"
   ],
   "baseCommit": "ba79d1f0e02fb71e23774db15dcde81190b735de",
-  "recordedAt": "2026-07-26T03:22:43Z",
+  "recordedAt": "2026-07-26T04:23:25Z",
   "host": {
     "architecture": "arm64",
     "runtime": "Apple Container",
@@ -245,6 +245,67 @@
       "recoveryAuditCount": 1,
       "finalMode": "ACTIVE",
       "runner": "running"
+    },
+    {
+      "name": "round-2-canonical-spec-and-active-build-reconciliation",
+      "prefix": "agentops-ciso06-final",
+      "requestId": "grounded-r2-active-build-reconcile-1",
+      "result": "passed",
+      "fastPath": "unchanged immutable image and canonical spec labels accepted",
+      "buildPathTransitions": [
+        "ACTIVE->DRAINING",
+        "DRAINING->MONITOR_ONLY",
+        "MONITOR_ONLY->ACTIVE"
+      ],
+      "controlSpecLabelPresent": true,
+      "runnerSpecLabelPresent": true,
+      "immutableImageDescriptorsPresent": true,
+      "runnerVolumeInitialization": "performed only after the prior runner released the named volume"
+    },
+    {
+      "name": "round-2-nonexpired-inflight-drain",
+      "requestId": "grounded-r2-live-drain-1",
+      "result": "passed",
+      "injectedWork": {
+        "lease": "active and five minutes from expiry",
+        "attempt": "running"
+      },
+      "controlInternalAddressDuringDrain": "192.168.130.50/24",
+      "proxyDuringDrain": {
+        "api.github.com": "HTTP 401 from GitHub after successful CONNECT using inert credential",
+        "example.com": "Forbidden by CONNECT allowlist"
+      },
+      "completion": "lease, attempt, and job were deterministically completed while drain waited",
+      "runnerAfterDrain": "stopped",
+      "persistedMode": "DRAINING"
+    },
+    {
+      "name": "round-2-persisted-deadline-replay",
+      "requestId": "grounded-r2-live-drain-1",
+      "result": "passed",
+      "transitionRows": 1,
+      "deadlineSource": "persisted DRAINING state",
+      "completedDrainReplayAfterDeadline": "successful because work and runner were already stopped"
+    },
+    {
+      "name": "round-2-final-egress-and-stop",
+      "requestId": "grounded-r2-final-stop-1",
+      "result": "passed",
+      "runnerEgress": {
+        "directInternet": "timeout",
+        "api.github.comViaProxy": "HTTP 401 from GitHub with inert credential",
+        "example.comViaProxy": "Forbidden"
+      },
+      "actualAfterRepeatedStop": {
+        "control": "absent",
+        "runner": "absent",
+        "postgres": "absent"
+      },
+      "preservedResources": [
+        "agentops-ciso06-final-internal",
+        "agentops-ciso06-final-postgres-data",
+        "agentops-ciso06-final-runner-workspace"
+      ]
     }
   ],
   "commandsCovered": [

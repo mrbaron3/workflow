@@ -49,6 +49,77 @@ func TestBuildContainerArgsEnforcesPublicationAndNamedMounts(t *testing.T) {
 	}
 }
 
+func TestContainerSpecDigestBindsImageEnvironmentAndInit(t *testing.T) {
+	spec := ContainerSpec{
+		Name: "agentops-control", Role: "control", Image: "control:test",
+		Networks: []string{"default", "agentops-internal"},
+		Environment: map[string]string{
+			"AGENTOPS_OPERATING_MODE": "ACTIVE",
+			"SECRET":                  "first",
+		},
+		Init: true, ReadOnly: true, CapDropAll: true, Detach: true,
+		Publish: []Publication{{
+			HostIP: "127.0.0.1", HostPort: 8080, ContainerPort: 8080,
+		}},
+	}
+	digest, err := SpecDigest(
+		spec,
+		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.SpecDigest = digest
+	args, _, err := buildContainerArgs(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(
+		strings.Join(args, " "),
+		"--label com.mrbaron3.workflow.spec-sha256="+digest,
+	) {
+		t.Fatalf("spec digest label is absent: %v", args)
+	}
+	rotated := spec
+	rotated.Environment = map[string]string{
+		"AGENTOPS_OPERATING_MODE": "ACTIVE",
+		"SECRET":                  "second",
+	}
+	rotatedDigest, err := SpecDigest(
+		rotated,
+		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rotatedDigest == digest {
+		t.Fatal("environment rotation did not change the canonical digest")
+	}
+	imageDigest, err := SpecDigest(
+		spec,
+		"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if imageDigest == digest {
+		t.Fatal("immutable image rotation did not change the canonical digest")
+	}
+}
+
+func TestImageDigestParsesImmutableDescriptor(t *testing.T) {
+	fake := &fakeRuntimeRunner{results: []CommandResult{{
+		Status: 0,
+		Stdout: `{"configuration":{"descriptor":{"digest":"sha256:` +
+			strings.Repeat("a", 64) + `"}}}`,
+	}}}
+	runtime := NewAppleRuntimeForTest(fake)
+	digest, err := runtime.ImageDigest(context.Background(), "control:test")
+	if err != nil || digest != "sha256:"+strings.Repeat("a", 64) {
+		t.Fatalf("ImageDigest() = %q, %v", digest, err)
+	}
+}
+
 func TestBuildControlArgsAreExactLoopbackAndSecretsRedact(t *testing.T) {
 	spec := ContainerSpec{
 		Name: "agentops-control", Role: "control", Image: "control:test",

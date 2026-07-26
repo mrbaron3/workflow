@@ -1,0 +1,83 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#16",
+  "baseCommit": "ba79d1f0e02fb71e23774db15dcde81190b735de",
+  "validatedAt": "2026-07-26T04:25:16Z",
+  "formalReviews": {
+    "count": 2,
+    "round1": {
+      "frozenHead": "845fd0183a6f6b9eb2752adfb4f565d484e5d7d8",
+      "codexWorkerDone": "msg_480aa1aed0e1",
+      "claudeWorkerDone": "msg_680519780323",
+      "repairCommit": "f461305dd751e5a0f9c839bc82cb5f748dc059e0"
+    },
+    "round2": {
+      "frozenHead": "f461305dd751e5a0f9c839bc82cb5f748dc059e0",
+      "codexWorkerDone": "msg_6349113ebb00",
+      "claudeWorkerDone": "msg_d35495802136",
+      "allConfirmedFindingsRepaired": true
+    },
+    "round3Created": false
+  },
+  "postRound2OwnerRepairs": [
+    "mutation receipts plus audited safe-mode compensation",
+    "immutable image and canonical runtime-spec reconciliation, including --build",
+    "database-time/persisted drain deadlines and completed-drain replay",
+    "lifecycle-row-first same-key serialization",
+    "actor/target/deadline/details semantic idempotency conflicts",
+    "trigger-side lifecycle row fence for direct SQL job inserts",
+    "dead copyStream helper removal",
+    "runner volume initialization after releasing the prior runner attachment"
+  ],
+  "validation": [
+    {
+      "command": "npm audit --audit-level=high",
+      "result": "passed; 0 vulnerabilities"
+    },
+    {
+      "command": "go vet ./...",
+      "result": "passed"
+    },
+    {
+      "command": "npm test",
+      "result": "passed; 98 files, 820 tests, 1 file/26 PostgreSQL-dependent tests skipped"
+    },
+    {
+      "command": "npm run build",
+      "result": "passed"
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "passed"
+    },
+    {
+      "command": "AGENTOPS_TEST_DATABASE_URL=<temporary-loopback-postgres> npm run test:postgres",
+      "result": "passed; 25/25"
+    },
+    {
+      "command": "AGENTOPS_TEST_DATABASE_URL=<temporary-loopback-postgres> go test -race ./...",
+      "result": "passed, including concurrent same-key transition and direct INSERT-vs-DRAINING fences"
+    },
+    {
+      "command": "AGENTOPS_TEST_DATABASE_URL=<temporary-loopback-postgres> npm run test:dashboard",
+      "result": "passed; 1/1 headless Chromium"
+    },
+    {
+      "command": "docker build --target control -t agentops-control:ciso06-final -f deploy/Containerfile .",
+      "result": "passed"
+    },
+    {
+      "command": "real Apple Container 1.1.0 lifecycle smoke",
+      "result": "passed; ACTIVE/build reconciliation, canonical specs, non-expired in-flight drain, stable proxy, persisted replay, exact publication, egress fence, recovery, and repeated stop"
+    }
+  ],
+  "preservedAppleResources": [
+    "agentops-ciso06-final-internal",
+    "agentops-ciso06-final-postgres-data",
+    "agentops-ciso06-final-runner-workspace"
+  ],
+  "residualRisks": [
+    "Apple Container grounding covers one arm64 macOS host; CI and standard OCI builds cover the portable boundary",
+    "external provider/GitHub mutation was intentionally not executed; inert credentials proved proxy routing and denial while existing expected-head and lease fences retain side-effect authority"
+  ]
+}

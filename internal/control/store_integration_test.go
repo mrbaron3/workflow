@@ -37,29 +37,80 @@ func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	deadline := time.Now().UTC().Add(time.Minute)
-	transition, state, err := store.Transition(
-		ctx,
-		"integration",
-		"active-to-draining",
-		lifecyclestore.ModeDraining,
-		&deadline,
-		map[string]any{"test": true},
-	)
-	if err != nil || transition.Status != "applied" ||
-		state.Mode != lifecyclestore.ModeDraining {
-		t.Fatalf("drain transition=%#v state=%#v err=%v", transition, state, err)
+	deadline := time.Now().UTC().Add(time.Minute).Round(time.Microsecond)
+	details := map[string]any{"test": true}
+	type transitionResult struct {
+		transition lifecyclestore.Transition
+		state      lifecyclestore.State
+		err        error
 	}
-	replay, _, err := store.Transition(
+	results := make([]transitionResult, 2)
+	var wait sync.WaitGroup
+	for index := range results {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			results[index].transition, results[index].state, results[index].err =
+				store.Transition(
+					ctx,
+					"integration",
+					"active-to-draining",
+					lifecyclestore.ModeDraining,
+					&deadline,
+					details,
+				)
+		}(index)
+	}
+	wait.Wait()
+	transition := results[0].transition
+	if transition.Replayed {
+		transition = results[1].transition
+	}
+	for index, result := range results {
+		if result.err != nil ||
+			result.transition.ID != transition.ID ||
+			result.state.Mode != lifecyclestore.ModeDraining {
+			t.Fatalf("concurrent transition[%d]=%#v state=%#v err=%v",
+				index, result.transition, result.state, result.err)
+		}
+	}
+	if results[0].transition.Replayed == results[1].transition.Replayed ||
+		transition.Status != "applied" {
+		t.Fatalf("same-key callers did not converge: %#v", results)
+	}
+	replay, replayState, err := store.Transition(
 		ctx,
 		"integration",
 		"active-to-draining",
 		lifecyclestore.ModeDraining,
 		&deadline,
-		nil,
+		details,
 	)
-	if err != nil || !replay.Replayed || replay.ID != transition.ID {
-		t.Fatalf("transition replay=%#v err=%v", replay, err)
+	if err != nil || !replay.Replayed || replay.ID != transition.ID ||
+		replayState.DrainDeadlineAt == nil ||
+		!replayState.DrainDeadlineAt.Equal(deadline) {
+		t.Fatalf("transition replay=%#v state=%#v err=%v", replay, replayState, err)
+	}
+	conflictingDeadline := deadline.Add(time.Second)
+	for name, candidate := range map[string]struct {
+		actor    string
+		deadline *time.Time
+		details  map[string]any
+	}{
+		"actor":    {"other-actor", &deadline, details},
+		"deadline": {"integration", &conflictingDeadline, details},
+		"details":  {"integration", &deadline, map[string]any{"test": false}},
+	} {
+		if _, _, err := store.Transition(
+			ctx,
+			candidate.actor,
+			"active-to-draining",
+			lifecyclestore.ModeDraining,
+			candidate.deadline,
+			candidate.details,
+		); !errors.Is(err, lifecyclestore.ErrIdempotencyConflict) {
+			t.Fatalf("%s idempotency conflict = %v", name, err)
+		}
 	}
 	if _, current, err := store.Transition(
 		ctx,
@@ -87,7 +138,7 @@ func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
 		"active-to-draining",
 		lifecyclestore.ModeDraining,
 		&deadline,
-		nil,
+		details,
 	); !errors.Is(err, lifecyclestore.ErrStaleReplay) {
 		t.Fatalf("old transition replay was not rejected as stale: %v", err)
 	}
@@ -188,6 +239,158 @@ func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
 	if err != nil || !status.State.DrainTimedOut ||
 		status.State.LastError == nil || len(status.RecentTransitions) < 4 {
 		t.Fatalf("lifecycle status=%#v err=%v", status, err)
+	}
+}
+
+func TestPostgresDirectInsertLifecycleFenceIntegration(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	store, err := lifecyclestore.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.repository_registrations(id, repository)
+		VALUES ('11000000-0000-4000-8000-000000000001', 'owner/fence')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	insertTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = insertTx.Rollback(context.Background()) }()
+	if _, err := insertTx.Exec(ctx, `
+		INSERT INTO agentops_control.jobs(
+		  id, registration_id, registration_version, source_kind, source_key,
+		  idempotency_key, job_type, payload, status
+		) VALUES (
+		  '21000000-0000-4000-8000-000000000001',
+		  '11000000-0000-4000-8000-000000000001',
+		  1, 'manual', 'before-drain', 'before-drain',
+		  'agentops.runner', '{}', 'queued'
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	drainDone := make(chan error, 1)
+	deadline := time.Now().UTC().Add(time.Minute).Round(time.Microsecond)
+	go func() {
+		_, _, transitionErr := store.Transition(
+			ctx,
+			"integration",
+			"direct-insert-drain",
+			lifecyclestore.ModeDraining,
+			&deadline,
+			map[string]any{"test": "direct-insert-fence"},
+		)
+		drainDone <- transitionErr
+	}()
+	select {
+	case err := <-drainDone:
+		t.Fatalf("drain crossed the uncommitted insert fence: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := insertTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-drainDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.jobs(
+		  id, registration_id, registration_version, source_kind, source_key,
+		  idempotency_key, job_type, payload, status
+		) VALUES (
+		  '21000000-0000-4000-8000-000000000002',
+		  '11000000-0000-4000-8000-000000000001',
+		  1, 'manual', 'after-drain', 'after-drain',
+		  'agentops.runner', '{}', 'queued'
+		)
+	`); err == nil {
+		t.Fatal("direct insert committed after DRAINING")
+	}
+
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"fence-draining-monitor",
+		lifecyclestore.ModeMonitorOnly,
+		nil,
+		map[string]any{"test": "direct-insert-fence"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"fence-monitor-active",
+		lifecyclestore.ModeActive,
+		nil,
+		map[string]any{"test": "direct-insert-fence"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agentops_control.jobs
+		   SET status = 'succeeded', finished_at = clock_timestamp(),
+		       updated_at = clock_timestamp()
+		 WHERE id = '21000000-0000-4000-8000-000000000001'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	drainTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = drainTx.Rollback(context.Background()) }()
+	if _, err := drainTx.Exec(ctx, `
+		UPDATE agentops_control.lifecycle_state
+		   SET mode = 'DRAINING', generation = generation + 1,
+		       updated_at = clock_timestamp()
+		 WHERE singleton
+	`); err != nil {
+		t.Fatal(err)
+	}
+	insertDone := make(chan error, 1)
+	go func() {
+		_, insertErr := pool.Exec(ctx, `
+			INSERT INTO agentops_control.jobs(
+			  id, registration_id, registration_version, source_kind, source_key,
+			  idempotency_key, job_type, payload, status
+			) VALUES (
+			  '21000000-0000-4000-8000-000000000003',
+			  '11000000-0000-4000-8000-000000000001',
+			  1, 'manual', 'racing-drain', 'racing-drain',
+			  'agentops.runner', '{}', 'queued'
+			)
+		`)
+		insertDone <- insertErr
+	}()
+	select {
+	case err := <-insertDone:
+		t.Fatalf("insert crossed the uncommitted drain fence: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := drainTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-insertDone; err == nil {
+		t.Fatal("racing direct insert committed after drain")
 	}
 }
 

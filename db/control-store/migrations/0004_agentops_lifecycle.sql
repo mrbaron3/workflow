@@ -49,11 +49,13 @@ RETURNS trigger
 LANGUAGE plpgsql
 AS $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1
-      FROM agentops_control.lifecycle_state
-     WHERE singleton AND mode = 'ACTIVE'
-  ) THEN
+  -- Take the same row fence used by lifecycle transitions. This prevents a
+  -- direct INSERT from observing ACTIVE and committing after DRAINING.
+  PERFORM 1
+    FROM agentops_control.lifecycle_state
+   WHERE singleton AND mode = 'ACTIVE'
+   FOR SHARE;
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'lifecycle mode does not permit new jobs'
       USING ERRCODE = '55000';
   END IF;

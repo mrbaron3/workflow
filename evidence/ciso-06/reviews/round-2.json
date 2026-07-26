@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "1.0",
+  "round": 2,
+  "finalRound": true,
+  "frozenHead": "f461305dd751e5a0f9c839bc82cb5f748dc059e0",
+  "baseCommit": "ba79d1f0e02fb71e23774db15dcde81190b735de",
+  "recordedAt": "2026-07-26T04:04:52Z",
+  "codex": {
+    "taskId": "task_8e35bb26791a",
+    "dispatchId": "ctx_b9962ac593f5",
+    "workerDoneMessageId": "msg_6349113ebb00",
+    "readOnly": true,
+    "filesModified": [],
+    "confirmedFindings": [
+      "preflight failures can be mistaken for mutations and later failures can leave durable mode divergent from compensated topology",
+      "ACTIVE --build and mutable-tag/config drift can be accepted by the running-container fast path",
+      "drain replay waits against a newly computed local deadline instead of the persisted deadline",
+      "concurrent same-key transitions can race into a unique-key error before replay"
+    ]
+  },
+  "claude": {
+    "taskId": "task_63fd588b9b98",
+    "dispatchId": "ctx_d887837ca413",
+    "workerDoneMessageId": "msg_d35495802136",
+    "readOnly": true,
+    "filesModified": [],
+    "confirmedFindings": [],
+    "lowNotes": [
+      "delete the unreferenced copyStream helper"
+    ],
+    "independentReportPath": "/private/tmp/claude-501/-Users-yu-Company-Development-workflow-ciso-06-agentopsctl-lifecycle/88565389-ab09-4840-9ca4-8c7309b3ec26/scratchpad/ciso06-review-round2-claude.md"
+  },
+  "ownerRepairs": [
+    "mutation receipts are issued only after host/image/spec preflight; compensation restores OFF/MONITOR_ONLY before execution or retains audited DRAINING after execution can begin",
+    "control/runner canonical fingerprints bind immutable image descriptors and complete desired runtime specs; --build and drift enter the drain/recreate path",
+    "drain waits against the database-returned persisted deadline",
+    "lifecycle row locking precedes same-key lookup, so concurrent callers converge on one transition",
+    "copyStream dead code was removed",
+    "post-review coordinator requirements added full actor/deadline/details idempotency binding and trigger-side lifecycle row locking"
+  ],
+  "plannedFinalValidation": [
+    "Go unit/race/vet with real PostgreSQL concurrency tests",
+    "TypeScript unit/PostgreSQL/typecheck/build and dependency audit",
+    "real Apple Container 1.1.0 lifecycle/spec/build/drain/recovery/publication/egress smoke",
+    "final-head GitHub Actions"
+  ],
+  "allConfirmedFindingsRepaired": true,
+  "round3Created": false
+}

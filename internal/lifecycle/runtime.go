@@ -3,10 +3,11 @@ package lifecycle
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -20,6 +21,7 @@ const (
 	managedLabelKey   = "com.mrbaron3.workflow.agentopsctl"
 	managedLabelValue = "v1"
 	roleLabelKey      = "com.mrbaron3.workflow.role"
+	specLabelKey      = "com.mrbaron3.workflow.spec-sha256"
 )
 
 var resourceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
@@ -160,7 +162,10 @@ type ContainerActual struct {
 		CapAdd   []string          `json:"capAdd"`
 		CapDrop  []string          `json:"capDrop"`
 		Image    struct {
-			Reference string `json:"reference"`
+			Reference  string `json:"reference"`
+			Descriptor struct {
+				Digest string `json:"digest"`
+			} `json:"descriptor"`
 		} `json:"image"`
 		InitProcess struct {
 			User struct {
@@ -303,6 +308,42 @@ func (runtime *AppleRuntime) ImageExists(ctx context.Context, image string) bool
 	return result.Status == 0
 }
 
+func (runtime *AppleRuntime) ImageDigest(
+	ctx context.Context,
+	image string,
+) (string, error) {
+	result := runtime.runner.Run(ctx, []string{"image", "inspect", image})
+	if result.Status != 0 {
+		return "", runtimeError(result, nil)
+	}
+	type inspection struct {
+		Configuration struct {
+			Descriptor struct {
+				Digest string `json:"digest"`
+			} `json:"descriptor"`
+		} `json:"configuration"`
+	}
+	var item inspection
+	body := []byte(result.Stdout)
+	if len(bytes.TrimSpace(body)) > 0 && bytes.TrimSpace(body)[0] == '[' {
+		var items []inspection
+		if err := json.Unmarshal(body, &items); err != nil {
+			return "", fmt.Errorf("parse Apple Container image inspect: %w", err)
+		}
+		if len(items) != 1 {
+			return "", fmt.Errorf("image inspect returned %d records for %s", len(items), image)
+		}
+		item = items[0]
+	} else if err := json.Unmarshal(body, &item); err != nil {
+		return "", fmt.Errorf("parse Apple Container image inspect: %w", err)
+	}
+	digest := strings.TrimSpace(item.Configuration.Descriptor.Digest)
+	if !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+64 {
+		return "", fmt.Errorf("image %s has no immutable sha256 descriptor", image)
+	}
+	return digest, nil
+}
+
 func (runtime *AppleRuntime) BuildImage(
 	ctx context.Context,
 	image, target, containerfile, root string,
@@ -330,6 +371,7 @@ type ContainerSpec struct {
 	Name        string
 	Role        string
 	Image       string
+	SpecDigest  string
 	Networks    []string
 	Environment map[string]string
 	Mounts      []Mount
@@ -344,6 +386,23 @@ type ContainerSpec struct {
 	Command     []string
 	Detach      bool
 	Remove      bool
+}
+
+func SpecDigest(spec ContainerSpec, imageDigest string) (string, error) {
+	spec.SpecDigest = ""
+	payload := struct {
+		Spec        ContainerSpec `json:"spec"`
+		ImageDigest string        `json:"imageDigest"`
+	}{
+		Spec:        spec,
+		ImageDigest: imageDigest,
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode container specification: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func (runtime *AppleRuntime) RunContainer(
@@ -404,6 +463,12 @@ func buildContainerArgs(spec ContainerSpec) ([]string, []string, error) {
 		"--label", managedLabelKey+"="+managedLabelValue,
 		"--label", roleLabelKey+"="+spec.Role,
 	)
+	if spec.SpecDigest != "" {
+		if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(spec.SpecDigest) {
+			return nil, nil, fmt.Errorf("invalid container specification digest")
+		}
+		args = append(args, "--label", specLabelKey+"="+spec.SpecDigest)
+	}
 	for _, network := range spec.Networks {
 		if err := validateResourceName(network); err != nil {
 			return nil, nil, err
@@ -626,8 +691,4 @@ func validateResourceName(name string) error {
 		)
 	}
 	return nil
-}
-
-func copyStream(destination io.Writer, source io.Reader) {
-	_, _ = io.Copy(destination, source)
 }

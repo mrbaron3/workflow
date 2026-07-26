@@ -7,10 +7,11 @@ control・runner・PostgreSQLをPostgreSQL権威のOFF／MONITOR_ONLY／ACTIVE�
 
 ## 主要変更
 
-- schema version 4へlifecycle singleton、idempotent/audited transition、drain deadline/timeout/errorを追加
-- DRAINING commitとdelivery routing／poll・webhook enqueue／job leaseをrow lock＋triggerで原子的にfence
-- actual container/lease/attemptを照合するrestart recoveryと、変更範囲限定のpartial-start compensation
+- schema version 4へlifecycle singleton、semantic-bound idempotent/audited transition、drain deadline/timeout/errorを追加
+- DRAINING commitとdelivery routing／poll・webhook enqueue／job lease／direct INSERT triggerを同一row lockで原子的にfence
+- actual container/lease/attemptを照合するrestart recoveryと、mutation receipt＋safe-mode rollbackによるpartial-start compensation
 - ownership検証付きApple Container adapter、exact loopback-only control publish、internal-only runner/PostgreSQL
+- immutable image descriptorとenvironment/init/security/network/mount/publicationのcanonical specで`--build`／driftをreconcile
 - runner direct egressをhost-only networkで拒否し、control CONNECT proxyでGitHub／GitHub API／選択providerの443だけ許可
 - read-only root、capability drop、private named volume、credential/DB role分離、argv/error redaction
 - unit／race／real PostgreSQL concurrency／full TypeScript／actual Apple Container lifecycle・publish・egress smoke
@@ -21,11 +22,12 @@ control・runner・PostgreSQLをPostgreSQL権威のOFF／MONITOR_ONLY／ACTIVE�
 - `mise exec go@1.24.0 -- go vet ./...`
 - `npm test`
 - `AGENTOPS_TEST_DATABASE_URL=<temporary-loopback-postgres> npm run test:postgres`
+- `AGENTOPS_TEST_DATABASE_URL=<temporary-loopback-postgres> npm run test:dashboard`
 - `npm run build`
-- `npm audit --omit=dev`
+- `npm audit --audit-level=high`
 - Apple Container 1.1.0/arm64でACTIVE→DRAINING→OFF、idempotent replay、DRAINING recovery、
-  MONITOR_ONLY volume restart、repeated stop、partial-start compensation、exact publish/security inspect、
-  allowed/denied CONNECTを実測
+  MONITOR_ONLY volume restart、repeated stop、partial-start compensation、ACTIVE `--build` reconciliation、
+  non-expired in-flight drain、exact publish/security inspect、allowed/denied CONNECTを実測
 
 証跡: `evidence/ciso-06/`
 
