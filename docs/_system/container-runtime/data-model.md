@@ -24,3 +24,6 @@
 - **DATA-container-runtime-007 agentopsctl actual status** — Apple Container capability、3 roleのstate/network/
   publish/socket/mount/read-only/capabilityとloopback probeを起動ごとに観測する揮発snapshot。persisted lifecycleとは
   同一視せず並べて表示する。
+- **DATA-container-runtime-008 credential volume and broker configuration** — runner-only named credential volume、
+  private`auth.json` destination、固定monitor repositoryを起動時specへ含める。source host path、credential値、
+  fingerprintはstatus/evidenceへ永続化しない。

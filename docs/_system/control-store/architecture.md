@@ -31,6 +31,10 @@
   actual containerを照合し、欠損ACTIVEをDRAININGへ寄せてから安全な復旧経路だけを通す。
 - **ARCH-control-store-015 Explicit Owner Migration** — 通常consumerはschema verify-onlyを保ち、短命なowner-only
   admin containerだけがadvisory lock下でversion 4 migrationとleast-privilege role bootstrapを行う。
+- **ARCH-control-store-016 Typed Private Monitor Broker** — credential-free controlはRegistration/version、固定repository、
+  issue/PR kind、strict cursorだけをdurable requestへ保存し、credential-bearing runnerがleaseしてsanitized identityだけを
+  応答する。stale/disabled/out-of-allowlist requestはprovider call前に拒否し、expiry後の回収とresponse digestを監査する。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
-[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)
+[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)

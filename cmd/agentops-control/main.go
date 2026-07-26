@@ -111,13 +111,23 @@ func run() error {
 	)
 	pollInterval := durationEnvironment("AGENTOPS_GITHUB_POLL_INTERVAL", time.Minute)
 	httpClient := &http.Client{Timeout: 30 * time.Second}
+	var monitorSource control.MonitorSource = control.GitHubSource{
+		Client:  httpClient,
+		BaseURL: environment("AGENTOPS_GITHUB_API_URL", "https://api.github.com"),
+		Token:   firstNonEmpty(os.Getenv("GH_TOKEN"), os.Getenv("GITHUB_TOKEN")),
+	}
+	if brokerRepository := strings.ToLower(strings.TrimSpace(
+		os.Getenv("AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY"),
+	)); brokerRepository != "" {
+		monitorSource = control.BrokeredGitHubSource{
+			Store:             store,
+			AllowedRepository: brokerRepository,
+			Timeout:           25 * time.Second,
+		}
+	}
 	runner := &control.ProductionRunner{
-		Store: store,
-		Source: control.GitHubSource{
-			Client:  httpClient,
-			BaseURL: environment("AGENTOPS_GITHUB_API_URL", "https://api.github.com"),
-			Token:   firstNonEmpty(os.Getenv("GH_TOKEN"), os.Getenv("GITHUB_TOKEN")),
-		},
+		Store:          store,
+		Source:         monitorSource,
 		Mode:           mode,
 		SupervisorID:   supervisorID,
 		PollInterval:   pollInterval,

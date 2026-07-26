@@ -22,6 +22,7 @@ export const RunnerStartupInput = z.object({
   workspaceRoot: z.string().min(1),
   databaseUrl: z.string().url(),
   provider: z.enum(['codex', 'claude']),
+  providerAuth: z.enum(['api-key', 'codex-login']),
   operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']),
   leaseDurationMs: z.number().int().min(5_000).max(60 * 60_000),
   heartbeatIntervalMs: z.number().int().min(500).max(10 * 60_000),
@@ -45,7 +46,8 @@ export type RunnerStartupInput = z.infer<typeof RunnerStartupInput>;
 export interface RunnerCredentials {
   githubToken: string;
   provider: 'codex' | 'claude';
-  providerToken: string;
+  providerToken: string | null;
+  codexHome: string | null;
 }
 
 export interface RunnerRuntimeBoundary {
@@ -155,10 +157,16 @@ function platformVirtualMount(mount: ObservedMount): boolean {
     || target.startsWith('/dev/');
 }
 
-function validateRuntimeBoundary(boundary: RunnerRuntimeBoundary): void {
+function validateRuntimeBoundary(
+  boundary: RunnerRuntimeBoundary,
+  requiresCredentialVolume: boolean,
+): void {
   const mounts = boundary.mountInfo.split('\n').filter(Boolean).map(observedMount);
   const workspace = mounts.find((mount) => mount.target === '/workspace');
   const root = mounts.find((mount) => mount.target === '/');
+  const credential = mounts.find(
+    (mount) => mount.target === '/run/agentops-credentials',
+  );
   if (!workspace || !workspace.options.includes('rw')) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
@@ -186,6 +194,23 @@ function validateRuntimeBoundary(boundary: RunnerRuntimeBoundary): void {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
       'kernel /workspace mount is not an observed private block-backed named volume',
+      false,
+    );
+  }
+  if (
+    requiresCredentialVolume
+    && (
+      !credential
+      || !credential.options.includes('ro')
+      || credential.options.includes('rw')
+      || !['ext4', 'xfs', 'btrfs'].includes(credential.fsType)
+      || !credential.source.startsWith('/dev/')
+      || credential.majorMinor === root.majorMinor
+    )
+  ) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'Codex credential path is not an observed read-only private named volume',
       false,
     );
   }
@@ -353,6 +378,16 @@ export function loadRunnerStartup(
   const provider = z.enum(['codex', 'claude']).parse(
     env.AGENTOPS_RUNNER_PROVIDER,
   );
+  const providerAuth = z.enum(['api-key', 'codex-login']).parse(
+    env.AGENTOPS_RUNNER_PROVIDER_AUTH ?? 'api-key',
+  );
+  if (providerAuth === 'codex-login' && provider !== 'codex') {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'codex-login authentication is valid only for the codex provider',
+      false,
+    );
+  }
   const selectedProviderKey = PROVIDER_TOKEN_KEYS[provider];
   for (const [candidate, key] of Object.entries(PROVIDER_TOKEN_KEYS)) {
     if (candidate !== provider && env[key]) {
@@ -401,6 +436,7 @@ export function loadRunnerStartup(
     workspaceRoot,
     databaseUrl,
     provider,
+    providerAuth,
     operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']).parse(
       env.AGENTOPS_OPERATING_MODE ?? 'MONITOR_ONLY',
     ),
@@ -428,14 +464,31 @@ export function loadRunnerStartup(
     outbound,
   });
 
+  const workspaceMount = config.mounts.find(
+    (mount) => mount.target === '/workspace',
+  );
+  const credentialMount = config.mounts.find(
+    (mount) => mount.target === '/run/agentops-credentials',
+  );
+  if (!workspaceMount || workspaceMount.readOnly) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'runner must have one writable named volume mounted at /workspace',
+      false,
+    );
+  }
   if (
-    config.mounts.length !== 1
-    || config.mounts[0]?.target !== '/workspace'
-    || config.mounts[0].readOnly
+    config.providerAuth === 'api-key'
+      ? config.mounts.length !== 1
+      : (
+        config.mounts.length !== 2
+        || !credentialMount
+        || !credentialMount.readOnly
+      )
   ) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
-      'runner must have exactly one writable named volume mounted at /workspace',
+      'runner mounts do not match its exact provider credential boundary',
       false,
     );
   }
@@ -479,7 +532,45 @@ export function loadRunnerStartup(
       false,
     );
   }
-  if (runtimeBoundary) validateRuntimeBoundary(runtimeBoundary);
+  let providerToken: string | null = null;
+  let codexHome: string | null = null;
+  if (config.providerAuth === 'codex-login') {
+    codexHome = assertContainerNeutralPath(env.CODEX_HOME ?? '', 'CODEX_HOME');
+    if (codexHome !== '/run/agentops-credentials/codex') {
+      throw new RunnerExecutionError(
+        'startup_isolation_failure',
+        'Codex login must use /run/agentops-credentials/codex',
+        false,
+      );
+    }
+    let authInfo: fs.Stats;
+    try {
+      authInfo = fs.statSync(path.join(codexHome, 'auth.json'));
+    } catch (error) {
+      throw new RunnerExecutionError(
+        'startup_isolation_failure',
+        'Codex auth.json is unavailable in the credential volume',
+        false,
+        null,
+        { cause: error },
+      );
+    }
+    if (!authInfo.isFile() || (authInfo.mode & 0o077) !== 0) {
+      throw new RunnerExecutionError(
+        'startup_isolation_failure',
+        'Codex auth.json must be a private regular file',
+        false,
+      );
+    }
+  } else {
+    providerToken = requiredSecret(env, selectedProviderKey);
+  }
+  if (runtimeBoundary) {
+    validateRuntimeBoundary(
+      runtimeBoundary,
+      config.providerAuth === 'codex-login',
+    );
+  }
 
   return {
     config,
@@ -487,7 +578,8 @@ export function loadRunnerStartup(
     credentials: {
       githubToken: requiredSecret(env, 'AGENTOPS_RUNNER_GITHUB_TOKEN'),
       provider,
-      providerToken: requiredSecret(env, selectedProviderKey),
+      providerToken,
+      codexHome,
     },
   };
 }
@@ -524,7 +616,9 @@ export function minimalExecutionEnvironment(
     GITHUB_TOKEN: credentials.githubToken,
     GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',
     GIT_TERMINAL_PROMPT: '0',
-    [providerKey]: credentials.providerToken,
+    ...(credentials.providerToken
+      ? { [providerKey]: credentials.providerToken }
+      : { CODEX_HOME: credentials.codexHome ?? '' }),
   };
 }
 

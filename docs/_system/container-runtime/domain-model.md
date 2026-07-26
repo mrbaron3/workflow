@@ -31,3 +31,5 @@
   adapterは同名foreign resourceを変更しない。
 - **DOM-container-runtime-011 Actual Topology** — persisted modeと独立に観測されるcontrol/runner/PostgreSQLの実状態。
 - **DOM-container-runtime-012 Compensation Scope** —1回のstartが作成・置換したcontainer集合。失敗時削除範囲の上限となる。
+- **DOM-container-runtime-013 Runner Credential Boundary** — GitHub monitor credentialとprovider credentialをrunnerだけに
+  所有させ、control/host mount/argv/logから隔離するaggregate。

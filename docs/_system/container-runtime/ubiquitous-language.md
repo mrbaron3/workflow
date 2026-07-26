@@ -22,3 +22,5 @@
 | LANG-container-runtime-013 | Lifecycle Owner | Apple Container topologyを操作する短命な`agentopsctl` process。 |
 | LANG-container-runtime-014 | Actual Topology | runtime inspectで観測した3 container、network、publish、mount、security属性の現在値。 |
 | LANG-container-runtime-015 | Scoped Compensation | partial startで当該試行が変更したcontainerだけをrollbackし、volumeと既存workを保存する処理。 |
+| LANG-container-runtime-016 | Runner Credential Volume | provider login fileだけをprivate stdinでseedしrunnerへread-only mountするnamed volume。 |
+| LANG-container-runtime-017 | Typed Monitor Broker | controlの固定Issue/PR read要求をrunner credential境界内で実行するdurable broker。任意HTTP proxyではない。 |

@@ -43,12 +43,16 @@
   GitHub/GitHub API/選択providerの443だけへ到達する。PostgreSQLはactual internal IPv4で直接到達する。
 - **ARCH-container-runtime-014 Scoped compensation** — partial startは当該試行が変更したcontainerだけを停止・削除し、
   named volumeと既存in-flight topologyを保存する。
+- **ARCH-container-runtime-015 Runner-only monitor credential boundary** — private repository read credentialとCodex credentialは
+  runnerだけへ渡す。controlのGitHub credentialは空のまま、runnerはinternal network上のcontrol egress allowlist経由で
+  固定typed monitor endpointへ出る。MONITOR_ONLYでもbrokerは動くがexecution leaseはmode fenceが拒否する。
 
 ## 段階導入
 
 - #11（CISO-01）: `ARCH-container-runtime-001`〜`007` を一括で確立する（本フェーズが基盤）。
 - #14（CISO-04）: `runner` stageとprivate Registration workspaceを`ARCH-container-runtime-008`〜`010`で追加する。
 - #16（CISO-06）: `agentopsctl` lifecycleとactual publish/compensationを`ARCH-container-runtime-011`〜`014`で追加する。
+- #17（CISO-07）: private monitor credential boundaryを`ARCH-container-runtime-015`で追加する。
 
 ## grounded smoke
 

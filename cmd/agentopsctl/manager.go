@@ -42,6 +42,17 @@ func (manager *manager) Start(
 	if err := manager.ensureRuntime(ctx); err != nil {
 		return err
 	}
+	if build || !manager.runtime.ImageExists(ctx, manager.config.PostgresImage) {
+		if err := manager.runtime.BuildImage(
+			ctx,
+			manager.config.PostgresImage,
+			"postgres",
+			filepath.Join(manager.config.ProjectRoot, "deploy", "Containerfile"),
+			manager.config.ProjectRoot,
+		); err != nil {
+			return err
+		}
+	}
 	if build || !manager.runtime.ImageExists(ctx, manager.config.ControlImage) {
 		if err := manager.runtime.BuildImage(
 			ctx,
@@ -53,8 +64,7 @@ func (manager *manager) Start(
 			return err
 		}
 	}
-	if mode == lifecycle.ModeActive &&
-		(build || !manager.runtime.ImageExists(ctx, manager.config.RunnerImage)) {
+	if build || !manager.runtime.ImageExists(ctx, manager.config.RunnerImage) {
 		if err := manager.runtime.BuildImage(
 			ctx,
 			manager.config.RunnerImage,
@@ -73,6 +83,14 @@ func (manager *manager) Start(
 	}
 	if err := manager.runtime.EnsureVolume(ctx, manager.config.RunnerVolume); err != nil {
 		return err
+	}
+	if manager.config.usesCodexAuthFile() {
+		if err := manager.runtime.EnsureVolume(
+			ctx,
+			manager.config.CredentialVolume,
+		); err != nil {
+			return err
+		}
 	}
 	postgresStarted := false
 	controlChanged := false
@@ -190,12 +208,12 @@ func (manager *manager) Start(
 			}
 		}
 	}
+	receipt, err := manager.replaceRunner(ctx, mode)
+	runnerChanged = runnerChanged || receipt.Mutated
+	if err != nil {
+		return err
+	}
 	if mode == lifecycle.ModeActive {
-		receipt, err := manager.replaceRunner(ctx, lifecycle.ModeActive)
-		runnerChanged = runnerChanged || receipt.Mutated
-		if err != nil {
-			return err
-		}
 		current, err := manager.databaseStatus(ctx)
 		if err != nil {
 			return err
@@ -210,15 +228,11 @@ func (manager *manager) Start(
 				return err
 			}
 		}
-	} else {
-		if err := manager.removeRunner(ctx); err != nil {
-			return err
-		}
 	}
 	return manager.verifyPublishedSurface(
 		ctx,
 		true,
-		mode == lifecycle.ModeActive,
+		true,
 		mode,
 	)
 }
@@ -867,12 +881,13 @@ func (manager *manager) controlSpec(
 				"http://127.0.0.1:%d",
 				manager.config.ControlHostPort,
 			),
-			"AGENTOPS_CONTROL_LISTEN":             "127.0.0.1:8081",
-			"AGENTOPS_CONTROL_PROXY_LISTEN":       "0.0.0.0:8080",
-			"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN": "0.0.0.0:8082",
-			"AGENTOPS_RUNNER_PROVIDER":            manager.config.Provider,
-			"GH_TOKEN":                            manager.config.ControlGitHubToken,
-			"AGENTOPS_APP_ROOT":                   "/app",
+			"AGENTOPS_CONTROL_LISTEN":                   "127.0.0.1:8081",
+			"AGENTOPS_CONTROL_PROXY_LISTEN":             "0.0.0.0:8080",
+			"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":       "0.0.0.0:8082",
+			"AGENTOPS_RUNNER_PROVIDER":                  manager.config.Provider,
+			"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY": manager.config.MonitorRepository,
+			"GH_TOKEN":          manager.config.ControlGitHubToken,
+			"AGENTOPS_APP_ROOT": "/app",
 		},
 		Publish: []lifecycle.Publication{{
 			HostIP:        "127.0.0.1",
@@ -917,6 +932,69 @@ func (manager *manager) ensureRunnerVolumeOwner(ctx context.Context) error {
 	return err
 }
 
+func (manager *manager) seedCodexCredentialVolume(ctx context.Context) error {
+	if !manager.config.usesCodexAuthFile() {
+		return nil
+	}
+	if err := validateCodexAuthSource(manager.config.CodexAuthPath); err != nil {
+		return err
+	}
+	name := fmt.Sprintf(
+		"%s-credential-init-%d",
+		manager.config.Prefix,
+		os.Getpid(),
+	)
+	_, err := manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+		Name:     name,
+		Role:     "volume-init",
+		Image:    manager.config.RunnerImage,
+		Networks: []string{manager.config.Network},
+		Mounts: []lifecycle.Mount{{
+			Volume: manager.config.CredentialVolume,
+			Target: "/credentials",
+		}},
+		User:       "root",
+		Entrypoint: "/bin/sh",
+		Command: []string{
+			"-c",
+			"mkdir -p /credentials/codex && " +
+				"chown 0:0 /credentials/codex && " +
+				"chmod 0700 /credentials/codex && " +
+				"chown 65532:65532 /credentials/codex && sleep 600",
+		},
+		CapDropAll: true,
+		CapAdd:     []string{"CAP_CHOWN"},
+		Detach:     true,
+		Remove:     true,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = manager.runtime.Stop(context.Background(), name, 5)
+		_ = manager.runtime.Delete(context.Background(), name)
+	}()
+	ready, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	if err := manager.runtime.WaitState(
+		ready,
+		name,
+		"running",
+		250*time.Millisecond,
+	); err != nil {
+		return err
+	}
+	if err := manager.runtime.CopyFileToContainer(
+		ctx,
+		name,
+		manager.config.CodexAuthPath,
+		"/credentials/codex/auth.json",
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (manager *manager) replaceRunner(
 	ctx context.Context,
 	mode lifecycle.Mode,
@@ -947,6 +1025,9 @@ func (manager *manager) replaceRunner(
 	if err := manager.ensureRunnerVolumeOwner(ctx); err != nil {
 		return receipt, err
 	}
+	if err := manager.seedCodexCredentialVolume(ctx); err != nil {
+		return receipt, err
+	}
 	_, err = manager.runtime.RunContainer(ctx, spec)
 	if err != nil {
 		return receipt, err
@@ -971,7 +1052,19 @@ func (manager *manager) replaceRunner(
 		return receipt, err
 	}
 	if actual == nil || actual.Status.State != "running" {
-		return receipt, fmt.Errorf("runner exited during readiness stabilization")
+		logs := manager.runtime.RecentLogs(
+			ctx,
+			manager.config.RunnerContainer,
+			100,
+		)
+		detail := strings.TrimSpace(logs.Stdout + logs.Stderr)
+		if detail == "" {
+			detail = "no runner log output"
+		}
+		return receipt, fmt.Errorf(
+			"runner exited during readiness stabilization: %s",
+			redactedError(errors.New(detail), manager.config),
+		)
 	}
 	return receipt, nil
 }
@@ -991,11 +1084,28 @@ func (manager *manager) runnerSpec(
 		outbound = append(outbound, map[string]any{"host": "api.anthropic.com", "port": 443})
 	}
 	outboundJSON, _ := json.Marshal(outbound)
-	mountJSON, _ := json.Marshal([]map[string]any{{
+	mounts := []map[string]any{{
 		"source":   manager.config.RunnerVolume,
 		"target":   "/workspace",
 		"readOnly": false,
-	}})
+	}}
+	runtimeMounts := []lifecycle.Mount{{
+		Volume: manager.config.RunnerVolume,
+		Target: "/workspace",
+	}}
+	if manager.config.usesCodexAuthFile() {
+		mounts = append(mounts, map[string]any{
+			"source":   manager.config.CredentialVolume,
+			"target":   "/run/agentops-credentials",
+			"readOnly": true,
+		})
+		runtimeMounts = append(runtimeMounts, lifecycle.Mount{
+			Volume:   manager.config.CredentialVolume,
+			Target:   "/run/agentops-credentials",
+			ReadOnly: true,
+		})
+	}
+	mountJSON, _ := json.Marshal(mounts)
 	environment := map[string]string{
 		"AGENTOPS_RUNNER_DATABASE_URL":         manager.config.runnerDatabaseURL(databaseHost),
 		"AGENTOPS_RUNNER_WORKER_ID":            manager.config.RunnerContainer,
@@ -1005,13 +1115,21 @@ func (manager *manager) runnerSpec(
 		"AGENTOPS_RUNNER_PUBLISHED_PORTS_JSON": "[]",
 		"AGENTOPS_RUNNER_OUTBOUND_JSON":        string(outboundJSON),
 		"AGENTOPS_RUNNER_GITHUB_TOKEN":         manager.config.RunnerGitHubToken,
+		"AGENTOPS_MONITOR_REPOSITORY":          manager.config.MonitorRepository,
 		"HTTPS_PROXY":                          "http://" + controlHost + ":8082",
 		"HTTP_PROXY":                           "http://" + controlHost + ":8082",
 		"NO_PROXY":                             databaseHost + ",127.0.0.1,localhost",
 	}
 	if manager.config.Provider == "codex" {
-		environment["OPENAI_API_KEY"] = manager.config.ProviderToken
+		if manager.config.usesCodexAuthFile() {
+			environment["AGENTOPS_RUNNER_PROVIDER_AUTH"] = "codex-login"
+			environment["CODEX_HOME"] = "/run/agentops-credentials/codex"
+		} else {
+			environment["AGENTOPS_RUNNER_PROVIDER_AUTH"] = "api-key"
+			environment["OPENAI_API_KEY"] = manager.config.ProviderToken
+		}
 	} else {
+		environment["AGENTOPS_RUNNER_PROVIDER_AUTH"] = "api-key"
 		environment["ANTHROPIC_API_KEY"] = manager.config.ProviderToken
 	}
 	return lifecycle.ContainerSpec{
@@ -1020,15 +1138,12 @@ func (manager *manager) runnerSpec(
 		Image:       manager.config.RunnerImage,
 		Networks:    []string{manager.config.Network},
 		Environment: environment,
-		Mounts: []lifecycle.Mount{{
-			Volume: manager.config.RunnerVolume,
-			Target: "/workspace",
-		}},
-		Tmpfs:      []string{"/tmp", "/home/agentops"},
-		ReadOnly:   true,
-		CapDropAll: true,
-		Init:       true,
-		Detach:     true,
+		Mounts:      runtimeMounts,
+		Tmpfs:       []string{"/tmp", "/home/agentops"},
+		ReadOnly:    true,
+		CapDropAll:  true,
+		Init:        true,
+		Detach:      true,
 	}
 }
 
@@ -1469,11 +1584,15 @@ func validateRunnerActual(
 		len(actual.Configuration.PublishedSock) != 0 {
 		return fmt.Errorf("runner exposes a host port or socket")
 	}
-	if !exactMounts(actual, map[string]string{
+	expectedMounts := map[string]string{
 		"/tmp":           "tmpfs",
 		"/home/agentops": "tmpfs",
 		"/workspace":     config.RunnerVolume,
-	}) {
+	}
+	if config.usesCodexAuthFile() {
+		expectedMounts["/run/agentops-credentials"] = config.CredentialVolume
+	}
+	if !exactMounts(actual, expectedMounts) {
 		return fmt.Errorf("runner mounts do not match the hardened topology")
 	}
 	return nil

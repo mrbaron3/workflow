@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { Pool } from 'pg';
@@ -109,6 +110,34 @@ integration('PostgreSQL control store', () => {
     });
   }
 
+  async function insertMonitorBrokerRequest(input: {
+    registrationId: string;
+    registrationVersion: number;
+    kind?: 'issue' | 'pull_request';
+    cursor?: { updatedAfter: string };
+  }): Promise<string> {
+    const id = randomUUID();
+    const cursor = input.cursor ?? { updatedAfter: '' };
+    const digest = createHash('sha256')
+      .update(JSON.stringify(cursor))
+      .digest('hex');
+    await pool.query(
+      `INSERT INTO agentops_control.monitor_broker_requests(
+         id, registration_id, registration_version, repository,
+         monitor_kind, cursor, cursor_sha256
+       ) VALUES ($1, $2, $3, 'mrbaron3/workflow', $4, $5, $6)`,
+      [
+        id,
+        input.registrationId,
+        input.registrationVersion,
+        input.kind ?? 'issue',
+        cursor,
+        digest,
+      ],
+    );
+    return id;
+  }
+
   it('atomically fences racing enqueue and lease acquisition when drain commits', async () => {
     const store = await migratedStore();
     const registered = await registration(store, '-mode-fence');
@@ -192,6 +221,7 @@ integration('PostgreSQL control store', () => {
       '0002_registration_control.sql',
       '0003_isolated_runner.sql',
       '0004_agentops_lifecycle.sql',
+      '0005_private_monitor_broker.sql',
     ]) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
@@ -199,7 +229,7 @@ integration('PostgreSQL control store', () => {
       );
       fs.writeFileSync(
         path.join(directory, name),
-        name.startsWith('0004_')
+        name.startsWith('0005_')
           ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
           : valid,
       );
@@ -229,6 +259,118 @@ integration('PostgreSQL control store', () => {
       await blocker.query('SELECT pg_advisory_unlock($1)', [CONTROL_MIGRATION_LOCK_KEY]);
       blocker.release();
     }
+  });
+
+  it('deduplicates typed monitor work, fences stale leases, and rejects stale Registration', async () => {
+    const store = await migratedStore();
+    const repo = await store.createRegistration({
+      repository: 'mrbaron3/workflow',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: {},
+    });
+    const requestId = await insertMonitorBrokerRequest({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+    });
+    await expect(insertMonitorBrokerRequest({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+    })).rejects.toMatchObject({ code: '23505' });
+
+    const claims = await Promise.all([
+      store.claimMonitorBrokerRequest({
+        workerId: 'monitor-runner-a',
+        allowedRepository: repo.repository,
+        leaseMs: 5_000,
+      }),
+      store.claimMonitorBrokerRequest({
+        workerId: 'monitor-runner-b',
+        allowedRepository: repo.repository,
+        leaseMs: 5_000,
+      }),
+    ]);
+    const first = claims.find((claim) => claim !== null);
+    expect(first).toMatchObject({
+      id: requestId,
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+      repository: repo.repository,
+      monitorKind: 'issue',
+      cursor: { updatedAfter: '' },
+    });
+    expect(claims.filter((claim) => claim !== null)).toHaveLength(1);
+
+    await pool.query(
+      `UPDATE agentops_control.monitor_broker_requests
+          SET lease_expires_at = clock_timestamp() - interval '1 second'
+        WHERE id = $1`,
+      [requestId],
+    );
+    const recovered = await store.claimMonitorBrokerRequest({
+      workerId: 'monitor-runner-recovery',
+      allowedRepository: repo.repository,
+      leaseMs: 5_000,
+    });
+    expect(recovered).toMatchObject({ id: requestId });
+    expect(recovered?.leaseToken).not.toBe(first?.leaseToken);
+    await expect(store.completeMonitorBrokerRequest({
+      request: first!,
+      workerId: claims[0] === first ? 'monitor-runner-a' : 'monitor-runner-b',
+      response: {},
+      itemCount: 0,
+    })).rejects.toThrow(/stale or lost/);
+    const response = {
+      items: [],
+      nextCursor: { updatedAfter: '' },
+      observedAt: new Date().toISOString(),
+    };
+    await store.completeMonitorBrokerRequest({
+      request: recovered!,
+      workerId: 'monitor-runner-recovery',
+      response,
+      itemCount: 0,
+    });
+
+    const staleId = await insertMonitorBrokerRequest({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+      kind: 'pull_request',
+    });
+    await store.updateRegistration(repo.id, { enabled: false });
+    await expect(store.claimMonitorBrokerRequest({
+      workerId: 'monitor-runner-stale',
+      allowedRepository: repo.repository,
+      leaseMs: 5_000,
+    })).resolves.toBeNull();
+    const stale = await pool.query<{
+      status: string;
+      error_code: string | null;
+    }>(
+      `SELECT status, error_code
+         FROM agentops_control.monitor_broker_requests
+        WHERE id = $1`,
+      [staleId],
+    );
+    expect(stale.rows[0]).toMatchObject({
+      status: 'failed',
+      error_code: 'stale_registration',
+    });
+    const audit = await pool.query<{ event_type: string }>(
+      `SELECT event_type
+         FROM agentops_control.runtime_audit
+        WHERE registration_id = $1
+          AND event_type LIKE 'monitor.broker.%'
+        ORDER BY id`,
+      [repo.id],
+    );
+    expect(audit.rows.map((row) => row.event_type)).toEqual(expect.arrayContaining([
+      'monitor.broker.claimed',
+      'monitor.broker.completed',
+      'monitor.broker.denied',
+    ]));
   });
 
   it('deduplicates concurrent webhook and poll enqueue and duplicate deliveries', async () => {

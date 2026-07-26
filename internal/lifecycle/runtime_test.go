@@ -2,6 +2,9 @@ package lifecycle
 
 import (
 	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -23,6 +26,14 @@ func (runner *fakeRuntimeRunner) Run(
 	runner.results = runner.results[1:]
 	result.Args = append([]string(nil), args...)
 	return result
+}
+
+func (runner *fakeRuntimeRunner) RunWithStdin(
+	ctx context.Context,
+	args []string,
+	_ io.Reader,
+) CommandResult {
+	return runner.Run(ctx, args)
 }
 
 func TestBuildContainerArgsEnforcesPublicationAndNamedMounts(t *testing.T) {
@@ -207,5 +218,30 @@ func TestRuntimeErrorsRedactEnvironmentValues(t *testing.T) {
 	})
 	if err == nil || strings.Contains(err.Error(), "secret-value") {
 		t.Fatalf("error was not safely redacted: %v", err)
+	}
+}
+
+func TestCopyFileToContainerRedactsHostCredentialPathOnFailure(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(source, []byte("private\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeRuntimeRunner{results: []CommandResult{{
+		Status: 1, Stderr: "copy rejected",
+	}}}
+	runtime := NewAppleRuntimeForTest(fake)
+	err := runtime.CopyFileToContainer(
+		context.Background(),
+		"agentops-credential-init",
+		source,
+		"/credentials/codex/auth.json",
+	)
+	if err == nil || strings.Contains(err.Error(), source) {
+		t.Fatalf("credential source path leaked: %v", err)
+	}
+	if len(fake.args) != 1 ||
+		fake.args[0][0] != "exec" ||
+		strings.Contains(strings.Join(fake.args[0], " "), source) {
+		t.Fatalf("private stdin copy exposed the host source: %#v", fake.args)
 	}
 }

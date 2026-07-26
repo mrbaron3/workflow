@@ -1333,6 +1333,7 @@ func resetAndMigrate(
 		"0002_registration_control.sql",
 		"0003_isolated_runner.sql",
 		"0004_agentops_lifecycle.sql",
+		"0005_private_monitor_broker.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

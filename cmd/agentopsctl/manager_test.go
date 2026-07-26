@@ -122,13 +122,15 @@ func testManagerConfig() config {
 		Network:           "agentops-internal",
 		PostgresVolume:    "agentops-postgres-data",
 		RunnerVolume:      "agentops-runner-workspace",
+		CredentialVolume:  "agentops-runner-credentials",
 		PostgresContainer: "agentops-postgres",
 		ControlContainer:  "agentops-control",
 		RunnerContainer:   "agentops-runner",
-		PostgresImage:     "postgres:16",
+		PostgresImage:     "agentops-postgres:dev",
 		ControlImage:      "control:test",
 		RunnerImage:       "runner:test",
 		ControlHostPort:   8080,
 		Provider:          "codex",
+		MonitorRepository: "mrbaron3/workflow",
 	}
 }

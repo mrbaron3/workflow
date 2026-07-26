@@ -1,0 +1,67 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#17",
+  "immutableBase": "257dc557753b099a646c94d3e3cc700468ffb32a",
+  "claimedIntake": "INTAKE-0001",
+  "planningInvocation": "INVOKE-0001",
+  "planningEnrichment": {
+    "id": "ENRICH-0001",
+    "status": "needs-human-review",
+    "preservedWithoutSuccessRewrite": true,
+    "ambiguityCount": 7
+  },
+  "decisionGates": [
+    {
+      "requestMessageId": "msg_4d1aa7b8286d",
+      "replyMessageId": "msg_4482f7c75487",
+      "scope": "current Codex login copied into a managed runner-only named volume; one current GitHub OAuth token runner-only; initially planned unauthenticated control monitoring; no second credential wait",
+      "supersededPremise": "The repository was discovered to be private and unauthenticated control polling failed honestly with GitHub 404.",
+      "secretOrFingerprintRecorded": false
+    },
+    {
+      "requestMessageId": "msg_21c98a5e66c0",
+      "replyMessageId": "msg_cee18193059f",
+      "scope": "runner-mediated private-repository monitor broker bounded strictly to mrbaron3/workflow and typed Issue/PR read operations; no generic proxy or credential sharing",
+      "secretOrFingerprintRecorded": false
+    }
+  ],
+  "resolvedDecisions": [
+    {
+      "ambiguity": "current-head review cardinality",
+      "resolution": "Keep the existing six independent LLM perspectives and deterministic functionality gate; do not change the seven-gate model."
+    },
+    {
+      "ambiguity": "repository, base, required checks, and merge method",
+      "resolution": "The only Registration and mutable GitHub target is mrbaron3/workflow on main; required checks are macos and postgres; merge method is squash; synthetic unregistered input is rejected before any provider call."
+    },
+    {
+      "ambiguity": "OCI pin and build policy",
+      "resolution": "Build control, runner, and PostgreSQL as separate standard-OCI targets from digest-pinned upstream bases; package and provider CLI versions are explicit; record exact resulting descriptors."
+    },
+    {
+      "ambiguity": "credential bootstrap and rotation",
+      "resolution": "Use role-separated PostgreSQL credentials, credential-free control, runner-only GitHub OAuth, and either a provider API key or a private Codex auth.json copied by stdin into a managed volume. Because mrbaron3/workflow is private, control submits only durable typed Issue/PR reads and runner returns bounded identities through the allowlisted broker. Rotation requires DRAINING to OFF before reseeding and must fail closed."
+    },
+    {
+      "ambiguity": "scanner and severity policy",
+      "resolution": "Use aquasec/trivy 0.65.0 at sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436; fail on HIGH or CRITICAL vulnerabilities and any secret finding; record scanner database and report digests."
+    },
+    {
+      "ambiguity": "restart and recovery semantics",
+      "resolution": "Restart into MONITOR_ONLY first, verify Registration, cursor, job, attempt, lease, audit, and artifact references from volumes, and require an explicit transition before returning to ACTIVE."
+    },
+    {
+      "ambiguity": "child set and release authority",
+      "resolution": "Regression lineage is PR #9 and released Issues #11 through #16; completion requires the #17 PR merged at expected head, Issue #17 CLOSED/COMPLETED, merge reachable from origin/main, and PostgreSQL/GitHub current-state reconciliation. Parent #10 remains coordinator-owned and is never mutated here."
+    }
+  ],
+  "bootstrapCutover": {
+    "reason": "The integration implementation cannot be the normal main-branch runtime that merges the commit which first introduces that runtime.",
+    "boundedAction": "Claim and planning use the existing intake. A host checkout creates the implementation commit and draft PR only. After the current integration head exists, the real three-container runner performs current-head review reconciliation, required-check gating, expected-SHA merge, Issue release, and current GitHub reconciliation.",
+    "normalExecutionClaimsExcluded": [
+      "host-side PR creation is not claimed as integrated execution",
+      "the needs-human-review planning record is not rewritten",
+      "no database job or GitHub state is manually rewritten to success"
+    ]
+  }
+}

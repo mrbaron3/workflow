@@ -12,7 +12,7 @@
 # Stage boundary keeps the TypeScript runner and Go control-plane release surfaces independent.
 
 # --- deps: resolve the full dependency graph from the lockfile (reproducible) -------------------
-FROM node:22-bookworm-slim AS deps
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS deps
 WORKDIR /app
 # Only the manifest + lockfile, so this layer caches unless dependencies change.
 COPY package.json package-lock.json ./
@@ -26,7 +26,7 @@ COPY . .
 RUN npm run typecheck && npm run build
 
 # --- control-build: compile and unit-test the Registration-driven Go control plane ----------------
-FROM golang:1.24-bookworm AS control-build
+FROM golang:1.24-bookworm@sha256:1a6d4452c65dea36aac2e2d606b01b4a029ec90cc1ae53890540ce6173ea77ac AS control-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -51,9 +51,10 @@ CMD ["go", "test", "-race", "./..."]
 # Runs the harness via the tsx launcher (bin/agentops.mjs). Retains the toolchain so the in-container
 # graders (typecheck / unit tests) run against container-relative paths; a leaner prod-only split is a
 # later concern (#14) and does not change this image's standard-OCI shape.
-FROM node:22-bookworm-slim AS runtime
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
 # git is part of the harness grader/runner toolchain (it shells out to git); install it reproducibly.
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git=1:2.39.5-0+deb12u3 \
     && rm -rf /var/lib/apt/lists/*
 # Container-neutral roots (DATA-container-runtime-004). AGENTOPS_APP_ROOT is CONSUMED by the CLI
 # bootstrap (resolveHarnessRoot): Store / workspace / systemDir all anchor on it, so nothing depends on
@@ -78,7 +79,12 @@ ARG CODEX_VERSION=0.145.0
 ARG CLAUDE_CODE_VERSION=2.1.220
 COPY --chown=root:root deploy/agentops-git-askpass /usr/local/bin/agentops-git-askpass
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bubblewrap ca-certificates gh tmux openssh-client \
+    && apt-get install -y --no-install-recommends \
+         bubblewrap=0.8.0-2+deb12u1 \
+         ca-certificates=20230311+deb12u1 \
+         gh=2.23.0+dfsg1-1 \
+         tmux=3.3a-3 \
+         openssh-client=1:9.2p1-2+deb12u10 \
     && npm install --global \
          "@openai/codex@${CODEX_VERSION}" \
          "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
@@ -101,11 +107,14 @@ USER agentops
 ENTRYPOINT ["node", "dist/src/runner/cli.js"]
 
 # --- control: Go agentops-control + fixed gh forwarder adapter ------------------------------------
-FROM debian:bookworm-slim AS control
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS control
 ARG TARGETARCH
 ARG GH_WEBHOOK_VERSION=v0.2.0
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl gh \
+    && apt-get install -y --no-install-recommends \
+         ca-certificates=20230311+deb12u1 \
+         curl=7.88.1-10+deb12u15 \
+         gh=2.23.0+dfsg1-1 \
     && useradd --uid 65532 --create-home --shell /usr/sbin/nologin agentops \
     && architecture="${TARGETARCH:-$(dpkg --print-architecture)}" \
     && case "$architecture" in \
@@ -139,3 +148,14 @@ COPY --from=control-build /src/docs /app/docs
 USER agentops
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/agentops-control"]
+
+# --- postgres: pinned standard-OCI persistence boundary ------------------------------------------
+# agentopsctl builds and runs this target instead of pulling a mutable tag at deployment time.
+# The upstream entrypoint retains PostgreSQL's volume initialization semantics; agentopsctl owns
+# role-separated bootstrap, migrations, readiness, rollback-safe failure, and the named volume.
+FROM postgres:16-bookworm@sha256:92620daddcd947f8d5ab5ba66e848702fe443d87fed30c4cea8e389fd78dfc55 AS postgres
+LABEL org.opencontainers.image.source="https://github.com/mrbaron3/workflow" \
+      org.opencontainers.image.title="AgentOps PostgreSQL" \
+      org.opencontainers.image.description="Pinned PostgreSQL persistence boundary for AgentOps"
+HEALTHCHECK --interval=5s --timeout=3s --start-period=20s --retries=12 \
+  CMD ["pg_isready", "-U", "postgres", "-d", "agentops"]

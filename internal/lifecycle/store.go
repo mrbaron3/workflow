@@ -601,6 +601,8 @@ func BootstrapRoles(
 		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
 		   agentops_control.job_leases, agentops_control.artifact_links
 		   TO agentops_runner`,
+		`GRANT SELECT, UPDATE ON agentops_control.monitor_broker_requests
+		   TO agentops_runner`,
 		`GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_runner`,
 		`GRANT USAGE, SELECT ON SEQUENCE agentops_control.runtime_audit_id_seq
 		   TO agentops_runner`,

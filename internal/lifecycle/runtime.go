@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -41,12 +43,16 @@ type environmentRuntimeRunner interface {
 	RunWithEnvironment(context.Context, []string, map[string]string) CommandResult
 }
 
+type stdinRuntimeRunner interface {
+	RunWithStdin(context.Context, []string, io.Reader) CommandResult
+}
+
 type execRuntimeRunner struct {
 	binary string
 }
 
 func (runner execRuntimeRunner) Run(ctx context.Context, args []string) CommandResult {
-	return runner.run(ctx, args, nil)
+	return runner.run(ctx, args, nil, nil)
 }
 
 func (runner execRuntimeRunner) RunWithEnvironment(
@@ -54,15 +60,25 @@ func (runner execRuntimeRunner) RunWithEnvironment(
 	args []string,
 	environment map[string]string,
 ) CommandResult {
-	return runner.run(ctx, args, environment)
+	return runner.run(ctx, args, environment, nil)
+}
+
+func (runner execRuntimeRunner) RunWithStdin(
+	ctx context.Context,
+	args []string,
+	stdin io.Reader,
+) CommandResult {
+	return runner.run(ctx, args, nil, stdin)
 }
 
 func (runner execRuntimeRunner) run(
 	ctx context.Context,
 	args []string,
 	environment map[string]string,
+	stdin io.Reader,
 ) CommandResult {
 	command := exec.CommandContext(ctx, runner.binary, args...)
+	command.Stdin = stdin
 	if len(environment) > 0 {
 		values := make(map[string]string)
 		for _, item := range os.Environ() {
@@ -595,6 +611,54 @@ func (runtime *AppleRuntime) Exec(
 	return runtime.runner.Run(ctx, args)
 }
 
+// CopyFileToContainer copies one validated regular file into a running managed
+// container. The host source path is intentionally omitted from returned
+// errors: it can disclose operator directory structure and is never useful to
+// durable evidence.
+func (runtime *AppleRuntime) CopyFileToContainer(
+	ctx context.Context,
+	name, source, destination string,
+) error {
+	if err := validateResourceName(name); err != nil {
+		return err
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return fmt.Errorf("credential source is unavailable")
+	}
+	if !filepath.IsAbs(source) || !info.Mode().IsRegular() {
+		return fmt.Errorf("credential source must be an absolute regular file")
+	}
+	if !regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`).MatchString(destination) ||
+		strings.Contains(destination, "..") ||
+		strings.Contains(destination, "//") {
+		return fmt.Errorf("copy destination must be a safe container-absolute path")
+	}
+	sourceFile, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("credential source is unavailable")
+	}
+	defer sourceFile.Close()
+	stdinRunner, ok := runtime.runner.(stdinRuntimeRunner)
+	if !ok {
+		return fmt.Errorf("container runtime does not support private stdin copy")
+	}
+	result := stdinRunner.RunWithStdin(ctx, []string{
+		"exec", "--interactive", "--user", "65532:65532", name,
+		"/bin/sh", "-c",
+		"rm -f " + destination + "; umask 077; cat > " + destination +
+			" && chmod 0400 " + destination,
+	}, sourceFile)
+	if result.Status != 0 {
+		result.Args = []string{
+			"exec", "--interactive", "--user", "65532:65532", name,
+			"/bin/sh", "-c", "***private-stdin-copy***",
+		}
+		return runtimeError(result, nil)
+	}
+	return nil
+}
+
 func (runtime *AppleRuntime) WaitState(
 	ctx context.Context,
 	name, expected string,
@@ -637,6 +701,22 @@ func (runtime *AppleRuntime) FollowLogs(
 	command.Stdout = os.Stdout
 	command.Stderr = os.Stderr
 	return command.Run()
+}
+
+func (runtime *AppleRuntime) RecentLogs(
+	ctx context.Context,
+	name string,
+	lines int,
+) CommandResult {
+	if err := validateResourceName(name); err != nil {
+		return CommandResult{Status: -1, Stderr: err.Error()}
+	}
+	if lines < 1 || lines > 500 {
+		return CommandResult{Status: -1, Stderr: "log line count must be 1..500"}
+	}
+	return runtime.runner.Run(ctx, []string{
+		"logs", "-n", strconv.Itoa(lines), name,
+	})
 }
 
 func (runtime *AppleRuntime) command(

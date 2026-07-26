@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import {
   Pool,
   type Notification,
@@ -11,6 +11,7 @@ import {
   EnqueueJobInput,
   IdempotencyConflictError,
   LeaseRejectedError,
+  MonitorBrokerCursor,
   OperatingModeError,
   RepositoryBusyError,
   RepositoryRegistrationInput,
@@ -24,6 +25,7 @@ import {
   type ExecutionGuardVerdict,
   type JobEnvelope,
   type Lease,
+  type MonitorBrokerRequest,
   type ReconciliationWork,
   type RepositoryRegistration,
   type RunnerJobFailureV1,
@@ -68,6 +70,16 @@ interface WebhookDeliveryRow extends QueryResultRow {
   headers: Record<string, string>;
   payload: Record<string, unknown>;
   received_at: Date;
+}
+
+interface MonitorBrokerRequestRow extends QueryResultRow {
+  id: string;
+  registration_id: string;
+  registration_version: string;
+  repository: string;
+  monitor_kind: 'issue' | 'pull_request';
+  cursor: { updatedAfter: string };
+  lease_token: string;
 }
 
 function registration(row: RegistrationRow): RepositoryRegistration {
@@ -307,6 +319,253 @@ export class PostgresControlStore {
       observedAt: row.observed_at.toISOString(),
       updatedAt: row.updated_at.toISOString(),
     } : null;
+  }
+
+  async claimMonitorBrokerRequest(input: {
+    workerId: string;
+    allowedRepository: string;
+    leaseMs: number;
+  }): Promise<MonitorBrokerRequest | null> {
+    if (
+      !Number.isInteger(input.leaseMs)
+      || input.leaseMs < 5_000
+      || input.leaseMs > 60_000
+    ) {
+      throw new Error('monitor broker lease must be 5000..60000ms');
+    }
+    const allowedRepository = input.allowedRepository.trim().toLowerCase();
+    return transaction(this.pool, async (client) => {
+      const rejected = await client.query<{ id: string; registration_id: string }>(
+        `UPDATE agentops_control.monitor_broker_requests request
+            SET status = 'failed',
+                worker_id = NULL,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                error_code = 'stale_registration',
+                error_message = 'registration is stale, disabled, or outside the broker allowlist',
+                completed_at = clock_timestamp(),
+                updated_at = clock_timestamp()
+          WHERE request.status IN ('pending', 'leased')
+            AND (request.status = 'pending'
+              OR request.lease_expires_at <= clock_timestamp())
+            AND (
+              request.repository <> $1
+              OR NOT EXISTS (
+                SELECT 1
+                  FROM agentops_control.repository_registrations registration
+                 WHERE registration.id = request.registration_id
+                   AND registration.version = request.registration_version
+                   AND registration.repository = request.repository
+                   AND registration.enabled
+                   AND (
+                     (request.monitor_kind = 'issue'
+                       AND registration.issue_monitor_enabled)
+                     OR
+                     (request.monitor_kind = 'pull_request'
+                       AND registration.pr_monitor_enabled)
+                   )
+              )
+            )
+        RETURNING request.id, request.registration_id`,
+        [allowedRepository],
+      );
+      for (const row of rejected.rows) {
+        await client.query(
+          `INSERT INTO agentops_control.runtime_audit(
+             actor_type, actor_id, event_type, registration_id, details
+           ) VALUES ('runner', $1, 'monitor.broker.denied', $2, $3)`,
+          [
+            input.workerId,
+            row.registration_id,
+            { requestId: row.id, reason: 'stale_registration' },
+          ],
+        );
+      }
+
+      const leaseToken = randomUUID();
+      const result = await client.query<MonitorBrokerRequestRow>(
+        `WITH candidate AS (
+           SELECT request.id
+             FROM agentops_control.monitor_broker_requests request
+             JOIN agentops_control.repository_registrations registration
+               ON registration.id = request.registration_id
+              AND registration.version = request.registration_version
+              AND registration.repository = request.repository
+            WHERE request.repository = $1
+              AND registration.enabled
+              AND (
+                (request.monitor_kind = 'issue'
+                  AND registration.issue_monitor_enabled)
+                OR
+                (request.monitor_kind = 'pull_request'
+                  AND registration.pr_monitor_enabled)
+              )
+              AND (
+                request.status = 'pending'
+                OR (
+                  request.status = 'leased'
+                  AND request.lease_expires_at <= clock_timestamp()
+                )
+              )
+            ORDER BY request.created_at, request.id
+            FOR UPDATE OF request SKIP LOCKED
+            LIMIT 1
+         )
+         UPDATE agentops_control.monitor_broker_requests request
+            SET status = 'leased',
+                worker_id = $2,
+                lease_token = $3,
+                lease_expires_at =
+                  clock_timestamp() + ($4 * interval '1 millisecond'),
+                response = NULL,
+                error_code = NULL,
+                error_message = NULL,
+                completed_at = NULL,
+                updated_at = clock_timestamp()
+           FROM candidate
+          WHERE request.id = candidate.id
+        RETURNING request.id, request.registration_id,
+                  request.registration_version, request.repository,
+                  request.monitor_kind, request.cursor, request.lease_token`,
+        [allowedRepository, input.workerId, leaseToken, input.leaseMs],
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      const cursor = MonitorBrokerCursor.parse(row.cursor);
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, details
+         ) VALUES ('runner', $1, 'monitor.broker.claimed', $2, $3)`,
+        [
+          input.workerId,
+          row.registration_id,
+          {
+            requestId: row.id,
+            registrationVersion: Number(row.registration_version),
+            repository: row.repository,
+            monitorKind: row.monitor_kind,
+          },
+        ],
+      );
+      return {
+        id: row.id,
+        registrationId: row.registration_id,
+        registrationVersion: Number(row.registration_version),
+        repository: row.repository,
+        monitorKind: row.monitor_kind,
+        cursor,
+        leaseToken: row.lease_token,
+      };
+    });
+  }
+
+  async completeMonitorBrokerRequest(input: {
+    request: MonitorBrokerRequest;
+    workerId: string;
+    response: Record<string, unknown>;
+    itemCount: number;
+  }): Promise<void> {
+    await transaction(this.pool, async (client) => {
+      const completed = await client.query(
+        `UPDATE agentops_control.monitor_broker_requests
+            SET status = 'succeeded',
+                worker_id = NULL,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                response = $4,
+                error_code = NULL,
+                error_message = NULL,
+                completed_at = clock_timestamp(),
+                updated_at = clock_timestamp()
+          WHERE id = $1
+            AND lease_token = $2
+            AND worker_id = $3
+            AND status = 'leased'
+            AND lease_expires_at > clock_timestamp()
+        RETURNING registration_id`,
+        [
+          input.request.id,
+          input.request.leaseToken,
+          input.workerId,
+          input.response,
+        ],
+      );
+      if ((completed.rowCount ?? 0) !== 1) {
+        throw new Error('monitor broker lease is stale or lost');
+      }
+      const responseDigest = createHash('sha256')
+        .update(JSON.stringify(input.response))
+        .digest('hex');
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, details
+         ) VALUES ('runner', $1, 'monitor.broker.completed', $2, $3)`,
+        [
+          input.workerId,
+          input.request.registrationId,
+          {
+            requestId: input.request.id,
+            registrationVersion: input.request.registrationVersion,
+            repository: input.request.repository,
+            monitorKind: input.request.monitorKind,
+            itemCount: input.itemCount,
+            responseSha256: responseDigest,
+          },
+        ],
+      );
+    });
+  }
+
+  async failMonitorBrokerRequest(input: {
+    request: MonitorBrokerRequest;
+    workerId: string;
+    code: string;
+    message: string;
+  }): Promise<void> {
+    const message = input.message.slice(0, 512);
+    await transaction(this.pool, async (client) => {
+      const failed = await client.query(
+        `UPDATE agentops_control.monitor_broker_requests
+            SET status = 'failed',
+                worker_id = NULL,
+                lease_token = NULL,
+                lease_expires_at = NULL,
+                response = NULL,
+                error_code = $4,
+                error_message = $5,
+                completed_at = clock_timestamp(),
+                updated_at = clock_timestamp()
+          WHERE id = $1
+            AND lease_token = $2
+            AND worker_id = $3
+            AND status = 'leased'
+        RETURNING registration_id`,
+        [
+          input.request.id,
+          input.request.leaseToken,
+          input.workerId,
+          input.code,
+          message,
+        ],
+      );
+      if ((failed.rowCount ?? 0) !== 1) return;
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, registration_id, details
+         ) VALUES ('runner', $1, 'monitor.broker.failed', $2, $3)`,
+        [
+          input.workerId,
+          input.request.registrationId,
+          {
+            requestId: input.request.id,
+            registrationVersion: input.request.registrationVersion,
+            repository: input.request.repository,
+            monitorKind: input.request.monitorKind,
+            code: input.code,
+          },
+        ],
+      );
+    });
   }
 
   async receiveWebhook(input: {
