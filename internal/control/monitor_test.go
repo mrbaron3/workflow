@@ -159,6 +159,38 @@ func TestMonitorDoesNotAdvanceCursorWhenSingleFlightIsBusy(t *testing.T) {
 	}
 }
 
+func TestPRIntentActiveStartupFenceDoesNotFailOrAdvanceMonitor(t *testing.T) {
+	store := &fakeMonitorStore{enqueueError: ErrOperatingMode}
+	runner := &ProductionRunner{
+		Store: store,
+		Mode:  ModeActive,
+		Source: fakeMonitorSource{items: []WorkItem{{
+			Repository: "owner/repo",
+			Kind:       "pull_request",
+			Number:     41,
+			UpdatedAt:  time.Now(),
+		}}},
+		SupervisorID: "test",
+	}
+	err := runner.pollOnce(context.Background(), Registration{
+		ID:               "registration-1",
+		Repository:       "owner/repo",
+		Enabled:          true,
+		PRMonitorEnabled: true,
+		ExecutionEnabled: true,
+		Version:          1,
+	}, "pull_request", ComponentPRMonitor)
+	if err != nil {
+		t.Fatalf("startup lifecycle fence was projected as monitor failure: %v", err)
+	}
+	if store.savedCursors != 0 {
+		t.Fatal("startup lifecycle fence advanced the cursor before ACTIVE")
+	}
+	if store.actualStates != 1 {
+		t.Fatal("startup lifecycle fence did not keep monitor health current")
+	}
+}
+
 func TestExecutionDisabledMonitorPersistsObservationWithoutEnqueue(t *testing.T) {
 	store := &fakeMonitorStore{}
 	polls := 0

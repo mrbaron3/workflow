@@ -154,7 +154,8 @@ func (runner *ProductionRunner) pollOnce(
 			item,
 		)
 		if err != nil {
-			if errors.Is(err, ErrRepositoryBusy) {
+			if errors.Is(err, ErrRepositoryBusy) ||
+				errors.Is(err, ErrOperatingMode) {
 				return runner.Store.UpsertActualState(
 					ctx,
 					registration,
