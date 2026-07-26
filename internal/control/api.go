@@ -514,6 +514,7 @@ func (api *API) registrationCommand(
 			if api.registrationCommandError(
 				writer,
 				err,
+				duplicate,
 				registration,
 				id,
 				expectedVersion,
@@ -558,6 +559,7 @@ func (api *API) registrationCommand(
 			if api.registrationCommandError(
 				writer,
 				err,
+				duplicate,
 				registration,
 				id,
 				expectedVersion,
@@ -1116,6 +1118,7 @@ func commandOutcome(
 func (api *API) registrationCommandError(
 	writer http.ResponseWriter,
 	err error,
+	duplicate bool,
 	current Registration,
 	registrationID string,
 	expectedVersion int64,
@@ -1154,6 +1157,14 @@ func (api *API) registrationCommandError(
 		}
 		writer.Header().Set("ETag", quotedVersion(current.Version))
 	}
+	recordedAt := time.Now().UTC()
+	var rejection *RegistrationCommandRejection
+	if errors.As(err, &rejection) {
+		recordedAt = rejection.RecordedAt
+	}
+	if duplicate {
+		writer.Header().Set("Idempotent-Replay", "true")
+	}
 	writeJSON(writer, status, map[string]any{
 		"outcome": commandOutcome(
 			idempotencyKey,
@@ -1164,7 +1175,7 @@ func (api *API) registrationCommandError(
 				RegistrationVersion: expectedVersion,
 			},
 			currentFence,
-			time.Now().UTC(),
+			recordedAt,
 		),
 		"error": map[string]any{
 			"code":    reason,

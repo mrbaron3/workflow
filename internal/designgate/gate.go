@@ -84,6 +84,12 @@ func ValidateDashboard(repositoryRoot string) (GateResult, error) {
 	if err != nil {
 		return GateResult{}, fmt.Errorf("dashboard manifest: %w", err)
 	}
+	if err := validatePinnedSchema(
+		"urn:designflow:schema:v1:design-bundle-manifest",
+		manifestRaw,
+	); err != nil {
+		return GateResult{}, fmt.Errorf("dashboard manifest schema: %w", err)
+	}
 	if bundle.SchemaVersion != "1.0" ||
 		bundle.RevisionID != "workflow-ciso05-dashboard-r02" ||
 		bundle.BundleDigest != ApprovedDashboardBundleDigest {
@@ -96,6 +102,12 @@ func ValidateDashboard(repositoryRoot string) (GateResult, error) {
 	sourceRaw, err := os.ReadFile(sourcePath)
 	if err != nil {
 		return GateResult{}, fmt.Errorf("dashboard Design Request: %w", err)
+	}
+	if err := validatePinnedSchema(
+		"urn:designflow:schema:v1:design-request",
+		sourceRaw,
+	); err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Design Request schema: %w", err)
 	}
 	sourceDigest, err := digestArtifact(sourceRaw, "application/json")
 	if err != nil || sourceDigest != bundle.SourceDigest {
@@ -117,11 +129,40 @@ func ValidateDashboard(repositoryRoot string) (GateResult, error) {
 		if err != nil || digest != artifact.Digest {
 			return GateResult{}, fmt.Errorf("dashboard artifact %s digest mismatch", key)
 		}
+		switch artifact.SchemaRef {
+		case "urn:designflow:schema:v1:experience-contract",
+			"urn:designflow:schema:v1:design-system-delta",
+			"urn:designflow:schema:v1:capability-requirements":
+			if err := validatePinnedSchema(artifact.SchemaRef, body); err != nil {
+				return GateResult{}, fmt.Errorf("dashboard artifact %s schema: %w", key, err)
+			}
+		case designTokensSchemaRef:
+			if err := validateDesignTokens(body); err != nil {
+				return GateResult{}, fmt.Errorf("dashboard artifact %s token format: %w", key, err)
+			}
+		case "none":
+			if artifact.MediaType != "text/html" {
+				return GateResult{}, fmt.Errorf("dashboard artifact %s has no schema for non-preview media", key)
+			}
+		default:
+			return GateResult{}, fmt.Errorf(
+				"dashboard artifact %s references an unpinned schema %s",
+				key,
+				artifact.SchemaRef,
+			)
+		}
 	}
 
 	var approval decision
-	if _, err := readStrict(decisionPath, &approval); err != nil {
+	approvalRaw, err := readStrict(decisionPath, &approval)
+	if err != nil {
 		return GateResult{}, fmt.Errorf("dashboard Human Design Decision: %w", err)
+	}
+	if err := validatePinnedSchema(
+		"urn:designflow:schema:v1:human-design-decision",
+		approvalRaw,
+	); err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Human Design Decision schema: %w", err)
 	}
 	if approval.DecisionID != "workflow-ciso05-dashboard-r02-approve" ||
 		approval.Verdict != "approve" ||

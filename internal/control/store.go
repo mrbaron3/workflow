@@ -426,14 +426,20 @@ func (store *Store) UpdateRegistrationCommand(
 		if storedHash != requestHash {
 			return Registration{}, false, ErrIdempotencyConflict
 		}
-		var registration Registration
-		if err := json.Unmarshal(storedResponse, &registration); err != nil {
+		var stored registrationCommandRecord
+		if err := json.Unmarshal(storedResponse, &stored); err != nil {
 			return Registration{}, false, unavailable(err)
 		}
 		if err := transaction.Commit(ctx); err != nil {
 			return Registration{}, false, unavailable(err)
 		}
-		return registration, true, nil
+		if stored.ErrorReason != "" {
+			return stored.Registration, true, registrationCommandRejection(
+				stored.ErrorReason,
+				stored.RecordedAt,
+			)
+		}
+		return stored.Registration, true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Registration{}, false, unavailable(err)
@@ -444,16 +450,55 @@ func (store *Store) UpdateRegistrationCommand(
 		id,
 	))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Registration{}, false, ErrNotFound
+		return persistRegistrationCommandRejection(
+			ctx,
+			transaction,
+			scope,
+			idempotencyKey,
+			requestHash,
+			actorID,
+			eventType,
+			id,
+			expectedVersion,
+			Registration{},
+			"registration_not_found",
+			404,
+		)
 	}
 	if err != nil {
 		return Registration{}, false, unavailable(err)
 	}
 	if previous.Version != expectedVersion {
-		return previous, false, ErrConflict
+		return persistRegistrationCommandRejection(
+			ctx,
+			transaction,
+			scope,
+			idempotencyKey,
+			requestHash,
+			actorID,
+			eventType,
+			id,
+			expectedVersion,
+			previous,
+			"registration_version_mismatch",
+			409,
+		)
 	}
 	if !registrationPatchChanges(patch, previous) {
-		return previous, false, ErrNoChange
+		return persistRegistrationCommandRejection(
+			ctx,
+			transaction,
+			scope,
+			idempotencyKey,
+			requestHash,
+			actorID,
+			eventType,
+			id,
+			expectedVersion,
+			previous,
+			"registration_patch_has_no_change",
+			400,
+		)
 	}
 	var configuration any
 	if len(patch.Configuration) > 0 {
@@ -486,7 +531,10 @@ func (store *Store) UpdateRegistrationCommand(
 	if err != nil {
 		return Registration{}, false, classifyPostgres(err)
 	}
-	response, _ := json.Marshal(registration)
+	response, _ := json.Marshal(registrationCommandRecord{
+		Registration: registration,
+		RecordedAt:   registration.UpdatedAt,
+	})
 	if _, err := transaction.Exec(ctx,
 		`INSERT INTO agentops_control.control_api_requests(
 		   scope, idempotency_key, request_hash, status_code, response, actor_id
@@ -522,6 +570,94 @@ func (store *Store) UpdateRegistrationCommand(
 		return Registration{}, false, unavailable(err)
 	}
 	return registration, false, nil
+}
+
+type registrationCommandRecord struct {
+	Registration Registration `json:"registration"`
+	ErrorReason  string       `json:"errorReason,omitempty"`
+	RecordedAt   time.Time    `json:"recordedAt"`
+}
+
+func registrationCommandRejection(
+	reason string,
+	recordedAt time.Time,
+) *RegistrationCommandRejection {
+	cause := ErrConflict
+	switch reason {
+	case "registration_not_found":
+		cause = ErrNotFound
+	case "registration_patch_has_no_change":
+		cause = ErrNoChange
+	}
+	return &RegistrationCommandRejection{
+		Cause:      cause,
+		Reason:     reason,
+		RecordedAt: recordedAt,
+	}
+}
+
+func persistRegistrationCommandRejection(
+	ctx context.Context,
+	transaction pgx.Tx,
+	scope, idempotencyKey, requestHash, actorID, eventType string,
+	registrationID string,
+	expectedVersion int64,
+	current Registration,
+	reason string,
+	statusCode int,
+) (Registration, bool, error) {
+	var recordedAt time.Time
+	if err := transaction.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&recordedAt); err != nil {
+		return Registration{}, false, unavailable(err)
+	}
+	record := registrationCommandRecord{
+		Registration: current,
+		ErrorReason:  reason,
+		RecordedAt:   recordedAt,
+	}
+	response, _ := json.Marshal(record)
+	if _, err := transaction.Exec(ctx,
+		`INSERT INTO agentops_control.control_api_requests(
+		   scope, idempotency_key, request_hash, status_code, response, actor_id
+		 ) VALUES ($1, $2, $3, $4, $5, $6)`,
+		scope,
+		idempotencyKey,
+		requestHash,
+		statusCode,
+		response,
+		actorID,
+	); err != nil {
+		return Registration{}, false, classifyPostgres(err)
+	}
+	var auditRegistrationID *string
+	var currentVersion *int64
+	if current.ID != "" {
+		auditRegistrationID = &current.ID
+		currentVersion = &current.Version
+	}
+	if err := appendAuditTx(
+		ctx,
+		transaction,
+		actorID,
+		eventType,
+		auditRegistrationID,
+		nil,
+		map[string]any{
+			"registrationId":        registrationID,
+			"expectedVersion":       expectedVersion,
+			"currentVersion":        currentVersion,
+			"outcome":               map[bool]string{true: "version_conflict", false: "rejected"}[reason == "registration_version_mismatch"],
+			"reason":                reason,
+			"commandIdentityDigest": "sha256:" + sha256Hex([]byte(idempotencyKey)),
+			"recordedAt":            recordedAt,
+		},
+	); err != nil {
+		return Registration{}, false, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return Registration{}, false, unavailable(err)
+	}
+	return current, false, registrationCommandRejection(reason, recordedAt)
 }
 
 func registrationDesiredAudit(registration Registration) map[string]bool {
@@ -1708,17 +1844,27 @@ func (store *Store) Projections(
 		var activeJobUpdatedAt *time.Time
 		if err := transaction.QueryRow(ctx,
 			`SELECT
-			   count(*) FILTER (WHERE status = 'queued'),
-			   (array_agg(id::text ORDER BY updated_at DESC, id DESC)
-			      FILTER (WHERE status = 'leased'))[1],
-			   (array_agg(status ORDER BY updated_at DESC, id DESC)
-			      FILTER (WHERE status IN ('leased', 'queued')))[1],
-			   (array_agg(registration_version ORDER BY updated_at DESC, id DESC)
-			      FILTER (WHERE status IN ('leased', 'queued')))[1],
-			   (array_agg(updated_at ORDER BY updated_at DESC, id DESC)
-			      FILTER (WHERE status IN ('leased', 'queued')))[1]
-			 FROM agentops_control.jobs
-			WHERE registration_id = $1`,
+				   count(*) FILTER (WHERE job.status = 'queued'),
+				   (array_agg(
+				      job.id::text
+				      ORDER BY COALESCE(lease.heartbeat_at, job.updated_at) DESC, job.id DESC
+				    ) FILTER (WHERE job.status = 'leased'))[1],
+				   (array_agg(
+				      job.status
+				      ORDER BY COALESCE(lease.heartbeat_at, job.updated_at) DESC, job.id DESC
+				    ) FILTER (WHERE job.status IN ('leased', 'queued')))[1],
+				   (array_agg(
+				      job.registration_version
+				      ORDER BY COALESCE(lease.heartbeat_at, job.updated_at) DESC, job.id DESC
+				    ) FILTER (WHERE job.status IN ('leased', 'queued')))[1],
+				   (array_agg(
+				      COALESCE(lease.heartbeat_at, job.updated_at)
+				      ORDER BY COALESCE(lease.heartbeat_at, job.updated_at) DESC, job.id DESC
+				    ) FILTER (WHERE job.status IN ('leased', 'queued')))[1]
+				 FROM agentops_control.jobs AS job
+				 LEFT JOIN agentops_control.job_leases AS lease
+				   ON lease.job_id = job.id AND lease.status = 'active'
+				WHERE job.registration_id = $1`,
 			registration.ID,
 		).Scan(
 			&projection.QueueDepth,

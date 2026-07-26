@@ -35,6 +35,20 @@ var (
 	ErrNoChange            = errors.New("registration patch does not change desired state")
 )
 
+type RegistrationCommandRejection struct {
+	Cause      error
+	Reason     string
+	RecordedAt time.Time
+}
+
+func (rejection *RegistrationCommandRejection) Error() string {
+	return rejection.Cause.Error()
+}
+
+func (rejection *RegistrationCommandRejection) Unwrap() error {
+	return rejection.Cause
+}
+
 type Registration struct {
 	ID                  string `json:"id"`
 	Repository          string `json:"repository"`

@@ -23,6 +23,9 @@
 - **ARCH-registration-control-007 Experience design gate** — Control API 起動前に
   `mrbaron3/designflow@contract-v1.0.0-rc.1` の pinned bundle を検証し、human-approved decision と
   `revisionId` / `bundleDigest` の一致、capability 完全性、ambiguity 不在、API/system/Issue AC coverage を要求する。
+  provider commit由来の7 JSON SchemaをSHA-256 trust anchor付きでbinaryへembedし、manifest、request、
+  decision、Experience Contract、Design System Delta、Capability Requirementsへ適用する。Design Tokensも
+  DTCG group/token/$type/$value構造をfail-closedで検証し、未知schemaRefは拒否する。
   self-consistentな差替えもcompiled trust anchorのexact bundleDigest不一致として拒否し、unapproved、
   digest mismatch、mixed revision、incomplete capability、coverage 欠落は fail closed にする。
 - **ARCH-registration-control-008 Wake + truth recovery** — Registration と webhook の `LISTEN/NOTIFY` は
@@ -43,7 +46,8 @@
   `MONITOR_ONLY|ACTIVE` mode と Issue Monitor、PR Monitor、Forwarder、Execution、Queue の desired / actual /
   observedAt / freshness / staleReason / lastGoodAt / lastError / recoveryState を Registration version-bound
   repeatable-read snapshot から返す。MONITOR_ONLY は monitor observation を継続するが enqueue/lease/execution を
-  fail-closed で阻止し、DB/API 切断を cached success に置換しない。
+  fail-closed で阻止し、DB/API 切断を cached success に置換しない。leased Execution/QueueのobservedAtは
+  `jobs.updated_at`ではなくactive `job_leases.heartbeat_at`を正本にして長時間jobを誤ってstale表示しない。
 - **ARCH-registration-control-012 Strict command envelope** — create/update/disable/retry は allowlisted
   repository identity と boolean flag、明示した fence 以外を strict JSON decoder で拒否する。arbitrary command、
   host path、image、mount、credential、environment、provider endpoint は API schema と runner payload の双方に
@@ -51,6 +55,8 @@
 - **ARCH-registration-control-013 Duplicate-safe outcome + version fence** — create/update/disable/retry は
   request hash と response を PostgreSQL transaction に保存し、applied/duplicate の structured outcome、
   command identity digest、observed/current Registration fence、recordedAt、cancellable=false を返す。
+  update/disableのnot-found、version-conflict、no-changeも同じidentity、outcome、recordedAt、auditを保存し、
+  rejected keyを異なるfence/patchへ再利用できない。
   disable は version を一度だけ進め、旧versionの queued jobをtransactionalにrejectし、leased workも既存の
   pre-side-effect fenceにより再活性化できない。UIはauthoritative re-query一致後だけverified successをannounceする。
 - **ARCH-registration-control-014 Delivery retry registration fence** — retry body は observed route attempts に加え

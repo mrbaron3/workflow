@@ -22,6 +22,7 @@ type fakeAPIStore struct {
 	projectionError error
 	retryError      error
 	updateError     error
+	updateDuplicate bool
 	updated         Registration
 	deliveryStatus  DeliveryStatus
 	deliveryError   error
@@ -55,7 +56,7 @@ func (store *fakeAPIStore) UpdateRegistrationCommand(
 	string,
 	string,
 ) (Registration, bool, error) {
-	return store.updated, false, store.updateError
+	return store.updated, store.updateDuplicate, store.updateError
 }
 
 func (store *fakeAPIStore) Projections(
@@ -217,8 +218,14 @@ func TestExpectedVersionRequiresStrongQuotedVersion(t *testing.T) {
 }
 
 func TestVersionConflictReturnsStructuredCurrentFence(t *testing.T) {
+	recordedAt := time.Date(2026, 7, 26, 2, 0, 0, 0, time.UTC)
 	store := &fakeAPIStore{
-		updateError: ErrConflict,
+		updateError: &RegistrationCommandRejection{
+			Cause:      ErrConflict,
+			Reason:     "registration_version_mismatch",
+			RecordedAt: recordedAt,
+		},
+		updateDuplicate: true,
 		updated: Registration{
 			ID:         testRegistrationID,
 			Repository: "owner/repo",
@@ -238,8 +245,10 @@ func TestVersionConflictReturnsStructuredCurrentFence(t *testing.T) {
 	testAPI(store).Handler().ServeHTTP(response, request)
 	if response.Code != http.StatusConflict ||
 		response.Header().Get("ETag") != `"4"` ||
+		response.Header().Get("Idempotent-Replay") != "true" ||
 		!bytes.Contains(response.Body.Bytes(), []byte(`"outcome":"version_conflict"`)) ||
-		!bytes.Contains(response.Body.Bytes(), []byte(`"registrationVersion":4`)) {
+		!bytes.Contains(response.Body.Bytes(), []byte(`"registrationVersion":4`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"recordedAt":"2026-07-26T02:00:00Z"`)) {
 		t.Fatalf("version conflict = %d headers=%v body=%s", response.Code, response.Header(), response.Body)
 	}
 }

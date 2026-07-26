@@ -14,6 +14,8 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   const hosts = new Set<string>();
   page.on('request', (request) => hosts.add(new URL(request.url()).origin));
   await bootstrap(page);
+  await expect(page.getByRole('button', { name: /failed 0/ })).toBeVisible();
+  await expect(page.getByText('状態ラベルの意味')).toBeVisible();
 
   await page.getByRole('button', { name: 'Registration を追加' }).click();
   await expect(page.locator('#repository')).toBeFocused();
@@ -28,6 +30,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(card.locator('[aria-label="Issue Monitor"]')).toContainText('desired: ON');
   await expect(card.locator('[aria-label="Execution"]')).toContainText('desired: OFF');
   await expect(page.locator('#live')).toContainText('反映を確認しました');
+  await expect(page.locator('#command-outcome')).toContainText('反映を確認しました');
 
   await card.getByRole('button', { name: '編集' }).click();
   await expect(page.locator('#repository')).toBeFocused();
@@ -73,6 +76,10 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
     };
   const deliveryId = '00000000-0000-4000-8000-000000000015';
   const registration = snapshot.items[0]!.registration as Record<string, unknown>;
+  const components = snapshot.items[0]!.components as Record<string, Record<string, unknown>>;
+  components.issue_monitor!.actual = 'failed';
+  components.issue_monitor!.freshness = 'fresh';
+  snapshot.nextPageToken = 'expired-snapshot';
   snapshot.items[0]!.recentDeliveryFailures = [{
     id: deliveryId,
     deliveryKey: 'browser-failed-delivery',
@@ -91,7 +98,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   let deliveryState = 'failed';
   await page.route(new RegExp(`/v1/deliveries/${deliveryId}(?:/retry)?$`), async (route) => {
     if (route.request().method() === 'POST') {
-      deliveryState = 'pending';
+      deliveryState = 'processing';
       await route.fulfill({
         status: 202,
         contentType: 'application/json',
@@ -119,14 +126,30 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
         lastError: deliveryState === 'failed' ? 'transient delivery failure' : null,
         ignoredReason: null,
         updatedAt: '2026-07-26T00:00:00Z',
-        retryAttempts: deliveryState === 'pending' ? [{
+        retryAttempts: deliveryState !== 'failed' ? [{
           attemptId: '00000000-0000-4000-8000-000000000016',
           status: 'accepted',
         }] : [],
       }),
     });
   });
+  await page.route('**/v1/registrations?limit=200&pageToken=expired-snapshot', async (route) => {
+    await route.fulfill({
+      status: 400,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: { code: 'invalid_page_token', message: 'snapshot expired' },
+      }),
+    });
+  }, { times: 1 });
   await page.getByRole('button', { name: '再取得' }).click();
+  await expect(page.getByRole('button', { name: /failed 1/ })).toBeVisible();
+  await page.getByRole('button', { name: /failed 1/ }).click();
+  await expect(card).toBeVisible();
+  await page.getByRole('button', { name: /すべて 1/ }).click();
+  await page.getByRole('button', { name: 'さらに読み込む' }).click();
+  await expect(page.getByRole('alert')).toContainText('ページsnapshot');
+  await expect(card.getByRole('button', { name: '編集' })).toBeEnabled();
   await card.locator('summary').click();
   await card.getByRole('button', { name: '確認・再試行' }).click();
   await expect(page.locator('#retry-delivery')).toBeFocused();
@@ -147,6 +170,20 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await page.keyboard.press('Escape');
   await expect(page.locator('#registration-dialog')).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Registration を追加' })).toBeFocused();
+
+  await page.route('**/v1/registrations?limit=200', async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: { code: 'unauthorized', message: 'browser session expired' },
+      }),
+    });
+  }, { times: 1 });
+  await page.getByRole('button', { name: '再取得' }).click();
+  await expect(page.getByRole('alert')).toContainText('Operator session');
+  await expect(page.getByRole('alert')).not.toContainText('Control API に接続できません');
+  await expect(card.getByRole('button', { name: '編集' })).toBeDisabled();
 
   await page.route('**/v1/registrations?limit=200', async (route) => {
     await route.fulfill({

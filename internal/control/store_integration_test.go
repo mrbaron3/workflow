@@ -138,6 +138,73 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	); !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("update command identity conflict = %v", err)
 	}
+	_, replay, err = store.UpdateRegistrationCommand(
+		ctx,
+		created.ID,
+		created.Version,
+		RegistrationPatch{PRMonitorEnabled: &differentPREnabled},
+		"update-command-rejected",
+		"operator",
+		"registration.updated",
+	)
+	var rejectedCommand *RegistrationCommandRejection
+	if replay || !errors.As(err, &rejectedCommand) ||
+		rejectedCommand.Reason != "registration_version_mismatch" ||
+		rejectedCommand.RecordedAt.IsZero() {
+		t.Fatalf("rejected update = replay=%v rejection=%#v err=%v", replay, rejectedCommand, err)
+	}
+	updateRejectedRecordedAt := rejectedCommand.RecordedAt
+	_, replay, err = store.UpdateRegistrationCommand(
+		ctx,
+		created.ID,
+		created.Version,
+		RegistrationPatch{PRMonitorEnabled: &differentPREnabled},
+		"update-command-rejected",
+		"operator",
+		"registration.updated",
+	)
+	if !replay || !errors.As(err, &rejectedCommand) ||
+		!rejectedCommand.RecordedAt.Equal(updateRejectedRecordedAt) {
+		t.Fatalf("rejected update replay = replay=%v rejection=%#v err=%v", replay, rejectedCommand, err)
+	}
+	enabled := false
+	if _, _, err := store.UpdateRegistrationCommand(
+		ctx,
+		created.ID,
+		created.Version,
+		RegistrationPatch{Enabled: &enabled},
+		"update-command-rejected",
+		"operator",
+		"registration.updated",
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("rejected update identity reuse = %v", err)
+	}
+	_, replay, err = store.UpdateRegistrationCommand(
+		ctx,
+		commandUpdated.ID,
+		commandUpdated.Version,
+		RegistrationPatch{PRMonitorEnabled: &prEnabled},
+		"update-command-no-change",
+		"operator",
+		"registration.updated",
+	)
+	if replay || !errors.As(err, &rejectedCommand) ||
+		rejectedCommand.Reason != "registration_patch_has_no_change" {
+		t.Fatalf("no-change update = replay=%v rejection=%#v err=%v", replay, rejectedCommand, err)
+	}
+	_, replay, err = store.UpdateRegistrationCommand(
+		ctx,
+		commandUpdated.ID,
+		commandUpdated.Version,
+		RegistrationPatch{PRMonitorEnabled: &prEnabled},
+		"update-command-no-change",
+		"operator",
+		"registration.updated",
+	)
+	if !replay || !errors.As(err, &rejectedCommand) ||
+		rejectedCommand.Reason != "registration_patch_has_no_change" {
+		t.Fatalf("no-change replay = replay=%v rejection=%#v err=%v", replay, rejectedCommand, err)
+	}
 	created = commandUpdated
 	if err := store.UpsertActualState(
 		ctx,
@@ -519,6 +586,89 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		createdProjection.ActiveJobRegistrationVersion == nil ||
 		*createdProjection.ActiveJobRegistrationVersion != created.Version {
 		t.Fatalf("active work projection = %#v", createdProjection)
+	}
+	attemptID, _ := randomUUID()
+	leaseID, _ := randomUUID()
+	leaseToken, _ := randomUUID()
+	if _, err := store.pool.Exec(ctx,
+		`UPDATE agentops_control.jobs
+		    SET status = 'leased', updated_at = clock_timestamp() - interval '2 minutes'
+		  WHERE id = $1`,
+		jobID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx,
+		`INSERT INTO agentops_control.job_attempts(
+		   id, job_id, attempt_number, worker_id, status, started_at
+		 ) VALUES ($1, $2, 1, 'heartbeat-worker', 'running', clock_timestamp() - interval '2 minutes')`,
+		attemptID,
+		jobID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx,
+		`INSERT INTO agentops_control.job_leases(
+		   id, job_id, attempt_id, lease_token, worker_id,
+		   acquired_at, heartbeat_at, expires_at
+		 ) VALUES (
+		   $1, $2, $3, $4, 'heartbeat-worker',
+		   clock_timestamp() - interval '2 minutes',
+		   clock_timestamp(),
+		   clock_timestamp() + interval '1 minute'
+		 )`,
+		leaseID,
+		jobID,
+		attemptID,
+		leaseToken,
+	); err != nil {
+		t.Fatal(err)
+	}
+	projections, err = store.Projections(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range projections {
+		if projections[index].Registration.ID == created.ID {
+			createdProjection = &projections[index]
+			break
+		}
+	}
+	executionProjection := createdProjection.Components[ComponentExecution]
+	queueProjection := createdProjection.Components[ComponentQueue]
+	if executionProjection.Actual != "running" ||
+		executionProjection.Freshness != "fresh" ||
+		queueProjection.Actual != "leased" ||
+		queueProjection.Freshness != "fresh" ||
+		executionProjection.ObservedAt == nil ||
+		time.Since(*executionProjection.ObservedAt) > 10*time.Second {
+		t.Fatalf(
+			"lease heartbeat projection execution=%#v queue=%#v",
+			executionProjection,
+			queueProjection,
+		)
+	}
+	if _, err := store.pool.Exec(ctx,
+		`UPDATE agentops_control.job_leases
+		    SET status = 'released', released_at = clock_timestamp()
+		  WHERE id = $1`,
+		leaseID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx,
+		`DELETE FROM agentops_control.job_attempts WHERE id = $1`,
+		attemptID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx,
+		`UPDATE agentops_control.jobs
+		    SET status = 'queued', updated_at = clock_timestamp()
+		  WHERE id = $1`,
+		jobID,
+	); err != nil {
+		t.Fatal(err)
 	}
 	retry, replay, err := store.RetryWebhook(
 		ctx,

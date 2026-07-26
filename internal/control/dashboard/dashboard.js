@@ -13,9 +13,11 @@
     restoreSelector: '',
     selectedCardId: '',
     nextPageToken: '',
+    anomalyFilter: 'all',
   };
   const byId = (id) => document.getElementById(id);
   const live = (message) => {
+    byId('command-outcome').textContent = message;
     byId('live').textContent = '';
     window.setTimeout(() => { byId('live').textContent = message; }, 20);
   };
@@ -74,13 +76,23 @@
     if (options.method && !['GET', 'HEAD'].includes(options.method)) {
       headers.set('X-CSRF-Token', state.csrf);
     }
-    const response = await fetch(path, {
-      ...options, headers, credentials: 'same-origin', redirect: 'error',
-    });
+    let response;
+    try {
+      response = await fetch(path, {
+        ...options, headers, credentials: 'same-origin', redirect: 'error',
+      });
+    } catch (cause) {
+      const error = new Error('Control API network request failed', { cause });
+      error.code = 'request_failed';
+      error.status = 0;
+      error.body = {};
+      throw error;
+    }
     const body = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(body.error?.message || `Control API ${response.status}`);
       error.code = body.error?.code || 'request_failed';
+      error.status = response.status;
       error.body = body;
       throw error;
     }
@@ -111,6 +123,22 @@
       component.freshness !== 'fresh'
       || ['failed', 'disconnected', 'unknown'].includes(component.actual)
       || (component.desired && !['running', 'idle', 'waiting', 'paused_by_mode', 'blocked_by_mode'].includes(component.actual)));
+  }
+  function anomalyKinds(item) {
+    const components = Object.values(item.components);
+    const kinds = new Set();
+    if (components.some((component) => component.actual === 'failed')) kinds.add('failed');
+    if (components.some((component) => component.actual === 'disconnected')) kinds.add('disconnected');
+    if (components.some((component) => component.freshness === 'stale')) kinds.add('stale');
+    if (components.some((component) => {
+      if (['unknown', 'failed', 'disconnected'].includes(component.actual)) return false;
+      const desiredActual = ['running', 'idle', 'waiting', 'paused_by_mode', 'blocked_by_mode'];
+      const stoppedActual = ['stopped', 'idle'];
+      return component.desired
+        ? !desiredActual.includes(component.actual)
+        : !stoppedActual.includes(component.actual);
+    })) kinds.add('divergent');
+    return kinds;
   }
   function component(name, value) {
     const label = {
@@ -169,7 +197,23 @@
   }
   function render() {
     const query = byId('search').value.trim().toLowerCase();
-    const items = state.items.filter((item) => item.registration.repository.includes(query));
+    const matchingRepository = state.items.filter((item) =>
+      item.registration.repository.includes(query));
+    const counts = {
+      all: matchingRepository.length,
+      failed: 0,
+      disconnected: 0,
+      stale: 0,
+      divergent: 0,
+    };
+    matchingRepository.forEach((item) => {
+      anomalyKinds(item).forEach((kind) => { counts[kind] += 1; });
+    });
+    Object.entries(counts).forEach(([kind, count]) => {
+      byId('anomaly-filters').querySelector(`[data-filter-count="${kind}"]`).textContent = count;
+    });
+    const items = matchingRepository.filter((item) =>
+      state.anomalyFilter === 'all' || anomalyKinds(item).has(state.anomalyFilter));
     byId('cards').innerHTML = items.map(card).join('');
     byId('empty').hidden = items.length !== 0;
     byId('count').textContent = `${items.length} 件`;
@@ -198,8 +242,22 @@
       return page;
     } catch (error) {
       if (generation !== state.requestGeneration) throw error;
-      markDisconnected(error);
-      live(`Control API 接続失敗: ${error.message}`);
+      if (error.status === 401) {
+        state.connected = false;
+        state.csrf = '';
+        byId('create').disabled = true;
+        byId('alert').hidden = false;
+        byId('alert').textContent = 'Operator session が失効または拒否されました。新しい一回限りの bootstrap URL が必要です。';
+        render();
+        live(`Operator session 拒否: ${error.message}`);
+      } else if (error.code === 'control_store_unavailable' || error.code === 'request_failed') {
+        markDisconnected(error);
+        live(`Control API 接続失敗: ${error.message}`);
+      } else {
+        byId('alert').hidden = false;
+        byId('alert').textContent = `状態取得要求が拒否されました (${error.code})。入力またはsnapshotを再取得してください。`;
+        live(`状態取得要求拒否: ${error.message}`);
+      }
       throw error;
     } finally {
       if (generation === state.requestGeneration) {
@@ -225,9 +283,22 @@
       byId('load-more').focus();
       live(`${page.items?.length || 0} 件を追加し、合計 ${state.items.length} 件になりました`);
     } catch (error) {
-      markDisconnected(error);
-      byId('alert').textContent = `追加ページを確認できませんでした。表示中の値は最終正常取得 ${formatTime(state.lastGood)} のものです。`;
-      live(`追加ページ取得失敗: ${error.message}`);
+      if (error.status === 401) {
+        state.connected = false;
+        state.csrf = '';
+        byId('alert').hidden = false;
+        byId('alert').textContent = 'Operator session が失効しました。新しいbootstrapが必要です。';
+        render();
+      } else if (error.code === 'control_store_unavailable' || error.code === 'request_failed') {
+        markDisconnected(error);
+        byId('alert').textContent = `追加ページを確認できませんでした。表示中の値は最終正常取得 ${formatTime(state.lastGood)} のものです。`;
+      } else {
+        state.nextPageToken = '';
+        byId('load-more').hidden = true;
+        byId('alert').hidden = false;
+        byId('alert').textContent = 'ページsnapshotが失効または拒否されました。「再取得」で先頭から読み直してください。';
+      }
+      live(`追加ページ取得失敗 (${error.code}): ${error.message}`);
     } finally {
       byId('cards').setAttribute('aria-busy', 'false');
       if (state.connected && state.nextPageToken) byId('load-more').disabled = false;
@@ -372,8 +443,9 @@
         }),
       });
       const verified = await api(`/v1/deliveries/${encodeURIComponent(delivery.id)}`);
-      if (verified.status !== 'pending'
-        || !verified.retryAttempts?.some((attempt) => attempt.attemptId === response.retry.attemptId)) {
+      if (!verified.retryAttempts?.some((attempt) =>
+        attempt.attemptId === response.retry.attemptId
+        && attempt.status === 'accepted')) {
         throw new Error('authoritative re-query did not verify retry');
       }
       clearCommandKey(scope);
@@ -405,6 +477,15 @@
   byId('load-more').addEventListener('click', loadMore);
   byId('create').addEventListener('click', () => openRegistration());
   byId('search').addEventListener('input', render);
+  byId('anomaly-filters').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-filter]');
+    if (!button) return;
+    state.anomalyFilter = button.dataset.filter;
+    byId('anomaly-filters').querySelectorAll('[data-filter]').forEach((candidate) =>
+      candidate.setAttribute('aria-pressed', String(candidate === button)));
+    render();
+    live(`${button.textContent.trim()} で絞り込みました`);
+  });
   byId('registration-form').addEventListener('submit', saveRegistration);
   byId('confirm-form').addEventListener('submit', disableRegistration);
   byId('delivery-form').addEventListener('submit', retryDelivery);

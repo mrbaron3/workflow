@@ -21,6 +21,7 @@
   </header>
 
   <div id="alert" class="global-alert" role="alert" hidden></div>
+  <p id="command-outcome" class="command-outcome" role="status" aria-live="polite" aria-atomic="true">状態を取得しています。</p>
   <p id="live" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
 
   <main id="workspace" tabindex="-1">
@@ -40,6 +41,17 @@
       <label for="search">リポジトリ</label>
       <input id="search" type="search" autocomplete="off" placeholder="owner/repository">
       <span id="count" class="quiet">0 件</span>
+      <div id="anomaly-filters" class="anomaly-filters" aria-label="状態による絞り込み">
+        <button class="filter-button" type="button" data-filter="all" aria-pressed="true">すべて <span data-filter-count="all">0</span></button>
+        <button class="filter-button" type="button" data-filter="failed" aria-pressed="false">failed <span data-filter-count="failed">0</span></button>
+        <button class="filter-button" type="button" data-filter="disconnected" aria-pressed="false">disconnected <span data-filter-count="disconnected">0</span></button>
+        <button class="filter-button" type="button" data-filter="stale" aria-pressed="false">stale <span data-filter-count="stale">0</span></button>
+        <button class="filter-button" type="button" data-filter="divergent" aria-pressed="false">divergent <span data-filter-count="divergent">0</span></button>
+      </div>
+      <details class="status-legend">
+        <summary>状態ラベルの意味</summary>
+        <p><strong>failed</strong> は処理失敗、<strong>disconnected</strong> はauthoritative source不達、<strong>stale</strong> は鮮度budget超過、<strong>divergent</strong> はdesiredとactualの不一致です。色だけで状態を示しません。</p>
+      </details>
     </section>
 
     <section id="empty" class="empty" hidden>

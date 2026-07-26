@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:designflow:schema:v1:capability-requirements",
+  "title": "Backend Capability Requirements v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "requestId", "revisionId", "capabilities", "ambiguities"],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "requestId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "revisionId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    },
+    "ambiguities": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+      }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "userIntent",
+        "sourceInteractionIds",
+        "sourceRequirementIds",
+        "inputDescription",
+        "successOutcome",
+        "failureSemantics",
+        "authorization",
+        "latencyExpectation",
+        "freshnessExpectation",
+        "concurrencySemantics",
+        "idempotencySemantics",
+        "retrySemantics",
+        "cancellationSemantics",
+        "paginationSemantics",
+        "auditSemantics"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "kind": {
+          "enum": ["query", "command", "event"]
+        },
+        "userIntent": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "sourceInteractionIds": {
+          "$ref": "#/$defs/idList"
+        },
+        "sourceRequirementIds": {
+          "$ref": "#/$defs/idList"
+        },
+        "inputDescription": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "successOutcome": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "failureSemantics": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["condition", "userVisibleOutcome", "recoverability"],
+            "properties": {
+              "condition": {
+                "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+              },
+              "userVisibleOutcome": {
+                "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+              },
+              "recoverability": {
+                "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+              }
+            }
+          }
+        },
+        "authorization": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "latencyExpectation": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "freshnessExpectation": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "concurrencySemantics": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "idempotencySemantics": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "retrySemantics": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "cancellationSemantics": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "paginationSemantics": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "auditSemantics": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "idList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+      }
+    }
+  }
+}

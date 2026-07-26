@@ -37,6 +37,56 @@ func TestValidateApprovedDashboardRevisionAndReconciliation(t *testing.T) {
 	}
 }
 
+func TestDashboardPinnedSchemasAndDesignTokenFormatRejectInvalidDocuments(t *testing.T) {
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	experience, err := os.ReadFile(filepath.Join(
+		repositoryRoot,
+		"evidence",
+		"ciso-05",
+		"design",
+		"revision-02",
+		"experience-contract.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invalidExperience map[string]any
+	if err := json.Unmarshal(experience, &invalidExperience); err != nil {
+		t.Fatal(err)
+	}
+	invalidExperience["unapprovedField"] = true
+	invalidExperienceBody, _ := json.Marshal(invalidExperience)
+	if err := validatePinnedSchema(
+		"urn:designflow:schema:v1:experience-contract",
+		invalidExperienceBody,
+	); err == nil {
+		t.Fatal("pinned Experience Contract schema accepted an additional property")
+	}
+
+	tokens, err := os.ReadFile(filepath.Join(
+		repositoryRoot,
+		"evidence",
+		"ciso-05",
+		"design",
+		"revision-02",
+		"design-tokens.json",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateDesignTokens(tokens); err != nil {
+		t.Fatalf("approved design tokens rejected: %v", err)
+	}
+	if err := validateDesignTokens([]byte(
+		`{"group":{"$type":"color","bad":{"$value":"#fff","child":{"$value":"#000"}}}}`,
+	)); err == nil {
+		t.Fatal("token validator accepted a token mixed with a child")
+	}
+}
+
 func TestValidateFailsClosedForApprovalAndCoverageDefects(t *testing.T) {
 	tests := []struct {
 		name   string

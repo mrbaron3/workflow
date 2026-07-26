@@ -138,6 +138,10 @@ paths:
     patch:
       operationId: updateRegistration
       x-designflow-capability: cap-update-registration
+      x-idempotency: >-
+        success、not-found、version-conflict、no-changeを同じtransactionでrequest hash、
+        structured outcome、recordedAt、auditへ保存する。同一key+requestは同じ結果を返し、
+        keyを異なるfenceまたはpatchへ再利用すると409。
       x-freshness: If-Matchを現在versionへ照合し、stale commandを409で拒否。
       x-audit: actor、old/new version、結果をruntime_auditへtransactionalに保存。
       parameters:
@@ -168,6 +172,9 @@ paths:
     post:
       operationId: disableRegistration
       x-designflow-capability: cap-disable-registration
+      x-idempotency: >-
+        success、not-found、version-conflict、already-disabledを同じtransactionで保存し、
+        rejected identityも再利用不能にする。
       x-cancellation: 即時commandのため受付後cancel不可。
       x-failure-semantics: version不一致、未知ID、DB不達を成功表示しない。
       parameters:
