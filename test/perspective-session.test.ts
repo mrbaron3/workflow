@@ -232,6 +232,38 @@ describe('restricted repository-PR reviewers', () => {
     },
   );
 
+  it('PR-INTENT copies the runner Codex credential from its private CODEX_HOME', () => {
+    const operatorHome = tmpDir('restricted-runner-operator');
+    const codexHome = tmpDir('restricted-runner-codex-home');
+    fs.writeFileSync(
+      path.join(codexHome, 'auth.json'),
+      '{"credential":"runner-codex-only"}\n',
+      { mode: 0o600 },
+    );
+    const execution = prepareRestrictedReviewExecution(
+      'codex',
+      process.execPath,
+      {
+        operatorHome,
+        parentEnv: {
+          PATH: process.env.PATH,
+          LANG: 'C',
+          CODEX_HOME: codexHome,
+          GITHUB_TOKEN: 'github-secret',
+        },
+      },
+    );
+    try {
+      expect(
+        fs.readFileSync(path.join(execution.home, '.codex', 'auth.json'), 'utf8'),
+      ).toContain('runner-codex-only');
+      expect(execution.env).not.toHaveProperty('CODEX_HOME');
+      expect(JSON.stringify(execution.env)).not.toContain('github-secret');
+    } finally {
+      execution.cleanup();
+    }
+  });
+
   it('PR-INTENT tells a no-tool reviewer to return JSON without attempting a file write', () => {
     const prompt = restrictedPerspectivePrompt(
       perspectivePrompt('security', contract, '/tmp/eval/security'),
