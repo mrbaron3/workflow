@@ -55,14 +55,24 @@ export const RunnerStartupInput = z.object({
       path: ['providerAuth'],
     });
   }
+  if (value.providerAuth === 'codex-login' && value.provider !== 'codex') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Codex login authentication requires the codex provider',
+      path: ['provider'],
+    });
+  }
 });
 export type RunnerStartupInput = z.infer<typeof RunnerStartupInput>;
 
+export type RunnerProviderAuthentication =
+  | { kind: 'none'; provider: 'codex' | 'claude' }
+  | { kind: 'api-key'; provider: 'codex' | 'claude'; token: string }
+  | { kind: 'codex-login'; provider: 'codex'; codexHome: string };
+
 export interface RunnerCredentials {
   githubToken: string;
-  provider: 'codex' | 'claude';
-  providerToken: string | null;
-  codexHome: string | null;
+  providerAuthentication: RunnerProviderAuthentication;
 }
 
 export interface RunnerRuntimeBoundary {
@@ -604,10 +614,9 @@ export function loadRunnerStartup(
       false,
     );
   }
-  let providerToken: string | null = null;
-  let codexHome: string | null = null;
+  let providerAuthentication: RunnerProviderAuthentication;
   if (config.providerAuth === 'codex-login') {
-    codexHome = assertContainerNeutralPath(env.CODEX_HOME ?? '', 'CODEX_HOME');
+    const codexHome = assertContainerNeutralPath(env.CODEX_HOME ?? '', 'CODEX_HOME');
     if (codexHome !== '/run/agentops-credentials/codex') {
       throw new RunnerExecutionError(
         'startup_isolation_failure',
@@ -616,14 +625,25 @@ export function loadRunnerStartup(
       );
     }
     validateCodexAuthFile(path.join(codexHome, 'auth.json'));
+    providerAuthentication = {
+      kind: 'codex-login',
+      provider: 'codex',
+      codexHome,
+    };
   } else if (config.providerAuth === 'api-key') {
-    providerToken = requiredSecret(env, selectedProviderKey);
+    providerAuthentication = {
+      kind: 'api-key',
+      provider,
+      token: requiredSecret(env, selectedProviderKey),
+    };
   } else if (env[selectedProviderKey] || env.CODEX_HOME) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
       'non-ACTIVE runner received a provider credential',
       false,
     );
+  } else {
+    providerAuthentication = { kind: 'none', provider };
   }
   if (runtimeBoundary) {
     validateRuntimeBoundary(
@@ -637,9 +657,7 @@ export function loadRunnerStartup(
     runtimeBoundary: runtimeBoundary ?? null,
     credentials: {
       githubToken: requiredSecret(env, 'AGENTOPS_RUNNER_GITHUB_TOKEN'),
-      provider,
-      providerToken,
-      codexHome,
+      providerAuthentication,
     },
   };
 }
@@ -653,7 +671,12 @@ export function minimalExecutionEnvironment(
   source: NodeJS.ProcessEnv = process.env,
   timeouts?: { commandTimeoutMs: number },
 ): NodeJS.ProcessEnv {
-  const providerKey = PROVIDER_TOKEN_KEYS[credentials.provider];
+  const authentication = credentials.providerAuthentication;
+  const providerCredential = authentication.kind === 'api-key'
+    ? { [PROVIDER_TOKEN_KEYS[authentication.provider]]: authentication.token }
+    : authentication.kind === 'codex-login'
+      ? { CODEX_HOME: authentication.codexHome }
+      : {};
   return {
     PATH: source.PATH ?? '/usr/local/bin:/usr/bin:/bin',
     HOME: '/home/agentops',
@@ -676,9 +699,7 @@ export function minimalExecutionEnvironment(
     GITHUB_TOKEN: credentials.githubToken,
     GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',
     GIT_TERMINAL_PROMPT: '0',
-    ...(credentials.providerToken
-      ? { [providerKey]: credentials.providerToken }
-      : { CODEX_HOME: credentials.codexHome ?? '' }),
+    ...providerCredential,
   };
 }
 

@@ -45,6 +45,9 @@ export function runnerSandboxArgs(
     '--unshare-ipc',
     '--unshare-uts',
     '--ro-bind', '/', '/',
+    // Trusted provider processes need the credential volume; repository code
+    // instead receives an empty /run tree.
+    '--tmpfs', '/run',
     '--proc', '/proc',
     '--dev', '/dev',
     '--tmpfs', '/workspace',

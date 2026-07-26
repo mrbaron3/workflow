@@ -80,7 +80,10 @@ describe('runner startup isolation', () => {
     );
     expect(loaded.config.operatingMode).toBe('MONITOR_ONLY');
     expect(loaded.config.providerAuth).toBe('none');
-    expect(loaded.credentials.providerToken).toBeNull();
+    expect(loaded.credentials.providerAuthentication).toEqual({
+      kind: 'none',
+      provider: 'codex',
+    });
   });
 
   it('rejects malformed or structurally incomplete private Codex auth files', () => {
@@ -223,5 +226,10 @@ describe('runner startup isolation', () => {
     expect(child).not.toHaveProperty('AGENTOPS_CONTROL_TOKEN');
     expect(child).not.toHaveProperty('SSH_AUTH_SOCK');
     expect(child).not.toHaveProperty('CONTAINER_HOST');
+    expect(credentials.providerAuthentication).toEqual({
+      kind: 'api-key',
+      provider: 'codex',
+      token: 'provider-secret',
+    });
   });
 });

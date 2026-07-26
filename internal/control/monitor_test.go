@@ -21,6 +21,16 @@ func TestMonitorBrokerProductionBoundaries(t *testing.T) {
 	if MonitorBrokerResponseReuse != 2*time.Minute {
 		t.Fatalf("response reuse = %s", MonitorBrokerResponseReuse)
 	}
+	if DefaultMonitorBrokerTimeout != 25*time.Second ||
+		MaxMonitorBrokerTimeout != 30*time.Second ||
+		MonitorBrokerResponsePoll != 100*time.Millisecond {
+		t.Fatalf(
+			"broker timing = default %s max %s poll %s",
+			DefaultMonitorBrokerTimeout,
+			MaxMonitorBrokerTimeout,
+			MonitorBrokerResponsePoll,
+		)
+	}
 }
 
 type fakeMonitorStore struct {

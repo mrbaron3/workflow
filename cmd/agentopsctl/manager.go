@@ -22,6 +22,14 @@ type manager struct {
 	runtime *lifecycle.AppleRuntime
 }
 
+const (
+	ProviderProbeTimeout          = 45 * time.Second
+	CredentialSeedReadyTimeout    = 20 * time.Second
+	ContainerReadyPollInterval    = 250 * time.Millisecond
+	CredentialInitializerLifetime = 10 * time.Minute
+	RunnerReadinessLogLines       = 100
+)
+
 type mutationReceipt struct {
 	Mutated bool
 }
@@ -1026,7 +1034,11 @@ func (manager *manager) seedCodexCredentialVolume(
 			"mkdir -p /credentials/codex && " +
 				"chown 0:0 /credentials/codex && " +
 				"chmod 0700 /credentials/codex && " +
-				"chown 65532:65532 /credentials/codex && sleep 600",
+				"chown 65532:65532 /credentials/codex && sleep " +
+				strconv.FormatInt(
+					int64(CredentialInitializerLifetime/time.Second),
+					10,
+				),
 		},
 		CapDropAll: true,
 		CapAdd:     []string{"CAP_CHOWN"},
@@ -1040,13 +1052,13 @@ func (manager *manager) seedCodexCredentialVolume(
 		_ = manager.runtime.Stop(context.Background(), name, 5)
 		_ = manager.runtime.Delete(context.Background(), name)
 	}()
-	ready, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ready, cancel := context.WithTimeout(ctx, CredentialSeedReadyTimeout)
 	defer cancel()
 	if err := manager.runtime.WaitState(
 		ready,
 		name,
 		"running",
-		250*time.Millisecond,
+		ContainerReadyPollInterval,
 	); err != nil {
 		return err
 	}
@@ -1121,7 +1133,7 @@ func (manager *manager) replaceRunner(
 		logs := manager.runtime.RecentLogs(
 			ctx,
 			manager.config.RunnerContainer,
-			100,
+			RunnerReadinessLogLines,
 		)
 		detail := strings.TrimSpace(logs.Stdout + logs.Stderr)
 		if detail == "" {
@@ -1141,7 +1153,7 @@ func (manager *manager) replaceRunner(
 }
 
 func (manager *manager) probeRunnerProvider(ctx context.Context) error {
-	probeContext, cancel := context.WithTimeout(ctx, 45*time.Second)
+	probeContext, cancel := context.WithTimeout(ctx, ProviderProbeTimeout)
 	defer cancel()
 	var command []string
 	switch manager.config.Provider {

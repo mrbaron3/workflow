@@ -128,7 +128,7 @@ func run() error {
 		monitorSource = control.BrokeredGitHubSource{
 			Store:             store,
 			AllowedRepository: brokerRepository,
-			Timeout:           25 * time.Second,
+			Timeout:           control.DefaultMonitorBrokerTimeout,
 		}
 	}
 	runner := &control.ProductionRunner{

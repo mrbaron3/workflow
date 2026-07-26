@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import {
   runnerSandboxArgs,
@@ -23,12 +24,45 @@ describe('runner subprocess filesystem sandbox', () => {
     expect(args).toContain('--unshare-pid');
     expect(args).toContain('--proc');
     expect(args).toContain('--dev');
+    expect(args).toContain('/run');
     expect(args).toContain(registrationRoot);
     expect(args).toContain('/app/node_modules');
     expect(args).toContain(
       `${registrationRoot}/jobs/db837db2-30d7-4788-a56f-00056f5d550e/attempt-1/worktree/node_modules`,
     );
     expect(args.slice(-3)).toEqual(['--', 'npm', 'test']);
+  });
+
+  it.runIf(
+    process.platform === 'linux'
+      && process.env.AGENTOPS_RUNNER_PROCESS_SANDBOX === 'bubblewrap-v1',
+  )('PR-INTENT hides the live provider credential volume inside the actual sandbox', () => {
+    const liveRoot = runnerSandboxRoot(process.env)!;
+    const result = spawnSync('bwrap', runnerSandboxArgs(
+      liveRoot,
+      liveRoot,
+      '/bin/sh',
+      [
+        '-c',
+        'test ! -e /run/agentops-credentials && '
+          + 'test ! -r /run/agentops-credentials/codex/auth.json',
+      ],
+    ), {
+      cwd: liveRoot,
+      encoding: 'utf8',
+      env: process.env,
+    });
+    expect({
+      status: result.status,
+      signal: result.signal,
+      error: result.error?.message,
+      stderr: result.stderr,
+    }).toEqual({
+      status: 0,
+      signal: null,
+      error: undefined,
+      stderr: '',
+    });
   });
 
   it('fails closed for a missing/invalid Registration root or escaping cwd', () => {

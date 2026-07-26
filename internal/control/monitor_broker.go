@@ -32,6 +32,9 @@ type monitorBrokerItem struct {
 const (
 	MonitorBrokerTerminalRetention = 7 * 24 * time.Hour
 	MonitorBrokerResponseReuse     = 2 * time.Minute
+	DefaultMonitorBrokerTimeout    = 25 * time.Second
+	MaxMonitorBrokerTimeout        = 30 * time.Second
+	MonitorBrokerResponsePoll      = 100 * time.Millisecond
 )
 
 // BrokeredGitHubSource is a typed PostgreSQL request/response boundary. It
@@ -79,8 +82,8 @@ func (source BrokeredGitHubSource) Poll(
 	requestContext := ctx
 	cancel := func() {}
 	timeout := source.Timeout
-	if timeout <= 0 || timeout > 30*time.Second {
-		timeout = 25 * time.Second
+	if timeout <= 0 || timeout > MaxMonitorBrokerTimeout {
+		timeout = DefaultMonitorBrokerTimeout
 	}
 	requestContext, cancel = context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -244,7 +247,7 @@ func (store *Store) monitorBrokerPoll(
 		return monitorBrokerResponse{}, fmt.Errorf("monitor broker request dedup race did not converge")
 	}
 
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(MonitorBrokerResponsePoll)
 	defer ticker.Stop()
 	for {
 		var status string

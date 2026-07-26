@@ -63,6 +63,51 @@ class MonitorBrokerFailure extends Error {
   }
 }
 
+function appendTypedRows(
+  request: MonitorBrokerRequest,
+  rows: z.infer<typeof GitHubRow>[],
+  cursorTime: number,
+  currentMaxUpdated: number,
+  items: MonitorBrokerResponseType['items'],
+): number {
+  let maxUpdated = currentMaxUpdated;
+  for (const row of rows) {
+    if (request.monitorKind === 'issue' && row.pull_request !== undefined) continue;
+    const updated = Date.parse(row.updated_at);
+    if (updated < cursorTime) continue;
+    items.push({
+      repository: request.repository,
+      kind: request.monitorKind,
+      number: row.number,
+      updatedAt: new Date(updated).toISOString(),
+    });
+    maxUpdated = Math.max(maxUpdated, updated);
+  }
+  if (items.length > 1_000) {
+    throw new MonitorBrokerFailure(
+      'item_limit',
+      'GitHub monitor response exceeded the item limit',
+    );
+  }
+  return maxUpdated;
+}
+
+function completedResponse(
+  items: MonitorBrokerResponseType['items'],
+  maxUpdated: number,
+  observedAt: string,
+): MonitorBrokerResponseType {
+  return MonitorBrokerResponse.parse({
+    items,
+    nextCursor: {
+      updatedAfter: maxUpdated === 0
+        ? ''
+        : new Date(maxUpdated).toISOString(),
+    },
+    observedAt,
+  });
+}
+
 function nextLink(header: string | null): string | null {
   if (!header) return null;
   for (const part of header.split(',')) {
@@ -316,36 +361,15 @@ export class PrivateMonitorBroker {
           );
         }
         const rows = z.array(GitHubRow).max(100).parse(parsed);
-        for (const row of rows) {
-          if (request.monitorKind === 'issue' && row.pull_request !== undefined) {
-            continue;
-          }
-          const updated = Date.parse(row.updated_at);
-          if (updated < cursorTime) continue;
-          items.push({
-            repository: request.repository,
-            kind: request.monitorKind,
-            number: row.number,
-            updatedAt: new Date(updated).toISOString(),
-          });
-          maxUpdated = Math.max(maxUpdated, updated);
-        }
-        if (items.length > 1_000) {
-          throw new MonitorBrokerFailure(
-            'item_limit',
-            'GitHub monitor response exceeded the item limit',
-          );
-        }
+        maxUpdated = appendTypedRows(
+          request,
+          rows,
+          cursorTime,
+          maxUpdated,
+          items,
+        );
         if (rows.length < 100) {
-          return MonitorBrokerResponse.parse({
-            items,
-            nextCursor: {
-              updatedAfter: maxUpdated === 0
-                ? ''
-                : new Date(maxUpdated).toISOString(),
-            },
-            observedAt,
-          });
+          return completedResponse(items, maxUpdated, observedAt);
         }
       }
       throw new MonitorBrokerFailure(
@@ -398,38 +422,17 @@ export class PrivateMonitorBroker {
         );
       }
       const rows = z.array(GitHubRow).max(100).parse(parsed);
-      for (const row of rows) {
-        if (request.monitorKind === 'issue' && row.pull_request !== undefined) {
-          continue;
-        }
-        const updated = Date.parse(row.updated_at);
-        if (updated < cursorTime) continue;
-        items.push({
-          repository: request.repository,
-          kind: request.monitorKind,
-          number: row.number,
-          updatedAt: new Date(updated).toISOString(),
-        });
-        maxUpdated = Math.max(maxUpdated, updated);
-      }
-      if (items.length > 1_000) {
-        throw new MonitorBrokerFailure(
-          'item_limit',
-          'GitHub monitor response exceeded the item limit',
-        );
-      }
+      maxUpdated = appendTypedRows(
+        request,
+        rows,
+        cursorTime,
+        maxUpdated,
+        items,
+      );
       const link = nextLink(response.headers.get('link'));
       pageURL = link ? new URL(link) : null;
     }
-    return MonitorBrokerResponse.parse({
-      items,
-      nextCursor: {
-        updatedAfter: maxUpdated === 0
-          ? ''
-          : new Date(maxUpdated).toISOString(),
-      },
-      observedAt,
-    });
+    return completedResponse(items, maxUpdated, observedAt);
   }
 
   async runOnce(): Promise<boolean> {
