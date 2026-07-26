@@ -250,6 +250,37 @@ func TestProbeRunnerProviderFailsClosedWithoutLeakingOutput(t *testing.T) {
 	}
 }
 
+func TestCompensationTopologyRestoresPrivateBrokerRunner(t *testing.T) {
+	stops, restoreControl, restoreRunner := compensationTopology(
+		lifecycle.ModeMonitorOnly,
+		true,
+		true,
+		"agentops-control",
+		"agentops-runner",
+	)
+	if strings.Join(stops, ",") != "agentops-runner" ||
+		!restoreControl ||
+		!restoreRunner {
+		t.Fatalf(
+			"MONITOR_ONLY compensation stops=%v control=%t runner=%t",
+			stops,
+			restoreControl,
+			restoreRunner,
+		)
+	}
+
+	_, _, restoreDrainingRunner := compensationTopology(
+		lifecycle.ModeDraining,
+		true,
+		true,
+		"agentops-control",
+		"agentops-runner",
+	)
+	if restoreDrainingRunner {
+		t.Fatal("DRAINING compensation recreated the execution/broker runner")
+	}
+}
+
 func TestPRIntentPinsCredentialAndProviderReadinessBoundaries(t *testing.T) {
 	if ProviderProbeTimeout != 45*time.Second ||
 		CredentialSeedReadyTimeout != 20*time.Second ||

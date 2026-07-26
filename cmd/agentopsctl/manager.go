@@ -1409,22 +1409,28 @@ func (manager *manager) compensateStart(
 		)
 	}
 
-	names := make([]string, 0, 1)
-	if runnerChanged {
-		names = append(names, manager.config.RunnerContainer)
-	}
-	if controlChanged && target == lifecycle.ModeOff {
-		names = append(names, manager.config.ControlContainer)
-	}
+	names, restoreControl, restoreRunner := compensationTopology(
+		target,
+		controlChanged,
+		runnerChanged,
+		manager.config.ControlContainer,
+		manager.config.RunnerContainer,
+	)
 	for _, name := range names {
 		_ = manager.gracefulStop(ctx, name, 10*time.Second)
 		_ = manager.runtime.Delete(ctx, name)
 	}
-	if controlChanged && target != lifecycle.ModeOff {
+	if restoreControl {
 		// Recreate the control plane from current credentials and the safe
 		// durable mode; this restores a pre-existing MONITOR_ONLY topology and
 		// retains the recovery proxy for DRAINING.
 		_, _ = manager.replaceControl(ctx, target)
+	}
+	if restoreRunner {
+		// MONITOR_ONLY still requires the runner-owned private GitHub broker.
+		// An ACTIVE replacement failure must restore that runner rather than
+		// leaving the durable lifecycle healthy while both monitors are inert.
+		_, _ = manager.replaceRunner(ctx, target)
 	}
 	if postgresStarted {
 		if target == lifecycle.ModeOff {
@@ -1433,6 +1439,25 @@ func (manager *manager) compensateStart(
 		}
 	}
 	return nil
+}
+
+func compensationTopology(
+	target lifecycle.Mode,
+	controlChanged, runnerChanged bool,
+	controlContainer, runnerContainer string,
+) (
+	stopNames []string,
+	restoreControl, restoreRunner bool,
+) {
+	if runnerChanged {
+		stopNames = append(stopNames, runnerContainer)
+	}
+	if controlChanged && target == lifecycle.ModeOff {
+		stopNames = append(stopNames, controlContainer)
+	}
+	return stopNames,
+		controlChanged && target != lifecycle.ModeOff,
+		runnerChanged && target == lifecycle.ModeMonitorOnly
 }
 
 func (manager *manager) rollbackLifecycle(

@@ -10,6 +10,7 @@ import {
 import { IsolatedRunnerService } from './service.js';
 import { RunnerWorkspaceManager } from './workspace.js';
 import { PrivateMonitorBroker } from './monitor-broker.js';
+import { runCoupledLoops } from './liveness.js';
 
 async function main(): Promise<void> {
   const { config, credentials, runtimeBoundary } = loadRunnerStartup(
@@ -100,7 +101,7 @@ async function main(): Promise<void> {
           || process.env.DOCKER_HOST !== undefined,
       },
     });
-    await Promise.all([service.run(), broker.run()]);
+    await runCoupledLoops(service, broker);
   } finally {
     process.off('SIGTERM', drain);
     process.off('SIGINT', drain);
