@@ -105,8 +105,8 @@ func (runner *ProductionRunner) runMonitor(
 	transientRetries := 0
 	for {
 		if err := runner.pollOnce(ctx, registration, kind, component); err != nil {
-			if errors.Is(err, ErrMonitorBrokerProviderTimeout) &&
-				transientRetries < MaxMonitorBrokerTimeoutRetries {
+			if errors.Is(err, ErrMonitorBrokerTransientProvider) &&
+				transientRetries < MaxMonitorBrokerTransientRetry {
 				transientRetries++
 				if stateErr := runner.Store.UpsertActualState(
 					ctx,

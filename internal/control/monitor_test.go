@@ -24,13 +24,13 @@ func TestMonitorBrokerProductionBoundaries(t *testing.T) {
 	if DefaultMonitorBrokerTimeout != 25*time.Second ||
 		MaxMonitorBrokerTimeout != 30*time.Second ||
 		MonitorBrokerResponsePoll != 100*time.Millisecond ||
-		MaxMonitorBrokerTimeoutRetries != 1 {
+		MaxMonitorBrokerTransientRetry != 1 {
 		t.Fatalf(
 			"broker timing = default %s max %s poll %s retries %d",
 			DefaultMonitorBrokerTimeout,
 			MaxMonitorBrokerTimeout,
 			MonitorBrokerResponsePoll,
-			MaxMonitorBrokerTimeoutRetries,
+			MaxMonitorBrokerTransientRetry,
 		)
 	}
 }
@@ -139,7 +139,7 @@ func (source fakeMonitorSource) Poll(
 	return source.items, map[string]any{"updatedAfter": "next"}, time.Now(), nil
 }
 
-func TestMonitorRetriesOneBrokerProviderTimeoutWithoutAdvancingCursor(t *testing.T) {
+func TestMonitorRetriesOneTransientBrokerProviderFailureWithoutAdvancingCursor(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	store := &fakeMonitorStore{saveHook: cancel}
 	polls := 0
@@ -147,7 +147,7 @@ func TestMonitorRetriesOneBrokerProviderTimeoutWithoutAdvancingCursor(t *testing
 		Store: store,
 		Source: fakeMonitorSource{
 			calls:  &polls,
-			errors: []error{ErrMonitorBrokerProviderTimeout},
+			errors: []error{ErrMonitorBrokerTransientProvider},
 		},
 		Mode:           ModeMonitorOnly,
 		SupervisorID:   "test",
@@ -175,7 +175,7 @@ func TestMonitorRetriesOneBrokerProviderTimeoutWithoutAdvancingCursor(t *testing
 	}
 }
 
-func TestMonitorSurfacesRepeatedBrokerProviderTimeout(t *testing.T) {
+func TestMonitorSurfacesRepeatedTransientBrokerProviderFailure(t *testing.T) {
 	store := &fakeMonitorStore{}
 	polls := 0
 	runner := &ProductionRunner{
@@ -183,8 +183,8 @@ func TestMonitorSurfacesRepeatedBrokerProviderTimeout(t *testing.T) {
 		Source: fakeMonitorSource{
 			calls: &polls,
 			errors: []error{
-				ErrMonitorBrokerProviderTimeout,
-				ErrMonitorBrokerProviderTimeout,
+				ErrMonitorBrokerTransientProvider,
+				ErrMonitorBrokerTransientProvider,
 			},
 		},
 		Mode:           ModeMonitorOnly,
@@ -200,8 +200,8 @@ func TestMonitorSurfacesRepeatedBrokerProviderTimeout(t *testing.T) {
 		ExecutionEnabled:    true,
 		Version:             1,
 	}, "issue", ComponentIssueMonitor)
-	if !errors.Is(err, ErrMonitorBrokerProviderTimeout) {
-		t.Fatalf("runMonitor() error = %v, want provider timeout", err)
+	if !errors.Is(err, ErrMonitorBrokerTransientProvider) {
+		t.Fatalf("runMonitor() error = %v, want transient provider failure", err)
 	}
 	if polls != 2 || store.savedCursors != 0 || store.actualStates != 1 {
 		t.Fatalf(
@@ -213,17 +213,19 @@ func TestMonitorSurfacesRepeatedBrokerProviderTimeout(t *testing.T) {
 	}
 }
 
-func TestMonitorBrokerProviderTimeoutClassificationIsExact(t *testing.T) {
-	providerTimeout := monitorBrokerFailure(
-		"provider_timeout",
-		"provider operation exceeded its deadline",
-	)
-	if !errors.Is(providerTimeout, ErrMonitorBrokerProviderTimeout) {
-		t.Fatal("provider_timeout was not classified for bounded retry")
+func TestMonitorBrokerTransientProviderClassificationIsExact(t *testing.T) {
+	for _, code := range []string{"provider_timeout", "provider_failure"} {
+		failure := monitorBrokerFailure(
+			code,
+			"typed provider operation failed",
+		)
+		if !errors.Is(failure, ErrMonitorBrokerTransientProvider) {
+			t.Fatalf("%s was not classified for bounded retry", code)
+		}
 	}
-	other := monitorBrokerFailure("provider_error", "GitHub request failed")
-	if errors.Is(other, ErrMonitorBrokerProviderTimeout) {
-		t.Fatal("non-timeout broker failure was classified as retryable")
+	other := monitorBrokerFailure("invalid_json", "GitHub response was invalid")
+	if errors.Is(other, ErrMonitorBrokerTransientProvider) {
+		t.Fatal("non-transient broker failure was classified as retryable")
 	}
 }
 
