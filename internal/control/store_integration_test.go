@@ -55,6 +55,16 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	if err != nil || !duplicate || replayed.ID != created.ID {
 		t.Fatalf("idempotent replay = %#v, %v, %v", replayed, duplicate, err)
 	}
+	existing, duplicate, err := store.CreateRegistration(
+		ctx,
+		CreateRegistration{Repository: "owner/repo"},
+		"create-existing-registration",
+		"operator",
+	)
+	if !errors.Is(err, ErrConflict) || duplicate ||
+		existing.ID != created.ID || existing.Version != created.Version {
+		t.Fatalf("existing registration conflict = %#v, %v, %v", existing, duplicate, err)
+	}
 	if _, _, err := store.CreateRegistration(
 		ctx,
 		CreateRegistration{Repository: "owner/other"},
@@ -206,6 +216,50 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		t.Fatalf("no-change replay = replay=%v rejection=%#v err=%v", replay, rejectedCommand, err)
 	}
 	created = commandUpdated
+	disabledDesired := false
+	noEvidence, duplicate, err := store.CreateRegistration(
+		ctx,
+		CreateRegistration{
+			Repository:          "owner/no-evidence",
+			Enabled:             &disabledDesired,
+			IssueMonitorEnabled: &disabledDesired,
+			PRMonitorEnabled:    &disabledDesired,
+			ExecutionEnabled:    &disabledDesired,
+		},
+		"create-no-evidence-registration",
+		"operator",
+	)
+	if err != nil || duplicate {
+		t.Fatalf("no-evidence registration = %#v, %v, %v", noEvidence, duplicate, err)
+	}
+	noEvidenceProjections, err := store.Projections(ctx, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundNoEvidence := false
+	for _, projection := range noEvidenceProjections {
+		if projection.Registration.ID != noEvidence.ID {
+			continue
+		}
+		foundNoEvidence = true
+		for _, componentName := range []string{
+			ComponentIssueMonitor,
+			ComponentPRMonitor,
+			ComponentForwarder,
+			ComponentExecution,
+		} {
+			component := projection.Components[componentName]
+			if component.Actual != "unknown" ||
+				component.Freshness != "unknown" ||
+				component.ObservedAt != nil ||
+				component.LastGoodAt != nil {
+				t.Fatalf("missing %s evidence was fabricated: %#v", componentName, component)
+			}
+		}
+	}
+	if !foundNoEvidence {
+		t.Fatal("no-evidence registration was absent from projections")
+	}
 	if err := store.UpsertActualState(
 		ctx,
 		created,
@@ -670,6 +724,51 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.pool.Exec(ctx,
+		`UPDATE agentops_control.repository_registrations
+		    SET execution_enabled = false
+		  WHERE id = $1`,
+		created.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	_, replay, err = store.RetryWebhook(
+		ctx,
+		failedReceipt.DeliveryID,
+		"retry-execution-disabled",
+		"operator",
+		failedClaim.RouteAttempts,
+		created.ID,
+		created.Version,
+	)
+	var executionDisabledConflict *DeliveryRetryConflict
+	if replay || !errors.As(err, &executionDisabledConflict) ||
+		executionDisabledConflict.Reason != "execution_disabled" ||
+		executionDisabledConflict.AttemptID == "" {
+		t.Fatalf("execution-disabled retry = replay=%v conflict=%#v err=%v", replay, executionDisabledConflict, err)
+	}
+	executionDisabledAttemptID := executionDisabledConflict.AttemptID
+	_, replay, err = store.RetryWebhook(
+		ctx,
+		failedReceipt.DeliveryID,
+		"retry-execution-disabled",
+		"operator",
+		failedClaim.RouteAttempts,
+		created.ID,
+		created.Version,
+	)
+	if !replay || !errors.As(err, &executionDisabledConflict) ||
+		executionDisabledConflict.AttemptID != executionDisabledAttemptID {
+		t.Fatalf("execution-disabled retry replay = replay=%v conflict=%#v err=%v", replay, executionDisabledConflict, err)
+	}
+	if _, err := store.pool.Exec(ctx,
+		`UPDATE agentops_control.repository_registrations
+		    SET execution_enabled = true
+		  WHERE id = $1`,
+		created.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
 	retry, replay, err := store.RetryWebhook(
 		ctx,
 		failedReceipt.DeliveryID,
@@ -684,11 +783,17 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		t.Fatalf("RetryWebhook() = %#v, %v, %v", retry, replay, err)
 	}
 	deliveryStatus, err := store.DeliveryStatus(ctx, failedReceipt.DeliveryID)
+	acceptedRetryPresent := false
+	for _, attempt := range deliveryStatus.RetryAttempts {
+		if attempt.AttemptID == retry.AttemptID &&
+			attempt.Status == "accepted" &&
+			attempt.ObservedRouteAttempts == failedClaim.RouteAttempts {
+			acceptedRetryPresent = true
+		}
+	}
 	if err != nil ||
 		deliveryStatus.Status != "pending" ||
-		len(deliveryStatus.RetryAttempts) != 1 ||
-		deliveryStatus.RetryAttempts[0].AttemptID != retry.AttemptID ||
-		deliveryStatus.RetryAttempts[0].Status != "accepted" {
+		!acceptedRetryPresent {
 		t.Fatalf("DeliveryStatus() = %#v, %v", deliveryStatus, err)
 	}
 	retryReplay, replay, err := store.RetryWebhook(
@@ -703,6 +808,17 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	if err != nil || !replay || retryReplay.AttemptID != retry.AttemptID ||
 		!retryReplay.RecordedAt.Equal(retry.RecordedAt) {
 		t.Fatalf("retry replay = %#v, %v, %v", retryReplay, replay, err)
+	}
+	if _, _, err := store.RetryWebhook(
+		ctx,
+		unknownReceipt.DeliveryID,
+		"retry-key",
+		"operator",
+		0,
+		created.ID,
+		created.Version,
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("cross-delivery idempotency key reuse = %v", err)
 	}
 	_, replay, err = store.RetryWebhook(
 		ctx,
@@ -738,8 +854,9 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	if err := store.pool.QueryRow(ctx,
 		`SELECT count(*)
 		   FROM agentops_control.delivery_retry_attempts
-		  WHERE delivery_id = $1 AND status = 'rejected'`,
+		  WHERE delivery_id = $1 AND status = 'rejected' AND id = $2`,
 		failedReceipt.DeliveryID,
+		rejectedAttemptID,
 	).Scan(&rejectedAttempts); err != nil {
 		t.Fatal(err)
 	}

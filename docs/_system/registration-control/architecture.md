@@ -12,7 +12,8 @@
   停止し、status query は 503 にする。
 - **ARCH-registration-control-004 Retry idempotency** — Registration create と delivery retry は
   `Idempotency-Key`、request hash、response を PostgreSQL transaction に保存する。key の異なる request への再利用、
-  stale observed-attempt、processing/processed delivery を 409 で拒否する。受理時点の `pending` 応答を固定的な
+  異なるdeliveryへの再利用、stale observed-attempt、processing/processed delivery を 409 で拒否する。retry keyは
+  delivery間でglobalにscopeされる。受理時点の `pending` 応答を固定的な
   現在状態として扱わず、`GET /v1/deliveries/{deliveryId}` がdeliveryとretry attemptの最新durable stateを返す。
 - **ARCH-registration-control-005 Durable delivery router** — HMAC と repository identity を検証した delivery は
   commit 成功後だけ 202 ACK する。router は `FOR UPDATE SKIP LOCKED` と期限付き ownership で claim し、
@@ -37,7 +38,9 @@
   cookie にだけ置き、browser code、DOM、URL、storage、payloadへ bearer secret を渡さない。container targetは
   host-loopbackへpublishする同一process proxyから`127.0.0.1` backendへだけ転送し、forwarding provenance
   headerを除去するため、app側bootstrap peer条件とcontainer host boundaryを同時に維持する。logout/expiry時は
-  server logへ新しい一回限りbootstrap URLを発行し、失効済みtoken/sessionを再利用しない。
+  server logへ新しい一回限りbootstrap URLを発行し、失効済みtoken/sessionを再利用しない。session作成、
+  logout、expiry、Host/Origin/fetch metadata/CSRF/bootstrap拒否は匿名またはoperator actor、reason、request
+  metadata、timeをruntime auditへ記録し、token/session ID/CSRF proofは記録しない。
 - **ARCH-registration-control-010 Exact Origin + CSRF boundary** — browser の unsafe request は canonical
   Origin の byte-exact 一致、`Sec-Fetch-Site: same-origin`、session-bound `X-CSRF-Token` の全てを要求する。
   CSRF proof は session 確立時に生成して memory だけに保持し、logout/expiry で失効する。CSP、no-store、
@@ -60,7 +63,8 @@
   disable は version を一度だけ進め、旧versionの queued jobをtransactionalにrejectし、leased workも既存の
   pre-side-effect fenceにより再活性化できない。UIはauthoritative re-query一致後だけverified successをannounceする。
 - **ARCH-registration-control-014 Delivery retry registration fence** — retry body は observed route attempts に加え
-  expected Registration identity/version を必須とし、delivery binding、current Registration enabled/version、
+  expected Registration identity/version を必須とし、delivery binding、current Registration
+  enabled/executionEnabled/version、
   retryable state を同じrow-lock transactionで照合する。accepted/rejected outcome、attempt、audit、idempotent
   replayをdurableに保存し、unknown/disabled/stale/mismatched fenceはjobやretryを作らず理由付き409にする。
 

@@ -3,7 +3,7 @@
   "issue": "mrbaron3/workflow#15",
   "acceptanceCriterion": "AC-CISO-010",
   "baseCommit": "af16c6ac9e75aac949c9a4e81d6f1877a292e313",
-  "recordedAt": "2026-07-26T01:49:09Z",
+  "recordedAt": "2026-07-26T02:44:05Z",
   "designLineage": {
     "requestChangesDecisionId": "workflow-ciso05-dashboard-r01-request-changes",
     "requestChangesMessageId": "msg_59eb810e6bdd",
@@ -23,9 +23,35 @@
     "capabilityReconciliationDigest": "sha256:f67fed2c8de6836072cd8fb34ce53e70bf3801717989ba9c1dc25a1793d5a1db",
     "capabilityCount": 7
   },
+  "formalReviews": {
+    "roundsRequired": 2,
+    "roundsCompleted": 2,
+    "roundThreeRun": false,
+    "round1": {
+      "frozenHead": "b79b4e82d462fa2925d9cd6ec7042ac7d4d2032f",
+      "codexTaskId": "task_355e299b7abf",
+      "codexDispatchId": "ctx_ac98278a1e96",
+      "codexWorkerDoneMessageId": "msg_9375cde58b14",
+      "claudeTaskId": "task_ffefe8459344",
+      "claudeDispatchId": "ctx_08950b0b0ffa",
+      "claudeWorkerDoneMessageId": "msg_50acd5753a76",
+      "evidencePath": "evidence/ciso-05/reviews/round-1.json"
+    },
+    "round2": {
+      "frozenHead": "b36c480c163b3e8a1289ff0c8b0cb1834e4cd806",
+      "codexTaskId": "task_a0d8dc6ea4db",
+      "codexDispatchId": "ctx_08d829fa9275",
+      "codexWorkerDoneMessageId": "msg_fbc9d64a6bee",
+      "claudeTaskId": "task_1f3b6ad1fcdb",
+      "claudeDispatchId": "ctx_96e557562931",
+      "claudeWorkerDoneMessageId": "msg_2b56d0b9f27c",
+      "providerMetadataCorrectionMessageId": "msg_fd9875fc4d87",
+      "evidencePath": "evidence/ciso-05/reviews/round-2.json"
+    }
+  },
   "validation": [
     {
-      "boundary": "design schema, digest, decision, and seven-capability reconciliation",
+      "boundary": "design schema, digest, decision, seven-capability reconciliation, and exact OpenAPI method/path/capability pairing",
       "command": "go test ./internal/designgate",
       "result": "passed"
     },
@@ -64,7 +90,7 @@
       }
     },
     {
-      "boundary": "headless Chromium dashboard CRUD, divergence, retry, disconnect, keyboard, focus, labels, announcements, 320px layout, and same-origin network allowlist",
+      "boundary": "headless Chromium dashboard CRUD/restart, desired/actual divergence, component-specific Queue truth, truthful unknown-to-divergent filtering, execution-disabled and authoritative retry, mutation/session/network failures, keyboard/focus/labels/live announcements, 320px/767px layout, 44px targets, contrast, and same-origin network allowlist",
       "command": "AGENTOPS_TEST_DATABASE_URL=<loopback-test-dsn> npm run test:dashboard",
       "result": "passed",
       "details": {
@@ -87,10 +113,10 @@
     },
     {
       "boundary": "standard OCI control image",
-      "command": "docker build --target control -t agentops-control:ciso05-local -f deploy/Containerfile .",
+      "command": "docker build --target control -t agentops-control:ciso05-final -f deploy/Containerfile .",
       "result": "passed",
       "details": {
-        "manifestDigest": "sha256:24db791e68f5d8508fda313668aea2dc7a2774f8223689f48266f47e2b2c85b9",
+        "manifestDigest": "sha256:4684227239a995730e4fc4cda5833cbd8b040e4a2848ce6375d82087a561e47d",
         "runtimeUser": "agentops",
         "runtimeUid": 65532,
         "exposedPorts": [
@@ -105,7 +131,7 @@
       "command": "npm run smoke:dashboard:apple",
       "result": "passed",
       "evidencePath": "evidence/ciso-05/dashboard-apple-container-smoke.json",
-      "evidenceSha256": "ca40bbc06adf35f421e0f22b58ba4e641e5600670a43cf2a0eecfe0254c402cb",
+      "evidenceSha256": "48ac2054be09018fa2a8fa17d7067c4538b7f5be64f0eadfa50be7ce1c931120",
       "details": {
         "readOnlyRootFilesystem": true,
         "capabilitiesDropped": "ALL",

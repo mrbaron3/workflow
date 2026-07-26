@@ -18,6 +18,9 @@ import (
 type fakeAPIStore struct {
 	webhooks        int
 	creates         int
+	createResult    Registration
+	createDuplicate bool
+	createError     error
 	projections     []RegistrationProjection
 	projectionError error
 	retryError      error
@@ -26,6 +29,9 @@ type fakeAPIStore struct {
 	updated         Registration
 	deliveryStatus  DeliveryStatus
 	deliveryError   error
+	auditEvents     []string
+	auditDetails    []map[string]any
+	auditError      error
 }
 
 const (
@@ -41,6 +47,9 @@ func (store *fakeAPIStore) CreateRegistration(
 	_, _ string,
 ) (Registration, bool, error) {
 	store.creates++
+	if store.createError != nil {
+		return store.createResult, store.createDuplicate, store.createError
+	}
 	validated, err := input.Validated()
 	validated.ID = testRegistrationID
 	validated.Version = 1
@@ -96,6 +105,17 @@ func (store *fakeAPIStore) DeliveryStatus(
 	string,
 ) (DeliveryStatus, error) {
 	return store.deliveryStatus, store.deliveryError
+}
+
+func (store *fakeAPIStore) AppendAudit(
+	_ context.Context,
+	_, eventType string,
+	_, _ *string,
+	details map[string]any,
+) error {
+	store.auditEvents = append(store.auditEvents, eventType)
+	store.auditDetails = append(store.auditDetails, details)
+	return store.auditError
 }
 
 func TestControlAPIRequiresAuthorizationAndOptimisticContractHeaders(t *testing.T) {
@@ -194,6 +214,51 @@ func TestWebhookPersistsOnlyAfterValidSignatureAndIdentity(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest || store.webhooks != 1 {
 		t.Fatalf("trailing payload status=%d persisted=%d", response.Code, store.webhooks)
+	}
+}
+
+func TestWebhookRejectsAlternateHostBeforeSignatureOrPersistence(t *testing.T) {
+	store := &fakeAPIStore{}
+	handler := browserTestAPI(store).Handler()
+	payload := []byte(`{"repository":{"full_name":"owner/repo"}}`)
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"http://localhost:8080/v1/webhooks/github",
+		bytes.NewReader(payload),
+	)
+	request.Host = "localhost:8080"
+	request.Header.Set("X-GitHub-Delivery", "wrong-host-delivery")
+	request.Header.Set("X-GitHub-Event", "push")
+	request.Header.Set("X-Hub-Signature-256", sign(payload, "webhook-secret"))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || store.webhooks != 0 {
+		t.Fatalf("wrong Host webhook status=%d persisted=%d body=%s", response.Code, store.webhooks, response.Body)
+	}
+}
+
+func TestCreateConflictIdentifiesExistingRegistration(t *testing.T) {
+	existing := Registration{
+		ID:         testRegistrationID,
+		Repository: "owner/repo",
+		Version:    7,
+	}
+	store := &fakeAPIStore{createResult: existing, createError: ErrConflict}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/registrations",
+		bytes.NewBufferString(`{"repository":"owner/repo"}`),
+	)
+	request.Header.Set("Authorization", "Bearer control-token")
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Idempotency-Key", "create-existing")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusConflict ||
+		response.Header().Get("ETag") != `"7"` ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"resourceIdentity":"`+testRegistrationID+`"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"registrationVersion":7`)) {
+		t.Fatalf("create conflict status=%d headers=%v body=%s", response.Code, response.Header(), response.Body)
 	}
 }
 

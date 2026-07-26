@@ -156,6 +156,29 @@ func TestBrowserBootstrapSessionOriginAndCSRFLifecycle(t *testing.T) {
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("logged-out session status = %d", response.Code)
 	}
+	events := strings.Join(store.auditEvents, ",")
+	for _, required := range []string{
+		"browser.session.created",
+		"browser.session.rejected",
+		"browser.session.logout",
+	} {
+		if !strings.Contains(events, required) {
+			t.Fatalf("browser audit events %q missing %q", events, required)
+		}
+	}
+	details, err := json.Marshal(store.auditDetails)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{
+		"one-time-bootstrap-token",
+		session.CSRFToken,
+		sessionCookie.Value,
+	} {
+		if bytes.Contains(details, []byte(secret)) {
+			t.Fatalf("browser audit exposed secret %q: %s", secret, details)
+		}
+	}
 }
 
 func TestOperatorAPIRejectsAlternateHostEvenWithBearer(t *testing.T) {
@@ -170,7 +193,8 @@ func TestOperatorAPIRejectsAlternateHostEvenWithBearer(t *testing.T) {
 }
 
 func TestExpiredBrowserSessionFailsClosed(t *testing.T) {
-	api := browserTestAPI(&fakeAPIStore{})
+	store := &fakeAPIStore{}
+	api := browserTestAPI(store)
 	api.SessionTTL = time.Millisecond
 	handler := api.Handler()
 	request := httptest.NewRequest(
@@ -191,6 +215,27 @@ func TestExpiredBrowserSessionFailsClosed(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("expired session status = %d body=%s", response.Code, response.Body)
+	}
+	if !strings.Contains(strings.Join(store.auditEvents, ","), "browser.session.expired") {
+		t.Fatalf("expiry audit events = %#v", store.auditEvents)
+	}
+}
+
+func TestBrowserSessionCreationFailsClosedWhenAuditIsUnavailable(t *testing.T) {
+	store := &fakeAPIStore{auditError: ErrStoreUnavailable}
+	handler := browserTestAPI(store).Handler()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"http://127.0.0.1:8080/dashboard/bootstrap?token=one-time-bootstrap-token-with-enough-entropy",
+		nil,
+	)
+	request.Host = "127.0.0.1:8080"
+	request.RemoteAddr = "127.0.0.1:40000"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable ||
+		len(response.Result().Cookies()) != 0 {
+		t.Fatalf("audit failure bootstrap status=%d cookies=%#v body=%s", response.Code, response.Result().Cookies(), response.Body)
 	}
 }
 

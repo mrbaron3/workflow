@@ -23,7 +23,8 @@ button:focus-visible, input:focus-visible, summary:focus-visible, a:focus-visibl
 .topbar { min-height: 82px; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem clamp(1rem, 4vw, 4rem); color: #fff; background: #172c33; }
 h1, h2, h3, p { margin-top: 0; }
 h1 { margin-bottom: 0; font-size: clamp(1.25rem, 3vw, 1.8rem); }
-.eyebrow { margin-bottom: .25rem; color: #7ab8bc; font-size: .7rem; font-weight: 800; letter-spacing: .15em; }
+.eyebrow { margin-bottom: .25rem; color: #365d62; font-size: .7rem; font-weight: 800; letter-spacing: .15em; }
+.topbar .eyebrow { color: #7ab8bc; }
 .session, .actions, .dialog-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; }
 .mode { border: 1px solid #7ab8bc; border-radius: 999px; padding: .35rem .7rem; font-size: .8rem; font-weight: 800; }
 .quiet { color: var(--muted); font-size: .88rem; }
@@ -69,7 +70,7 @@ input { width: 100%; min-height: 44px; padding: .65rem .75rem; color: var(--ink)
 .component dt { color: var(--muted); }
 .component dd { margin: 0; overflow-wrap: anywhere; }
 .details { padding: .9rem 1.1rem; border-top: 1px solid var(--line); }
-.details summary { cursor: pointer; font-weight: 700; }
+.details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 700; }
 .details-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; margin-top: .8rem; font-size: .85rem; }
 .delivery-list { grid-column: 1 / -1; display: grid; gap: .45rem; margin: 0; padding: 0; list-style: none; }
 .delivery-list li { display: flex; align-items: center; justify-content: space-between; gap: .7rem; padding: .55rem; background: var(--canvas); border-radius: 6px; }
@@ -96,7 +97,7 @@ fieldset { display: grid; gap: .65rem; border: 1px solid var(--line); border-rad
   .component { border-bottom: 1px solid var(--line); }
   .details-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@media (max-width: 620px) {
+@media (max-width: 767px) {
   .topbar, .summary, .card-head { align-items: stretch; flex-direction: column; }
   .session, .actions, .card-actions { display: grid; grid-template-columns: 1fr; }
   .filters { grid-template-columns: 1fr; }

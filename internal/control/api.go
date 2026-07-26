@@ -64,6 +64,14 @@ type APIStore interface {
 		int64,
 	) (RetryResult, bool, error)
 	DeliveryStatus(context.Context, string) (DeliveryStatus, error)
+	AppendAudit(
+		context.Context,
+		string,
+		string,
+		*string,
+		*string,
+		map[string]any,
+	) error
 }
 
 type API struct {
@@ -137,6 +145,10 @@ func (api *API) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	if request.URL.Path == "/v1/webhooks/github" {
+		if !api.exactHost(request) {
+			writeError(writer, http.StatusForbidden, "invalid_host", "request Host does not match the configured Control API origin")
+			return
+		}
 		api.webhook(writer, request)
 		return
 	}
@@ -406,9 +418,24 @@ func (api *API) createRegistration(
 			)
 			return
 		case errors.Is(err, ErrConflict):
+			outcomeValue := "rejected"
+			if duplicate {
+				outcomeValue = "duplicate"
+				writer.Header().Set("Idempotent-Replay", "true")
+			}
+			var current *CommandFence
+			resourceIdentity := input.Repository
+			if registration.ID != "" && registration.Version > 0 {
+				current = &CommandFence{
+					RegistrationID:      registration.ID,
+					RegistrationVersion: registration.Version,
+				}
+				resourceIdentity = registration.ID
+				writer.Header().Set("ETag", quotedVersion(registration.Version))
+			}
 			writeCommandError(
-				writer, http.StatusConflict, idempotencyKey, "rejected",
-				"repository_already_registered", input.Repository, nil, nil, err,
+				writer, http.StatusConflict, idempotencyKey, outcomeValue,
+				"repository_already_registered", resourceIdentity, nil, current, err,
 			)
 			return
 		case errors.Is(err, ErrStoreUnavailable):
@@ -899,6 +926,7 @@ func (api *API) authorized(
 		digest := sha256.Sum256([]byte(session.ID))
 		return "browser-session:" + hex.EncodeToString(digest[:8]), true
 	} else if expired {
+		api.recordBrowserAudit(request, "browser.session.expired", "session_expired", "browser-cookie-present")
 		api.rotateBootstrap("session_expired")
 	}
 	if request.Header.Get("Origin") != "" {
@@ -967,6 +995,7 @@ func (api *API) browserAuthorized(
 	session, present, expired := api.sessions.get(request)
 	if !present {
 		if expired {
+			api.recordBrowserAudit(request, "browser.session.expired", "session_expired", "browser-cookie-present")
 			api.rotateBootstrap("session_expired")
 		}
 		api.logBrowserRejection(request, "browser_session_required")
@@ -1003,25 +1032,74 @@ func (api *API) logBrowserRejection(request *http.Request, reason string) {
 		"path", request.URL.Path,
 		"reason", reason,
 	)
+	api.recordBrowserAudit(request, "browser.session.rejected", reason, "browser-anonymous")
+}
+
+func (api *API) recordBrowserAudit(
+	request *http.Request,
+	eventType, reason, actorID string,
+) {
+	if err := api.Store.AppendAudit(
+		request.Context(),
+		actorID,
+		eventType,
+		nil,
+		nil,
+		map[string]any{
+			"method": request.Method,
+			"path":   request.URL.Path,
+			"reason": reason,
+			"host":   request.Host,
+		},
+	); err != nil {
+		api.Log.Error(
+			"browser boundary audit failed",
+			"eventType", eventType,
+			"reason", reason,
+			"error", err,
+		)
+	}
 }
 
 func (api *API) bootstrap(writer http.ResponseWriter, request *http.Request) {
 	if request.Method != http.MethodGet {
+		api.recordBrowserAudit(request, "browser.session.rejected", "invalid_method", "browser-anonymous")
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "GET is required")
 		return
 	}
 	if !api.exactHost(request) || !requestIsLoopback(request) {
+		api.recordBrowserAudit(request, "browser.session.rejected", "loopback_or_host_mismatch", "browser-anonymous")
 		writeError(writer, http.StatusForbidden, "loopback_required", "bootstrap is available only through the exact loopback dashboard origin")
 		return
 	}
 	token := request.URL.Query().Get("token")
 	if token == "" || len(token) > 512 || api.BootstrapToken == "" {
+		api.recordBrowserAudit(request, "browser.session.rejected", "invalid_bootstrap", "browser-anonymous")
 		writeError(writer, http.StatusUnauthorized, "invalid_bootstrap", "bootstrap token is invalid or unavailable")
 		return
 	}
 	session, err := api.sessions.bootstrap(token)
 	if err != nil {
+		api.recordBrowserAudit(request, "browser.session.rejected", "invalid_or_reused_bootstrap", "browser-anonymous")
 		writeError(writer, http.StatusUnauthorized, "invalid_bootstrap", err.Error())
+		return
+	}
+	if err := api.Store.AppendAudit(
+		request.Context(),
+		"browser-operator",
+		"browser.session.created",
+		nil,
+		nil,
+		map[string]any{
+			"method":    request.Method,
+			"path":      request.URL.Path,
+			"host":      request.Host,
+			"expiresAt": session.ExpiresAt,
+		},
+	); err != nil {
+		api.sessions.delete(session.ID)
+		api.rotateBootstrap("session_audit_failed")
+		writeError(writer, http.StatusServiceUnavailable, "control_store_unavailable", "browser session audit could not be persisted")
 		return
 	}
 	setSessionCookie(writer, api.origin, session)
@@ -1050,6 +1128,22 @@ func (api *API) browserSession(writer http.ResponseWriter, request *http.Request
 		api.sessions.delete(session.ID)
 		api.rotateBootstrap("operator_logout")
 		expireSessionCookie(writer, api.origin)
+		if err := api.Store.AppendAudit(
+			request.Context(),
+			"browser-operator",
+			"browser.session.logout",
+			nil,
+			nil,
+			map[string]any{
+				"method": request.Method,
+				"path":   request.URL.Path,
+				"host":   request.Host,
+				"reason": "operator_logout",
+			},
+		); err != nil {
+			writeError(writer, http.StatusServiceUnavailable, "control_store_unavailable", "browser session logout audit could not be persisted")
+			return
+		}
 		writeJSON(writer, http.StatusOK, map[string]any{"signedOut": true})
 	default:
 		writeError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "GET or DELETE is required")

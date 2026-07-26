@@ -231,6 +231,10 @@ func ValidateDashboard(repositoryRoot string) (GateResult, error) {
 	if err != nil {
 		return GateResult{}, fmt.Errorf("dashboard Control API contract: %w", err)
 	}
+	publishedOperations, err := parseOpenAPICapabilityOperations(openAPI)
+	if err != nil {
+		return GateResult{}, fmt.Errorf("dashboard Control API capability operations: %w", err)
+	}
 	system, err := os.ReadFile(filepath.Join(
 		repositoryRoot,
 		"docs",
@@ -255,10 +259,10 @@ func ValidateDashboard(repositoryRoot string) (GateResult, error) {
 			return GateResult{}, fmt.Errorf("dashboard capability %s is not completely reconciled", binding.CapabilityID)
 		}
 		for _, operation := range binding.PlannedHTTPOperations {
-			if !strings.Contains(string(openAPI), "  "+operation.Path+":") ||
-				!strings.Contains(string(openAPI), "    "+strings.ToLower(operation.Method)+":") {
+			key := strings.ToUpper(operation.Method) + " " + operation.Path
+			if publishedOperations[key] != binding.CapabilityID {
 				return GateResult{}, fmt.Errorf(
-					"dashboard capability %s has ungrounded API operation %s %s",
+					"dashboard capability %s has ungrounded or mismatched API operation %s %s",
 					binding.CapabilityID,
 					operation.Method,
 					operation.Path,
@@ -288,6 +292,53 @@ func ValidateDashboard(repositoryRoot string) (GateResult, error) {
 		CapabilityIDs:   ids,
 		CoverageBinding: len(trace.Capabilities),
 	}, nil
+}
+
+func parseOpenAPICapabilityOperations(document []byte) (map[string]string, error) {
+	operations := make(map[string]string)
+	currentPath := ""
+	currentMethod := ""
+	for lineNumber, line := range strings.Split(string(document), "\n") {
+		trimmed := strings.TrimSpace(line)
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if indent == 2 && strings.HasPrefix(trimmed, "/") &&
+			strings.HasSuffix(trimmed, ":") {
+			currentPath = strings.TrimSuffix(trimmed, ":")
+			currentMethod = ""
+			continue
+		}
+		if indent == 4 && currentPath != "" && strings.HasSuffix(trimmed, ":") {
+			method := strings.TrimSuffix(trimmed, ":")
+			switch method {
+			case "get", "post", "put", "patch", "delete", "head", "options", "trace":
+				currentMethod = strings.ToUpper(method)
+			default:
+				currentMethod = ""
+			}
+			continue
+		}
+		if indent == 6 && currentPath != "" && currentMethod != "" &&
+			strings.HasPrefix(trimmed, "x-designflow-capability:") {
+			capabilityID := strings.TrimSpace(strings.TrimPrefix(
+				trimmed,
+				"x-designflow-capability:",
+			))
+			if capabilityID == "" {
+				return nil, fmt.Errorf("line %d has an empty capability id", lineNumber+1)
+			}
+			key := currentMethod + " " + currentPath
+			if previous, duplicate := operations[key]; duplicate {
+				return nil, fmt.Errorf(
+					"operation %s declares duplicate capabilities %s and %s",
+					key,
+					previous,
+					capabilityID,
+				)
+			}
+			operations[key] = capabilityID
+		}
+	}
+	return operations, nil
 }
 
 type provenance struct {

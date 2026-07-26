@@ -37,6 +37,41 @@ func TestValidateApprovedDashboardRevisionAndReconciliation(t *testing.T) {
 	}
 }
 
+func TestOpenAPICapabilityOperationsRequireExactMethodPathPairing(t *testing.T) {
+	document := []byte(`openapi: 3.1.0
+paths:
+  /v1/registrations:
+    get:
+      x-designflow-capability: cap-list-registration-status
+    post:
+      x-designflow-capability: cap-create-registration
+  /v1/registrations/{registrationId}:
+    patch:
+      x-designflow-capability: cap-update-registration
+`)
+	operations, err := parseOpenAPICapabilityOperations(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[string]string{
+		"GET /v1/registrations":                    "cap-list-registration-status",
+		"POST /v1/registrations":                   "cap-create-registration",
+		"PATCH /v1/registrations/{registrationId}": "cap-update-registration",
+	}
+	if len(operations) != len(expected) {
+		t.Fatalf("operations = %#v", operations)
+	}
+	for key, capabilityID := range expected {
+		if operations[key] != capabilityID {
+			t.Fatalf("%s = %q, want %q", key, operations[key], capabilityID)
+		}
+	}
+	if operations["PATCH /v1/registrations"] != "" ||
+		operations["GET /v1/registrations/{registrationId}"] != "" {
+		t.Fatalf("method/path pairing leaked across operations: %#v", operations)
+	}
+}
+
 func TestDashboardPinnedSchemasAndDesignTokenFormatRejectInvalidDocuments(t *testing.T) {
 	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {

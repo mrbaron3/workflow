@@ -69,6 +69,25 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(page.locator('#registration-dialog')).not.toBeVisible();
   await expect(card.getByRole('button', { name: 'example/browser-control の状態詳細を選択' })).toBeFocused();
 
+  await page.route(new RegExp(`/v1/registrations/${registrationId}$`), async (route) => {
+    await route.fulfill({
+      status: 401,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        error: { code: 'unauthorized', message: 'browser session expired during mutation' },
+      }),
+    });
+  }, { times: 1 });
+  await card.getByRole('button', { name: '編集' }).click();
+  await page.locator('#pr-enabled').check();
+  await page.getByRole('button', { name: '保存' }).click();
+  await expect(page.locator('#alert')).toContainText('Operator session');
+  await expect(page.getByRole('button', { name: 'Registration を追加' })).toBeDisabled();
+  await expect(card.getByRole('button', { name: '編集' })).toBeDisabled();
+  await page.reload();
+  await expect(page.locator('#mode')).toHaveText('MONITOR_ONLY');
+  await expect(page.getByRole('button', { name: 'Registration を追加' })).toBeEnabled();
+
   const snapshot = await page.evaluate(async () =>
     (await fetch('/v1/registrations?limit=200')).json()) as {
       items: Array<Record<string, unknown>>;
@@ -79,6 +98,35 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   const components = snapshot.items[0]!.components as Record<string, Record<string, unknown>>;
   components.issue_monitor!.actual = 'failed';
   components.issue_monitor!.freshness = 'fresh';
+  components.pr_monitor!.actual = 'unknown';
+  components.pr_monitor!.freshness = 'unknown';
+  registration.executionEnabled = false;
+  const healthyQueueItem = structuredClone(snapshot.items[0]!);
+  const healthyQueueRegistration = healthyQueueItem.registration as Record<string, unknown>;
+  healthyQueueRegistration.id = '00000000-0000-4000-8000-000000000099';
+  healthyQueueRegistration.repository = 'example/healthy-queue';
+  healthyQueueRegistration.enabled = true;
+  healthyQueueRegistration.issueMonitorEnabled = true;
+  healthyQueueRegistration.prMonitorEnabled = false;
+  healthyQueueRegistration.executionEnabled = true;
+  const healthyComponents = healthyQueueItem.components as Record<string, Record<string, unknown>>;
+  Object.assign(healthyComponents.issue_monitor!, {
+    desired: true, actual: 'running', freshness: 'fresh', recoveryState: 'none',
+  });
+  Object.assign(healthyComponents.pr_monitor!, {
+    desired: false, actual: 'stopped', freshness: 'fresh', recoveryState: 'none',
+  });
+  Object.assign(healthyComponents.forwarder!, {
+    desired: true, actual: 'running', freshness: 'fresh', recoveryState: 'none',
+  });
+  Object.assign(healthyComponents.execution!, {
+    desired: true, actual: 'running', freshness: 'fresh', recoveryState: 'in_progress',
+  });
+  Object.assign(healthyComponents.queue!, {
+    desired: true, actual: 'leased', freshness: 'fresh', recoveryState: 'in_progress',
+  });
+  healthyQueueItem.recentDeliveryFailures = [];
+  snapshot.items.push(healthyQueueItem);
   snapshot.nextPageToken = 'expired-snapshot';
   snapshot.items[0]!.recentDeliveryFailures = [{
     id: deliveryId,
@@ -94,7 +142,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   }];
   await page.route('**/v1/registrations?limit=200', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) });
-  }, { times: 1 });
+  });
   let deliveryState = 'failed';
   await page.route(new RegExp(`/v1/deliveries/${deliveryId}(?:/retry)?$`), async (route) => {
     if (route.request().method() === 'POST') {
@@ -129,6 +177,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
         retryAttempts: deliveryState !== 'failed' ? [{
           attemptId: '00000000-0000-4000-8000-000000000016',
           status: 'accepted',
+          observedRouteAttempts: 2,
         }] : [],
       }),
     });
@@ -144,17 +193,37 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   }, { times: 1 });
   await page.getByRole('button', { name: '再取得' }).click();
   await expect(page.getByRole('button', { name: /failed 1/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /divergent 1/ })).toBeVisible();
+  await expect(page.locator('.card', { hasText: 'example/healthy-queue' })).not.toHaveClass(/anomaly/);
+  await page.getByRole('button', { name: /divergent 1/ }).click();
+  await expect(card).toBeVisible();
   await page.getByRole('button', { name: /failed 1/ }).click();
   await expect(card).toBeVisible();
-  await page.getByRole('button', { name: /すべて 1/ }).click();
+  await page.getByRole('button', { name: /すべて 2/ }).click();
   await page.getByRole('button', { name: 'さらに読み込む' }).click();
   await expect(page.getByRole('alert')).toContainText('ページsnapshot');
   await expect(card.getByRole('button', { name: '編集' })).toBeEnabled();
   await card.locator('summary').click();
   await card.getByRole('button', { name: '確認・再試行' }).click();
+  await expect(page.locator('#retry-delivery')).toBeDisabled();
+  await page.locator('#delivery-dialog [data-delivery-close]').last().click();
+  registration.executionEnabled = true;
+  await page.getByRole('button', { name: '再取得' }).click();
+  await card.locator('summary').click();
+  await page.route(new RegExp(`/v1/deliveries/${deliveryId}$`), async (route) => {
+    await route.abort('failed');
+  }, { times: 1 });
+  await card.getByRole('button', { name: '確認・再試行' }).click();
+  await expect(page.getByRole('alert')).toContainText('Control API に接続できません');
+  await expect(card.getByRole('button', { name: '編集' })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Registration を追加' })).toBeEnabled();
+  await card.locator('summary').click();
+  await card.getByRole('button', { name: '確認・再試行' }).click();
   await expect(page.locator('#retry-delivery')).toBeFocused();
   await page.locator('#retry-delivery').click();
-  await expect(page.locator('#live')).toContainText('再試行受付を確認しました');
+  await expect(page.locator('#live')).toContainText('再試行受付と durable processing state を確認しました');
+  await page.unroute('**/v1/registrations?limit=200');
 
   await card.getByRole('button', { name: '無効化' }).click();
   await expect(page.locator('#confirm-title')).toBeFocused();
@@ -163,6 +232,23 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(page.locator('#live')).toContainText('無効化を確認しました');
   await expect(card.getByRole('button', { name: 'example/browser-control の状態詳細を選択' })).toBeFocused();
 
+  await page.setViewportSize({ width: 767, height: 900 });
+  const responsiveLayout = await card.evaluate((element) => {
+    const browser = globalThis as unknown as {
+      getComputedStyle: (target: unknown) => { gridTemplateColumns: string };
+    };
+    const summary = element.querySelector('summary') as unknown as {
+      getBoundingClientRect: () => { height: number };
+    };
+    const componentsElement = element.querySelector('.components');
+    return {
+      summaryHeight: summary.getBoundingClientRect().height,
+      componentColumns: browser.getComputedStyle(componentsElement).gridTemplateColumns.split(' ').length,
+    };
+  });
+  expect(responsiveLayout.summaryHeight).toBeGreaterThanOrEqual(44);
+  expect(responsiveLayout.componentColumns).toBe(1);
+  await expect(page.locator('main .eyebrow').first()).toHaveCSS('color', 'rgb(54, 93, 98)');
   await page.setViewportSize({ width: 320, height: 800 });
   await page.getByRole('button', { name: 'Registration を追加' }).focus();
   await page.keyboard.press('Enter');

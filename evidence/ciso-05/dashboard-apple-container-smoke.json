@@ -5,8 +5,8 @@
   "runtimeVersion": "container CLI version 1.1.0 (build: release, commit: unspeci)",
   "images": {
     "githubStubImage": "node:22-bookworm-slim",
-    "controlImage": "agentops-control:ciso03-39571-1785030483127",
-    "controlTestImage": "agentops-control-test:ciso03-39571-1785030483127"
+    "controlImage": "agentops-control:ciso03-8879-1785033790534",
+    "controlTestImage": "agentops-control-test:ciso03-8879-1785033790534"
   },
   "checks": {
     "standardOciControlBuild": "passed",
@@ -32,7 +32,7 @@
         "containerPort": 8080,
         "count": 1,
         "hostAddress": "127.0.0.1",
-        "hostPort": 58617,
+        "hostPort": 64180,
         "proto": "tcp"
       }
     ],
@@ -42,11 +42,11 @@
     "runnerPublications": []
   },
   "registration": {
-    "id": "7a33cc5f-dd11-44d2-8445-e60b81f266ef",
+    "id": "0030d708-aaa3-494c-989c-f058cd1e690f",
     "createdVersion": 1,
     "enabledVersion": 2,
     "disabledVersion": 3,
     "restoredVersion": 4
   },
-  "completedAt": "2026-07-26T01:48:53.549Z"
+  "completedAt": "2026-07-26T02:44:02.637Z"
 }

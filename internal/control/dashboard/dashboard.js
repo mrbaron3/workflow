@@ -56,18 +56,41 @@
     state.dialogTrigger = null;
     target?.focus();
   };
-  const markDisconnected = (error) => {
-    state.connected = false;
-    state.lastGood = error.body?.error?.lastSuccessfulAt || state.lastGood;
+  const disableOperationalControls = () => {
     byId('create').disabled = true;
     byId('load-more').disabled = true;
     byId('save-registration').disabled = true;
     byId('confirm-dialog').querySelector('.danger').disabled = true;
     byId('retry-delivery').disabled = true;
+  };
+  const markDisconnected = (error) => {
+    state.connected = false;
+    state.lastGood = error.body?.error?.lastSuccessfulAt || state.lastGood;
+    disableOperationalControls();
     byId('alert').hidden = false;
     byId('alert').textContent = `Control API に接続できません。表示中の値は最終正常取得 ${formatTime(state.lastGood)} のものです。`;
     byId('freshness').textContent = `切断 · 最終正常 ${formatTime(state.lastGood)}`;
     render();
+  };
+  const markSessionUnavailable = () => {
+    state.connected = false;
+    state.csrf = '';
+    disableOperationalControls();
+    byId('alert').hidden = false;
+    byId('alert').textContent = 'Operator session が失効または拒否されました。新しい一回限りの bootstrap URL が必要です。';
+    byId('freshness').textContent = 'Operator session 失効';
+    render();
+  };
+  const handleOperationalFailure = (error) => {
+    if (error.status === 401) {
+      markSessionUnavailable();
+      return true;
+    }
+    if (['control_store_unavailable', 'request_failed'].includes(error.code)) {
+      markDisconnected(error);
+      return true;
+    }
+    return false;
   };
 
   async function api(path, options = {}) {
@@ -118,25 +141,40 @@
     if (component.recoveryState && !['none', 'recovered'].includes(component.recoveryState)) return 'warn';
     return '';
   }
+  function componentDiverges(name, component) {
+    const desiredStates = {
+      issue_monitor: ['starting', 'running'],
+      pr_monitor: ['starting', 'running'],
+      forwarder: ['starting', 'running'],
+      execution: ['running', 'waiting', 'idle', 'paused_by_mode'],
+      queue: ['idle', 'queued', 'leased', 'blocked_by_mode'],
+    };
+    const stoppedStates = {
+      issue_monitor: ['stopped'],
+      pr_monitor: ['stopped'],
+      forwarder: ['stopped'],
+      execution: ['stopped', 'idle'],
+      queue: ['idle'],
+    };
+    const allowed = component.desired ? desiredStates[name] : stoppedStates[name];
+    return !allowed?.includes(component.actual);
+  }
   function isAnomaly(item) {
-    return Object.values(item.components).some((component) =>
+    return Object.entries(item.components).some(([name, component]) =>
       component.freshness !== 'fresh'
       || ['failed', 'disconnected', 'unknown'].includes(component.actual)
-      || (component.desired && !['running', 'idle', 'waiting', 'paused_by_mode', 'blocked_by_mode'].includes(component.actual)));
+      || componentDiverges(name, component));
   }
   function anomalyKinds(item) {
-    const components = Object.values(item.components);
+    const components = Object.entries(item.components);
     const kinds = new Set();
-    if (components.some((component) => component.actual === 'failed')) kinds.add('failed');
-    if (components.some((component) => component.actual === 'disconnected')) kinds.add('disconnected');
-    if (components.some((component) => component.freshness === 'stale')) kinds.add('stale');
-    if (components.some((component) => {
-      if (['unknown', 'failed', 'disconnected'].includes(component.actual)) return false;
-      const desiredActual = ['running', 'idle', 'waiting', 'paused_by_mode', 'blocked_by_mode'];
-      const stoppedActual = ['stopped', 'idle'];
-      return component.desired
-        ? !desiredActual.includes(component.actual)
-        : !stoppedActual.includes(component.actual);
+    if (components.some(([, component]) => component.actual === 'failed')) kinds.add('failed');
+    if (components.some(([, component]) => component.actual === 'disconnected')) kinds.add('disconnected');
+    if (components.some(([, component]) => component.freshness === 'stale')) kinds.add('stale');
+    if (components.some(([name, component]) => {
+      if (component.actual === 'unknown') return true;
+      if (['failed', 'disconnected'].includes(component.actual)) return false;
+      return componentDiverges(name, component);
     })) kinds.add('divergent');
     return kinds;
   }
@@ -243,12 +281,7 @@
     } catch (error) {
       if (generation !== state.requestGeneration) throw error;
       if (error.status === 401) {
-        state.connected = false;
-        state.csrf = '';
-        byId('create').disabled = true;
-        byId('alert').hidden = false;
-        byId('alert').textContent = 'Operator session が失効または拒否されました。新しい一回限りの bootstrap URL が必要です。';
-        render();
+        markSessionUnavailable();
         live(`Operator session 拒否: ${error.message}`);
       } else if (error.code === 'control_store_unavailable' || error.code === 'request_failed') {
         markDisconnected(error);
@@ -284,11 +317,7 @@
       live(`${page.items?.length || 0} 件を追加し、合計 ${state.items.length} 件になりました`);
     } catch (error) {
       if (error.status === 401) {
-        state.connected = false;
-        state.csrf = '';
-        byId('alert').hidden = false;
-        byId('alert').textContent = 'Operator session が失効しました。新しいbootstrapが必要です。';
-        render();
+        markSessionUnavailable();
       } else if (error.code === 'control_store_unavailable' || error.code === 'request_failed') {
         markDisconnected(error);
         byId('alert').textContent = `追加ページを確認できませんでした。表示中の値は最終正常取得 ${formatTime(state.lastGood)} のものです。`;
@@ -361,7 +390,7 @@
       live(`${repository} version ${verified.version} の反映を確認しました (${response.outcome.outcome})`);
     } catch (error) {
       live(`保存失敗: ${error.message}`);
-      if (error.code === 'control_store_unavailable') markDisconnected(error);
+      handleOperationalFailure(error);
       showDialogError('registration-error', error);
       versionConflict = error.body?.outcome?.outcome === 'version_conflict';
       byId('registration-reload').hidden = !versionConflict;
@@ -394,7 +423,7 @@
       live(`${r.repository} version ${verified.version} の無効化を確認しました (${response.outcome.outcome})`);
     } catch (error) {
       live(`無効化失敗: ${error.message}`);
-      if (error.code === 'control_store_unavailable') markDisconnected(error);
+      handleOperationalFailure(error);
       showDialogError('confirm-error', error);
     }
   }
@@ -415,12 +444,13 @@
       const retryable = delivery.status === 'failed'
         && delivery.registrationId === item.registration.id
         && delivery.registrationVersion === item.registration.version
-        && item.registration.enabled;
+        && item.registration.enabled
+        && item.registration.executionEnabled;
       byId('retry-delivery').disabled = !retryable;
       byId('delivery-dialog').showModal();
       (retryable ? byId('retry-delivery') : byId('delivery-dialog').querySelector('[data-delivery-close]')).focus();
     } catch (error) {
-      if (error.code === 'control_store_unavailable') markDisconnected(error);
+      handleOperationalFailure(error);
       live(`Delivery 取得失敗: ${error.message}`);
     }
   }
@@ -443,34 +473,47 @@
         }),
       });
       const verified = await api(`/v1/deliveries/${encodeURIComponent(delivery.id)}`);
-      if (!verified.retryAttempts?.some((attempt) =>
-        attempt.attemptId === response.retry.attemptId
-        && attempt.status === 'accepted')) {
+      const acceptedAttempt = verified.retryAttempts?.find((attempt) =>
+        attempt.attemptId === response.retry.attemptId);
+      if (response.retry.deliveryId !== delivery.id
+        || response.retry.state !== 'pending'
+        || verified.id !== delivery.id
+        || verified.registrationId !== delivery.registrationId
+        || verified.registrationVersion !== delivery.registrationVersion
+        || verified.routeAttempts < delivery.routeAttempts
+        || !['pending', 'processing', 'processed', 'ignored', 'failed'].includes(verified.status)
+        || acceptedAttempt?.status !== 'accepted'
+        || acceptedAttempt.observedRouteAttempts !== delivery.routeAttempts) {
         throw new Error('authoritative re-query did not verify retry');
       }
       clearCommandKey(scope);
       await load({ announce: false });
       state.restoreSelector = `[data-select="${CSS.escape(current.item.registration.id)}"]`;
       byId('delivery-dialog').close();
-      live(`Delivery ${delivery.id} の再試行受付を確認しました (${response.outcome.outcome})`);
+      live(`Delivery ${delivery.id} の再試行受付と durable ${verified.status} state を確認しました (${response.outcome.outcome})`);
     } catch (error) {
       live(`再試行失敗: ${error.message}`);
-      if (error.code === 'control_store_unavailable') markDisconnected(error);
+      handleOperationalFailure(error);
       showDialogError('delivery-error', error);
       byId('retry-delivery').disabled = !state.connected;
     }
   }
 
   async function start() {
+    let session;
     try {
-      const session = await api('/v1/browser-session');
-      state.csrf = session.csrfToken;
-      await load();
+      session = await api('/v1/browser-session');
     } catch (error) {
-      byId('alert').hidden = false;
-      byId('alert').textContent = 'Operator session がありません。起動時に表示された一回限りの loopback bootstrap URL を開いてください。';
+      const handled = handleOperationalFailure(error);
+      if (error.status === 401 || !handled) {
+        byId('alert').hidden = false;
+        byId('alert').textContent = 'Operator session がありません。起動時に表示された一回限りの loopback bootstrap URL を開いてください。';
+      }
       live(`セッション確認失敗: ${error.message}`);
+      return;
     }
+    state.csrf = session.csrfToken;
+    await load().catch(() => {});
   }
 
   byId('refresh').addEventListener('click', () => load().catch(() => {}));

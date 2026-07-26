@@ -252,6 +252,7 @@ func (store *Store) CreateRegistration(
 		   id, repository, enabled, issue_monitor_enabled, pr_monitor_enabled,
 		   execution_enabled, configuration
 		 ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (repository) DO NOTHING
 		 RETURNING id, repository, enabled, issue_monitor_enabled,
 		           pr_monitor_enabled, execution_enabled, configuration,
 		           version, created_at, updated_at`,
@@ -263,6 +264,20 @@ func (store *Store) CreateRegistration(
 		validated.ExecutionEnabled,
 		validated.Configuration,
 	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing, lookupErr := scanRegistration(transaction.QueryRow(
+			ctx,
+			registrationSelect+` WHERE repository = $1`,
+			validated.Repository,
+		))
+		if lookupErr != nil {
+			return Registration{}, false, unavailable(lookupErr)
+		}
+		if err := transaction.Commit(ctx); err != nil {
+			return Registration{}, false, unavailable(err)
+		}
+		return existing, false, ErrConflict
+	}
 	if err != nil {
 		return Registration{}, false, classifyPostgres(err)
 	}
@@ -1372,7 +1387,7 @@ func (store *Store) RetryWebhook(
 		"observedAttempts":            observedAttempts,
 	})
 	requestHash := sha256Hex(requestBody)
-	scope := "delivery:retry:" + deliveryID
+	scope := "delivery:retry"
 	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return RetryResult{}, false, unavailable(err)
@@ -1489,14 +1504,15 @@ func (store *Store) RetryWebhook(
 	}
 	if registrationID != nil {
 		var enabled bool
+		var executionEnabled bool
 		var currentVersion int64
 		if err := transaction.QueryRow(ctx,
-			`SELECT enabled, version
+			`SELECT enabled, execution_enabled, version
 				   FROM agentops_control.repository_registrations
 				  WHERE id = $1
 				  FOR SHARE`,
 			*registrationID,
-		).Scan(&enabled, &currentVersion); err != nil {
+		).Scan(&enabled, &executionEnabled, &currentVersion); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				conflict := &DeliveryRetryConflict{
 					Reason: "registration_missing", State: status, RouteAttempts: routeAttempts,
@@ -1513,6 +1529,17 @@ func (store *Store) RetryWebhook(
 		if !enabled {
 			conflict := &DeliveryRetryConflict{
 				Reason: "registration_disabled", State: status, RouteAttempts: routeAttempts,
+				RegistrationID:      *registrationID,
+				RegistrationVersion: currentVersion,
+			}
+			return persistRetryRejection(
+				ctx, transaction, deliveryID, idempotencyKey, actorID,
+				observedAttempts, requestHash, registrationID, conflict,
+			)
+		}
+		if !executionEnabled {
+			conflict := &DeliveryRetryConflict{
+				Reason: "execution_disabled", State: status, RouteAttempts: routeAttempts,
 				RegistrationID:      *registrationID,
 				RegistrationVersion: currentVersion,
 			}
@@ -1634,7 +1661,7 @@ func persistRetryRejection(
 		`INSERT INTO agentops_control.control_api_requests(
 		   scope, idempotency_key, request_hash, status_code, response, actor_id
 		 ) VALUES ($1, $2, $3, 409, $4, $5)`,
-		"delivery:retry:"+deliveryID,
+		"delivery:retry",
 		idempotencyKey,
 		requestHash,
 		response,
@@ -1802,12 +1829,6 @@ func (store *Store) Projections(
 						componentProjection.RecoveryState = "none"
 					}
 				}
-			} else if !componentProjection.Desired {
-				componentProjection.Actual = "stopped"
-				componentProjection.State = "stopped"
-				componentProjection.Freshness = "fresh"
-				componentProjection.RecoveryState = "none"
-				componentProjection.Stale = false
 			}
 			projection.Components[component] = componentProjection
 		}
@@ -1953,13 +1974,6 @@ func (store *Store) Projections(
 			queue.StaleReason = &reason
 			queue.LastError = &reason
 			queue.RecoveryState = "blocked"
-		} else if !execution.Desired {
-			execution.Actual, execution.State = "stopped", "stopped"
-			execution.ObservedAt = &registration.UpdatedAt
-			execution.LastGoodAt = &registration.UpdatedAt
-			execution.Freshness = "fresh"
-			execution.RecoveryState = "none"
-			execution.Stale = false
 		} else if activeJobStatus != nil {
 			execution.ObservedAt = activeJobUpdatedAt
 			execution.Stale = false
@@ -2285,21 +2299,45 @@ func nullIfEmpty(value string) any {
 }
 
 func projectionHasAnomaly(projection RegistrationProjection) bool {
-	for _, component := range projection.Components {
+	for name, component := range projection.Components {
 		if component.Freshness != "fresh" ||
 			component.Actual == "failed" ||
 			component.Actual == "disconnected" ||
 			component.Actual == "unknown" ||
-			(component.Desired &&
-				component.Actual != "running" &&
-				component.Actual != "idle" &&
-				component.Actual != "waiting" &&
-				component.Actual != "paused_by_mode" &&
-				component.Actual != "blocked_by_mode") {
+			componentProjectionDiverges(name, component) {
 			return true
 		}
 	}
 	return false
+}
+
+func componentProjectionDiverges(name string, component ComponentProjection) bool {
+	var allowed []string
+	if component.Desired {
+		switch name {
+		case ComponentIssueMonitor, ComponentPRMonitor, ComponentForwarder:
+			allowed = []string{"starting", "running"}
+		case ComponentExecution:
+			allowed = []string{"running", "waiting", "idle", "paused_by_mode"}
+		case ComponentQueue:
+			allowed = []string{"idle", "queued", "leased", "blocked_by_mode"}
+		}
+	} else {
+		switch name {
+		case ComponentIssueMonitor, ComponentPRMonitor, ComponentForwarder:
+			allowed = []string{"stopped"}
+		case ComponentExecution:
+			allowed = []string{"stopped", "idle"}
+		case ComponentQueue:
+			allowed = []string{"idle"}
+		}
+	}
+	for _, state := range allowed {
+		if component.Actual == state {
+			return false
+		}
+	}
+	return true
 }
 
 func componentFreshnessBudget(component string) time.Duration {
