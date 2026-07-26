@@ -291,6 +291,9 @@ func (manager *manager) Drain(
 			return err
 		}
 	}
+	if err := manager.reconcileExpiredRunnerWork(ctx); err != nil {
+		return err
+	}
 	active, attempts, err := manager.inFlight(ctx)
 	if err == nil && active == 0 && attempts == 0 {
 		runner, runtimeErr := manager.runtime.Container(
@@ -309,6 +312,9 @@ func (manager *manager) Drain(
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
+		if err := manager.reconcileExpiredRunnerWork(drainContext); err != nil {
+			return err
+		}
 		active, attempts, err := manager.inFlight(drainContext)
 		if err == nil && active == 0 && attempts == 0 {
 			runner, runtimeErr := manager.runtime.Container(
@@ -337,6 +343,23 @@ func (manager *manager) Drain(
 		case <-ticker.C:
 		}
 	}
+}
+
+func (manager *manager) reconcileExpiredRunnerWork(ctx context.Context) error {
+	_, err := manager.admin(
+		ctx,
+		[]string{
+			"lifecycle",
+			"reconcile-expired",
+			"--max-attempts", "3",
+			"--retry-base", "5s",
+		},
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("reconcile expired runner work: %w", err)
+	}
+	return nil
 }
 
 func (manager *manager) Stop(
@@ -753,16 +776,7 @@ func (manager *manager) recoverDraining(
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if _, err := manager.admin(
-			ctx,
-			[]string{
-				"lifecycle",
-				"reconcile-expired",
-				"--max-attempts", "3",
-				"--retry-base", "5s",
-			},
-			nil,
-		); err != nil {
+		if err := manager.reconcileExpiredRunnerWork(ctx); err != nil {
 			return lifecycle.Status{}, err
 		}
 		current, err := manager.databaseStatus(ctx)
