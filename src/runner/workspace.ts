@@ -33,7 +33,7 @@ const defaultRunner: WorkspaceCommandRunner = (command, args, options) => {
         '-c', 'core.fsmonitor=false',
         '-c', 'commit.gpgSign=false',
         '-c', 'credential.helper=',
-        '-c', 'http.proxy=',
+        '-c', `http.proxy=${options.env.HTTPS_PROXY ?? ''}`,
         ...args,
       ]
     : [...args];
