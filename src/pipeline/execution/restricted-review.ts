@@ -236,6 +236,15 @@ export function prepareRestrictedReviewExecution(
         TMPDIR: tmp,
         PATH: safePath,
         LANG: parentEnv.LANG ?? 'C',
+        ...(parentEnv.HTTP_PROXY
+          ? { HTTP_PROXY: parentEnv.HTTP_PROXY }
+          : {}),
+        ...(parentEnv.HTTPS_PROXY
+          ? { HTTPS_PROXY: parentEnv.HTTPS_PROXY }
+          : {}),
+        ...(parentEnv.NO_PROXY
+          ? { NO_PROXY: parentEnv.NO_PROXY }
+          : {}),
       },
       cleanup,
     };

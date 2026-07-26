@@ -250,6 +250,9 @@ describe('restricted repository-PR reviewers', () => {
           LANG: 'C',
           CODEX_HOME: codexHome,
           GITHUB_TOKEN: 'github-secret',
+          HTTP_PROXY: 'http://192.0.2.10:8082',
+          HTTPS_PROXY: 'http://192.0.2.10:8082',
+          NO_PROXY: '192.0.2.20,127.0.0.1,localhost',
         },
       },
     );
@@ -259,6 +262,11 @@ describe('restricted repository-PR reviewers', () => {
       ).toContain('runner-codex-only');
       expect(execution.env).not.toHaveProperty('CODEX_HOME');
       expect(JSON.stringify(execution.env)).not.toContain('github-secret');
+      expect(execution.env).toMatchObject({
+        HTTP_PROXY: 'http://192.0.2.10:8082',
+        HTTPS_PROXY: 'http://192.0.2.10:8082',
+        NO_PROXY: '192.0.2.20,127.0.0.1,localhost',
+      });
     } finally {
       execution.cleanup();
     }
