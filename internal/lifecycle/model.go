@@ -9,10 +9,12 @@ import (
 type Mode string
 
 const (
-	ModeOff         Mode = "OFF"
-	ModeMonitorOnly Mode = "MONITOR_ONLY"
-	ModeActive      Mode = "ACTIVE"
-	ModeDraining    Mode = "DRAINING"
+	ModeOff                     Mode = "OFF"
+	ModeMonitorOnly             Mode = "MONITOR_ONLY"
+	ModeActive                  Mode = "ACTIVE"
+	ModeDraining                Mode = "DRAINING"
+	DefaultReconcileMaxAttempts      = 3
+	DefaultReconcileRetryBase        = 5 * time.Second
 )
 
 func ParseMode(raw string) (Mode, error) {

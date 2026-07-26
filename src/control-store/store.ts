@@ -12,6 +12,7 @@ import {
   IdempotencyConflictError,
   LeaseRejectedError,
   MonitorBrokerCursor,
+  MonitorBrokerResponse,
   OperatingModeError,
   RepositoryBusyError,
   RepositoryRegistrationInput,
@@ -26,6 +27,7 @@ import {
   type JobEnvelope,
   type Lease,
   type MonitorBrokerRequest,
+  type MonitorBrokerResponse as MonitorBrokerResponseType,
   type ReconciliationWork,
   type RepositoryRegistration,
   type RunnerJobFailureV1,
@@ -335,105 +337,10 @@ export class PostgresControlStore {
     }
     const allowedRepository = input.allowedRepository.trim().toLowerCase();
     return transaction(this.pool, async (client) => {
-      const rejected = await client.query<{ id: string; registration_id: string }>(
-        `WITH rejected_candidate AS (
-           SELECT request.id
-             FROM agentops_control.monitor_broker_requests request
-            WHERE request.status IN ('pending', 'leased')
-              AND (request.status = 'pending'
-                OR request.lease_expires_at <= clock_timestamp())
-              AND (
-                request.repository <> $1
-                OR NOT EXISTS (
-                  SELECT 1
-                    FROM agentops_control.repository_registrations registration
-                   WHERE registration.id = request.registration_id
-                     AND registration.version = request.registration_version
-                     AND registration.repository = request.repository
-                     AND registration.enabled
-                     AND (
-                       (request.monitor_kind = 'issue'
-                         AND registration.issue_monitor_enabled)
-                       OR
-                       (request.monitor_kind = 'pull_request'
-                         AND registration.pr_monitor_enabled)
-                     )
-                )
-              )
-            FOR UPDATE SKIP LOCKED
-         )
-         UPDATE agentops_control.monitor_broker_requests request
-            SET status = 'failed',
-                worker_id = NULL,
-                lease_token = NULL,
-                lease_expires_at = NULL,
-                error_code = 'stale_registration',
-                error_message = 'registration is stale, disabled, or outside the broker allowlist',
-                completed_at = clock_timestamp(),
-                updated_at = clock_timestamp()
-          WHERE request.id IN (SELECT id FROM rejected_candidate)
-        RETURNING request.id, request.registration_id`,
-        [allowedRepository],
-      );
-      for (const row of rejected.rows) {
-        await client.query(
-          `INSERT INTO agentops_control.runtime_audit(
-             actor_type, actor_id, event_type, registration_id, details
-           ) VALUES ('runner', $1, 'monitor.broker.denied', $2, $3)`,
-          [
-            input.workerId,
-            row.registration_id,
-            { requestId: row.id, reason: 'stale_registration' },
-          ],
-        );
-      }
-
       const leaseToken = randomUUID();
       const result = await client.query<MonitorBrokerRequestRow>(
-        `WITH candidate AS (
-           SELECT request.id
-             FROM agentops_control.monitor_broker_requests request
-             JOIN agentops_control.repository_registrations registration
-               ON registration.id = request.registration_id
-              AND registration.version = request.registration_version
-              AND registration.repository = request.repository
-            WHERE request.repository = $1
-              AND registration.enabled
-              AND (
-                (request.monitor_kind = 'issue'
-                  AND registration.issue_monitor_enabled)
-                OR
-                (request.monitor_kind = 'pull_request'
-                  AND registration.pr_monitor_enabled)
-              )
-              AND (
-                request.status = 'pending'
-                OR (
-                  request.status = 'leased'
-                  AND request.lease_expires_at <= clock_timestamp()
-                )
-              )
-            ORDER BY request.created_at, request.id
-            FOR UPDATE OF request SKIP LOCKED
-            LIMIT 1
-         )
-         UPDATE agentops_control.monitor_broker_requests request
-            SET status = 'leased',
-                worker_id = $2,
-                lease_token = $3,
-                lease_expires_at =
-                  clock_timestamp() + ($4 * interval '1 millisecond'),
-                response = NULL,
-                error_code = NULL,
-                error_message = NULL,
-                completed_at = NULL,
-                updated_at = clock_timestamp()
-           FROM candidate
-          WHERE request.id = candidate.id
-        RETURNING request.id, request.registration_id,
-                  request.registration_version, request.repository,
-                  request.monitor_kind, request.cursor, request.lease_token`,
-        [allowedRepository, input.workerId, leaseToken, input.leaseMs],
+        `SELECT * FROM agentops_control.claim_monitor_broker_request($1, $2, $3, $4)`,
+        [input.workerId, allowedRepository, leaseToken, input.leaseMs],
       );
       const row = result.rows[0];
       if (!row) return null;
@@ -468,39 +375,25 @@ export class PostgresControlStore {
   async completeMonitorBrokerRequest(input: {
     request: MonitorBrokerRequest;
     workerId: string;
-    response: Record<string, unknown>;
-    itemCount: number;
+    response: MonitorBrokerResponseType;
   }): Promise<void> {
+    const response = MonitorBrokerResponse.parse(input.response);
     await transaction(this.pool, async (client) => {
-      const completed = await client.query(
-        `UPDATE agentops_control.monitor_broker_requests
-            SET status = 'succeeded',
-                worker_id = NULL,
-                lease_token = NULL,
-                lease_expires_at = NULL,
-                response = $4,
-                error_code = NULL,
-                error_message = NULL,
-                completed_at = clock_timestamp(),
-                updated_at = clock_timestamp()
-          WHERE id = $1
-            AND lease_token = $2
-            AND worker_id = $3
-            AND status = 'leased'
-            AND lease_expires_at > clock_timestamp()
-        RETURNING registration_id`,
+      const completed = await client.query<{ registration_id: string | null }>(
+        `SELECT agentops_control.complete_monitor_broker_request($1, $2, $3, $4)
+           AS registration_id`,
         [
           input.request.id,
           input.request.leaseToken,
           input.workerId,
-          input.response,
+          response,
         ],
       );
-      if ((completed.rowCount ?? 0) !== 1) {
+      if (!completed.rows[0]?.registration_id) {
         throw new Error('monitor broker lease is stale or lost');
       }
       const responseDigest = createHash('sha256')
-        .update(JSON.stringify(input.response))
+        .update(JSON.stringify(response))
         .digest('hex');
       await client.query(
         `INSERT INTO agentops_control.runtime_audit(
@@ -514,7 +407,7 @@ export class PostgresControlStore {
             registrationVersion: input.request.registrationVersion,
             repository: input.request.repository,
             monitorKind: input.request.monitorKind,
-            itemCount: input.itemCount,
+            itemCount: response.items.length,
             responseSha256: responseDigest,
           },
         ],
@@ -530,23 +423,9 @@ export class PostgresControlStore {
   }): Promise<void> {
     const message = input.message.slice(0, 512);
     await transaction(this.pool, async (client) => {
-      const failed = await client.query(
-        `UPDATE agentops_control.monitor_broker_requests
-            SET status = 'failed',
-                worker_id = NULL,
-                lease_token = NULL,
-                lease_expires_at = NULL,
-                response = NULL,
-                error_code = $4,
-                error_message = $5,
-                completed_at = clock_timestamp(),
-                updated_at = clock_timestamp()
-          WHERE id = $1
-            AND lease_token = $2
-            AND worker_id = $3
-            AND status = 'leased'
-            AND lease_expires_at > clock_timestamp()
-        RETURNING registration_id`,
+      const failed = await client.query<{ registration_id: string | null }>(
+        `SELECT agentops_control.fail_monitor_broker_request($1, $2, $3, $4, $5)
+           AS registration_id`,
         [
           input.request.id,
           input.request.leaseToken,
@@ -555,7 +434,7 @@ export class PostgresControlStore {
           message,
         ],
       );
-      if ((failed.rowCount ?? 0) !== 1) {
+      if (!failed.rows[0]?.registration_id) {
         throw new Error('monitor broker lease is stale or lost');
       }
       await client.query(

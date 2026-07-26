@@ -2,7 +2,17 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { PostgresControlStore } from '../control-store/store.js';
-import type { MonitorBrokerRequest } from '../control-store/types.js';
+import {
+  MonitorBrokerResponse,
+  type MonitorBrokerRequest,
+  type MonitorBrokerResponse as MonitorBrokerResponseType,
+} from '../control-store/types.js';
+
+export const MONITOR_BROKER_INTERVAL_MS = 250;
+export const MONITOR_BROKER_REQUEST_TIMEOUT_MS = 20_000;
+export const MONITOR_BROKER_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+export const MONITOR_BROKER_MAX_PAGES = 10;
+export const MONITOR_BROKER_LEASE_MS = 30_000;
 
 const GitHubRow = z.object({
   number: z.number().int().positive(),
@@ -171,10 +181,12 @@ export class PrivateMonitorBroker {
 
   constructor(private readonly options: PrivateMonitorBrokerOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.intervalMs = options.intervalMs ?? 250;
-    this.requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
-    this.maxResponseBytes = options.maxResponseBytes ?? 8 * 1024 * 1024;
-    this.maxPages = options.maxPages ?? 10;
+    this.intervalMs = options.intervalMs ?? MONITOR_BROKER_INTERVAL_MS;
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? MONITOR_BROKER_REQUEST_TIMEOUT_MS;
+    this.maxResponseBytes =
+      options.maxResponseBytes ?? MONITOR_BROKER_MAX_RESPONSE_BYTES;
+    this.maxPages = options.maxPages ?? MONITOR_BROKER_MAX_PAGES;
     if (
       options.repository !== 'mrbaron3/workflow'
       || options.githubToken.trim().length < 20
@@ -192,7 +204,7 @@ export class PrivateMonitorBroker {
 
   private async read(
     request: MonitorBrokerRequest,
-  ): Promise<Record<string, unknown>> {
+  ): Promise<MonitorBrokerResponseType> {
     if (request.repository !== this.options.repository) {
       throw new MonitorBrokerFailure(
         'repository_denied',
@@ -325,7 +337,7 @@ export class PrivateMonitorBroker {
           );
         }
         if (rows.length < 100) {
-          return {
+          return MonitorBrokerResponse.parse({
             items,
             nextCursor: {
               updatedAfter: maxUpdated === 0
@@ -333,7 +345,7 @@ export class PrivateMonitorBroker {
                 : new Date(maxUpdated).toISOString(),
             },
             observedAt,
-          };
+          });
         }
       }
       throw new MonitorBrokerFailure(
@@ -409,7 +421,7 @@ export class PrivateMonitorBroker {
       const link = nextLink(response.headers.get('link'));
       pageURL = link ? new URL(link) : null;
     }
-    return {
+    return MonitorBrokerResponse.parse({
       items,
       nextCursor: {
         updatedAfter: maxUpdated === 0
@@ -417,7 +429,7 @@ export class PrivateMonitorBroker {
           : new Date(maxUpdated).toISOString(),
       },
       observedAt,
-    };
+    });
   }
 
   async runOnce(): Promise<boolean> {
@@ -427,7 +439,7 @@ export class PrivateMonitorBroker {
       request = await this.options.store.claimMonitorBrokerRequest({
         workerId: this.options.workerId,
         allowedRepository: this.options.repository,
-        leaseMs: 30_000,
+        leaseMs: MONITOR_BROKER_LEASE_MS,
       });
     } catch {
       this.options.log?.(
@@ -438,12 +450,10 @@ export class PrivateMonitorBroker {
     if (!request) return false;
     try {
       const response = await this.read(request);
-      const items = response.items as unknown[];
       await this.options.store.completeMonitorBrokerRequest({
         request,
         workerId: this.options.workerId,
         response,
-        itemCount: items.length,
       });
     } catch (error) {
       if (

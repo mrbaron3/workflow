@@ -1,6 +1,18 @@
 package lifecycle
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
+
+func TestProductionReconciliationBoundaries(t *testing.T) {
+	if DefaultReconcileMaxAttempts != 3 {
+		t.Fatalf("max attempts = %d", DefaultReconcileMaxAttempts)
+	}
+	if DefaultReconcileRetryBase != 5*time.Second {
+		t.Fatalf("retry base = %s", DefaultReconcileRetryBase)
+	}
+}
 
 func TestExplicitLifecycleTransitions(t *testing.T) {
 	valid := [][2]Mode{

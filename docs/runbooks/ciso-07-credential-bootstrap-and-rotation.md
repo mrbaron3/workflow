@@ -75,7 +75,7 @@ file mode, and pass/fail results.
 
 Schema migration is additive, checksum-gated, and committed in one PostgreSQL transaction
 before control or runner replacement. A migration error leaves the prior schema unchanged.
-After version 5 commits, rollback means scoped compensation to the previous safe lifecycle
+After version 6 commits, rollback means scoped compensation to the previous safe lifecycle
 mode with the PostgreSQL volume and broker rows intact, followed by forward recovery with a
 version-5-aware image. Starting an immutable version-4 consumer against a committed
 version-5 database intentionally fails its version gate; no destructive down migration is

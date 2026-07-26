@@ -169,8 +169,16 @@ func runLifecycleCommand(
 		return writeJSON(map[string]any{"recorded": true})
 	case "reconcile-expired":
 		flags := flag.NewFlagSet("lifecycle reconcile-expired", flag.ContinueOnError)
-		maxAttempts := flags.Int("max-attempts", 3, "terminal attempt ceiling")
-		retryBase := flags.Duration("retry-base", 5*time.Second, "retry backoff base")
+		maxAttempts := flags.Int(
+			"max-attempts",
+			lifecycle.DefaultReconcileMaxAttempts,
+			"terminal attempt ceiling",
+		)
+		retryBase := flags.Duration(
+			"retry-base",
+			lifecycle.DefaultReconcileRetryBase,
+			"retry backoff base",
+		)
 		if err := flags.Parse(args[1:]); err != nil {
 			return err
 		}

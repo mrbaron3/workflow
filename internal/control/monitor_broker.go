@@ -29,6 +29,11 @@ type monitorBrokerItem struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
+const (
+	MonitorBrokerTerminalRetention = 7 * 24 * time.Hour
+	MonitorBrokerResponseReuse     = 2 * time.Minute
+)
+
 // BrokeredGitHubSource is a typed PostgreSQL request/response boundary. It
 // exposes no URL or arbitrary method: only issue and pull_request monitor reads
 // for one configured repository can cross from credential-free control to the
@@ -131,7 +136,8 @@ func (store *Store) monitorBrokerPoll(
 		if _, pruneErr := transaction.Exec(ctx,
 			`DELETE FROM agentops_control.monitor_broker_requests
 			  WHERE status IN ('succeeded', 'failed')
-			    AND completed_at < clock_timestamp() - interval '7 days'`); pruneErr != nil {
+			    AND completed_at < clock_timestamp() - ($1 * interval '1 millisecond')`,
+			MonitorBrokerTerminalRetention.Milliseconds()); pruneErr != nil {
 			_ = transaction.Rollback(context.Background())
 			return monitorBrokerResponse{}, unavailable(pruneErr)
 		}
@@ -146,13 +152,14 @@ func (store *Store) monitorBrokerPoll(
 			    AND monitor_kind = $3
 			    AND cursor_sha256 = $4
 			    AND status = 'succeeded'
-			    AND completed_at >= clock_timestamp() - interval '2 minutes'
+			    AND completed_at >= clock_timestamp() - ($5 * interval '1 millisecond')
 			  ORDER BY completed_at DESC
 			  LIMIT 1`,
 			registration.ID,
 			registration.Version,
 			kind,
 			hex.EncodeToString(cursorDigest[:]),
+			MonitorBrokerResponseReuse.Milliseconds(),
 		).Scan(&requestID)
 		if reuseErr == nil {
 			if err := transaction.Commit(ctx); err != nil {

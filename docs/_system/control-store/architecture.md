@@ -30,7 +30,7 @@
 - **ARCH-control-store-014 Recovery Reconciliation** — CLI restartはpersisted mode、active lease、running attempt、
   actual containerを照合し、欠損ACTIVEをDRAININGへ寄せてから安全な復旧経路だけを通す。
 - **ARCH-control-store-015 Explicit Owner Migration** — 通常consumerはschema verify-onlyを保ち、短命なowner-only
-  admin containerだけがadvisory lock下でversion 5までのadditive migrationとleast-privilege role bootstrapを行う。
+  admin containerだけがadvisory lock下でversion 6までのadditive migrationとleast-privilege role bootstrapを行う。
   commit前failureは旧versionを保持し、commit後はdurable rowを消すdown migrationでなくsafe modeへのcompensationと
   current imageによるforward recoveryを行う。
 - **ARCH-control-store-016 Typed Private Monitor Broker** — credential-free controlはRegistration/version、固定repository、

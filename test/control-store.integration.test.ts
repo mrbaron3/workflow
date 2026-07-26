@@ -222,6 +222,7 @@ integration('PostgreSQL control store', () => {
       '0003_isolated_runner.sql',
       '0004_agentops_lifecycle.sql',
       '0005_private_monitor_broker.sql',
+      '0006_monitor_broker_capability_functions.sql',
     ]) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
@@ -329,22 +330,20 @@ integration('PostgreSQL control store', () => {
     });
     expect(recovered).toMatchObject({ id: requestId });
     expect(recovered?.leaseToken).not.toBe(first?.leaseToken);
-    await expect(store.completeMonitorBrokerRequest({
-      request: first!,
-      workerId: claims[0] === first ? 'monitor-runner-a' : 'monitor-runner-b',
-      response: {},
-      itemCount: 0,
-    })).rejects.toThrow(/stale or lost/);
     const response = {
       items: [],
       nextCursor: { updatedAfter: '' },
       observedAt: new Date().toISOString(),
     };
+    await expect(store.completeMonitorBrokerRequest({
+      request: first!,
+      workerId: claims[0] === first ? 'monitor-runner-a' : 'monitor-runner-b',
+      response,
+    })).rejects.toThrow(/stale or lost/);
     await store.completeMonitorBrokerRequest({
       request: recovered!,
       workerId: 'monitor-runner-recovery',
       response,
-      itemCount: 0,
     });
 
     const staleId = await insertMonitorBrokerRequest({
@@ -384,6 +383,109 @@ integration('PostgreSQL control store', () => {
       'monitor.broker.completed',
       'monitor.broker.denied',
     ]));
+  });
+
+  it('restricts the runner role to live broker capabilities', async () => {
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'agentops_runner'
+        ) THEN
+          CREATE ROLE agentops_runner NOLOGIN;
+        END IF;
+      END $$
+    `);
+    const store = await migratedStore();
+    await pool.query(
+      `GRANT USAGE ON SCHEMA agentops_control TO agentops_runner`,
+    );
+    await pool.query(
+      `GRANT SELECT ON agentops_control.monitor_broker_requests
+         TO agentops_runner`,
+    );
+    const repo = await store.createRegistration({
+      repository: 'mrbaron3/workflow',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: {},
+    });
+    const requestId = await insertMonitorBrokerRequest({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+    });
+    const request = await store.claimMonitorBrokerRequest({
+      workerId: 'capability-runner',
+      allowedRepository: repo.repository,
+      leaseMs: 30_000,
+    });
+    expect(request).toMatchObject({ id: requestId });
+    const validResponse = {
+      items: [],
+      nextCursor: { updatedAfter: '' },
+      observedAt: new Date().toISOString(),
+    };
+
+    const runner = await pool.connect();
+    try {
+      await runner.query('SET ROLE agentops_runner');
+      await expect(runner.query(
+        `UPDATE agentops_control.monitor_broker_requests
+            SET status = 'succeeded', response = '{}'::jsonb,
+                completed_at = clock_timestamp()
+          WHERE id = $1`,
+        [requestId],
+      )).rejects.toMatchObject({ code: '42501' });
+
+      const wrongLease = await runner.query<{ registration_id: string | null }>(
+        `SELECT agentops_control.complete_monitor_broker_request(
+           $1, $2, $3, $4
+         ) AS registration_id`,
+        [requestId, randomUUID(), 'capability-runner', validResponse],
+      );
+      expect(wrongLease.rows[0]?.registration_id).toBeNull();
+
+      await expect(runner.query(
+        `SELECT agentops_control.complete_monitor_broker_request(
+           $1, $2, $3, $4
+         )`,
+        [
+          requestId,
+          request!.leaseToken,
+          'capability-runner',
+          {
+            items: [{
+              repository: 'attacker/forged',
+              kind: 'issue',
+              number: 1,
+              updatedAt: new Date().toISOString(),
+            }],
+            nextCursor: { updatedAfter: '' },
+            observedAt: new Date().toISOString(),
+          },
+        ],
+      )).rejects.toThrow(/invalid monitor broker response/);
+    } finally {
+      await runner.query('RESET ROLE');
+      runner.release();
+    }
+
+    const durable = await pool.query<{
+      status: string;
+      response: Record<string, unknown> | null;
+    }>(
+      `SELECT status, response
+         FROM agentops_control.monitor_broker_requests
+        WHERE id = $1`,
+      [requestId],
+    );
+    expect(durable.rows[0]).toEqual({ status: 'leased', response: null });
+    await store.completeMonitorBrokerRequest({
+      request: request!,
+      workerId: 'capability-runner',
+      response: validResponse,
+    });
   });
 
   it('deduplicates concurrent webhook and poll enqueue and duplicate deliveries', async () => {

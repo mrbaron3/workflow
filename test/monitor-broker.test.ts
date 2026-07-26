@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { MonitorBrokerRequest } from '../src/control-store/types.js';
-import { PrivateMonitorBroker } from '../src/runner/monitor-broker.js';
+import {
+  MONITOR_BROKER_INTERVAL_MS,
+  MONITOR_BROKER_LEASE_MS,
+  MONITOR_BROKER_MAX_PAGES,
+  MONITOR_BROKER_MAX_RESPONSE_BYTES,
+  MONITOR_BROKER_REQUEST_TIMEOUT_MS,
+  PrivateMonitorBroker,
+} from '../src/runner/monitor-broker.js';
 
 const request: MonitorBrokerRequest = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -21,6 +28,13 @@ function storeFor(next: MonitorBrokerRequest | null = request) {
 }
 
 describe('typed private-repository monitor broker', () => {
+  it('PR-INTENT pins every production broker boundary', () => {
+    expect(MONITOR_BROKER_INTERVAL_MS).toBe(250);
+    expect(MONITOR_BROKER_REQUEST_TIMEOUT_MS).toBe(20_000);
+    expect(MONITOR_BROKER_MAX_RESPONSE_BYTES).toBe(8 * 1024 * 1024);
+    expect(MONITOR_BROKER_MAX_PAGES).toBe(10);
+    expect(MONITOR_BROKER_LEASE_MS).toBe(30_000);
+  });
   it('covers the production gh transport with explicit bounded pagination', async () => {
     const store = storeFor();
     const rows = Array.from({ length: 100 }, (_, index) => ({
@@ -56,7 +70,6 @@ describe('typed private-repository monitor broker', () => {
     expect(execFileImpl.mock.calls[1]?.[1].at(-1)).toContain('page=2');
     expect(store.completeMonitorBrokerRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        itemCount: 101,
         response: expect.objectContaining({
           nextCursor: { updatedAfter: '2026-07-26T01:02:04.000Z' },
         }),
@@ -183,7 +196,6 @@ describe('typed private-repository monitor broker', () => {
     expect(store.failMonitorBrokerRequest).not.toHaveBeenCalled();
     expect(store.completeMonitorBrokerRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        itemCount: 1,
         response: {
           items: [{
             repository: 'mrbaron3/workflow',

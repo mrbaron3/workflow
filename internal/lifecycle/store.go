@@ -602,7 +602,18 @@ func BootstrapRoles(
 		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
 		   agentops_control.job_leases, agentops_control.artifact_links
 		   TO agentops_runner`,
-		`GRANT SELECT, UPDATE ON agentops_control.monitor_broker_requests
+		`GRANT SELECT ON agentops_control.monitor_broker_requests
+		   TO agentops_runner`,
+		`REVOKE UPDATE ON agentops_control.monitor_broker_requests
+		   FROM agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.claim_monitor_broker_request(text, text, uuid, integer)
+		   TO agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.complete_monitor_broker_request(uuid, uuid, text, jsonb)
+		   TO agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.fail_monitor_broker_request(uuid, uuid, text, text, text)
 		   TO agentops_runner`,
 		`GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_runner`,
 		`GRANT USAGE, SELECT ON SEQUENCE agentops_control.runtime_audit_id_seq

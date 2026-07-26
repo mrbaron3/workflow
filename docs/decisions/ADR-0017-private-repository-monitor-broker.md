@@ -33,11 +33,16 @@ GitHubの404でfail closedした。一方、controlへrunnerと同じGitHub cred
    commit後のrollbackはvolumeとbroker/audit行を保存したsafe modeへのcompensation＋version 5 imageによる
    forward recoveryである。version 4 consumerはunknown schemaをfail closedし、durable broker証跡を失う
    destructive down migrationは提供しない。
+8. schema version 6ではrunnerのbroker table直接`UPDATE`を廃止し、live lease token・worker・DB expiryを
+   検証する`SECURITY DEFINER` claim/complete/fail capabilityだけを付与する。terminal stateはlease ownershipを
+   必ず消去し、responseはrequestのrepository/kindに一致するstrict schemaだけを受ける。既存roleはmigration内で
+   revokeし、新規roleはmigration後のbootstrapで同じgrantへ収束する。
 
 ## 帰結
 
 - controlは引き続きGitHub credentialを持たず、private repositoryのIssue/PR monitorを同時に収束できる。
 - PostgreSQLはrequest、lease、failure、digest auditの唯一のdurable SoTであり、restart後もpending/expired workを回収する。
+- runner DB roleはbroker responseやterminal stateを直接偽造できず、期限内の自己leaseに対する限定 capabilityだけを持つ。
 - PostgreSQL containerは起動時image digest＋credential-redacted canonical specへsealされ、credential値はactualと
   process内だけで比較する。admin credential rotationはDRAINING・zero workでtransactionalに旧credential失効を
   検証してからvolume-preserving restartする。

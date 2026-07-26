@@ -351,8 +351,9 @@ func (manager *manager) reconcileExpiredRunnerWork(ctx context.Context) error {
 		[]string{
 			"lifecycle",
 			"reconcile-expired",
-			"--max-attempts", "3",
-			"--retry-base", "5s",
+			"--max-attempts",
+			strconv.Itoa(lifecycle.DefaultReconcileMaxAttempts),
+			"--retry-base", lifecycle.DefaultReconcileRetryBase.String(),
 		},
 		nil,
 	)

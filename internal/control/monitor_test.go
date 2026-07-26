@@ -14,6 +14,15 @@ import (
 	"time"
 )
 
+func TestMonitorBrokerProductionBoundaries(t *testing.T) {
+	if MonitorBrokerTerminalRetention != 7*24*time.Hour {
+		t.Fatalf("terminal retention = %s", MonitorBrokerTerminalRetention)
+	}
+	if MonitorBrokerResponseReuse != 2*time.Minute {
+		t.Fatalf("response reuse = %s", MonitorBrokerResponseReuse)
+	}
+}
+
 type fakeMonitorStore struct {
 	mu           sync.Mutex
 	enqueueError error

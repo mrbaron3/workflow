@@ -1483,6 +1483,7 @@ func resetAndMigrate(
 		"0003_isolated_runner.sql",
 		"0004_agentops_lifecycle.sql",
 		"0005_private_monitor_broker.sql",
+		"0006_monitor_broker_capability_functions.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)
