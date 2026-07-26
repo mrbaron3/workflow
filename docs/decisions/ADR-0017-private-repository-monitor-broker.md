@@ -42,6 +42,9 @@ GitHubの404でfail closedした。一方、controlへrunnerと同じGitHub cred
   process内だけで比較する。admin credential rotationはDRAINING・zero workでtransactionalに旧credential失効を
   検証してからvolume-preserving restartする。
 - GitHub webhook forwardingの汎用proxyではない。webhook ingressは既存の署名検証・delivery dedup境界を使う。
+- CISO-07 control imageはGitHub credentialに加えて`gh`／`gh-webhook` executableも持たない。private repositoryの
+  webhookは署名済みControl API ingressだけで受け、pollはtyped brokerだけを使う。従来adapterのcode/testは
+  compatibility oracleとして残るが、このcredential-free topologyで起動成功を主張しない。
 - 匿名pollがprivate repositoryで404になった初回失敗は証跡から消さず、broker cutoverの理由として残す。
 
 ## 実装先 id

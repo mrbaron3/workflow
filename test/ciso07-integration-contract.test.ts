@@ -32,6 +32,14 @@ describe('CISO-07 integrated release source contracts', () => {
     expect(containerfile).toContain(
       'npm ci --omit=dev --ignore-scripts --prefix /opt/provider-cli',
     );
+    expect(containerfile).toContain('golang:1.26.5-bookworm@sha256:');
+    expect(containerfile).toContain(
+      'gcr.io/distroless/static-debian12:nonroot@sha256:',
+    );
+    expect(containerfile).toContain('github.com/cli/cli/v2/cmd/gh');
+    expect(read('deploy/gh/go.mod')).toContain(
+      'google.golang.org/grpc v1.82.1',
+    );
     const providerLock = JSON.parse(
       read('deploy/provider-cli/package-lock.json'),
     ) as {

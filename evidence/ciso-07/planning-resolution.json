@@ -44,7 +44,7 @@
     },
     {
       "ambiguity": "scanner and severity policy",
-      "resolution": "Use aquasec/trivy 0.65.0 at sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436; fail on HIGH or CRITICAL vulnerabilities and any secret finding; record scanner database and report digests."
+      "resolution": "Use aquasec/trivy 0.65.0 at sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436; fail on every fix-available HIGH or CRITICAL vulnerability and any secret finding. Debian stable findings whose FixedVersion is empty are allowed only as explicit residual risk with CVE, severity, installed version, empty FixedVersion, scan database time, and report digest. This precise no-fix exception was approved in coordinator message msg_5cb4603da92d after the current scanner database made the original zero-finding interpretation impossible."
     },
     {
       "ambiguity": "restart and recovery semantics",
