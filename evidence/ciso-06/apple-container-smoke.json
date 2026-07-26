@@ -1,0 +1,231 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#16",
+  "acceptanceCriteria": [
+    "AC-CISO-007",
+    "AC-CISO-009"
+  ],
+  "baseCommit": "ba79d1f0e02fb71e23774db15dcde81190b735de",
+  "recordedAt": "2026-07-26T03:22:43Z",
+  "host": {
+    "architecture": "arm64",
+    "runtime": "Apple Container",
+    "runtimeVersion": "1.1.0",
+    "installationAction": "none",
+    "systemStart": "granted Apple Container system permission"
+  },
+  "configuration": {
+    "prefix": "agentops-ciso06-smoke",
+    "controlHostPort": 18086,
+    "network": {
+      "name": "agentops-ciso06-smoke-internal",
+      "mode": "hostOnly",
+      "ownedLabel": "com.mrbaron3.workflow.agentopsctl=v1"
+    },
+    "credentials": "distinct inert validation values; values omitted",
+    "provider": "codex",
+    "externalSideEffects": false
+  },
+  "steps": [
+    {
+      "name": "build-and-start-active",
+      "requestId": "grounded-start-active-5",
+      "result": "passed",
+      "persistedMode": "ACTIVE",
+      "actual": {
+        "control": "running",
+        "runner": "running",
+        "postgres": "running"
+      },
+      "runner": {
+        "uid": 65532,
+        "workspaceRegistrationDirectoryWritable": true,
+        "workspaceStoreDirectoryWritable": true,
+        "homeTmpfsWritable": true
+      },
+      "statusArtifactSha256": "7acace929b1dd1d6389270410d1ab8ed20b651c8d9989171c79e4f58c390118f"
+    },
+    {
+      "name": "exact-publish-and-security-inspect",
+      "result": "passed",
+      "control": {
+        "publishedPorts": [
+          {
+            "hostAddress": "127.0.0.1",
+            "hostPort": 18086,
+            "containerPort": 8080,
+            "count": 1,
+            "protocol": "tcp"
+          }
+        ],
+        "loopbackReachable": true,
+        "offLoopbackReachable": false,
+        "readOnlyRootFilesystem": true,
+        "capabilitiesDropped": [
+          "ALL"
+        ],
+        "hostPathMounts": 0,
+        "containerSocketMounts": 0
+      },
+      "runner": {
+        "publishedPorts": [],
+        "publishedSockets": [],
+        "networks": [
+          "agentops-ciso06-smoke-internal"
+        ],
+        "readOnlyRootFilesystem": true,
+        "capabilitiesDropped": [
+          "ALL"
+        ],
+        "hostPathMounts": 0,
+        "containerSocketMounts": 0
+      },
+      "postgres": {
+        "publishedPorts": [],
+        "publishedSockets": [],
+        "networks": [
+          "agentops-ciso06-smoke-internal"
+        ],
+        "volume": "agentops-ciso06-smoke-postgres-data"
+      }
+    },
+    {
+      "name": "runner-egress-enforcement",
+      "requestId": "grounded-final-active-route-1",
+      "result": "passed",
+      "controlNetworkOrder": [
+        "default",
+        "agentops-ciso06-smoke-internal"
+      ],
+      "directRunnerInternet": "timed out on host-only network",
+      "allowedConnect": {
+        "destination": "api.github.com:443",
+        "response": "HTTP/1.1 200 Connection Established"
+      },
+      "deniedConnect": {
+        "destination": "example.com:443",
+        "response": "HTTP/1.1 403 Forbidden"
+      },
+      "statusArtifactSha256": "bc36718c386d2887bda01a049249694cd6fb6daa5e67ba9212b19d42f164c4f3"
+    },
+    {
+      "name": "active-to-draining",
+      "requestId": "grounded-drain-1",
+      "result": "passed",
+      "persistedMode": "DRAINING",
+      "activeLeases": 0,
+      "inFlightAttempts": 0,
+      "drainTimedOut": false,
+      "actual": {
+        "control": "running",
+        "runner": "stopped",
+        "postgres": "running"
+      },
+      "idempotentReplay": {
+        "sameRequestCount": 1,
+        "status": "applied"
+      },
+      "statusArtifactSha256": "965fe36cd32fb0613db023fb26590003665768b95933246808849fa310ff035a"
+    },
+    {
+      "name": "draining-restart-recovery",
+      "requestId": "grounded-recover-active-1",
+      "result": "passed",
+      "transitions": [
+        {
+          "from": "DRAINING",
+          "to": "MONITOR_ONLY",
+          "keySuffix": ":recover-monitor"
+        },
+        {
+          "from": "MONITOR_ONLY",
+          "to": "ACTIVE",
+          "keySuffix": ":active"
+        }
+      ],
+      "actual": {
+        "control": "running",
+        "runner": "running",
+        "postgres": "running"
+      },
+      "statusArtifactSha256": "7c730c2ee12e339abb830ee3feb1c91133872e7780ce5f8b8c2cfef0783a229c"
+    },
+    {
+      "name": "active-drain-stop",
+      "requestId": "grounded-stop-1",
+      "result": "passed",
+      "transitions": [
+        "ACTIVE->DRAINING",
+        "DRAINING->OFF"
+      ],
+      "actualAfterStop": {
+        "control": "absent",
+        "runner": "absent",
+        "postgres": "absent",
+        "loopbackReachable": false,
+        "offLoopbackReachable": false
+      },
+      "persistedStatusWhileDatabaseStopped": "not inferred",
+      "preservedVolumes": [
+        "agentops-ciso06-smoke-postgres-data",
+        "agentops-ciso06-smoke-runner-workspace"
+      ],
+      "statusArtifactSha256": "1b3cc25a516cb76206656528479a1e5f2e29b1907a7f562abd3e3207ef6c8529"
+    },
+    {
+      "name": "volume-backed-monitor-only-restart",
+      "requestId": "grounded-restart-monitor-1",
+      "result": "passed",
+      "persistedTransition": "OFF->MONITOR_ONLY",
+      "actual": {
+        "control": "running",
+        "runner": "absent",
+        "postgres": "running"
+      },
+      "loopbackOnly": true,
+      "statusArtifactSha256": "5f1bc96edb6ac74bc097dfa5f88b1772a85df26b5818e638b2d0cbab4d4a3fc5"
+    },
+    {
+      "name": "repeated-stop",
+      "requestId": "grounded-stop-monitor-1",
+      "result": "passed",
+      "runs": 2,
+      "actualAfterBoth": {
+        "control": "absent",
+        "runner": "absent",
+        "postgres": "absent"
+      }
+    },
+    {
+      "name": "partial-start-compensation",
+      "prefix": "agentops-ciso06-comp",
+      "requestId": "grounded-compensation-1",
+      "injectedFailure": "loopback port 18087 already bound",
+      "commandResult": "failed closed",
+      "actualAfterCompensation": {
+        "control": "absent",
+        "runner": "absent",
+        "postgres": "absent"
+      },
+      "preservedVolumes": [
+        "agentops-ciso06-comp-postgres-data",
+        "agentops-ciso06-comp-runner-workspace"
+      ],
+      "secretValuesPresentInError": false,
+      "outputArtifactSha256": "19dc0c489809a4d7f278574b3e22030413edf7a919ff564e8d166388ea1c660b"
+    }
+  ],
+  "commandsCovered": [
+    "start",
+    "drain",
+    "stop",
+    "status",
+    "logs"
+  ],
+  "openCommand": {
+    "implementation": "macOS open of exact loopback Dashboard URL after reachability gate",
+    "headedLaunchDuringSmoke": false,
+    "reason": "the headed browser lifecycle is not required to prove the CLI URL/reachability boundary"
+  },
+  "result": "passed"
+}

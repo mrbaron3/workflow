@@ -20,6 +20,10 @@
 - **DATA-control-store-013** runner attempt `failure` — retry/restart後も残るtyped failureとboundary。
 - **DATA-control-store-014** runner artifact/audit — Registration-scoped volume URI＋digest/size/time、および
   boundaryごとのallow/deny reason。artifact bytes、credential、test output本文はDBへ入れない。
+- **DATA-control-store-015** `lifecycle_state` — singleton mode、generation、transition identity/time、
+  drain deadline/timeout、redacted last error。
+- **DATA-control-store-016** `lifecycle_transitions` — unique idempotency key、actor、from/to、applied/idempotent/rejected/
+  compensated status、deadline、error、details、開始/完了時刻を持つ監査履歴。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)

@@ -22,7 +22,7 @@ export const RunnerStartupInput = z.object({
   workspaceRoot: z.string().min(1),
   databaseUrl: z.string().url(),
   provider: z.enum(['codex', 'claude']),
-  operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE']),
+  operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']),
   leaseDurationMs: z.number().int().min(5_000).max(60 * 60_000),
   heartbeatIntervalMs: z.number().int().min(500).max(10 * 60_000),
   reconciliationIntervalMs: z.number().int().min(250).max(10 * 60_000),
@@ -401,7 +401,7 @@ export function loadRunnerStartup(
     workspaceRoot,
     databaseUrl,
     provider,
-    operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE']).parse(
+    operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']).parse(
       env.AGENTOPS_OPERATING_MODE ?? 'MONITOR_ONLY',
     ),
     leaseDurationMs: integerEnv(env, 'AGENTOPS_RUNNER_LEASE_MS', 60_000),
@@ -509,6 +509,10 @@ export function minimalExecutionEnvironment(
     LANG: source.LANG ?? 'C.UTF-8',
     LC_ALL: source.LC_ALL ?? 'C.UTF-8',
     NO_COLOR: '1',
+    ...(source.HTTP_PROXY ? { HTTP_PROXY: source.HTTP_PROXY } : {}),
+    ...(source.HTTPS_PROXY ? { HTTPS_PROXY: source.HTTPS_PROXY } : {}),
+    ...(source.NO_PROXY ? { NO_PROXY: source.NO_PROXY } : {}),
+    ...(source.ALL_PROXY ? { ALL_PROXY: source.ALL_PROXY } : {}),
     AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
     ...(timeouts
       ? {

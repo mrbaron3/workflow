@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	ControlSchemaVersion = 3
+	ControlSchemaVersion = 4
 	migrationLockKey     = int64(0x4349534f02)
 )
 
@@ -45,6 +45,134 @@ func OpenStore(ctx context.Context, databaseURL, migrationRoot string) (*Store, 
 		return nil, err
 	}
 	return store, nil
+}
+
+// MigrateSchema is the explicit owner-only migration path used by the
+// short-lived agentopsctl bootstrap container. Normal control and runner
+// startup still call verify-only paths and never mutate DDL.
+func MigrateSchema(ctx context.Context, databaseURL, migrationRoot string) error {
+	expected, err := expectedMigrations(migrationRoot)
+	if err != nil {
+		return err
+	}
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return fmt.Errorf("%w: parse database URL: %v", ErrStoreUnavailable, err)
+	}
+	config.ConnConfig.ConnectTimeout = 3 * time.Second
+	config.MaxConns = 2
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		return fmt.Errorf("%w: connect for migration: %v", ErrStoreUnavailable, err)
+	}
+	defer pool.Close()
+	connection, err := pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: acquire for migration: %v", ErrStoreUnavailable, err)
+	}
+	defer connection.Release()
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: begin migration: %v", ErrStoreUnavailable, err)
+	}
+	defer func() { _ = transaction.Rollback(context.Background()) }()
+	if _, err := transaction.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLockKey); err != nil {
+		return fmt.Errorf("%w: lock migration: %v", ErrStoreUnavailable, err)
+	}
+	var trackingPresent bool
+	if err := transaction.QueryRow(ctx,
+		`SELECT to_regclass('agentops_control.schema_migrations') IS NOT NULL`,
+	).Scan(&trackingPresent); err != nil {
+		return fmt.Errorf("%w: inspect migration history: %v", ErrStoreUnavailable, err)
+	}
+	var objectCount int
+	if err := transaction.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_class c
+		  JOIN pg_namespace n ON n.oid = c.relnamespace
+		 WHERE n.nspname = 'agentops_control'
+		   AND c.relkind IN ('r', 'p', 'v', 'm', 'S')
+	`).Scan(&objectCount); err != nil {
+		return fmt.Errorf("%w: inspect control schema: %v", ErrStoreUnavailable, err)
+	}
+	if !trackingPresent && objectCount > 0 {
+		return fmt.Errorf(
+			"%w: partial control schema exists without migration history",
+			ErrStoreUnavailable,
+		)
+	}
+	if !trackingPresent {
+		if _, err := transaction.Exec(ctx, `
+			CREATE SCHEMA IF NOT EXISTS agentops_control;
+			CREATE TABLE agentops_control.schema_migrations (
+			  version integer PRIMARY KEY CHECK (version > 0),
+			  name text NOT NULL UNIQUE,
+			  checksum text NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'),
+			  installed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+			)
+		`); err != nil {
+			return fmt.Errorf("%w: create migration history: %v", ErrStoreUnavailable, err)
+		}
+	}
+	rows, err := transaction.Query(ctx, `
+		SELECT version, name, checksum
+		  FROM agentops_control.schema_migrations
+		 ORDER BY version
+	`)
+	if err != nil {
+		return fmt.Errorf("%w: read migration history: %v", ErrStoreUnavailable, err)
+	}
+	installed := 0
+	for rows.Next() {
+		var version int
+		var name, checksum string
+		if err := rows.Scan(&version, &name, &checksum); err != nil {
+			rows.Close()
+			return fmt.Errorf("%w: read migration row: %v", ErrStoreUnavailable, err)
+		}
+		installed++
+		item, present := expected[version]
+		if !present || version != installed ||
+			item.name != name || item.checksum != checksum {
+			rows.Close()
+			return fmt.Errorf(
+				"%w: migration %d is unknown, non-contiguous, or checksum-mismatched",
+				ErrStoreUnavailable,
+				version,
+			)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("%w: read migration history: %v", ErrStoreUnavailable, err)
+	}
+	rows.Close()
+	for version := installed + 1; version <= ControlSchemaVersion; version++ {
+		item := expected[version]
+		body, err := os.ReadFile(filepath.Join(
+			migrationRoot,
+			"db",
+			"control-store",
+			"migrations",
+			item.name,
+		))
+		if err != nil {
+			return fmt.Errorf("%w: read migration %s: %v", ErrStoreUnavailable, item.name, err)
+		}
+		if _, err := transaction.Exec(ctx, string(body)); err != nil {
+			return fmt.Errorf("%w: apply migration %s: %v", ErrStoreUnavailable, item.name, err)
+		}
+		if _, err := transaction.Exec(ctx, `
+			INSERT INTO agentops_control.schema_migrations(version, name, checksum)
+			VALUES ($1, $2, $3)
+		`, version, item.name, item.checksum); err != nil {
+			return fmt.Errorf("%w: record migration %s: %v", ErrStoreUnavailable, item.name, err)
+		}
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return fmt.Errorf("%w: commit migration: %v", ErrStoreUnavailable, err)
+	}
+	return nil
 }
 
 func (store *Store) Close() {
@@ -848,6 +976,18 @@ func (store *Store) EnqueueWork(
 	if !current.Enabled || !current.ExecutionEnabled || current.Version != registration.Version {
 		return "", false, ErrStaleRegistration
 	}
+	var lifecycleMode string
+	if err := transaction.QueryRow(ctx, `
+		SELECT mode
+		  FROM agentops_control.lifecycle_state
+		 WHERE singleton
+		 FOR SHARE
+	`).Scan(&lifecycleMode); err != nil {
+		return "", false, unavailable(err)
+	}
+	if lifecycleMode != string(ModeActive) {
+		return "", false, ErrOperatingMode
+	}
 	var existingID, existingStatus string
 	var existingVersion int64
 	var existingLastError *string
@@ -1133,11 +1273,23 @@ func (store *Store) ClaimWebhook(
 		return nil, err
 	}
 	row := store.pool.QueryRow(ctx,
-		`WITH candidate AS (
+		`WITH lifecycle AS (
+		   SELECT mode
+		     FROM agentops_control.lifecycle_state
+		    WHERE singleton
+		    FOR SHARE
+		 ),
+		 candidate AS (
 		   SELECT id
 		     FROM agentops_control.webhook_deliveries
-		    WHERE status = 'pending'
-		       OR (status = 'failed' AND next_retry_at <= clock_timestamp())
+		    WHERE EXISTS (
+		            SELECT 1 FROM lifecycle
+		             WHERE mode IN ('MONITOR_ONLY', 'ACTIVE')
+		          )
+		      AND (
+		            status = 'pending'
+		         OR (status = 'failed' AND next_retry_at <= clock_timestamp())
+		          )
 		    ORDER BY received_at, id
 		    FOR UPDATE SKIP LOCKED
 		    LIMIT 1
@@ -2225,6 +2377,7 @@ func unavailable(err error) error {
 	}
 	if errors.Is(err, ErrNotFound) || errors.Is(err, ErrConflict) ||
 		errors.Is(err, ErrRepositoryBusy) ||
+		errors.Is(err, ErrOperatingMode) ||
 		errors.Is(err, ErrStaleRegistration) || errors.Is(err, ErrIdempotencyConflict) {
 		return err
 	}
@@ -2245,6 +2398,8 @@ func classifyPostgres(err error) error {
 			return fmt.Errorf("%w: %s", ErrConflict, postgresError.ConstraintName)
 		case "23514", "22P02", "23503":
 			return fmt.Errorf("%w: %s", ErrConflict, postgresError.Message)
+		case "55000":
+			return fmt.Errorf("%w: %s", ErrOperatingMode, postgresError.Message)
 		}
 	}
 	return unavailable(err)

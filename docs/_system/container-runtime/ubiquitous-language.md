@@ -19,3 +19,6 @@
 | LANG-container-runtime-010 | Isolated Runner | PostgreSQL leaseを消費し、private workspace内から既存AgentOps gateを実行するnonroot runtime role。 |
 | LANG-container-runtime-011 | Registration Workspace | Registration IDをrootとするrunner-only volume上のmirror/worktree/state/artifact集合。 |
 | LANG-container-runtime-012 | Startup Isolation Proof | mount/publish/outbound/HOME/credential/socket境界が副作用前に成立した構造化監査。 |
+| LANG-container-runtime-013 | Lifecycle Owner | Apple Container topologyを操作する短命な`agentopsctl` process。 |
+| LANG-container-runtime-014 | Actual Topology | runtime inspectで観測した3 container、network、publish、mount、security属性の現在値。 |
+| LANG-container-runtime-015 | Scoped Compensation | partial startで当該試行が変更したcontainerだけをrollbackし、volumeと既存workを保存する処理。 |

@@ -9,6 +9,9 @@
 - **DOM-control-store-007 Runner Job Contract** — repository/event/ref/gate identityだけを持つversioned executable envelope。
 - **DOM-control-store-008 Execution Guard** — lease/Registrationの現在値をcritical boundaryごとに裁定するtransactional verdict。
 - **DOM-control-store-009 Side-effect Permit** — DB guard成功後、対応するpush/merge/releaseの1回だけ消費できる短命capability。
+- **DOM-control-store-010 Lifecycle State** — OFF／MONITOR_ONLY／ACTIVE／DRAININGのsingleton aggregate。
+- **DOM-control-store-011 Lifecycle Transition** — actorとidempotency identityを持ち、明示graphだけを進む監査entity。
+- **DOM-control-store-012 Drain Fence** — DRAINING commitと新規routing/enqueue/leaseを直列化するDB権威の境界。
 
 不変条件: active jobはrepositoryごとに高々1件、active leaseはjobごとに高々1件、stale/disabled Registrationのjobは
 claimしない。artifactはRegistration rootからreal pathで逸脱できず、lease loss後にside effect permitを消費できない。

@@ -13,7 +13,100 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	lifecyclestore "github.com/mrbaron3/workflow/internal/lifecycle"
 )
+
+func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	store, err := lifecyclestore.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	deadline := time.Now().UTC().Add(time.Minute)
+	transition, state, err := store.Transition(
+		ctx,
+		"integration",
+		"active-to-draining",
+		lifecyclestore.ModeDraining,
+		&deadline,
+		map[string]any{"test": true},
+	)
+	if err != nil || transition.Status != "applied" ||
+		state.Mode != lifecyclestore.ModeDraining {
+		t.Fatalf("drain transition=%#v state=%#v err=%v", transition, state, err)
+	}
+	replay, _, err := store.Transition(
+		ctx,
+		"integration",
+		"active-to-draining",
+		lifecyclestore.ModeDraining,
+		&deadline,
+		nil,
+	)
+	if err != nil || !replay.Replayed || replay.ID != transition.ID {
+		t.Fatalf("transition replay=%#v err=%v", replay, err)
+	}
+	if _, current, err := store.Transition(
+		ctx,
+		"integration",
+		"invalid-draining-active",
+		lifecyclestore.ModeActive,
+		nil,
+		nil,
+	); err == nil || current.Mode != lifecyclestore.ModeDraining {
+		t.Fatalf("invalid transition state=%#v err=%v", current, err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"draining-monitor",
+		lifecyclestore.ModeMonitorOnly,
+		nil,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"monitor-active",
+		lifecyclestore.ModeActive,
+		nil,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordFailure(
+		ctx,
+		"integration",
+		"drain",
+		"deadline reached",
+		true,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.Status(ctx)
+	if err != nil || !status.State.DrainTimedOut ||
+		status.State.LastError == nil || len(status.RecentTransitions) < 4 {
+		t.Fatalf("lifecycle status=%#v err=%v", status, err)
+	}
+}
 
 func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
@@ -953,6 +1046,7 @@ func resetAndMigrate(
 		"0001_control_store.sql",
 		"0002_registration_control.sql",
 		"0003_isolated_runner.sql",
+		"0004_agentops_lifecycle.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)
@@ -973,6 +1067,14 @@ func resetAndMigrate(
 		); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agentops_control.lifecycle_state
+		   SET mode = 'ACTIVE', generation = generation + 1,
+		       updated_at = clock_timestamp()
+		 WHERE singleton
+	`); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -119,3 +119,41 @@ runnerは`AGENTOPS_OPERATING_MODE`省略時に`MONITOR_ONLY`でleaseを取得せ
 Apple Container smokeはinternal network上のrunner/PostgreSQL、lease競合・expiry・restart recovery、全critical boundaryの
 Registration stale race、lease loss、artifact tamper、zero host port、private volumeを接地し、
 `evidence/ciso-04/apple-container-smoke.json`へmachine-readable証跡を出力する。
+
+## `agentopsctl` lifecycle（CISO-06）
+
+Mac側の常駐daemonを追加せず、短命なGo CLIだけでApple Container topologyを操作する。Apple Container systemは
+既存の付与済み権限で起動し、brew installは行わない。credentialはshell historyへ直接書かず、operator管理の
+permission 0600 env fileなどからexportする。
+
+```sh
+export AGENTOPS_POSTGRES_PASSWORD='<32+ bytes: admin only>'
+export AGENTOPS_CONTROL_DB_PASSWORD='<32+ bytes: distinct control role>'
+export AGENTOPS_RUNNER_DB_PASSWORD='<32+ bytes: distinct runner role>'
+export AGENTOPS_CONTROL_TOKEN='<32+ bytes>'
+export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<32+ bytes>'
+export AGENTOPS_GITHUB_WEBHOOK_SECRET='<32+ bytes>'
+export AGENTOPS_CONTROL_GITHUB_TOKEN='<control read/monitor scope>'
+export AGENTOPS_RUNNER_GITHUB_TOKEN='<runner development scope>'
+export AGENTOPS_RUNNER_PROVIDER=codex
+export OPENAI_API_KEY='<runner provider credential>'
+
+go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build --request-id operator-start-001
+go run ./cmd/agentopsctl start --mode ACTIVE --request-id operator-active-001
+go run ./cmd/agentopsctl status --json
+go run ./cmd/agentopsctl logs --component runner --lines 200
+go run ./cmd/agentopsctl open
+go run ./cmd/agentopsctl drain --timeout 10m --request-id operator-drain-001
+go run ./cmd/agentopsctl stop --timeout 10m --request-id operator-stop-001
+```
+
+mode graphは`OFF → MONITOR_ONLY → ACTIVE → DRAINING → OFF|MONITOR_ONLY`。同一`--request-id`はdurableに
+replayされ、不正遷移は拒否・監査される。DRAININGはDB commit後にrouting/enqueue/leaseを止め、SIGTERMを受けたrunnerが
+現在attemptを閉じるまで待つ。timeoutはforce killせず非0終了し、statusへdeadline/timeout/last errorを残す。
+
+controlだけがexact `127.0.0.1:${AGENTOPSCTL_CONTROL_HOST_PORT:-8080}:8080/tcp`を1件publishする。
+runner/PostgreSQLはownership label付きhost-only networkとnamed volumeだけを使い、host port/socket/host path/runtime
+socketを持たない。通常stopはcontainerを削除してListen消失を検査するがnamed volumeは保存する。start途中失敗では、
+そのstartが変更したcontainerだけを補償停止し、既存in-flight topologyとvolumeは保持する。詳細は
+[ADR-0016](../docs/decisions/ADR-0016-agentopsctl-lifecycle-authority.md)と
+[`evidence/ciso-06/`](../evidence/ciso-06/)を参照する。

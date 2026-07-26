@@ -11,6 +11,7 @@ import {
   EnqueueJobInput,
   IdempotencyConflictError,
   LeaseRejectedError,
+  OperatingModeError,
   RepositoryBusyError,
   RepositoryRegistrationInput,
   RepositoryRegistrationPatch,
@@ -660,6 +661,17 @@ export class PostgresControlStore {
           `registration ${parsed.registrationId} is absent, disabled, or stale`,
         );
       }
+      const lifecycleResult = await client.query<{ mode: string }>(
+        `SELECT mode
+           FROM agentops_control.lifecycle_state
+          WHERE singleton
+          FOR SHARE`,
+      );
+      if (lifecycleResult.rows[0]?.mode !== 'ACTIVE') {
+        throw new OperatingModeError(
+          `operating mode ${lifecycleResult.rows[0]?.mode ?? 'unknown'} does not permit enqueue`,
+        );
+      }
       // The idempotency-key lock makes same-logical webhook/poll races converge
       // before the repository-wide active-job constraint can reject the loser.
       await client.query(
@@ -831,6 +843,13 @@ export class PostgresControlStore {
       throw new Error('jobType must be non-empty when provided');
     }
     return transaction(this.pool, async (client) => {
+      const lifecycleResult = await client.query<{ mode: string }>(
+        `SELECT mode
+           FROM agentops_control.lifecycle_state
+          WHERE singleton
+          FOR SHARE`,
+      );
+      if (lifecycleResult.rows[0]?.mode !== 'ACTIVE') return null;
       const candidate = await client.query<JobRow>(
         `SELECT j.*
            FROM agentops_control.jobs j

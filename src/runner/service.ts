@@ -23,7 +23,7 @@ export interface RunnerServiceConfig {
   workerId: string;
   workspaceRoot: string;
   provider: 'codex' | 'claude';
-  operatingMode?: 'MONITOR_ONLY' | 'ACTIVE';
+  operatingMode?: 'MONITOR_ONLY' | 'ACTIVE' | 'DRAINING';
   leaseDurationMs: number;
   heartbeatIntervalMs: number;
   /** Kept only in workerData; never restored to provider/grader process env. */

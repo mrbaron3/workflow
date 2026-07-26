@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-export const CONTROL_SCHEMA_VERSION = 3;
+export const CONTROL_SCHEMA_VERSION = 4;
 
 export const RepositoryRegistrationInput = z.object({
   repository: z.string().trim().toLowerCase()
@@ -297,6 +297,10 @@ export class StaleRegistrationError extends Error {
 
 export class RepositoryBusyError extends Error {
   override readonly name = 'RepositoryBusyError';
+}
+
+export class OperatingModeError extends Error {
+  override readonly name = 'OperatingModeError';
 }
 
 export class IdempotencyConflictError extends Error {

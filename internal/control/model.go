@@ -31,6 +31,7 @@ var (
 	ErrRepositoryBusy      = errors.New("repository already has active work")
 	ErrStaleRegistration   = errors.New("registration is stale or disabled")
 	ErrStoreUnavailable    = errors.New("control store unavailable")
+	ErrOperatingMode       = errors.New("operating mode does not permit execution")
 	ErrIdempotencyConflict = errors.New("idempotency key was reused for a different request")
 	ErrNoChange            = errors.New("registration patch does not change desired state")
 )
@@ -161,6 +162,7 @@ type OperatingMode string
 const (
 	ModeMonitorOnly OperatingMode = "MONITOR_ONLY"
 	ModeActive      OperatingMode = "ACTIVE"
+	ModeDraining    OperatingMode = "DRAINING"
 )
 
 func ParseOperatingMode(raw string) (OperatingMode, error) {
@@ -169,8 +171,10 @@ func ParseOperatingMode(raw string) (OperatingMode, error) {
 		return ModeMonitorOnly, nil
 	case ModeActive:
 		return ModeActive, nil
+	case ModeDraining:
+		return ModeDraining, nil
 	default:
-		return "", fmt.Errorf("operating mode must be MONITOR_ONLY or ACTIVE")
+		return "", fmt.Errorf("operating mode must be MONITOR_ONLY, ACTIVE, or DRAINING")
 	}
 }
 
