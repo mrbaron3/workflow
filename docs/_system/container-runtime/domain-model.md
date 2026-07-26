@@ -27,3 +27,7 @@
   （`/Users`）依存を持たない。build/runtime surface の hardcoded host path は回帰検査で fail-closed に検出する。
 - **DOM-container-runtime-009 Runner Isolation Boundary** — nonroot process、private named volume、zero publish、
   minimal credential env、explicit outbound集合を一体で検証する起動時aggregate。
+- **DOM-container-runtime-010 Managed Resource** — ownership labelとsafe nameを持つnetwork/volume/container。
+  adapterは同名foreign resourceを変更しない。
+- **DOM-container-runtime-011 Actual Topology** — persisted modeと独立に観測されるcontrol/runner/PostgreSQLの実状態。
+- **DOM-container-runtime-012 Compensation Scope** —1回のstartが作成・置換したcontainer集合。失敗時削除範囲の上限となる。

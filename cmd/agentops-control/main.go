@@ -22,10 +22,17 @@ import (
 )
 
 func main() {
-	if err := run(); err != nil {
+	if err := runCommand(os.Args[1:]); err != nil {
 		slog.Error("agentops-control failed closed", "error", err)
 		os.Exit(1)
 	}
+}
+
+func runCommand(args []string) error {
+	if len(args) > 0 {
+		return runAdministrativeCommand(args)
+	}
+	return run()
 }
 
 func run() error {
@@ -164,6 +171,13 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	egressProxy, err := runnerEgressProxy(
+		strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN")),
+		environment("AGENTOPS_RUNNER_PROVIDER", "codex"),
+	)
+	if err != nil {
+		return err
+	}
 
 	go func() {
 		if err := supervisor.Run(ctx); err != nil {
@@ -180,7 +194,7 @@ func run() error {
 	go listenLoop(ctx, store, "agentops_registration_wake", supervisor.Wake, log)
 	go listenLoop(ctx, store, "agentops_webhook_wake", router.Signal, log)
 
-	serverError := make(chan error, 2)
+	serverError := make(chan error, 3)
 	go func() {
 		log.Info(
 			"agentops-control listening",
@@ -201,6 +215,16 @@ func run() error {
 			serverError <- proxyServer.ListenAndServe()
 		}()
 	}
+	if egressProxy != nil {
+		go func() {
+			log.Info(
+				"agentops-control runner egress proxy listening",
+				"address", egressProxy.Addr,
+				"provider", environment("AGENTOPS_RUNNER_PROVIDER", "codex"),
+			)
+			serverError <- egressProxy.ListenAndServe()
+		}()
+	}
 	select {
 	case <-ctx.Done():
 	case err := <-serverError:
@@ -212,6 +236,11 @@ func run() error {
 	defer shutdownCancel()
 	if proxyServer != nil {
 		if err := proxyServer.Shutdown(shutdownContext); err != nil {
+			return err
+		}
+	}
+	if egressProxy != nil {
+		if err := egressProxy.Shutdown(shutdownContext); err != nil {
 			return err
 		}
 	}

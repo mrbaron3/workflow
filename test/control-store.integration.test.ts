@@ -10,6 +10,7 @@ import {
   IdempotencyConflictError,
   JobEnvelopeContract,
   LeaseRejectedError,
+  OperatingModeError,
   PostgresControlStore,
   RepositoryBusyError,
   assertControlSchema,
@@ -43,6 +44,12 @@ integration('PostgreSQL control store', () => {
   async function migratedStore(): Promise<PostgresControlStore> {
     await reset();
     expect(await migrateControlSchema(pool)).toBe(CONTROL_SCHEMA_VERSION);
+    await pool.query(
+      `UPDATE agentops_control.lifecycle_state
+          SET mode = 'ACTIVE', generation = generation + 1,
+              updated_at = clock_timestamp()
+        WHERE singleton`,
+    );
     await assertControlSchema(pool);
     return new PostgresControlStore(pool);
   }
@@ -102,6 +109,49 @@ integration('PostgreSQL control store', () => {
     });
   }
 
+  it('atomically fences racing enqueue and lease acquisition when drain commits', async () => {
+    const store = await migratedStore();
+    const registered = await registration(store, '-mode-fence');
+    await enqueueRunner(store, registered.id, registered.version, 'before-drain');
+    const blocker = await pool.connect();
+    await blocker.query('BEGIN');
+    await blocker.query(
+      `UPDATE agentops_control.lifecycle_state
+          SET mode = 'DRAINING', generation = generation + 1,
+              updated_at = clock_timestamp()
+        WHERE singleton`,
+    );
+    let leaseSettled = false;
+    let enqueueSettled = false;
+    const lease = store.acquireLease({
+      workerId: 'mode-fenced-runner',
+      durationMs: 30_000,
+      jobType: 'agentops.runner',
+    }).finally(() => {
+      leaseSettled = true;
+    });
+    const enqueue = enqueueRunner(
+      store,
+      registered.id,
+      registered.version,
+      'after-drain',
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    ).finally(() => {
+      enqueueSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect({ leaseSettled, enqueueSettled }).toEqual({
+      leaseSettled: false,
+      enqueueSettled: false,
+    });
+    await blocker.query('COMMIT');
+    blocker.release();
+    await expect(lease).resolves.toBeNull();
+    await expect(enqueue).resolves.toBeInstanceOf(OperatingModeError);
+  });
+
   it('upgrades, verifies after restart, and rejects partial/unknown schema', async () => {
     await reset();
     await expect(assertControlSchema(pool)).rejects.toBeInstanceOf(ControlSchemaError);
@@ -141,6 +191,7 @@ integration('PostgreSQL control store', () => {
       '0001_control_store.sql',
       '0002_registration_control.sql',
       '0003_isolated_runner.sql',
+      '0004_agentops_lifecycle.sql',
     ]) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
@@ -148,7 +199,7 @@ integration('PostgreSQL control store', () => {
       );
       fs.writeFileSync(
         path.join(directory, name),
-        name.startsWith('0003_')
+        name.startsWith('0004_')
           ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
           : valid,
       );

@@ -15,6 +15,12 @@ const pool = new Pool({ connectionString: databaseUrl });
 try {
   await pool.query('DROP SCHEMA IF EXISTS agentops_control CASCADE');
   await migrateControlSchema(pool);
+  await pool.query(
+    `UPDATE agentops_control.lifecycle_state
+        SET mode = 'ACTIVE', generation = generation + 1,
+            updated_at = clock_timestamp()
+      WHERE singleton`,
+  );
 } finally {
   await pool.end();
 }

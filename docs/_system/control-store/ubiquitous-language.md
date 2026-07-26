@@ -15,6 +15,10 @@
 - **LANG-control-store-013 Execution Guard** — lease ownership/expiryとRegistration current stateをDBで裁定する操作。
 - **LANG-control-store-014 Side-effect Permit** — guard成功から対応side effectまでを結ぶ短命・単回token。
 - **LANG-control-store-015 Runner Failure** — code/retryable/boundary/timeを持つversioned failure。
+- **LANG-control-store-016 Lifecycle State** — operatorが明示したOFF／MONITOR_ONLY／ACTIVE／DRAININGの永続運転状態。
+- **LANG-control-store-017 Lifecycle Transition** — validation、idempotency、actor、時刻、結果を一体で保存する状態変更。
+- **LANG-control-store-018 Drain Fence** — DRAINING後の新規routing/enqueue/leaseをDBで拒否する競合境界。
+- **LANG-control-store-019 Recovery Reconciliation** — persisted mode/lease/attemptとactual topologyをrestart時に照合する操作。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)

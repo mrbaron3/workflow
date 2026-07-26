@@ -13,7 +13,386 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	lifecyclestore "github.com/mrbaron3/workflow/internal/lifecycle"
 )
+
+func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	store, err := lifecyclestore.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	deadline := time.Now().UTC().Add(time.Minute).Round(time.Microsecond)
+	details := map[string]any{"test": true}
+	type transitionResult struct {
+		transition lifecyclestore.Transition
+		state      lifecyclestore.State
+		err        error
+	}
+	results := make([]transitionResult, 2)
+	var wait sync.WaitGroup
+	for index := range results {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			results[index].transition, results[index].state, results[index].err =
+				store.Transition(
+					ctx,
+					"integration",
+					"active-to-draining",
+					lifecyclestore.ModeDraining,
+					&deadline,
+					details,
+				)
+		}(index)
+	}
+	wait.Wait()
+	transition := results[0].transition
+	if transition.Replayed {
+		transition = results[1].transition
+	}
+	for index, result := range results {
+		if result.err != nil ||
+			result.transition.ID != transition.ID ||
+			result.state.Mode != lifecyclestore.ModeDraining {
+			t.Fatalf("concurrent transition[%d]=%#v state=%#v err=%v",
+				index, result.transition, result.state, result.err)
+		}
+	}
+	if results[0].transition.Replayed == results[1].transition.Replayed ||
+		transition.Status != "applied" {
+		t.Fatalf("same-key callers did not converge: %#v", results)
+	}
+	replay, replayState, err := store.Transition(
+		ctx,
+		"integration",
+		"active-to-draining",
+		lifecyclestore.ModeDraining,
+		&deadline,
+		details,
+	)
+	if err != nil || !replay.Replayed || replay.ID != transition.ID ||
+		replayState.DrainDeadlineAt == nil ||
+		!replayState.DrainDeadlineAt.Equal(deadline) {
+		t.Fatalf("transition replay=%#v state=%#v err=%v", replay, replayState, err)
+	}
+	conflictingDeadline := deadline.Add(time.Second)
+	for name, candidate := range map[string]struct {
+		actor    string
+		deadline *time.Time
+		details  map[string]any
+	}{
+		"actor":    {"other-actor", &deadline, details},
+		"deadline": {"integration", &conflictingDeadline, details},
+		"details":  {"integration", &deadline, map[string]any{"test": false}},
+	} {
+		if _, _, err := store.Transition(
+			ctx,
+			candidate.actor,
+			"active-to-draining",
+			lifecyclestore.ModeDraining,
+			candidate.deadline,
+			candidate.details,
+		); !errors.Is(err, lifecyclestore.ErrIdempotencyConflict) {
+			t.Fatalf("%s idempotency conflict = %v", name, err)
+		}
+	}
+	if _, current, err := store.Transition(
+		ctx,
+		"integration",
+		"invalid-draining-active",
+		lifecyclestore.ModeActive,
+		nil,
+		nil,
+	); err == nil || current.Mode != lifecyclestore.ModeDraining {
+		t.Fatalf("invalid transition state=%#v err=%v", current, err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"draining-monitor",
+		lifecyclestore.ModeMonitorOnly,
+		nil,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"active-to-draining",
+		lifecyclestore.ModeDraining,
+		&deadline,
+		details,
+	); !errors.Is(err, lifecyclestore.ErrStaleReplay) {
+		t.Fatalf("old transition replay was not rejected as stale: %v", err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"monitor-active",
+		lifecyclestore.ModeActive,
+		nil,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"invalid-draining-active",
+		lifecyclestore.ModeActive,
+		nil,
+		nil,
+	); err == nil {
+		t.Fatal("rejected transition replay unexpectedly succeeded")
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.repository_registrations(id, repository)
+		VALUES ('10000000-0000-4000-8000-000000000001', 'owner/recovery');
+		INSERT INTO agentops_control.jobs(
+		  id, registration_id, registration_version, source_kind, source_key,
+		  idempotency_key, job_type, payload, status
+		) VALUES (
+		  '20000000-0000-4000-8000-000000000001',
+		  '10000000-0000-4000-8000-000000000001',
+		  1, 'recovery', 'expired-attempt', 'expired-attempt',
+		  'agentops.runner', '{}', 'leased'
+		);
+		INSERT INTO agentops_control.job_attempts(
+		  id, job_id, attempt_number, worker_id, status
+		) VALUES (
+		  '30000000-0000-4000-8000-000000000001',
+		  '20000000-0000-4000-8000-000000000001',
+		  1, 'crashed-runner', 'running'
+		);
+		INSERT INTO agentops_control.job_leases(
+		  id, job_id, attempt_id, lease_token, worker_id, status,
+		  acquired_at, heartbeat_at, expires_at
+		) VALUES (
+		  '40000000-0000-4000-8000-000000000001',
+		  '20000000-0000-4000-8000-000000000001',
+		  '30000000-0000-4000-8000-000000000001',
+		  '50000000-0000-4000-8000-000000000001',
+		  'crashed-runner', 'active',
+		  clock_timestamp() - interval '2 minutes',
+		  clock_timestamp() - interval '2 minutes',
+		  clock_timestamp() - interval '1 minute'
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	reconciled, err := store.ReconcileExpiredRunnerWork(
+		ctx,
+		3,
+		5*time.Second,
+	)
+	if err != nil || reconciled != 1 {
+		t.Fatalf("expired recovery reconciled=%d err=%v", reconciled, err)
+	}
+	var jobStatus, attemptStatus, leaseStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT j.status, a.status, l.status
+		  FROM agentops_control.jobs j
+		  JOIN agentops_control.job_attempts a ON a.job_id = j.id
+		  JOIN agentops_control.job_leases l ON l.attempt_id = a.id
+		 WHERE j.id = '20000000-0000-4000-8000-000000000001'
+	`).Scan(&jobStatus, &attemptStatus, &leaseStatus); err != nil {
+		t.Fatal(err)
+	}
+	if jobStatus != "queued" ||
+		attemptStatus != "timed_out" ||
+		leaseStatus != "expired" {
+		t.Fatalf(
+			"recovered states job=%s attempt=%s lease=%s",
+			jobStatus,
+			attemptStatus,
+			leaseStatus,
+		)
+	}
+	if err := store.RecordFailure(
+		ctx,
+		"integration",
+		"drain",
+		"deadline reached",
+		true,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.Status(ctx)
+	if err != nil || !status.State.DrainTimedOut ||
+		status.State.LastError == nil || len(status.RecentTransitions) < 4 {
+		t.Fatalf("lifecycle status=%#v err=%v", status, err)
+	}
+}
+
+func TestPostgresDirectInsertLifecycleFenceIntegration(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	store, err := lifecyclestore.Open(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.repository_registrations(id, repository)
+		VALUES ('11000000-0000-4000-8000-000000000001', 'owner/fence')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	insertTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = insertTx.Rollback(context.Background()) }()
+	if _, err := insertTx.Exec(ctx, `
+		INSERT INTO agentops_control.jobs(
+		  id, registration_id, registration_version, source_kind, source_key,
+		  idempotency_key, job_type, payload, status
+		) VALUES (
+		  '21000000-0000-4000-8000-000000000001',
+		  '11000000-0000-4000-8000-000000000001',
+		  1, 'manual', 'before-drain', 'before-drain',
+		  'agentops.runner', '{}', 'queued'
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	drainDone := make(chan error, 1)
+	deadline := time.Now().UTC().Add(time.Minute).Round(time.Microsecond)
+	go func() {
+		_, _, transitionErr := store.Transition(
+			ctx,
+			"integration",
+			"direct-insert-drain",
+			lifecyclestore.ModeDraining,
+			&deadline,
+			map[string]any{"test": "direct-insert-fence"},
+		)
+		drainDone <- transitionErr
+	}()
+	select {
+	case err := <-drainDone:
+		t.Fatalf("drain crossed the uncommitted insert fence: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := insertTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-drainDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.jobs(
+		  id, registration_id, registration_version, source_kind, source_key,
+		  idempotency_key, job_type, payload, status
+		) VALUES (
+		  '21000000-0000-4000-8000-000000000002',
+		  '11000000-0000-4000-8000-000000000001',
+		  1, 'manual', 'after-drain', 'after-drain',
+		  'agentops.runner', '{}', 'queued'
+		)
+	`); err == nil {
+		t.Fatal("direct insert committed after DRAINING")
+	}
+
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"fence-draining-monitor",
+		lifecyclestore.ModeMonitorOnly,
+		nil,
+		map[string]any{"test": "direct-insert-fence"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"fence-monitor-active",
+		lifecyclestore.ModeActive,
+		nil,
+		map[string]any{"test": "direct-insert-fence"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agentops_control.jobs
+		   SET status = 'succeeded', finished_at = clock_timestamp(),
+		       updated_at = clock_timestamp()
+		 WHERE id = '21000000-0000-4000-8000-000000000001'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	drainTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = drainTx.Rollback(context.Background()) }()
+	if _, err := drainTx.Exec(ctx, `
+		UPDATE agentops_control.lifecycle_state
+		   SET mode = 'DRAINING', generation = generation + 1,
+		       updated_at = clock_timestamp()
+		 WHERE singleton
+	`); err != nil {
+		t.Fatal(err)
+	}
+	insertDone := make(chan error, 1)
+	go func() {
+		_, insertErr := pool.Exec(ctx, `
+			INSERT INTO agentops_control.jobs(
+			  id, registration_id, registration_version, source_kind, source_key,
+			  idempotency_key, job_type, payload, status
+			) VALUES (
+			  '21000000-0000-4000-8000-000000000003',
+			  '11000000-0000-4000-8000-000000000001',
+			  1, 'manual', 'racing-drain', 'racing-drain',
+			  'agentops.runner', '{}', 'queued'
+			)
+		`)
+		insertDone <- insertErr
+	}()
+	select {
+	case err := <-insertDone:
+		t.Fatalf("insert crossed the uncommitted drain fence: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := drainTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-insertDone; err == nil {
+		t.Fatal("racing direct insert committed after drain")
+	}
+}
 
 func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
@@ -953,6 +1332,7 @@ func resetAndMigrate(
 		"0001_control_store.sql",
 		"0002_registration_control.sql",
 		"0003_isolated_runner.sql",
+		"0004_agentops_lifecycle.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)
@@ -973,6 +1353,14 @@ func resetAndMigrate(
 		); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agentops_control.lifecycle_state
+		   SET mode = 'ACTIVE', generation = generation + 1,
+		       updated_at = clock_timestamp()
+		 WHERE singleton
+	`); err != nil {
+		t.Fatal(err)
 	}
 }
 

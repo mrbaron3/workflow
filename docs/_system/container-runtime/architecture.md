@@ -35,12 +35,20 @@
   DB接続・provider実行前にfail closed検証し、secret値を含まない検証結果をcontrol-store auditへ残す。
 - **ARCH-container-runtime-010 Registration workspace** — mirror/worktree/state/artifactは
   `/workspace/registrations/<id>`だけに置き、job/attempt pathはDB identityから決定論的に導出する。
+- **ARCH-container-runtime-011 Short-lived lifecycle owner** — `agentopsctl`だけがApple Container systemと
+  named topologyを操作し、終了後にhost-native daemonを残さない。
+- **ARCH-container-runtime-012 Actual publish proof** — reachabilityに加えてrunning inspectのexact
+  `127.0.0.1:<port>:8080/tcp` 1件、runner/PostgreSQLのempty publish/socketを検査する。
+- **ARCH-container-runtime-013 Internal egress bridge** — internal-only runnerはcontrol上のCONNECT allowlistを経由し、
+  GitHub/GitHub API/選択providerの443だけへ到達する。PostgreSQLはactual internal IPv4で直接到達する。
+- **ARCH-container-runtime-014 Scoped compensation** — partial startは当該試行が変更したcontainerだけを停止・削除し、
+  named volumeと既存in-flight topologyを保存する。
 
 ## 段階導入
 
 - #11（CISO-01）: `ARCH-container-runtime-001`〜`007` を一括で確立する（本フェーズが基盤）。
 - #14（CISO-04）: `runner` stageとprivate Registration workspaceを`ARCH-container-runtime-008`〜`010`で追加する。
-- 後続 #13/#16: `control-build` stage と control lifecycle を ARCH-001 の port 越しに追加する。
+- #16（CISO-06）: `agentopsctl` lifecycleとactual publish/compensationを`ARCH-container-runtime-011`〜`014`で追加する。
 
 ## grounded smoke
 

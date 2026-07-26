@@ -23,6 +23,14 @@
   同じtransactionへ監査する。
 - **ARCH-control-store-011 Retry and Restart Recovery** — heartbeat loss後はside effect permitを失効し、retryable failureは
   attempt履歴を閉じて指数backoff再queueする。stale Registrationはretryせず、restart workerはDB queueを再発見する。
+- **ARCH-control-store-012 Lifecycle SoT** — singleton mode/generation/drain deadline/timeout/last errorと
+  idempotent transition履歴をPostgreSQLだけへ保存し、actual container状態をmodeとして推測保存しない。
+- **ARCH-control-store-013 Drain Fence** — lifecycle rowのexclusive transition lockとenqueue/leaseのshared lock、
+  job INSERT triggerを組み合わせ、DRAINING commit後のrouting/enqueue/leaseを原子的に拒否する。
+- **ARCH-control-store-014 Recovery Reconciliation** — CLI restartはpersisted mode、active lease、running attempt、
+  actual containerを照合し、欠損ACTIVEをDRAININGへ寄せてから安全な復旧経路だけを通す。
+- **ARCH-control-store-015 Explicit Owner Migration** — 通常consumerはschema verify-onlyを保ち、短命なowner-only
+  admin containerだけがadvisory lock下でversion 4 migrationとleast-privilege role bootstrapを行う。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)

@@ -21,3 +21,6 @@
   （`runtime`・`ok`・`preflight`・`steps`）。監査・PR 添付用の一時 artifact であり SoT ではない。
 - **DATA-container-runtime-006 runner isolation input** — worker ID、private mount、empty publish集合、
   DB/GitHub/選択providerだけのoutbound集合。起動時だけ解決し、credential値は永続化しない。
+- **DATA-container-runtime-007 agentopsctl actual status** — Apple Container capability、3 roleのstate/network/
+  publish/socket/mount/read-only/capabilityとloopback probeを起動ごとに観測する揮発snapshot。persisted lifecycleとは
+  同一視せず並べて表示する。

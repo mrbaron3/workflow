@@ -213,6 +213,13 @@ async function main(): Promise<void> {
     network,
     publishedPorts: 0,
   });
+  postgresExec(
+    `UPDATE agentops_control.lifecycle_state
+        SET mode = 'ACTIVE', generation = generation + 1,
+            drain_timed_out = false, last_error = NULL,
+            updated_at = clock_timestamp()
+      WHERE singleton;`,
+  );
 
   postgresExec(
     `DO $$
