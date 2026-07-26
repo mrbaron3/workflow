@@ -67,6 +67,7 @@ type ProductionRunner struct {
 	Mode           OperatingMode
 	SupervisorID   string
 	PollInterval   time.Duration
+	TransientRetry time.Duration
 	ForwarderRetry time.Duration
 	HealthInterval time.Duration
 	// SignedWebhookIngressOnly makes the HTTP webhook endpoint the forwarder
@@ -101,10 +102,36 @@ func (runner *ProductionRunner) runMonitor(
 ) error {
 	ticker := time.NewTicker(runner.PollInterval)
 	defer ticker.Stop()
+	transientRetries := 0
 	for {
 		if err := runner.pollOnce(ctx, registration, kind, component); err != nil {
+			if errors.Is(err, ErrMonitorBrokerProviderTimeout) &&
+				transientRetries < MaxMonitorBrokerTimeoutRetries {
+				transientRetries++
+				if stateErr := runner.Store.UpsertActualState(
+					ctx,
+					registration,
+					component,
+					"starting",
+					runner.SupervisorID,
+					nil,
+				); stateErr != nil {
+					return stateErr
+				}
+				retry := runner.TransientRetry
+				if retry <= 0 {
+					retry = 2 * time.Second
+				}
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-time.After(retry):
+					continue
+				}
+			}
 			return err
 		}
+		transientRetries = 0
 		select {
 		case <-ctx.Done():
 			return nil

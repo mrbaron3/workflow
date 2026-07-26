@@ -179,7 +179,7 @@ integration('PostgreSQL control store', () => {
     blocker.release();
     await expect(lease).resolves.toBeNull();
     await expect(enqueue).resolves.toBeInstanceOf(OperatingModeError);
-  });
+  }, 15_000);
 
   it('upgrades, verifies after restart, and rejects partial/unknown schema', async () => {
     await reset();

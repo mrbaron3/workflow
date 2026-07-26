@@ -137,6 +137,7 @@ func run() error {
 		Mode:           mode,
 		SupervisorID:   supervisorID,
 		PollInterval:   pollInterval,
+		TransientRetry: 2 * time.Second,
 		ForwarderRetry: 2 * time.Second,
 		HealthInterval: reconciliationInterval,
 		// Webhook ingress is the signed HTTP API in the standard OCI

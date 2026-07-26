@@ -35,7 +35,10 @@ const (
 	DefaultMonitorBrokerTimeout    = 25 * time.Second
 	MaxMonitorBrokerTimeout        = 30 * time.Second
 	MonitorBrokerResponsePoll      = 100 * time.Millisecond
+	MaxMonitorBrokerTimeoutRetries = 1
 )
+
+var ErrMonitorBrokerProviderTimeout = errors.New("monitor broker provider_timeout")
 
 // BrokeredGitHubSource is a typed PostgreSQL request/response boundary. It
 // exposes no URL or arbitrary method: only issue and pull_request monitor reads
@@ -297,11 +300,7 @@ func (store *Store) monitorBrokerPoll(
 			if errorMessage != nil && *errorMessage != "" {
 				message = *errorMessage
 			}
-			return monitorBrokerResponse{}, fmt.Errorf(
-				"monitor broker %s: %s",
-				code,
-				message,
-			)
+			return monitorBrokerResponse{}, monitorBrokerFailure(code, message)
 		case "pending", "leased":
 		default:
 			return monitorBrokerResponse{}, fmt.Errorf("monitor broker status is invalid")
@@ -312,6 +311,13 @@ func (store *Store) monitorBrokerPoll(
 		case <-ticker.C:
 		}
 	}
+}
+
+func monitorBrokerFailure(code, message string) error {
+	if code == "provider_timeout" {
+		return fmt.Errorf("%w: %s", ErrMonitorBrokerProviderTimeout, message)
+	}
+	return fmt.Errorf("monitor broker %s: %s", code, message)
 }
 
 func validBrokerTimestamp(value string) bool {
