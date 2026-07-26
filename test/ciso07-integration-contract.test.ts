@@ -36,6 +36,7 @@ describe('CISO-07 integrated release source contracts', () => {
     expect(containerfile).toContain(
       'gcr.io/distroless/static-debian12:nonroot@sha256:',
     );
+    expect(containerfile).toContain('USER 65532:65532');
     expect(containerfile).toContain('github.com/cli/cli/v2/cmd/gh');
     expect(read('deploy/gh/go.mod')).toContain(
       'google.golang.org/grpc v1.82.1',

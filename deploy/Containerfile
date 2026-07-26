@@ -140,7 +140,7 @@ COPY --from=control-build /src/contracts /app/contracts
 COPY --from=control-build /src/evidence /app/evidence
 COPY --from=control-build /src/db /app/db
 COPY --from=control-build /src/docs /app/docs
-USER nonroot:nonroot
+USER 65532:65532
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/agentops-control"]
 
