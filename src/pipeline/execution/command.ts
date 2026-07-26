@@ -60,7 +60,7 @@ export function runCommand(
         '-c', 'core.fsmonitor=false',
         '-c', 'commit.gpgSign=false',
         '-c', 'credential.helper=',
-        '-c', 'http.proxy=',
+        '-c', `http.proxy=${process.env.HTTPS_PROXY ?? ''}`,
         ...args,
       ]
     : args;
