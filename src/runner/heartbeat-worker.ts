@@ -80,6 +80,7 @@ function schedule(): void {
         }
       });
   }, input.intervalMs);
+  timer.unref();
 }
 
 parentPort?.on('message', (message: unknown) => {
@@ -91,7 +92,26 @@ parentPort?.on('message', (message: unknown) => {
     void stop();
   }
 });
-schedule();
+inFlight = heartbeat()
+  .then(() => {
+    parentPort?.postMessage({ type: 'ready' });
+    if (!stopping) schedule();
+  })
+  .catch((error: unknown) => {
+    parentPort?.postMessage({
+      type: 'lost',
+      message: error instanceof Error ? error.message : String(error),
+    });
+    stopping = true;
+  })
+  .finally(async () => {
+    inFlight = null;
+    if (stopping) {
+      await closePool();
+      parentPort?.postMessage({ type: 'stopped' });
+      parentPort?.close();
+    }
+  });
 deadlineTimer = setTimeout(() => {
   if (stopping) return;
   stopping = true;
