@@ -116,6 +116,38 @@ func TestValidateSpecActualRejectsImageAndConfigurationDrift(t *testing.T) {
 	}
 }
 
+func TestPostgresSpecRejectsMutableTagImageAndCredentialDrift(t *testing.T) {
+	cfg := testManagerConfig()
+	cfg.PostgresPassword = "postgres-password-first-value-0001"
+	subject := newManager(cfg, nil)
+	spec := subject.postgresSpec()
+	image := "sha256:" + strings.Repeat("c", 64)
+	digest, err := lifecycle.SpecDigest(spec, image)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.SpecDigest = digest
+	actual := &lifecycle.ContainerActual{}
+	actual.ID = cfg.PostgresContainer
+	actual.Configuration.Image.Descriptor.Digest = image
+	actual.Configuration.Labels = map[string]string{
+		"com.mrbaron3.workflow.spec-sha256": digest,
+	}
+	if err := validateSpecActual(actual, spec); err != nil {
+		t.Fatal(err)
+	}
+	actual.Configuration.Image.Descriptor.Digest =
+		"sha256:" + strings.Repeat("d", 64)
+	if err := validateSpecActual(actual, spec); err == nil {
+		t.Fatal("PostgreSQL mutable-tag image drift was accepted")
+	}
+	actual.Configuration.Image.Descriptor.Digest = image
+	spec.Environment["POSTGRES_PASSWORD"] = "postgres-password-rotated-value-0002"
+	if err := validateSpecActual(actual, spec); err == nil {
+		t.Fatal("PostgreSQL administrator credential drift was accepted")
+	}
+}
+
 func testManagerConfig() config {
 	return config{
 		Prefix:            "agentops",

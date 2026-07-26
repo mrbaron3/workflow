@@ -46,6 +46,27 @@ func runAdministrativeCommand(args []string) error {
 			return err
 		}
 		return writeJSON(map[string]any{"rolesBootstrapped": true})
+	case "rotate-postgres-admin":
+		flags := flag.NewFlagSet("rotate-postgres-admin", flag.ContinueOnError)
+		requestID := flags.String("request-id", "", "durable rotation identity")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return fmt.Errorf("unexpected rotate-postgres-admin arguments")
+		}
+		if err := lifecycle.RotatePostgresAdmin(
+			ctx,
+			databaseURL,
+			os.Getenv("AGENTOPS_NEXT_POSTGRES_PASSWORD"),
+			*requestID,
+		); err != nil {
+			return err
+		}
+		return writeJSON(map[string]any{
+			"rotated":   true,
+			"requestId": *requestID,
+		})
 	case "lifecycle":
 		return runLifecycleCommand(ctx, databaseURL, args[1:])
 	default:

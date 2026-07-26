@@ -93,7 +93,7 @@ func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 	}
 }
 
-func TestStartCredentialSeparation(t *testing.T) {
+func TestStartRejectsEveryControlGitHubCredential(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "deploy"), 0o700); err != nil {
 		t.Fatal(err)
@@ -119,8 +119,8 @@ func TestStartCredentialSeparation(t *testing.T) {
 		MonitorRepository: "mrbaron3/workflow",
 	}
 	if err := value.validateStart(lifecycle.ModeActive); err == nil ||
-		!strings.Contains(err.Error(), "distinct") {
-		t.Fatalf("shared GitHub credential was accepted: %v", err)
+		!strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("control GitHub credential was accepted: %v", err)
 	}
 }
 
@@ -154,7 +154,7 @@ func TestActiveAllowsCredentialFreeControlWithPrivateBrokerAndCodexLogin(t *test
 		MonitorRepository: "mrbaron3/workflow",
 	}
 	if err := value.validateStart(lifecycle.ModeActive); err != nil {
-		t.Fatalf("scoped public-control/private-runner boundary was rejected: %v", err)
+		t.Fatalf("credential-free-control/private-runner boundary was rejected: %v", err)
 	}
 	if !value.usesCodexAuthFile() {
 		t.Fatal("Codex login file mode was not selected")
@@ -176,5 +176,26 @@ func TestCodexAuthSourceRejectsPermissiveOrNonCanonicalFile(t *testing.T) {
 	}
 	if err := validateCodexAuthSource(safe); err == nil {
 		t.Fatal("non-canonical Codex auth filename was accepted")
+	}
+	missing := filepath.Join(root, "missing", "auth.json")
+	err := validateCodexAuthSource(missing)
+	if err == nil || strings.Contains(err.Error(), root) {
+		t.Fatalf("missing Codex auth leaked its host path: %v", err)
+	}
+}
+
+func TestPostgresRotationRequiresDistinctCurrentAndNextCredentials(t *testing.T) {
+	value := config{
+		PostgresPassword:     strings.Repeat("a", 32),
+		NextPostgresPassword: strings.Repeat("b", 32),
+		ControlDBPassword:    strings.Repeat("c", 32),
+		RunnerDBPassword:     strings.Repeat("d", 32),
+	}
+	if err := value.validatePostgresRotation(); err != nil {
+		t.Fatalf("valid PostgreSQL credential rotation rejected: %v", err)
+	}
+	value.NextPostgresPassword = value.ControlDBPassword
+	if err := value.validatePostgresRotation(); err == nil {
+		t.Fatal("database role credential reuse was accepted for admin rotation")
 	}
 }

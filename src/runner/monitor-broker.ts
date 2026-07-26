@@ -9,11 +9,6 @@ const GitHubRow = z.object({
   updated_at: z.string().datetime({ offset: true }),
   pull_request: z.unknown().optional(),
 }).passthrough();
-const SanitizedGitHubRow = z.object({
-  number: z.number().int().positive(),
-  updated_at: z.string().datetime({ offset: true }),
-  isPull: z.boolean(),
-}).strict();
 const execFileAsync = promisify(execFile);
 
 interface BrokerStore {
@@ -38,6 +33,7 @@ export interface PrivateMonitorBrokerOptions {
   requestTimeoutMs?: number;
   maxResponseBytes?: number;
   maxPages?: number;
+  log?: (message: string) => void;
 }
 
 class MonitorBrokerFailure extends Error {
@@ -56,6 +52,36 @@ function nextLink(header: string | null): string | null {
     if (match?.[2] === 'next') return match[1] ?? null;
   }
   return null;
+}
+
+async function readLimitedBody(
+  response: Response,
+  remainingBytes: number,
+): Promise<Uint8Array> {
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > remainingBytes) {
+      await reader.cancel();
+      throw new MonitorBrokerFailure(
+        'response_too_large',
+        'GitHub monitor response exceeded the byte limit',
+      );
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 function endpointFor(request: MonitorBrokerRequest): URL {
@@ -97,6 +123,31 @@ function assertTypedPageURL(
     throw new MonitorBrokerFailure(
       'pagination_escape',
       'GitHub pagination escaped the typed repository operation',
+    );
+  }
+  const allowedKeys = new Set([
+    'state',
+    'sort',
+    'direction',
+    'per_page',
+    'page',
+    ...(request.monitorKind === 'issue' ? ['since'] : []),
+  ]);
+  if (
+    [...candidate.searchParams.keys()].some((key) => !allowedKeys.has(key))
+    || candidate.searchParams.get('state') !== 'open'
+    || candidate.searchParams.get('sort') !== 'updated'
+    || candidate.searchParams.get('direction') !== 'asc'
+    || candidate.searchParams.get('per_page') !== '100'
+    || (candidate.searchParams.get('page') !== null
+      && !/^[1-9][0-9]*$/.test(candidate.searchParams.get('page')!))
+    || (request.monitorKind === 'issue'
+      && candidate.searchParams.get('since')
+        !== (request.cursor.updatedAfter || null))
+  ) {
+    throw new MonitorBrokerFailure(
+      'pagination_escape',
+      'GitHub pagination changed the typed query',
     );
   }
 }
@@ -159,92 +210,108 @@ export class PrivateMonitorBroker {
     const observedAt = new Date().toISOString();
     if (!this.options.fetchImpl) {
       const endpoint = endpointFor(request);
-      const endpointArgument = `${endpoint.pathname}${endpoint.search}`;
-      let stdout: string;
-      try {
-        const result = await execFileAsync(
-          'gh',
-          [
-            'api',
-            '--paginate',
-            '--method', 'GET',
-            '--header', 'Accept: application/vnd.github+json',
-            '--header', 'X-GitHub-Api-Version: 2022-11-28',
-            endpointArgument,
-            '--jq', '.[] | {number,updated_at,isPull:has("pull_request")}',
-          ],
-          {
-            encoding: 'utf8',
-            timeout: this.requestTimeoutMs,
-            maxBuffer: this.maxResponseBytes,
-            killSignal: 'SIGKILL',
-            env: {
-              PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
-              HOME: '/home/agentops',
-              GH_TOKEN: this.options.githubToken,
-              GITHUB_TOKEN: this.options.githubToken,
-              ...(process.env.HTTP_PROXY
-                ? { HTTP_PROXY: process.env.HTTP_PROXY }
-                : {}),
-              ...(process.env.HTTPS_PROXY
-                ? { HTTPS_PROXY: process.env.HTTPS_PROXY }
-                : {}),
-              ...(process.env.NO_PROXY
-                ? { NO_PROXY: process.env.NO_PROXY }
-                : {}),
+      const deadline = Date.now() + this.requestTimeoutMs;
+      let totalBytes = 0;
+      for (let page = 1; page <= this.maxPages; page += 1) {
+        endpoint.searchParams.set('page', String(page));
+        const endpointArgument = `${endpoint.pathname}${endpoint.search}`;
+        const remainingMs = deadline - Date.now();
+        const remainingBytes = this.maxResponseBytes - totalBytes;
+        if (remainingMs < 1_000 || remainingBytes < 1) {
+          throw new MonitorBrokerFailure(
+            remainingBytes < 1 ? 'response_too_large' : 'provider_timeout',
+            remainingBytes < 1
+              ? 'GitHub monitor response exceeded the byte limit'
+              : 'typed monitor provider operation exceeded its deadline',
+          );
+        }
+        let stdout: string;
+        try {
+          const result = await execFileAsync(
+            'gh',
+            [
+              'api',
+              '--method', 'GET',
+              '--header', 'Accept: application/vnd.github+json',
+              '--header', 'X-GitHub-Api-Version: 2022-11-28',
+              endpointArgument,
+            ],
+            {
+              encoding: 'utf8',
+              timeout: remainingMs,
+              maxBuffer: remainingBytes,
+              killSignal: 'SIGKILL',
+              env: {
+                PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+                HOME: '/home/agentops',
+                GH_TOKEN: this.options.githubToken,
+                GITHUB_TOKEN: this.options.githubToken,
+                ...(process.env.HTTP_PROXY
+                  ? { HTTP_PROXY: process.env.HTTP_PROXY }
+                  : {}),
+                ...(process.env.HTTPS_PROXY
+                  ? { HTTPS_PROXY: process.env.HTTPS_PROXY }
+                  : {}),
+                ...(process.env.NO_PROXY
+                  ? { NO_PROXY: process.env.NO_PROXY }
+                  : {}),
+              },
             },
-          },
-        );
-        stdout = result.stdout;
-      } catch {
-        throw new MonitorBrokerFailure(
-          'provider_failure',
-          'typed monitor provider operation failed',
-        );
-      }
-      if (Buffer.byteLength(stdout) > this.maxResponseBytes) {
-        throw new MonitorBrokerFailure(
-          'response_too_large',
-          'GitHub monitor response exceeded the byte limit',
-        );
-      }
-      for (const line of stdout.split('\n').filter(Boolean)) {
+          );
+          stdout = result.stdout;
+        } catch {
+          throw new MonitorBrokerFailure(
+            'provider_failure',
+            'typed monitor provider operation failed',
+          );
+        }
+        totalBytes += Buffer.byteLength(stdout);
         let parsed: unknown;
         try {
-          parsed = JSON.parse(line);
+          parsed = JSON.parse(stdout);
         } catch {
           throw new MonitorBrokerFailure(
             'invalid_json',
-            'GitHub monitor response was not sanitized JSON',
+            'GitHub monitor response was not JSON',
           );
         }
-        const row = SanitizedGitHubRow.parse(parsed);
-        if (request.monitorKind === 'issue' && row.isPull) continue;
-        const updated = Date.parse(row.updated_at);
-        if (updated < cursorTime) continue;
-        items.push({
-          repository: request.repository,
-          kind: request.monitorKind,
-          number: row.number,
-          updatedAt: new Date(updated).toISOString(),
-        });
-        maxUpdated = Math.max(maxUpdated, updated);
+        const rows = z.array(GitHubRow).max(100).parse(parsed);
+        for (const row of rows) {
+          if (request.monitorKind === 'issue' && row.pull_request !== undefined) {
+            continue;
+          }
+          const updated = Date.parse(row.updated_at);
+          if (updated < cursorTime) continue;
+          items.push({
+            repository: request.repository,
+            kind: request.monitorKind,
+            number: row.number,
+            updatedAt: new Date(updated).toISOString(),
+          });
+          maxUpdated = Math.max(maxUpdated, updated);
+        }
         if (items.length > 1_000) {
           throw new MonitorBrokerFailure(
             'item_limit',
             'GitHub monitor response exceeded the item limit',
           );
         }
+        if (rows.length < 100) {
+          return {
+            items,
+            nextCursor: {
+              updatedAfter: maxUpdated === 0
+                ? ''
+                : new Date(maxUpdated).toISOString(),
+            },
+            observedAt,
+          };
+        }
       }
-      return {
-        items,
-        nextCursor: {
-          updatedAfter: maxUpdated === 0
-            ? ''
-            : new Date(maxUpdated).toISOString(),
-        },
-        observedAt,
-      };
+      throw new MonitorBrokerFailure(
+        'page_limit',
+        'GitHub monitor response exceeded the page limit',
+      );
     }
 
     let pageURL: URL | null = endpointFor(request);
@@ -276,14 +343,11 @@ export class PrivateMonitorBroker {
           `GitHub typed monitor returned HTTP ${response.status}`,
         );
       }
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const bytes = await readLimitedBody(
+        response,
+        this.maxResponseBytes - totalBytes,
+      );
       totalBytes += bytes.byteLength;
-      if (totalBytes > this.maxResponseBytes) {
-        throw new MonitorBrokerFailure(
-          'response_too_large',
-          'GitHub monitor response exceeded the byte limit',
-        );
-      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(new TextDecoder().decode(bytes));
@@ -330,11 +394,19 @@ export class PrivateMonitorBroker {
 
   async runOnce(): Promise<boolean> {
     if (this.stopping) return false;
-    const request = await this.options.store.claimMonitorBrokerRequest({
-      workerId: this.options.workerId,
-      allowedRepository: this.options.repository,
-      leaseMs: 30_000,
-    });
+    let request: MonitorBrokerRequest | null;
+    try {
+      request = await this.options.store.claimMonitorBrokerRequest({
+        workerId: this.options.workerId,
+        allowedRepository: this.options.repository,
+        leaseMs: 30_000,
+      });
+    } catch {
+      this.options.log?.(
+        'typed monitor broker claim unavailable; retrying without stopping execution service',
+      );
+      return false;
+    }
     if (!request) return false;
     try {
       const response = await this.read(request);
@@ -346,18 +418,33 @@ export class PrivateMonitorBroker {
         itemCount: items.length,
       });
     } catch (error) {
+      if (
+        error instanceof Error
+        && error.message.includes('monitor broker lease is stale or lost')
+      ) {
+        this.options.log?.(
+          'typed monitor broker lease was lost before completion; leaving recovery to the current owner',
+        );
+        return true;
+      }
       const failure = error instanceof MonitorBrokerFailure
         ? error
         : new MonitorBrokerFailure(
           'provider_failure',
           'typed monitor provider operation failed',
         );
-      await this.options.store.failMonitorBrokerRequest({
-        request,
-        workerId: this.options.workerId,
-        code: failure.code,
-        message: failure.message,
-      });
+      try {
+        await this.options.store.failMonitorBrokerRequest({
+          request,
+          workerId: this.options.workerId,
+          code: failure.code,
+          message: failure.message,
+        });
+      } catch {
+        this.options.log?.(
+          'typed monitor broker failure persistence unavailable; lease expiry will recover the request',
+        );
+      }
     }
     return true;
   }

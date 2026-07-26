@@ -27,3 +27,6 @@
 - **DATA-container-runtime-008 credential volume and broker configuration** — runner-only named credential volume、
   private`auth.json` destination、固定monitor repositoryを起動時specへ含める。source host path、credential値、
   fingerprintはstatus/evidenceへ永続化しない。
+- **DATA-container-runtime-009 sealed PostgreSQL spec** — image descriptor、internal network、named volume、tmpfs、
+  administrator credentialを含むdesired specのdigestをmanaged labelに保存する。credential値自体はlabel/status/
+  evidenceへ出さず、actual descriptor＋spec digestの一致だけを起動・status時に検証する。

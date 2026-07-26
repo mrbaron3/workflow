@@ -539,6 +539,7 @@ export class PostgresControlStore {
             AND lease_token = $2
             AND worker_id = $3
             AND status = 'leased'
+            AND lease_expires_at > clock_timestamp()
         RETURNING registration_id`,
         [
           input.request.id,
@@ -548,7 +549,9 @@ export class PostgresControlStore {
           message,
         ],
       );
-      if ((failed.rowCount ?? 0) !== 1) return;
+      if ((failed.rowCount ?? 0) !== 1) {
+        throw new Error('monitor broker lease is stale or lost');
+      }
       await client.query(
         `INSERT INTO agentops_control.runtime_audit(
            actor_type, actor_id, event_type, registration_id, details

@@ -62,6 +62,7 @@ async function main(): Promise<void> {
     workerId: config.workerId,
     repository: monitorRepository,
     githubToken: credentials.githubToken,
+    log: (message) => process.stdout.write(`${message}\n`),
   });
   const drain = (): void => {
     broker.requestStop();

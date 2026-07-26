@@ -540,6 +540,26 @@ func (manager *manager) Open(ctx context.Context) error {
 	return command.Run()
 }
 
+func (manager *manager) RotatePostgresAdmin(
+	ctx context.Context,
+	requestID string,
+) error {
+	if err := manager.config.validatePostgresRotation(); err != nil {
+		return err
+	}
+	if err := manager.ensureRuntime(ctx); err != nil {
+		return err
+	}
+	_, err := manager.admin(
+		ctx,
+		[]string{"rotate-postgres-admin", "--request-id", requestID},
+		map[string]string{
+			"AGENTOPS_NEXT_POSTGRES_PASSWORD": manager.config.NextPostgresPassword,
+		},
+	)
+	return err
+}
+
 func (manager *manager) ensureRuntime(ctx context.Context) error {
 	capability := manager.runtime.Capability(ctx)
 	if !capability.Available {
@@ -558,6 +578,10 @@ func (manager *manager) ensureRuntime(ctx context.Context) error {
 }
 
 func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
+	spec := manager.postgresSpec()
+	if err := manager.sealSpec(ctx, &spec); err != nil {
+		return false, err
+	}
 	actual, err := manager.runtime.Container(ctx, manager.config.PostgresContainer)
 	if err != nil {
 		return false, err
@@ -567,13 +591,30 @@ func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
 			return false, fmt.Errorf("postgres container name is owned by another deployment")
 		}
 		if actual.Status.State == "running" {
+			if err := validatePostgresActual(actual, manager.config); err != nil {
+				return false, err
+			}
+			if err := validateSpecActual(actual, spec); err != nil {
+				return false, fmt.Errorf(
+					"PostgreSQL image/spec drift requires DRAINING, stop, and volume-preserving restart: %w",
+					err,
+				)
+			}
 			return false, manager.waitPostgres(ctx)
 		}
 		if err := manager.runtime.Delete(ctx, manager.config.PostgresContainer); err != nil {
 			return false, err
 		}
 	}
-	_, err = manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+	_, err = manager.runtime.RunContainer(ctx, spec)
+	if err != nil {
+		return false, err
+	}
+	return true, manager.waitPostgres(ctx)
+}
+
+func (manager *manager) postgresSpec() lifecycle.ContainerSpec {
+	return lifecycle.ContainerSpec{
 		Name:     manager.config.PostgresContainer,
 		Role:     "postgres",
 		Image:    manager.config.PostgresImage,
@@ -589,11 +630,7 @@ func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
 		}},
 		Tmpfs: []string{"/tmp", "/run/postgresql"},
 		Init:  true, Detach: true,
-	})
-	if err != nil {
-		return false, err
 	}
-	return true, manager.waitPostgres(ctx)
 }
 
 func (manager *manager) waitPostgres(ctx context.Context) error {
@@ -774,17 +811,6 @@ func (manager *manager) transition(
 	return result.State, nil
 }
 
-func (manager *manager) removeRunner(ctx context.Context) error {
-	if err := manager.gracefulStop(
-		ctx,
-		manager.config.RunnerContainer,
-		20*time.Second,
-	); err != nil {
-		return err
-	}
-	return manager.runtime.Delete(ctx, manager.config.RunnerContainer)
-}
-
 func (manager *manager) recordFailure(
 	ctx context.Context,
 	operation, message string,
@@ -886,8 +912,7 @@ func (manager *manager) controlSpec(
 			"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":       "0.0.0.0:8082",
 			"AGENTOPS_RUNNER_PROVIDER":                  manager.config.Provider,
 			"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY": manager.config.MonitorRepository,
-			"GH_TOKEN":          manager.config.ControlGitHubToken,
-			"AGENTOPS_APP_ROOT": "/app",
+			"AGENTOPS_APP_ROOT":                         "/app",
 		},
 		Publish: []lifecycle.Publication{{
 			HostIP:        "127.0.0.1",
@@ -1473,6 +1498,13 @@ func (manager *manager) verifyManagedTopology(
 	if err := validatePostgresActual(postgres, manager.config); err != nil {
 		return err
 	}
+	postgresSpec := manager.postgresSpec()
+	if err := manager.sealSpec(ctx, &postgresSpec); err != nil {
+		return err
+	}
+	if err := validateSpecActual(postgres, postgresSpec); err != nil {
+		return err
+	}
 	if runnerExpected {
 		if err := validateRunnerActual(runner, manager.config); err != nil {
 			return err
@@ -1490,9 +1522,8 @@ func (manager *manager) verifyManagedTopology(
 		}
 		return validateSpecActual(runner, runnerSpec)
 	}
-	if runner != nil {
-		return fmt.Errorf("runner must be absent outside ACTIVE")
-	}
+	// OFF is verified with both controlExpected and runnerExpected false.
+	// MONITOR_ONLY intentionally keeps runner alive for the typed read broker.
 	return nil
 }
 
@@ -1766,6 +1797,7 @@ func redactedError(err error, config config) string {
 	message := err.Error()
 	for _, secret := range []string{
 		config.PostgresPassword,
+		config.NextPostgresPassword,
 		config.ControlDBPassword,
 		config.RunnerDBPassword,
 		config.ControlToken,

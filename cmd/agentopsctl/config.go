@@ -12,31 +12,32 @@ import (
 )
 
 type config struct {
-	Prefix             string
-	Network            string
-	PostgresVolume     string
-	RunnerVolume       string
-	CredentialVolume   string
-	PostgresContainer  string
-	ControlContainer   string
-	RunnerContainer    string
-	PostgresImage      string
-	ControlImage       string
-	RunnerImage        string
-	ProjectRoot        string
-	ControlHostPort    int
-	PostgresPassword   string
-	ControlDBPassword  string
-	RunnerDBPassword   string
-	ControlToken       string
-	DashboardToken     string
-	WebhookSecret      string
-	ControlGitHubToken string
-	RunnerGitHubToken  string
-	Provider           string
-	ProviderToken      string
-	CodexAuthPath      string
-	MonitorRepository  string
+	Prefix               string
+	Network              string
+	PostgresVolume       string
+	RunnerVolume         string
+	CredentialVolume     string
+	PostgresContainer    string
+	ControlContainer     string
+	RunnerContainer      string
+	PostgresImage        string
+	ControlImage         string
+	RunnerImage          string
+	ProjectRoot          string
+	ControlHostPort      int
+	PostgresPassword     string
+	NextPostgresPassword string
+	ControlDBPassword    string
+	RunnerDBPassword     string
+	ControlToken         string
+	DashboardToken       string
+	WebhookSecret        string
+	ControlGitHubToken   string
+	RunnerGitHubToken    string
+	Provider             string
+	ProviderToken        string
+	CodexAuthPath        string
+	MonitorRepository    string
 }
 
 func loadConfig() (config, error) {
@@ -77,20 +78,23 @@ func loadConfig() (config, error) {
 		return config{}, fmt.Errorf("AGENTOPS_RUNNER_PROVIDER must be codex or claude")
 	}
 	return config{
-		Prefix:             prefix,
-		Network:            prefix + "-internal",
-		PostgresVolume:     prefix + "-postgres-data",
-		RunnerVolume:       prefix + "-runner-workspace",
-		CredentialVolume:   prefix + "-runner-credentials",
-		PostgresContainer:  prefix + "-postgres",
-		ControlContainer:   prefix + "-control",
-		RunnerContainer:    prefix + "-runner",
-		PostgresImage:      environmentValue("AGENTOPSCTL_POSTGRES_IMAGE", "agentops-postgres:dev"),
-		ControlImage:       environmentValue("AGENTOPSCTL_CONTROL_IMAGE", "agentops-control:dev"),
-		RunnerImage:        environmentValue("AGENTOPSCTL_RUNNER_IMAGE", "agentops-runner:dev"),
-		ProjectRoot:        root,
-		ControlHostPort:    port,
-		PostgresPassword:   strings.TrimSpace(os.Getenv("AGENTOPS_POSTGRES_PASSWORD")),
+		Prefix:            prefix,
+		Network:           prefix + "-internal",
+		PostgresVolume:    prefix + "-postgres-data",
+		RunnerVolume:      prefix + "-runner-workspace",
+		CredentialVolume:  prefix + "-runner-credentials",
+		PostgresContainer: prefix + "-postgres",
+		ControlContainer:  prefix + "-control",
+		RunnerContainer:   prefix + "-runner",
+		PostgresImage:     environmentValue("AGENTOPSCTL_POSTGRES_IMAGE", "agentops-postgres:dev"),
+		ControlImage:      environmentValue("AGENTOPSCTL_CONTROL_IMAGE", "agentops-control:dev"),
+		RunnerImage:       environmentValue("AGENTOPSCTL_RUNNER_IMAGE", "agentops-runner:dev"),
+		ProjectRoot:       root,
+		ControlHostPort:   port,
+		PostgresPassword:  strings.TrimSpace(os.Getenv("AGENTOPS_POSTGRES_PASSWORD")),
+		NextPostgresPassword: strings.TrimSpace(
+			os.Getenv("AGENTOPS_NEXT_POSTGRES_PASSWORD"),
+		),
 		ControlDBPassword:  strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_DB_PASSWORD")),
 		RunnerDBPassword:   strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_DB_PASSWORD")),
 		ControlToken:       strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_TOKEN")),
@@ -153,15 +157,33 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 	} else if len(value.ProviderToken) < 20 {
 		return fmt.Errorf("ANTHROPIC_API_KEY is required for the isolated runner")
 	}
-	if value.ControlGitHubToken != "" &&
-		value.RunnerGitHubToken == value.ControlGitHubToken {
-		return fmt.Errorf("control and runner GitHub credentials must be distinct")
+	if value.ControlGitHubToken != "" {
+		return fmt.Errorf(
+			"AGENTOPS_CONTROL_GITHUB_TOKEN is forbidden for the private monitor broker",
+		)
 	}
 	return nil
 }
 
 func (value config) usesCodexAuthFile() bool {
 	return value.Provider == "codex" && len(value.ProviderToken) < 20
+}
+
+func (value config) validatePostgresRotation() error {
+	if len(value.PostgresPassword) < 32 {
+		return fmt.Errorf("AGENTOPS_POSTGRES_PASSWORD must be at least 32 bytes")
+	}
+	if len(value.NextPostgresPassword) < 32 {
+		return fmt.Errorf("AGENTOPS_NEXT_POSTGRES_PASSWORD must be at least 32 bytes")
+	}
+	if value.NextPostgresPassword == value.PostgresPassword ||
+		value.NextPostgresPassword == value.ControlDBPassword ||
+		value.NextPostgresPassword == value.RunnerDBPassword {
+		return fmt.Errorf(
+			"next PostgreSQL administrator credential must be distinct from current database credentials",
+		)
+	}
+	return nil
 }
 
 func validateCodexAuthSource(source string) error {
@@ -176,7 +198,7 @@ func validateCodexAuthSource(source string) error {
 	}
 	info, err := os.Lstat(absolute)
 	if err != nil {
-		return fmt.Errorf("Codex auth source is unavailable: %w", err)
+		return fmt.Errorf("Codex auth source is unavailable")
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("Codex auth source must be a regular file")

@@ -309,6 +309,19 @@ integration('PostgreSQL control store', () => {
         WHERE id = $1`,
       [requestId],
     );
+    await expect(store.failMonitorBrokerRequest({
+      request: first!,
+      workerId: claims[0] === first ? 'monitor-runner-a' : 'monitor-runner-b',
+      code: 'late_provider_failure',
+      message: 'must not overwrite an expired lease',
+    })).rejects.toThrow(/stale or lost/);
+    const stillLeased = await pool.query<{ status: string }>(
+      `SELECT status
+         FROM agentops_control.monitor_broker_requests
+        WHERE id = $1`,
+      [requestId],
+    );
+    expect(stillLeased.rows[0]?.status).toBe('leased');
     const recovered = await store.claimMonitorBrokerRequest({
       workerId: 'monitor-runner-recovery',
       allowedRepository: repo.repository,

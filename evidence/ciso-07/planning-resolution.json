@@ -40,7 +40,7 @@
     },
     {
       "ambiguity": "credential bootstrap and rotation",
-      "resolution": "Use role-separated PostgreSQL credentials, credential-free control, runner-only GitHub OAuth, and either a provider API key or a private Codex auth.json copied by stdin into a managed volume. Because mrbaron3/workflow is private, control submits only durable typed Issue/PR reads and runner returns bounded identities through the allowlisted broker. Rotation requires DRAINING to OFF before reseeding and must fail closed."
+      "resolution": "Use role-separated PostgreSQL credentials, credential-free control, runner-only GitHub OAuth, and either a provider API key or a private Codex auth.json copied by stdin into a managed volume. Because mrbaron3/workflow is private, control submits only durable typed Issue/PR reads and runner returns bounded identities through the allowlisted broker. PostgreSQL administrator rotation is transactional while DRAINING with zero work and verifies new-pass/old-fail; runner/application credentials are reseeded only after OFF. Every rotation then follows the same volume-preserving MONITOR_ONLY restart and fail-closed topology verification."
     },
     {
       "ambiguity": "scanner and severity policy",

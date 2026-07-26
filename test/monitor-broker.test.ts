@@ -129,4 +129,92 @@ describe('typed private-repository monitor broker', () => {
       }),
     );
   });
+
+  it('bounds valid typed pagination independently of response bytes', async () => {
+    const store = storeFor();
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const current = new URL(String(input));
+      return new Response('[]', {
+        status: 200,
+        headers: {
+          link: `<${new URL(
+            `${current.pathname}?state=open&sort=updated&direction=asc&per_page=100&page=2`,
+            current,
+          )}>; rel="next"`,
+        },
+      });
+    });
+    const broker = new PrivateMonitorBroker({
+      store,
+      workerId: 'runner-1',
+      repository: 'mrbaron3/workflow',
+      githubToken: 'runner-github-token-opaque',
+      fetchImpl,
+      maxPages: 1,
+    });
+    expect(await broker.runOnce()).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(store.failMonitorBrokerRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        code: 'page_limit',
+        message: 'GitHub monitor response exceeded the page limit',
+      }),
+    );
+  });
+
+  it('isolates claim persistence failures from the execution service', async () => {
+    const store = storeFor();
+    store.claimMonitorBrokerRequest.mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+    const log = vi.fn();
+    const broker = new PrivateMonitorBroker({
+      store,
+      workerId: 'runner-1',
+      repository: 'mrbaron3/workflow',
+      githubToken: 'runner-github-token-opaque',
+      fetchImpl: vi.fn(),
+      log,
+    });
+    await expect(broker.runOnce()).resolves.toBe(false);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('claim unavailable'),
+    );
+  });
+
+  it('does not rewrite a lost completion lease as a provider failure', async () => {
+    const store = storeFor();
+    store.completeMonitorBrokerRequest.mockRejectedValueOnce(
+      new Error('monitor broker lease is stale or lost'),
+    );
+    const broker = new PrivateMonitorBroker({
+      store,
+      workerId: 'runner-1',
+      repository: 'mrbaron3/workflow',
+      githubToken: 'runner-github-token-opaque',
+      fetchImpl: vi.fn(async () => new Response('[]', { status: 200 })),
+    });
+    await expect(broker.runOnce()).resolves.toBe(true);
+    expect(store.failMonitorBrokerRequest).not.toHaveBeenCalled();
+  });
+
+  it('leaves an unpersisted provider failure leased for expiry recovery', async () => {
+    const store = storeFor();
+    store.failMonitorBrokerRequest.mockRejectedValueOnce(
+      new Error('database unavailable'),
+    );
+    const log = vi.fn();
+    const broker = new PrivateMonitorBroker({
+      store,
+      workerId: 'runner-1',
+      repository: 'mrbaron3/workflow',
+      githubToken: 'runner-github-token-opaque',
+      fetchImpl: vi.fn(async () => new Response('invalid json', { status: 200 })),
+      log,
+    });
+    await expect(broker.runOnce()).resolves.toBe(true);
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining('lease expiry will recover'),
+    );
+  });
 });

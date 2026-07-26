@@ -28,30 +28,22 @@
       "additionalProperties": false,
       "required": ["control", "runner", "postgres"],
       "properties": {
-        "control": { "$ref": "#/$defs/digest" },
-        "runner": { "$ref": "#/$defs/digest" },
-        "postgres": { "$ref": "#/$defs/digest" }
+        "control": { "$ref": "#/$defs/image" },
+        "runner": { "$ref": "#/$defs/image" },
+        "postgres": { "$ref": "#/$defs/image" }
       }
     },
-    "topology": { "$ref": "#/$defs/evidenceSection" },
-    "registration": { "$ref": "#/$defs/evidenceSection" },
-    "monitoring": { "$ref": "#/$defs/evidenceSection" },
+    "topology": { "$ref": "#/$defs/topology" },
+    "registration": { "$ref": "#/$defs/registration" },
+    "monitoring": { "$ref": "#/$defs/monitoring" },
     "execution": { "$ref": "#/$defs/execution" },
-    "recovery": { "$ref": "#/$defs/evidenceSection" },
+    "recovery": { "$ref": "#/$defs/recovery" },
     "formalReviews": { "$ref": "#/$defs/reviews" },
     "github": { "$ref": "#/$defs/github" },
     "artifacts": {
       "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["kind", "sha256"],
-        "properties": {
-          "kind": { "type": "string", "minLength": 1 },
-          "sha256": { "$ref": "#/$defs/sha256" }
-        }
-      }
+      "minItems": 3,
+      "items": { "$ref": "#/$defs/artifact" }
     },
     "result": { "const": "passed" }
   },
@@ -68,34 +60,363 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?Z$"
+    },
     "source": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["immutableBase", "finalHead", "treeSha256"],
+      "required": [
+        "immutableBase",
+        "initialHead",
+        "finalHead",
+        "treeSha256",
+        "pullRequest",
+        "capturedAt"
+      ],
       "properties": {
-        "immutableBase": { "$ref": "#/$defs/sha" },
+        "immutableBase": {
+          "const": "257dc557753b099a646c94d3e3cc700468ffb32a"
+        },
+        "initialHead": { "$ref": "#/$defs/sha" },
         "finalHead": { "$ref": "#/$defs/sha" },
-        "treeSha256": { "$ref": "#/$defs/sha256" }
+        "treeSha256": { "$ref": "#/$defs/sha256" },
+        "pullRequest": { "const": 41 },
+        "capturedAt": { "$ref": "#/$defs/timestamp" }
       }
     },
-    "evidenceSection": {
+    "image": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["passed"],
+      "additionalProperties": false,
+      "required": [
+        "reference",
+        "digest",
+        "sourceHead",
+        "containerfileSha256",
+        "scanReportSha256"
+      ],
       "properties": {
-        "passed": { "const": true }
+        "reference": {
+          "type": "string",
+          "pattern": "^agentops-(?:control|runner|postgres):ciso07-[a-z0-9.-]+$"
+        },
+        "digest": { "$ref": "#/$defs/digest" },
+        "sourceHead": { "$ref": "#/$defs/sha" },
+        "containerfileSha256": { "$ref": "#/$defs/sha256" },
+        "scanReportSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "destination", "readOnly"],
+      "properties": {
+        "type": { "enum": ["tmpfs", "volume"] },
+        "name": {
+          "type": ["string", "null"],
+          "pattern": "^agentops-ciso07-dogfood-[a-z0-9.-]+$"
+        },
+        "destination": {
+          "type": "string",
+          "pattern": "^/[A-Za-z0-9._/-]+$"
+        },
+        "readOnly": { "type": "boolean" }
+      }
+    },
+    "container": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "state",
+        "imageDigest",
+        "specSha256",
+        "networks",
+        "publishedPorts",
+        "publishedSockets",
+        "mounts"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^agentops-ciso07-dogfood-(?:control|runner|postgres)$"
+        },
+        "state": { "const": "running" },
+        "imageDigest": { "$ref": "#/$defs/digest" },
+        "specSha256": { "$ref": "#/$defs/sha256" },
+        "networks": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "publishedPorts": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "publishedSockets": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "mounts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/mount" }
+        }
+      }
+    },
+    "topology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "observedAt",
+        "network",
+        "control",
+        "runner",
+        "postgres",
+        "loopbackListen",
+        "forbiddenMountsAbsent"
+      ],
+      "properties": {
+        "passed": { "const": true },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "network": { "const": "agentops-ciso07-dogfood-internal" },
+        "control": {
+          "allOf": [
+            { "$ref": "#/$defs/container" },
+            {
+              "type": "object",
+              "properties": {
+                "publishedPorts": {
+                  "type": "array",
+                  "minItems": 1,
+                  "maxItems": 1,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^127\\.0\\.0\\.1:[0-9]+:8080/tcp$"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "runner": {
+          "allOf": [
+            { "$ref": "#/$defs/container" },
+            {
+              "type": "object",
+              "properties": {
+                "publishedPorts": { "type": "array", "maxItems": 0 }
+              }
+            }
+          ]
+        },
+        "postgres": {
+          "allOf": [
+            { "$ref": "#/$defs/container" },
+            {
+              "type": "object",
+              "properties": {
+                "publishedPorts": { "type": "array", "maxItems": 0 }
+              }
+            }
+          ]
+        },
+        "loopbackListen": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["address", "port", "observed"],
+          "properties": {
+            "address": { "const": "127.0.0.1" },
+            "port": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+            "observed": { "const": true }
+          }
+        },
+        "forbiddenMountsAbsent": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "hostHome",
+            "developmentRoot",
+            "sshAgent",
+            "containerSocket"
+          ],
+          "properties": {
+            "hostHome": { "const": true },
+            "developmentRoot": { "const": true },
+            "sshAgent": { "const": true },
+            "containerSocket": { "const": true }
+          }
+        }
+      }
+    },
+    "registration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "observedAt",
+        "id",
+        "repository",
+        "version",
+        "onlyRegistration",
+        "enabled",
+        "issueMonitorEnabled",
+        "prMonitorEnabled",
+        "executionEnabled"
+      ],
+      "properties": {
+        "passed": { "const": true },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "id": { "$ref": "#/$defs/uuid" },
+        "repository": { "const": "mrbaron3/workflow" },
+        "version": { "type": "integer", "minimum": 1 },
+        "onlyRegistration": { "const": true },
+        "enabled": { "const": true },
+        "issueMonitorEnabled": { "const": true },
+        "prMonitorEnabled": { "const": true },
+        "executionEnabled": { "const": true }
+      }
+    },
+    "cursor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["updatedAfter", "observedAt", "sha256"],
+      "properties": {
+        "updatedAfter": { "$ref": "#/$defs/timestamp" },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "monitoring": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "observedAt",
+        "mode",
+        "issueActual",
+        "prActual",
+        "issueCursor",
+        "prCursor",
+        "brokerAuditSha256",
+        "webhookDeliveryId",
+        "duplicateDeliveryId",
+        "unregisteredDeliveryId",
+        "disabledDeliveryId",
+        "monitorOnlyJobCount",
+        "initial404Preserved"
+      ],
+      "properties": {
+        "passed": { "const": true },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "mode": { "const": "MONITOR_ONLY" },
+        "issueActual": { "const": "running" },
+        "prActual": { "const": "running" },
+        "issueCursor": { "$ref": "#/$defs/cursor" },
+        "prCursor": { "$ref": "#/$defs/cursor" },
+        "brokerAuditSha256": { "$ref": "#/$defs/sha256" },
+        "webhookDeliveryId": { "$ref": "#/$defs/uuid" },
+        "duplicateDeliveryId": { "$ref": "#/$defs/uuid" },
+        "unregisteredDeliveryId": { "$ref": "#/$defs/uuid" },
+        "disabledDeliveryId": { "$ref": "#/$defs/uuid" },
+        "monitorOnlyJobCount": { "const": 0 },
+        "initial404Preserved": { "const": true }
       }
     },
     "execution": {
       "type": "object",
-      "additionalProperties": true,
-      "required": ["passed", "jobId", "attemptId", "leaseId", "expectedHead"],
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "observedAt",
+        "mode",
+        "jobId",
+        "attemptId",
+        "leaseId",
+        "registrationVersion",
+        "expectedHead",
+        "finalHead",
+        "deduplicatedSources",
+        "auditSha256",
+        "artifactReferenceSha256"
+      ],
       "properties": {
         "passed": { "const": true },
-        "jobId": { "type": "string", "minLength": 1 },
-        "attemptId": { "type": "string", "minLength": 1 },
-        "leaseId": { "type": "string", "minLength": 1 },
-        "expectedHead": { "$ref": "#/$defs/sha" }
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "mode": { "const": "ACTIVE" },
+        "jobId": { "$ref": "#/$defs/uuid" },
+        "attemptId": { "$ref": "#/$defs/uuid" },
+        "leaseId": { "$ref": "#/$defs/uuid" },
+        "registrationVersion": { "type": "integer", "minimum": 1 },
+        "expectedHead": { "$ref": "#/$defs/sha" },
+        "finalHead": { "$ref": "#/$defs/sha" },
+        "deduplicatedSources": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": { "enum": ["webhook", "poll"] },
+          "allOf": [
+            { "contains": { "const": "webhook" } },
+            { "contains": { "const": "poll" } }
+          ]
+        },
+        "auditSha256": { "$ref": "#/$defs/sha256" },
+        "artifactReferenceSha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "reviewer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "agent",
+        "taskId",
+        "dispatchId",
+        "findingMessageId",
+        "doneMessageId",
+        "head",
+        "readOnly",
+        "worktreeClean",
+        "findingCount",
+        "verdict"
+      ],
+      "properties": {
+        "agent": { "enum": ["codex", "claude"] },
+        "taskId": { "type": "string", "pattern": "^task_[0-9a-f]+$" },
+        "dispatchId": { "type": "string", "pattern": "^ctx_[0-9a-f]+$" },
+        "findingMessageId": { "type": "string", "pattern": "^msg_[0-9a-f]+$" },
+        "doneMessageId": { "type": "string", "pattern": "^msg_[0-9a-f]+$" },
+        "head": { "$ref": "#/$defs/sha" },
+        "readOnly": { "const": true },
+        "worktreeClean": { "const": true },
+        "findingCount": { "type": "integer", "minimum": 0 },
+        "verdict": { "enum": ["findings", "no_findings"] }
+      }
+    },
+    "round": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "head",
+        "codex",
+        "claude",
+        "allConfirmedFindingsResolved"
+      ],
+      "properties": {
+        "passed": { "const": true },
+        "head": { "$ref": "#/$defs/sha" },
+        "codex": { "$ref": "#/$defs/reviewer" },
+        "claude": { "$ref": "#/$defs/reviewer" },
+        "allConfirmedFindingsResolved": { "const": true }
       }
     },
     "reviews": {
@@ -104,29 +425,118 @@
       "required": ["roundCount", "round1", "round2", "round3Created"],
       "properties": {
         "roundCount": { "const": 2 },
-        "round1": { "$ref": "#/$defs/evidenceSection" },
-        "round2": { "$ref": "#/$defs/evidenceSection" },
+        "round1": { "$ref": "#/$defs/round" },
+        "round2": { "$ref": "#/$defs/round" },
         "round3Created": { "const": false }
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed",
+        "drainingAt",
+        "offAt",
+        "restartedAt",
+        "macListenAbsentInOff",
+        "registrationId",
+        "registrationVersion",
+        "cursorDigestBefore",
+        "cursorDigestAfter",
+        "jobId",
+        "attemptId",
+        "leaseId",
+        "auditReferenceCount",
+        "artifactReferenceCount",
+        "postgresVolume",
+        "runnerVolume"
+      ],
+      "properties": {
+        "passed": { "const": true },
+        "drainingAt": { "$ref": "#/$defs/timestamp" },
+        "offAt": { "$ref": "#/$defs/timestamp" },
+        "restartedAt": { "$ref": "#/$defs/timestamp" },
+        "macListenAbsentInOff": { "const": true },
+        "registrationId": { "$ref": "#/$defs/uuid" },
+        "registrationVersion": { "type": "integer", "minimum": 1 },
+        "cursorDigestBefore": { "$ref": "#/$defs/sha256" },
+        "cursorDigestAfter": { "$ref": "#/$defs/sha256" },
+        "jobId": { "$ref": "#/$defs/uuid" },
+        "attemptId": { "$ref": "#/$defs/uuid" },
+        "leaseId": { "$ref": "#/$defs/uuid" },
+        "auditReferenceCount": { "type": "integer", "minimum": 1 },
+        "artifactReferenceCount": { "type": "integer", "minimum": 1 },
+        "postgresVolume": { "const": "agentops-ciso07-dogfood-postgres-data" },
+        "runnerVolume": { "const": "agentops-ciso07-dogfood-runner-workspace" }
       }
     },
     "github": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
       "required": [
+        "observedAt",
         "pullRequest",
         "finalPrHead",
         "mergeSha",
+        "expectedHeadProtected",
+        "requiredChecks",
+        "blockingReviewThreads",
         "issueState",
         "issueStateReason",
         "mergeReachableFromOriginMain"
       ],
       "properties": {
-        "pullRequest": { "type": "integer", "minimum": 1 },
+        "observedAt": { "$ref": "#/$defs/timestamp" },
+        "pullRequest": { "const": 41 },
         "finalPrHead": { "$ref": "#/$defs/sha" },
         "mergeSha": { "$ref": "#/$defs/sha" },
+        "expectedHeadProtected": { "const": true },
+        "requiredChecks": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["macos", "postgres"],
+          "properties": {
+            "macos": { "const": "SUCCESS" },
+            "postgres": { "const": "SUCCESS" }
+          }
+        },
+        "blockingReviewThreads": { "const": 0 },
         "issueState": { "const": "CLOSED" },
         "issueStateReason": { "const": "COMPLETED" },
         "mergeReachableFromOriginMain": { "const": true }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "uri",
+        "sha256",
+        "sizeBytes",
+        "sourceHead",
+        "observedAt"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "runtime-status",
+            "container-inspect",
+            "audit-export",
+            "job-artifact",
+            "validation-report",
+            "image-scan",
+            "github-current-state"
+          ]
+        },
+        "uri": {
+          "type": "string",
+          "pattern": "^(?:evidence/ciso-07/[A-Za-z0-9._/-]+|volume://registrations/[0-9a-f-]+/[A-Za-z0-9._/-]+)$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 1 },
+        "sourceHead": { "$ref": "#/$defs/sha" },
+        "observedAt": { "$ref": "#/$defs/timestamp" }
       }
     }
   }

@@ -124,11 +124,16 @@ func (store *Store) monitorBrokerPoll(
 	cursorDigest := sha256.Sum256(cursorJSON)
 	requestID := ""
 	for attempt := 0; attempt < 3 && requestID == ""; attempt++ {
+		transaction, beginErr := store.pool.Begin(ctx)
+		if beginErr != nil {
+			return monitorBrokerResponse{}, unavailable(beginErr)
+		}
 		candidate, idErr := randomUUID()
 		if idErr != nil {
+			_ = transaction.Rollback(context.Background())
 			return monitorBrokerResponse{}, idErr
 		}
-		err = store.pool.QueryRow(ctx,
+		err = transaction.QueryRow(ctx,
 			`INSERT INTO agentops_control.monitor_broker_requests(
 			   id, registration_id, registration_version, repository,
 			   monitor_kind, cursor, cursor_sha256
@@ -145,7 +150,7 @@ func (store *Store) monitorBrokerPoll(
 		).Scan(&requestID)
 		inserted := err == nil
 		if errors.Is(err, pgx.ErrNoRows) {
-			err = store.pool.QueryRow(ctx,
+			err = transaction.QueryRow(ctx,
 				`SELECT id
 				   FROM agentops_control.monitor_broker_requests
 				  WHERE registration_id = $1
@@ -162,20 +167,21 @@ func (store *Store) monitorBrokerPoll(
 			).Scan(&requestID)
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
+			_ = transaction.Rollback(context.Background())
 			requestID = ""
 			continue
 		}
 		if err != nil {
+			_ = transaction.Rollback(context.Background())
 			return monitorBrokerResponse{}, unavailable(err)
 		}
 		if inserted {
-			registrationID := registration.ID
-			if err := store.AppendAudit(
-				ctx,
-				"monitor-broker",
-				"monitor.broker.requested",
-				&registrationID,
-				nil,
+			if _, err := transaction.Exec(ctx,
+				`INSERT INTO agentops_control.runtime_audit(
+				   actor_type, actor_id, event_type, registration_id, details
+				 ) VALUES ('control', 'monitor-broker',
+				           'monitor.broker.requested', $1, $2)`,
+				registration.ID,
 				map[string]any{
 					"requestId":           requestID,
 					"registrationVersion": registration.Version,
@@ -183,8 +189,12 @@ func (store *Store) monitorBrokerPoll(
 					"monitorKind":         kind,
 				},
 			); err != nil {
-				return monitorBrokerResponse{}, err
+				_ = transaction.Rollback(context.Background())
+				return monitorBrokerResponse{}, unavailable(err)
 			}
+		}
+		if err := transaction.Commit(ctx); err != nil {
+			return monitorBrokerResponse{}, unavailable(err)
 		}
 	}
 	if requestID == "" {

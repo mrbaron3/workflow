@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 
 const root = process.cwd();
@@ -90,5 +91,24 @@ describe('CISO-07 integrated release source contracts', () => {
       'artifacts',
     ]));
     expect(schema.properties.result).toEqual({ const: 'passed' });
+
+    const ajv = new Ajv2020({ strict: true, allErrors: true });
+    const validate = ajv.compile(schema);
+    expect(validate({
+      schemaVersion: '1.0',
+      issue: 'mrbaron3/workflow#17',
+      source: {
+        immutableBase: '257dc557753b099a646c94d3e3cc700468ffb32a',
+        initialHead: '0'.repeat(40),
+        finalHead: '1'.repeat(40),
+        treeSha256: '2'.repeat(64),
+        pullRequest: 41,
+        capturedAt: '2026-07-26T00:00:00Z',
+      },
+      result: 'passed',
+    })).toBe(false);
+    expect(validate.errors).toEqual(expect.arrayContaining([
+      expect.objectContaining({ keyword: 'required' }),
+    ]));
   });
 });

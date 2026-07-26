@@ -119,6 +119,12 @@ func run() error {
 	if brokerRepository := strings.ToLower(strings.TrimSpace(
 		os.Getenv("AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY"),
 	)); brokerRepository != "" {
+		if strings.TrimSpace(os.Getenv("GH_TOKEN")) != "" ||
+			strings.TrimSpace(os.Getenv("GITHUB_TOKEN")) != "" {
+			return fmt.Errorf(
+				"private monitor broker control must not receive a GitHub credential",
+			)
+		}
 		monitorSource = control.BrokeredGitHubSource{
 			Store:             store,
 			AllowedRepository: brokerRepository,
