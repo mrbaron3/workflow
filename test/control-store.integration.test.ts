@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { Pool } from 'pg';
+import { Pool, type PoolClient } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   CONTROL_SCHEMA_VERSION,
@@ -142,43 +142,68 @@ integration('PostgreSQL control store', () => {
     const store = await migratedStore();
     const registered = await registration(store, '-mode-fence');
     await enqueueRunner(store, registered.id, registered.version, 'before-drain');
-    const blocker = await pool.connect();
-    await blocker.query('BEGIN');
-    await blocker.query(
-      `UPDATE agentops_control.lifecycle_state
-          SET mode = 'DRAINING', generation = generation + 1,
-              updated_at = clock_timestamp()
-        WHERE singleton`,
-    );
-    let leaseSettled = false;
-    let enqueueSettled = false;
-    const lease = store.acquireLease({
-      workerId: 'mode-fenced-runner',
-      durationMs: 30_000,
-      jobType: 'agentops.runner',
-    }).finally(() => {
-      leaseSettled = true;
-    });
-    const enqueue = enqueueRunner(
-      store,
-      registered.id,
-      registered.version,
-      'after-drain',
-    ).then(
-      () => null,
-      (error: unknown) => error,
-    ).finally(() => {
-      enqueueSettled = true;
-    });
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect({ leaseSettled, enqueueSettled }).toEqual({
-      leaseSettled: false,
-      enqueueSettled: false,
-    });
-    await blocker.query('COMMIT');
-    blocker.release();
-    await expect(lease).resolves.toBeNull();
-    await expect(enqueue).resolves.toBeInstanceOf(OperatingModeError);
+    let blocker: PoolClient | undefined;
+    let blockerTransactionOpen = false;
+    const pending: Promise<unknown>[] = [];
+    try {
+      blocker = await pool.connect();
+      await blocker.query('BEGIN');
+      blockerTransactionOpen = true;
+      await blocker.query(
+        `UPDATE agentops_control.lifecycle_state
+            SET mode = 'DRAINING', generation = generation + 1,
+                updated_at = clock_timestamp()
+          WHERE singleton`,
+      );
+      let leaseSettled = false;
+      let enqueueSettled = false;
+      const lease = store.acquireLease({
+        workerId: 'mode-fenced-runner',
+        durationMs: 30_000,
+        jobType: 'agentops.runner',
+      }).finally(() => {
+        leaseSettled = true;
+      });
+      // Mark an unexpected rejection handled immediately; the assertion below
+      // still observes the original promise after the blocker commits.
+      void lease.catch(() => undefined);
+      pending.push(lease);
+      const enqueue = enqueueRunner(
+        store,
+        registered.id,
+        registered.version,
+        'after-drain',
+      ).then(
+        () => null,
+        (error: unknown) => error,
+      ).finally(() => {
+        enqueueSettled = true;
+      });
+      pending.push(enqueue);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect({ leaseSettled, enqueueSettled }).toEqual({
+        leaseSettled: false,
+        enqueueSettled: false,
+      });
+      await blocker.query('COMMIT');
+      blockerTransactionOpen = false;
+      await expect(lease).resolves.toBeNull();
+      await expect(enqueue).resolves.toBeInstanceOf(OperatingModeError);
+    } finally {
+      let cleanupError: unknown;
+      if (blocker) {
+        if (blockerTransactionOpen) {
+          try {
+            await blocker.query('ROLLBACK');
+          } catch (error) {
+            cleanupError = error;
+          }
+        }
+        blocker.release(cleanupError instanceof Error ? cleanupError : undefined);
+      }
+      await Promise.allSettled(pending);
+      if (cleanupError) throw cleanupError;
+    }
   }, 15_000);
 
   it('upgrades, verifies after restart, and rejects partial/unknown schema', async () => {
