@@ -150,12 +150,14 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 			"AGENTOPS_RUNNER_GITHUB_TOKEN is required for the private monitor broker",
 		)
 	}
-	if value.Provider == "codex" && len(value.ProviderToken) < 20 {
-		if err := validateCodexAuthSource(value.CodexAuthPath); err != nil {
-			return err
+	if mode == lifecycle.ModeActive {
+		if value.Provider == "codex" && len(value.ProviderToken) < 20 {
+			if err := validateCodexAuthSource(value.CodexAuthPath); err != nil {
+				return err
+			}
+		} else if len(value.ProviderToken) < 20 {
+			return fmt.Errorf("ANTHROPIC_API_KEY is required for the isolated runner")
 		}
-	} else if len(value.ProviderToken) < 20 {
-		return fmt.Errorf("ANTHROPIC_API_KEY is required for the isolated runner")
 	}
 	if value.ControlGitHubToken != "" {
 		return fmt.Errorf(
@@ -167,6 +169,20 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 
 func (value config) usesCodexAuthFile() bool {
 	return value.Provider == "codex" && len(value.ProviderToken) < 20
+}
+
+func (value config) providerAuth(mode lifecycle.Mode) string {
+	if mode != lifecycle.ModeActive {
+		return "none"
+	}
+	if value.usesCodexAuthFile() {
+		return "codex-login"
+	}
+	return "api-key"
+}
+
+func (value config) usesCodexAuthFileFor(mode lifecycle.Mode) bool {
+	return mode == lifecycle.ModeActive && value.usesCodexAuthFile()
 }
 
 func (value config) validatePostgresRotation() error {

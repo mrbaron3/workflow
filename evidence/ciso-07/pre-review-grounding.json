@@ -14,7 +14,6 @@
         "name": "agentops-ciso07-dogfood-control",
         "state": "running",
         "imageDigest": "sha256:bbc3015558b5b8232f6dc745a77115eabfa7958328f03e2748f827cd5f920705",
-        "specSha256": "59fe2c08b6800c0ad80d6aa6bf42b11a493445151cbefd8c12f40667bc9d66e6",
         "networks": [
           "default",
           "agentops-ciso07-dogfood-internal"
@@ -39,7 +38,6 @@
         "name": "agentops-ciso07-dogfood-runner",
         "state": "running",
         "imageDigest": "sha256:bd3377d4152a876cf833ecd08a5c611ccf9441ba18da33e64b594fe46aa435aa",
-        "specSha256": "4e43afa6d018ef632aff8a0e8014aaa58865007a7592f5eafe2fb49ed52e8261",
         "networks": [
           "agentops-ciso07-dogfood-internal"
         ],
@@ -109,6 +107,11 @@
       "sshAgent": false,
       "containerSocket": false
     }
+  },
+  "credentialDerivedSpecFingerprints": {
+    "retracted": true,
+    "reason": "The pre-review labels were unsalted credential-derived verifiers; final credentials are rotated and final labels use credential-redacted canonical specs.",
+    "finalEvidenceMayContainCredentialDerivedDigest": false
   },
   "registration": {
     "id": "5894c60b-3468-45d5-b56a-aa0cbfa4924f",

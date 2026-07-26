@@ -84,7 +84,7 @@ func (manager *manager) Start(
 	if err := manager.runtime.EnsureVolume(ctx, manager.config.RunnerVolume); err != nil {
 		return err
 	}
-	if manager.config.usesCodexAuthFile() {
+	if manager.config.usesCodexAuthFileFor(mode) {
 		if err := manager.runtime.EnsureVolume(
 			ctx,
 			manager.config.CredentialVolume,
@@ -128,7 +128,7 @@ func (manager *manager) Start(
 	}
 	startingMode := persisted.State.Mode
 	initialMode = &startingMode
-	if err := manager.validateExistingTopology(ctx); err != nil {
+	if err := manager.validateExistingTopology(ctx, persisted.State.Mode); err != nil {
 		return err
 	}
 	if persisted.State.Mode == lifecycle.ModeActive {
@@ -911,6 +911,7 @@ func (manager *manager) controlSpec(
 			"AGENTOPS_CONTROL_PROXY_LISTEN":             "0.0.0.0:8080",
 			"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":       "0.0.0.0:8082",
 			"AGENTOPS_RUNNER_PROVIDER":                  manager.config.Provider,
+			"AGENTOPS_RUNNER_PROVIDER_AUTH":             manager.config.providerAuth(mode),
 			"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY": manager.config.MonitorRepository,
 			"AGENTOPS_APP_ROOT":                         "/app",
 		},
@@ -957,8 +958,11 @@ func (manager *manager) ensureRunnerVolumeOwner(ctx context.Context) error {
 	return err
 }
 
-func (manager *manager) seedCodexCredentialVolume(ctx context.Context) error {
-	if !manager.config.usesCodexAuthFile() {
+func (manager *manager) seedCodexCredentialVolume(
+	ctx context.Context,
+	mode lifecycle.Mode,
+) error {
+	if !manager.config.usesCodexAuthFileFor(mode) {
 		return nil
 	}
 	if err := validateCodexAuthSource(manager.config.CodexAuthPath); err != nil {
@@ -1050,7 +1054,7 @@ func (manager *manager) replaceRunner(
 	if err := manager.ensureRunnerVolumeOwner(ctx); err != nil {
 		return receipt, err
 	}
-	if err := manager.seedCodexCredentialVolume(ctx); err != nil {
+	if err := manager.seedCodexCredentialVolume(ctx, mode); err != nil {
 		return receipt, err
 	}
 	_, err = manager.runtime.RunContainer(ctx, spec)
@@ -1091,7 +1095,39 @@ func (manager *manager) replaceRunner(
 			redactedError(errors.New(detail), manager.config),
 		)
 	}
+	if mode == lifecycle.ModeActive {
+		if err := manager.probeRunnerProvider(ctx); err != nil {
+			return receipt, err
+		}
+	}
 	return receipt, nil
+}
+
+func (manager *manager) probeRunnerProvider(ctx context.Context) error {
+	probeContext, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	var command []string
+	switch manager.config.Provider {
+	case "codex":
+		// The catalog request exercises the selected login/API credential and
+		// its exact egress path without running an agent or persisting output.
+		command = []string{"codex", "debug", "models"}
+	case "claude":
+		// Claude's status command validates the CLI credential boundary. The
+		// CISO-07 grounded execution provider is Codex; Claude remains review-only.
+		command = []string{"claude", "auth", "status", "--json"}
+	default:
+		return fmt.Errorf("runner provider readiness is unsupported")
+	}
+	result := manager.runtime.Exec(
+		probeContext,
+		manager.config.RunnerContainer,
+		command...,
+	)
+	if probeContext.Err() != nil || result.Status != 0 {
+		return fmt.Errorf("runner provider authentication readiness failed")
+	}
+	return nil
 }
 
 func (manager *manager) runnerSpec(
@@ -1103,10 +1139,25 @@ func (manager *manager) runnerSpec(
 		{"host": "github.com", "port": 443},
 		{"host": "api.github.com", "port": 443},
 	}
-	if manager.config.Provider == "codex" {
-		outbound = append(outbound, map[string]any{"host": "api.openai.com", "port": 443})
-	} else {
-		outbound = append(outbound, map[string]any{"host": "api.anthropic.com", "port": 443})
+	providerAuth := manager.config.providerAuth(mode)
+	if mode == lifecycle.ModeActive {
+		if manager.config.Provider == "codex" && providerAuth == "codex-login" {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "chatgpt.com", "port": 443},
+				map[string]any{"host": "auth.openai.com", "port": 443},
+			)
+		} else if manager.config.Provider == "codex" {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "api.openai.com", "port": 443},
+			)
+		} else {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "api.anthropic.com", "port": 443},
+			)
+		}
 	}
 	outboundJSON, _ := json.Marshal(outbound)
 	mounts := []map[string]any{{
@@ -1118,7 +1169,7 @@ func (manager *manager) runnerSpec(
 		Volume: manager.config.RunnerVolume,
 		Target: "/workspace",
 	}}
-	if manager.config.usesCodexAuthFile() {
+	if manager.config.usesCodexAuthFileFor(mode) {
 		mounts = append(mounts, map[string]any{
 			"source":   manager.config.CredentialVolume,
 			"target":   "/run/agentops-credentials",
@@ -1135,6 +1186,7 @@ func (manager *manager) runnerSpec(
 		"AGENTOPS_RUNNER_DATABASE_URL":         manager.config.runnerDatabaseURL(databaseHost),
 		"AGENTOPS_RUNNER_WORKER_ID":            manager.config.RunnerContainer,
 		"AGENTOPS_RUNNER_PROVIDER":             manager.config.Provider,
+		"AGENTOPS_RUNNER_PROVIDER_AUTH":        providerAuth,
 		"AGENTOPS_OPERATING_MODE":              string(mode),
 		"AGENTOPS_RUNNER_MOUNTS_JSON":          string(mountJSON),
 		"AGENTOPS_RUNNER_PUBLISHED_PORTS_JSON": "[]",
@@ -1145,16 +1197,13 @@ func (manager *manager) runnerSpec(
 		"HTTP_PROXY":                           "http://" + controlHost + ":8082",
 		"NO_PROXY":                             databaseHost + ",127.0.0.1,localhost",
 	}
-	if manager.config.Provider == "codex" {
-		if manager.config.usesCodexAuthFile() {
-			environment["AGENTOPS_RUNNER_PROVIDER_AUTH"] = "codex-login"
+	if mode == lifecycle.ModeActive && manager.config.Provider == "codex" {
+		if manager.config.usesCodexAuthFileFor(mode) {
 			environment["CODEX_HOME"] = "/run/agentops-credentials/codex"
 		} else {
-			environment["AGENTOPS_RUNNER_PROVIDER_AUTH"] = "api-key"
 			environment["OPENAI_API_KEY"] = manager.config.ProviderToken
 		}
-	} else {
-		environment["AGENTOPS_RUNNER_PROVIDER_AUTH"] = "api-key"
+	} else if mode == lifecycle.ModeActive {
 		environment["ANTHROPIC_API_KEY"] = manager.config.ProviderToken
 	}
 	return lifecycle.ContainerSpec{
@@ -1506,7 +1555,7 @@ func (manager *manager) verifyManagedTopology(
 		return err
 	}
 	if runnerExpected {
-		if err := validateRunnerActual(runner, manager.config); err != nil {
+		if err := validateRunnerActual(runner, manager.config, mode); err != nil {
 			return err
 		}
 		controlHost, err := manager.networkHost(
@@ -1549,25 +1598,61 @@ func validateSpecActual(
 		expected.SpecDigest {
 		return fmt.Errorf("%s immutable image or runtime specification drifted", expected.Name)
 	}
+	actualEnvironment := make(map[string]string)
+	for _, entry := range actual.Configuration.InitProcess.Environment {
+		key, value, present := strings.Cut(entry, "=")
+		if !present || key == "" {
+			return fmt.Errorf("%s actual environment is malformed", expected.Name)
+		}
+		if _, duplicate := actualEnvironment[key]; duplicate {
+			return fmt.Errorf("%s actual environment repeats %s", expected.Name, key)
+		}
+		actualEnvironment[key] = value
+	}
+	for key, desired := range expected.Environment {
+		if observed, present := actualEnvironment[key]; !present || observed != desired {
+			return fmt.Errorf("%s environment drifted at %s", expected.Name, key)
+		}
+	}
+	for key := range actualEnvironment {
+		if lifecycle.CredentialEnvironmentKey(key) {
+			if _, expectedCredential := expected.Environment[key]; !expectedCredential {
+				return fmt.Errorf(
+					"%s has an unexpected credential environment key %s",
+					expected.Name,
+					key,
+				)
+			}
+		}
+	}
 	return nil
 }
 
-func (manager *manager) validateExistingTopology(ctx context.Context) error {
-	for _, item := range []struct {
-		name     string
-		validate func(*lifecycle.ContainerActual, config) error
-	}{
-		{manager.config.ControlContainer, validateControlActual},
-		{manager.config.RunnerContainer, validateRunnerActual},
-		{manager.config.PostgresContainer, validatePostgresActual},
+func (manager *manager) validateExistingTopology(
+	ctx context.Context,
+	mode lifecycle.Mode,
+) error {
+	for _, name := range []string{
+		manager.config.ControlContainer,
+		manager.config.RunnerContainer,
+		manager.config.PostgresContainer,
 	} {
-		actual, err := manager.runtime.Container(ctx, item.name)
+		actual, err := manager.runtime.Container(ctx, name)
 		if err != nil {
 			return err
 		}
 		if actual != nil && actual.Status.State == "running" {
-			if err := item.validate(actual, manager.config); err != nil {
-				return err
+			var validateErr error
+			switch name {
+			case manager.config.ControlContainer:
+				validateErr = validateControlActual(actual, manager.config)
+			case manager.config.RunnerContainer:
+				validateErr = validateRunnerActual(actual, manager.config, mode)
+			case manager.config.PostgresContainer:
+				validateErr = validatePostgresActual(actual, manager.config)
+			}
+			if validateErr != nil {
+				return validateErr
 			}
 		}
 	}
@@ -1600,6 +1685,7 @@ func validateControlActual(
 func validateRunnerActual(
 	actual *lifecycle.ContainerActual,
 	config config,
+	mode lifecycle.Mode,
 ) error {
 	if err := validateManagedActual(
 		actual,
@@ -1620,7 +1706,7 @@ func validateRunnerActual(
 		"/home/agentops": "tmpfs",
 		"/workspace":     config.RunnerVolume,
 	}
-	if config.usesCodexAuthFile() {
+	if config.usesCodexAuthFileFor(mode) {
 		expectedMounts["/run/agentops-credentials"] = config.CredentialVolume
 	}
 	if !exactMounts(actual, expectedMounts) {

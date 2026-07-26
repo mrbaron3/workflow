@@ -101,6 +101,7 @@ func TestValidateSpecActualRejectsImageAndConfigurationDrift(t *testing.T) {
 	actual.Configuration.Labels = map[string]string{
 		"com.mrbaron3.workflow.spec-sha256": digest,
 	}
+	actual.Configuration.InitProcess.Environment = []string{"SECRET=first"}
 	if err := validateSpecActual(actual, spec); err != nil {
 		t.Fatal(err)
 	}
@@ -133,6 +134,11 @@ func TestPostgresSpecRejectsMutableTagImageAndCredentialDrift(t *testing.T) {
 	actual.Configuration.Labels = map[string]string{
 		"com.mrbaron3.workflow.spec-sha256": digest,
 	}
+	actual.Configuration.InitProcess.Environment = []string{
+		"POSTGRES_PASSWORD=postgres-password-first-value-0001",
+		"POSTGRES_DB=agentops",
+		"PGDATA=/var/lib/postgresql/data",
+	}
 	if err := validateSpecActual(actual, spec); err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +151,23 @@ func TestPostgresSpecRejectsMutableTagImageAndCredentialDrift(t *testing.T) {
 	spec.Environment["POSTGRES_PASSWORD"] = "postgres-password-rotated-value-0002"
 	if err := validateSpecActual(actual, spec); err == nil {
 		t.Fatal("PostgreSQL administrator credential drift was accepted")
+	}
+}
+
+func TestProbeRunnerProviderFailsClosedWithoutLeakingOutput(t *testing.T) {
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{{
+		Status: 1,
+		Stderr: "secret provider rejection response",
+	}}}
+	subject := newManager(testManagerConfig(), lifecycle.NewAppleRuntimeForTest(fake))
+	err := subject.probeRunnerProvider(context.Background())
+	if err == nil || strings.Contains(err.Error(), "secret provider") {
+		t.Fatalf("probeRunnerProvider() err=%v", err)
+	}
+	if len(fake.args) != 1 ||
+		strings.Join(fake.args[0], " ") !=
+			"exec agentops-runner codex debug models" {
+		t.Fatalf("unexpected provider probe argv: %#v", fake.args)
 	}
 }
 

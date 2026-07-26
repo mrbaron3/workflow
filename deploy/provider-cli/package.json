@@ -1,0 +1,9 @@
+{
+  "name": "agentops-provider-cli-lock",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.220",
+    "@openai/codex": "0.145.0"
+  }
+}

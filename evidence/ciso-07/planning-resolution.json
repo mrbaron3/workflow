@@ -57,9 +57,9 @@
   ],
   "bootstrapCutover": {
     "reason": "The integration implementation cannot be the normal main-branch runtime that merges the commit which first introduces that runtime.",
-    "boundedAction": "Claim and planning use the existing intake. A host checkout creates the implementation commit and draft PR only. After the current integration head exists, the real three-container runner performs current-head review reconciliation, required-check gating, expected-SHA merge, Issue release, and current GitHub reconciliation.",
+    "boundedAction": "Claim and planning use the existing intake. A host checkout creates the implementation commit and draft PR, then performs the sole draft-to-ready metadata transition because the pre-CISO-07 runtime has no typed operation for that transition. After the current integration head exists and the PR is ready, the real three-container runner performs current-head review reconciliation, required-check gating, expected-SHA merge, Issue release, and current GitHub reconciliation.",
     "normalExecutionClaimsExcluded": [
-      "host-side PR creation is not claimed as integrated execution",
+      "host-side PR creation and the sole draft-to-ready metadata transition are not claimed as integrated execution",
       "the needs-human-review planning record is not rewritten",
       "no database job or GitHub state is manually rewritten to success"
     ]

@@ -20,8 +20,37 @@ describe('CISO-07 integrated release source contracts', () => {
     expect(containerfile).toContain(' AS runner');
     expect(containerfile).toContain(' AS postgres');
     expect(containerfile).toContain('git=1:2.39.5-0+deb12u3');
-    expect(containerfile).toContain('ARG CODEX_VERSION=0.145.0');
-    expect(containerfile).toContain('ARG CLAUDE_CODE_VERSION=2.1.220');
+    expect(containerfile).toContain(
+      'snapshot.debian.org/archive/debian/20260714T000000Z',
+    );
+    expect(containerfile).toContain(
+      'snapshot.debian.org/archive/debian-security/20260714T000000Z',
+    );
+    expect(containerfile).toContain(
+      'deploy/provider-cli/package-lock.json',
+    );
+    expect(containerfile).toContain(
+      'npm ci --omit=dev --ignore-scripts --prefix /opt/provider-cli',
+    );
+    const providerLock = JSON.parse(
+      read('deploy/provider-cli/package-lock.json'),
+    ) as {
+      packages: Record<string, {
+        version?: string;
+        integrity?: string;
+      }>;
+    };
+    expect(providerLock.packages['node_modules/@openai/codex']).toEqual(
+      expect.objectContaining({
+        version: '0.145.0',
+        integrity: expect.stringMatching(/^sha512-/),
+      }),
+    );
+    expect(providerLock.packages['node_modules/@anthropic-ai/claude-code'])
+      .toEqual(expect.objectContaining({
+        version: '2.1.220',
+        integrity: expect.stringMatching(/^sha512-/),
+      }));
 
     const manager = read('cmd/agentopsctl/manager.go');
     for (const target of ['postgres', 'control', 'runner']) {
@@ -91,6 +120,9 @@ describe('CISO-07 integrated release source contracts', () => {
       'artifacts',
     ]));
     expect(schema.properties.result).toEqual({ const: 'passed' });
+    expect(read('src/evidence/ciso07.ts')).toContain(
+      'ciso07SemanticErrors',
+    );
 
     const ajv = new Ajv2020({ strict: true, allErrors: true });
     const validate = ajv.compile(schema);

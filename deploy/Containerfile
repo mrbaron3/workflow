@@ -53,7 +53,13 @@ CMD ["go", "test", "-race", "./..."]
 # later concern (#14) and does not change this image's standard-OCI shape.
 FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
 # git is part of the harness grader/runner toolchain (it shells out to git); install it reproducibly.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN rm -f /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
+      > /etc/apt/sources.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
       git=1:2.39.5-0+deb12u3 \
     && rm -rf /var/lib/apt/lists/*
 # Container-neutral roots (DATA-container-runtime-004). AGENTOPS_APP_ROOT is CONSUMED by the CLI
@@ -75,9 +81,8 @@ CMD ["node", "bin/agentops.mjs"]
 # --- runner: isolated PostgreSQL lease consumer + existing AgentOps toolchain --------------------
 FROM runtime AS runner
 USER root
-ARG CODEX_VERSION=0.145.0
-ARG CLAUDE_CODE_VERSION=2.1.220
 COPY --chown=root:root deploy/agentops-git-askpass /usr/local/bin/agentops-git-askpass
+COPY --chown=root:root deploy/provider-cli/package.json deploy/provider-cli/package-lock.json /opt/provider-cli/
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
          bubblewrap=0.8.0-2+deb12u1 \
@@ -85,9 +90,9 @@ RUN apt-get update \
          gh=2.23.0+dfsg1-1 \
          tmux=3.3a-3 \
          openssh-client=1:9.2p1-2+deb12u10 \
-    && npm install --global \
-         "@openai/codex@${CODEX_VERSION}" \
-         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+    && npm ci --omit=dev --ignore-scripts --prefix /opt/provider-cli \
+    && ln -s /opt/provider-cli/node_modules/.bin/codex /usr/local/bin/codex \
+    && ln -s /opt/provider-cli/node_modules/.bin/claude /usr/local/bin/claude \
     && useradd --uid 65532 --create-home --home-dir /home/agentops \
          --shell /usr/sbin/nologin agentops \
     && mkdir -p /workspace \
@@ -110,7 +115,13 @@ ENTRYPOINT ["node", "dist/src/runner/cli.js"]
 FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818 AS control
 ARG TARGETARCH
 ARG GH_WEBHOOK_VERSION=v0.2.0
-RUN apt-get update \
+RUN rm -f /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
+      > /etc/apt/sources.list \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
          ca-certificates=20230311+deb12u1 \
          curl=7.88.1-10+deb12u15 \

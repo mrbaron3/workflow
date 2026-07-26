@@ -38,8 +38,9 @@ GitHubの404でfail closedした。一方、controlへrunnerと同じGitHub cred
 
 - controlは引き続きGitHub credentialを持たず、private repositoryのIssue/PR monitorを同時に収束できる。
 - PostgreSQLはrequest、lease、failure、digest auditの唯一のdurable SoTであり、restart後もpending/expired workを回収する。
-- PostgreSQL containerは起動時image digest＋full specへsealされ、admin credential rotationはDRAINING・zero workで
-  transactionalに旧credential失効を検証してからvolume-preserving restartする。
+- PostgreSQL containerは起動時image digest＋credential-redacted canonical specへsealされ、credential値はactualと
+  process内だけで比較する。admin credential rotationはDRAINING・zero workでtransactionalに旧credential失効を
+  検証してからvolume-preserving restartする。
 - GitHub webhook forwardingの汎用proxyではない。webhook ingressは既存の署名検証・delivery dedup境界を使う。
 - 匿名pollがprivate repositoryで404になった初回失敗は証跡から消さず、broker cutoverの理由として残す。
 

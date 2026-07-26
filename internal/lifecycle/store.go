@@ -686,7 +686,7 @@ func RotatePostgresAdmin(
 			) VALUES (
 			  'lifecycle', 'agentopsctl',
 			  'credential.postgres_admin.rotation_committed',
-			  jsonb_build_object('requestId', $1)
+			  jsonb_build_object('requestId', $1::text)
 			)
 		`, requestID); err != nil {
 			return fmt.Errorf("audit PostgreSQL administrator rotation")

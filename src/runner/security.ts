@@ -22,7 +22,7 @@ export const RunnerStartupInput = z.object({
   workspaceRoot: z.string().min(1),
   databaseUrl: z.string().url(),
   provider: z.enum(['codex', 'claude']),
-  providerAuth: z.enum(['api-key', 'codex-login']),
+  providerAuth: z.enum(['none', 'api-key', 'codex-login']),
   operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']),
   leaseDurationMs: z.number().int().min(5_000).max(60 * 60_000),
   heartbeatIntervalMs: z.number().int().min(500).max(10 * 60_000),
@@ -40,7 +40,22 @@ export const RunnerStartupInput = z.object({
 ).refine(
   (value) => value.commandTimeoutMs < value.attemptTimeoutMs,
   'command timeout must be less than the overall attempt timeout',
-);
+).superRefine((value, context) => {
+  if (value.operatingMode === 'ACTIVE' && value.providerAuth === 'none') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'ACTIVE requires provider authentication',
+      path: ['providerAuth'],
+    });
+  }
+  if (value.operatingMode !== 'ACTIVE' && value.providerAuth !== 'none') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'non-ACTIVE runner must not receive provider authentication',
+      path: ['providerAuth'],
+    });
+  }
+});
 export type RunnerStartupInput = z.infer<typeof RunnerStartupInput>;
 
 export interface RunnerCredentials {
@@ -63,6 +78,56 @@ const CONTAINER_SOCKET_PATHS = [
   '/run/podman/podman.sock',
   '/run/host-services/container.sock',
 ] as const;
+
+const CodexAuthFile = z.object({
+  auth_mode: z.enum(['chatgpt', 'apikey']),
+  OPENAI_API_KEY: z.string().min(20).nullable().optional(),
+  tokens: z.object({
+    access_token: z.string().min(20),
+    refresh_token: z.string().min(20),
+    account_id: z.string().min(1),
+    id_token: z.string().min(20).optional(),
+  }).passthrough().nullable().optional(),
+}).passthrough().superRefine((value, context) => {
+  if (value.auth_mode === 'chatgpt' && !value.tokens) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'chatgpt auth requires tokens',
+      path: ['tokens'],
+    });
+  }
+  if (
+    value.auth_mode === 'apikey'
+    && (!value.OPENAI_API_KEY || value.OPENAI_API_KEY.length < 20)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'apikey auth requires OPENAI_API_KEY',
+      path: ['OPENAI_API_KEY'],
+    });
+  }
+});
+
+export function validateCodexAuthFile(authPath: string): void {
+  try {
+    const authInfo = fs.statSync(authPath);
+    if (
+      !authInfo.isFile()
+      || (authInfo.mode & 0o077) !== 0
+      || authInfo.size < 2
+      || authInfo.size > 256 * 1024
+    ) {
+      throw new Error('invalid metadata');
+    }
+    CodexAuthFile.parse(JSON.parse(fs.readFileSync(authPath, 'utf8')));
+  } catch {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'Codex auth.json has an invalid private credential structure',
+      false,
+    );
+  }
+}
 
 function listeningPorts(raw: string): number[] {
   const ports = new Set<number>();
@@ -378,8 +443,12 @@ export function loadRunnerStartup(
   const provider = z.enum(['codex', 'claude']).parse(
     env.AGENTOPS_RUNNER_PROVIDER,
   );
-  const providerAuth = z.enum(['api-key', 'codex-login']).parse(
-    env.AGENTOPS_RUNNER_PROVIDER_AUTH ?? 'api-key',
+  const operatingMode = z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']).parse(
+    env.AGENTOPS_OPERATING_MODE ?? 'MONITOR_ONLY',
+  );
+  const providerAuth = z.enum(['none', 'api-key', 'codex-login']).parse(
+    env.AGENTOPS_RUNNER_PROVIDER_AUTH
+      ?? (operatingMode === 'ACTIVE' ? 'api-key' : 'none'),
   );
   if (providerAuth === 'codex-login' && provider !== 'codex') {
     throw new RunnerExecutionError(
@@ -437,9 +506,7 @@ export function loadRunnerStartup(
     databaseUrl,
     provider,
     providerAuth,
-    operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']).parse(
-      env.AGENTOPS_OPERATING_MODE ?? 'MONITOR_ONLY',
-    ),
+    operatingMode,
     leaseDurationMs: integerEnv(env, 'AGENTOPS_RUNNER_LEASE_MS', 60_000),
     heartbeatIntervalMs: integerEnv(env, 'AGENTOPS_RUNNER_HEARTBEAT_MS', 15_000),
     reconciliationIntervalMs: integerEnv(
@@ -478,7 +545,7 @@ export function loadRunnerStartup(
     );
   }
   if (
-    config.providerAuth === 'api-key'
+    config.providerAuth !== 'codex-login'
       ? config.mounts.length !== 1
       : (
         config.mounts.length !== 2
@@ -513,15 +580,20 @@ export function loadRunnerStartup(
     `${databaseHost}:${databasePort}`,
     'github.com:443',
     'api.github.com:443',
-    PROVIDER_DESTINATIONS[provider],
   ]);
+  if (config.providerAuth === 'api-key') {
+    required.add(PROVIDER_DESTINATIONS[provider]);
+  } else if (config.providerAuth === 'codex-login') {
+    required.add('chatgpt.com:443');
+    required.add('auth.openai.com:443');
+  }
   if (
     required.size !== allowed.size
     || ![...required].every((destination) => allowed.has(destination))
   ) {
     throw new RunnerExecutionError(
       'startup_isolation_failure',
-      `runner outbound allowlist must exactly match the database, GitHub, and ${provider} destinations`,
+      'runner outbound allowlist does not match its exact mode and provider credential boundary',
       false,
     );
   }
@@ -543,27 +615,15 @@ export function loadRunnerStartup(
         false,
       );
     }
-    let authInfo: fs.Stats;
-    try {
-      authInfo = fs.statSync(path.join(codexHome, 'auth.json'));
-    } catch (error) {
-      throw new RunnerExecutionError(
-        'startup_isolation_failure',
-        'Codex auth.json is unavailable in the credential volume',
-        false,
-        null,
-        { cause: error },
-      );
-    }
-    if (!authInfo.isFile() || (authInfo.mode & 0o077) !== 0) {
-      throw new RunnerExecutionError(
-        'startup_isolation_failure',
-        'Codex auth.json must be a private regular file',
-        false,
-      );
-    }
-  } else {
+    validateCodexAuthFile(path.join(codexHome, 'auth.json'));
+  } else if (config.providerAuth === 'api-key') {
     providerToken = requiredSecret(env, selectedProviderKey);
+  } else if (env[selectedProviderKey] || env.CODEX_HOME) {
+    throw new RunnerExecutionError(
+      'startup_isolation_failure',
+      'non-ACTIVE runner received a provider credential',
+      false,
+    );
   }
   if (runtimeBoundary) {
     validateRuntimeBoundary(

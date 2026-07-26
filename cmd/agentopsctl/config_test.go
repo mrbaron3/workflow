@@ -84,12 +84,45 @@ func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 		}
 		actual.Configuration.Mounts = append(actual.Configuration.Mounts, mount)
 	}
-	if err := validateRunnerActual(actual, cfg); err != nil {
+	if err := validateRunnerActual(actual, cfg, lifecycle.ModeActive); err != nil {
 		t.Fatalf("valid runner topology rejected: %v", err)
 	}
 	actual.Configuration.CapAdd = []string{"CAP_SYS_ADMIN"}
-	if err := validateRunnerActual(actual, cfg); err == nil {
+	if err := validateRunnerActual(actual, cfg, lifecycle.ModeActive); err == nil {
 		t.Fatal("runner with added capability was accepted")
+	}
+}
+
+func TestMonitorOnlyRequiresNoProviderCredentialOrCredentialMount(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "deploy"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "deploy", "Containerfile"),
+		[]byte("FROM scratch\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	value := config{
+		Prefix: "agentops", ProjectRoot: root,
+		PostgresPassword:  strings.Repeat("a", 32),
+		ControlDBPassword: strings.Repeat("b", 32),
+		RunnerDBPassword:  strings.Repeat("c", 32),
+		ControlToken:      strings.Repeat("d", 32),
+		DashboardToken:    strings.Repeat("e", 32),
+		WebhookSecret:     strings.Repeat("f", 32),
+		RunnerGitHubToken: strings.Repeat("g", 32),
+		Provider:          "codex",
+		MonitorRepository: "mrbaron3/workflow",
+	}
+	if err := value.validateStart(lifecycle.ModeMonitorOnly); err != nil {
+		t.Fatalf("provider-free MONITOR_ONLY was rejected: %v", err)
+	}
+	if value.providerAuth(lifecycle.ModeMonitorOnly) != "none" ||
+		value.usesCodexAuthFileFor(lifecycle.ModeMonitorOnly) {
+		t.Fatal("MONITOR_ONLY selected a provider credential boundary")
 	}
 }
 

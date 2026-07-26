@@ -265,7 +265,11 @@ func TestMonitorBrokerRequestAndOriginAuditAreAtomic(t *testing.T) {
 		INSERT INTO agentops_control.repository_registrations(
 		  id, repository, enabled, issue_monitor_enabled,
 		  pr_monitor_enabled, execution_enabled
-		) VALUES ($1, 'mrbaron3/workflow', true, true, true, true);
+		) VALUES ($1, 'mrbaron3/workflow', true, true, true, true)
+	`, registrationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
 		CREATE FUNCTION agentops_control.reject_monitor_request_audit()
 		RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
@@ -273,12 +277,16 @@ func TestMonitorBrokerRequestAndOriginAuditAreAtomic(t *testing.T) {
 		    RAISE EXCEPTION 'injected origin audit failure';
 		  END IF;
 		  RETURN NEW;
-		END $$;
+		END $$
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
 		CREATE TRIGGER reject_monitor_request_audit
 		  BEFORE INSERT ON agentops_control.runtime_audit
 		  FOR EACH ROW EXECUTE FUNCTION
-		    agentops_control.reject_monitor_request_audit();
-	`, registrationID); err != nil {
+		    agentops_control.reject_monitor_request_audit()
+	`); err != nil {
 		t.Fatal(err)
 	}
 	source := BrokeredGitHubSource{

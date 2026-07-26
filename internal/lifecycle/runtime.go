@@ -27,6 +27,9 @@ const (
 )
 
 var resourceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+var credentialEnvironmentKeyPattern = regexp.MustCompile(
+	`(?:^|_)(?:TOKEN|PASSWORD|SECRET|DATABASE_URL|API_KEY)$`,
+)
 
 type CommandResult struct {
 	Status int      `json:"status"`
@@ -184,7 +187,8 @@ type ContainerActual struct {
 			} `json:"descriptor"`
 		} `json:"image"`
 		InitProcess struct {
-			User struct {
+			Environment []string `json:"environment"`
+			User        struct {
 				ID struct {
 					UID int `json:"uid"`
 					GID int `json:"gid"`
@@ -406,6 +410,15 @@ type ContainerSpec struct {
 
 func SpecDigest(spec ContainerSpec, imageDigest string) (string, error) {
 	spec.SpecDigest = ""
+	environment := make(map[string]string, len(spec.Environment))
+	for key, value := range spec.Environment {
+		if CredentialEnvironmentKey(key) {
+			environment[key] = "<credential-redacted>"
+		} else {
+			environment[key] = value
+		}
+	}
+	spec.Environment = environment
 	payload := struct {
 		Spec        ContainerSpec `json:"spec"`
 		ImageDigest string        `json:"imageDigest"`
@@ -419,6 +432,12 @@ func SpecDigest(spec ContainerSpec, imageDigest string) (string, error) {
 	}
 	digest := sha256.Sum256(encoded)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// CredentialEnvironmentKey identifies values which must never be reduced to a
+// durable digest. Running actual values are compared only in memory.
+func CredentialEnvironmentKey(key string) bool {
+	return credentialEnvironmentKeyPattern.MatchString(key)
 }
 
 func (runtime *AppleRuntime) RunContainer(

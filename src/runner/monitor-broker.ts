@@ -10,6 +10,13 @@ const GitHubRow = z.object({
   pull_request: z.unknown().optional(),
 }).passthrough();
 const execFileAsync = promisify(execFile);
+type ExecFileOptions = Parameters<typeof execFileAsync>[2];
+type ExecFileResult = { stdout: string };
+type ExecFileImpl = (
+  file: string,
+  args: string[],
+  options: ExecFileOptions,
+) => Promise<ExecFileResult>;
 
 interface BrokerStore {
   claimMonitorBrokerRequest(
@@ -29,6 +36,7 @@ export interface PrivateMonitorBrokerOptions {
   repository: string;
   githubToken: string;
   fetchImpl?: typeof fetch;
+  execFileImpl?: ExecFileImpl;
   intervalMs?: number;
   requestTimeoutMs?: number;
   maxResponseBytes?: number;
@@ -154,7 +162,7 @@ function assertTypedPageURL(
 
 export class PrivateMonitorBroker {
   private stopping = false;
-  private wake: (() => void) | null = null;
+  private readonly wakes = new Set<() => void>();
   private readonly fetchImpl: typeof fetch;
   private readonly intervalMs: number;
   private readonly requestTimeoutMs: number;
@@ -179,7 +187,7 @@ export class PrivateMonitorBroker {
 
   requestStop(): void {
     this.stopping = true;
-    this.wake?.();
+    for (const wake of this.wakes) wake();
   }
 
   private async read(
@@ -227,7 +235,9 @@ export class PrivateMonitorBroker {
         }
         let stdout: string;
         try {
-          const result = await execFileAsync(
+          const execute = this.options.execFileImpl
+            ?? (execFileAsync as unknown as ExecFileImpl);
+          const result = await execute(
             'gh',
             [
               'api',
@@ -259,13 +269,31 @@ export class PrivateMonitorBroker {
             },
           );
           stdout = result.stdout;
-        } catch {
+        } catch (error) {
+          if (
+            error instanceof Error
+            && (
+              (error as NodeJS.ErrnoException).code === 'ETIMEDOUT'
+              || 'killed' in error && error.killed === true
+            )
+          ) {
+            throw new MonitorBrokerFailure(
+              'provider_timeout',
+              'typed monitor provider operation exceeded its deadline',
+            );
+          }
           throw new MonitorBrokerFailure(
             'provider_failure',
             'typed monitor provider operation failed',
           );
         }
         totalBytes += Buffer.byteLength(stdout);
+        if (totalBytes > this.maxResponseBytes) {
+          throw new MonitorBrokerFailure(
+            'response_too_large',
+            'GitHub monitor response exceeded the byte limit',
+          );
+        }
         let parsed: unknown;
         try {
           parsed = JSON.parse(stdout);
@@ -451,24 +479,31 @@ export class PrivateMonitorBroker {
 
   private wait(): Promise<void> {
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.wake = null;
-        resolve();
-      }, this.intervalMs);
-      this.wake = () => {
+      const finish = () => {
         clearTimeout(timer);
-        this.wake = null;
+        this.wakes.delete(finish);
         resolve();
       };
+      const timer = setTimeout(() => {
+        finish();
+      }, this.intervalMs);
+      this.wakes.add(finish);
     });
   }
 
-  async run(): Promise<void> {
+  private async runWorker(): Promise<void> {
     while (!this.stopping) {
       while (!this.stopping && await this.runOnce()) {
         // Drain all typed monitor requests before sleeping.
       }
       if (!this.stopping) await this.wait();
     }
+  }
+
+  async run(): Promise<void> {
+    // Control runs the Issue and PR monitors concurrently. Two bounded workers
+    // prevent one valid provider read from consuming the other's control
+    // deadline while keeping repository-level concurrency fixed and auditable.
+    await Promise.all([this.runWorker(), this.runWorker()]);
   }
 }

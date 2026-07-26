@@ -336,7 +336,33 @@ export class PostgresControlStore {
     const allowedRepository = input.allowedRepository.trim().toLowerCase();
     return transaction(this.pool, async (client) => {
       const rejected = await client.query<{ id: string; registration_id: string }>(
-        `UPDATE agentops_control.monitor_broker_requests request
+        `WITH rejected_candidate AS (
+           SELECT request.id
+             FROM agentops_control.monitor_broker_requests request
+            WHERE request.status IN ('pending', 'leased')
+              AND (request.status = 'pending'
+                OR request.lease_expires_at <= clock_timestamp())
+              AND (
+                request.repository <> $1
+                OR NOT EXISTS (
+                  SELECT 1
+                    FROM agentops_control.repository_registrations registration
+                   WHERE registration.id = request.registration_id
+                     AND registration.version = request.registration_version
+                     AND registration.repository = request.repository
+                     AND registration.enabled
+                     AND (
+                       (request.monitor_kind = 'issue'
+                         AND registration.issue_monitor_enabled)
+                       OR
+                       (request.monitor_kind = 'pull_request'
+                         AND registration.pr_monitor_enabled)
+                     )
+                )
+              )
+            FOR UPDATE SKIP LOCKED
+         )
+         UPDATE agentops_control.monitor_broker_requests request
             SET status = 'failed',
                 worker_id = NULL,
                 lease_token = NULL,
@@ -345,27 +371,7 @@ export class PostgresControlStore {
                 error_message = 'registration is stale, disabled, or outside the broker allowlist',
                 completed_at = clock_timestamp(),
                 updated_at = clock_timestamp()
-          WHERE request.status IN ('pending', 'leased')
-            AND (request.status = 'pending'
-              OR request.lease_expires_at <= clock_timestamp())
-            AND (
-              request.repository <> $1
-              OR NOT EXISTS (
-                SELECT 1
-                  FROM agentops_control.repository_registrations registration
-                 WHERE registration.id = request.registration_id
-                   AND registration.version = request.registration_version
-                   AND registration.repository = request.repository
-                   AND registration.enabled
-                   AND (
-                     (request.monitor_kind = 'issue'
-                       AND registration.issue_monitor_enabled)
-                     OR
-                     (request.monitor_kind = 'pull_request'
-                       AND registration.pr_monitor_enabled)
-                   )
-              )
-            )
+          WHERE request.id IN (SELECT id FROM rejected_candidate)
         RETURNING request.id, request.registration_id`,
         [allowedRepository],
       );

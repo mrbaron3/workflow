@@ -21,6 +21,132 @@ function storeFor(next: MonitorBrokerRequest | null = request) {
 }
 
 describe('typed private-repository monitor broker', () => {
+  it('covers the production gh transport with explicit bounded pagination', async () => {
+    const store = storeFor();
+    const rows = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      updated_at: '2026-07-26T01:02:03Z',
+    }));
+    const execFileImpl = vi.fn(async (
+      file: string,
+      args: string[],
+      options?: { env?: NodeJS.ProcessEnv } | null,
+    ) => {
+      expect(file).toBe('gh');
+      expect(args).not.toContain('runner-github-token-opaque');
+      expect(options?.env?.GH_TOKEN).toBe('runner-github-token-opaque');
+      return {
+        stdout: JSON.stringify(
+          execFileImpl.mock.calls.length === 1
+            ? rows
+            : [{ number: 101, updated_at: '2026-07-26T01:02:04Z' }],
+        ),
+      };
+    });
+    const broker = new PrivateMonitorBroker({
+      store,
+      workerId: 'runner-1',
+      repository: 'mrbaron3/workflow',
+      githubToken: 'runner-github-token-opaque',
+      execFileImpl,
+    });
+    await broker.runOnce();
+    expect(execFileImpl).toHaveBeenCalledTimes(2);
+    expect(execFileImpl.mock.calls[0]?.[1].at(-1)).toContain('page=1');
+    expect(execFileImpl.mock.calls[1]?.[1].at(-1)).toContain('page=2');
+    expect(store.completeMonitorBrokerRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        itemCount: 101,
+        response: expect.objectContaining({
+          nextCursor: { updatedAfter: '2026-07-26T01:02:04.000Z' },
+        }),
+      }),
+    );
+  });
+
+  it('fails the production gh transport on page, byte, and timeout bounds', async () => {
+    const fullPage = JSON.stringify(Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      updated_at: '2026-07-26T01:02:03Z',
+    })));
+    for (const scenario of [
+      {
+        options: {
+          maxPages: 1,
+          execFileImpl: vi.fn(async () => ({ stdout: fullPage })),
+        },
+        code: 'page_limit',
+      },
+      {
+        options: {
+          maxResponseBytes: 1,
+          execFileImpl: vi.fn(async () => ({ stdout: '[]' })),
+        },
+        code: 'response_too_large',
+      },
+      {
+        options: {
+          execFileImpl: vi.fn(async () => {
+            const error = new Error('hidden provider timeout') as NodeJS.ErrnoException;
+            error.code = 'ETIMEDOUT';
+            throw error;
+          }),
+        },
+        code: 'provider_timeout',
+      },
+    ]) {
+      const scenarioStore = storeFor();
+      const broker = new PrivateMonitorBroker({
+        store: scenarioStore,
+        workerId: 'runner-1',
+        repository: 'mrbaron3/workflow',
+        githubToken: 'runner-github-token-opaque',
+        ...scenario.options,
+      });
+      await broker.runOnce();
+      expect(scenarioStore.failMonitorBrokerRequest).toHaveBeenCalledWith(
+        expect.objectContaining({ code: scenario.code }),
+      );
+    }
+  });
+
+  it('services Issue and PR broker requests concurrently', async () => {
+    const requests = [
+      request,
+      { ...request, id: '44444444-4444-4444-8444-444444444444', monitorKind: 'pull_request' as const },
+    ];
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let completed = 0;
+    let broker: PrivateMonitorBroker;
+    const store = {
+      claimMonitorBrokerRequest: vi.fn(async () => requests.shift() ?? null),
+      completeMonitorBrokerRequest: vi.fn(async () => {
+        completed += 1;
+        if (completed === 2) broker.requestStop();
+      }),
+      failMonitorBrokerRequest: vi.fn(async () => undefined),
+    };
+    const fetchImpl = vi.fn(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      inFlight -= 1;
+      return new Response('[]', { status: 200 });
+    });
+    broker = new PrivateMonitorBroker({
+      store,
+      workerId: 'runner-1',
+      repository: 'mrbaron3/workflow',
+      githubToken: 'runner-github-token-opaque',
+      fetchImpl,
+      intervalMs: 1,
+    });
+    await broker.run();
+    expect(completed).toBe(2);
+    expect(maxInFlight).toBe(2);
+  });
+
   it('returns only sanitized issue identities and excludes pull rows', async () => {
     const store = storeFor();
     const fetchImpl = vi.fn(async (

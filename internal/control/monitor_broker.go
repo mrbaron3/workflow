@@ -128,6 +128,42 @@ func (store *Store) monitorBrokerPoll(
 		if beginErr != nil {
 			return monitorBrokerResponse{}, unavailable(beginErr)
 		}
+		if _, pruneErr := transaction.Exec(ctx,
+			`DELETE FROM agentops_control.monitor_broker_requests
+			  WHERE status IN ('succeeded', 'failed')
+			    AND completed_at < clock_timestamp() - interval '7 days'`); pruneErr != nil {
+			_ = transaction.Rollback(context.Background())
+			return monitorBrokerResponse{}, unavailable(pruneErr)
+		}
+		// A control deadline can expire just before a valid runner completion.
+		// Reuse that bounded durable result instead of spending provider quota on
+		// a duplicate typed read for the same Registration/cursor.
+		reuseErr := transaction.QueryRow(ctx,
+			`SELECT id
+			   FROM agentops_control.monitor_broker_requests
+			  WHERE registration_id = $1
+			    AND registration_version = $2
+			    AND monitor_kind = $3
+			    AND cursor_sha256 = $4
+			    AND status = 'succeeded'
+			    AND completed_at >= clock_timestamp() - interval '2 minutes'
+			  ORDER BY completed_at DESC
+			  LIMIT 1`,
+			registration.ID,
+			registration.Version,
+			kind,
+			hex.EncodeToString(cursorDigest[:]),
+		).Scan(&requestID)
+		if reuseErr == nil {
+			if err := transaction.Commit(ctx); err != nil {
+				return monitorBrokerResponse{}, unavailable(err)
+			}
+			break
+		}
+		if !errors.Is(reuseErr, pgx.ErrNoRows) {
+			_ = transaction.Rollback(context.Background())
+			return monitorBrokerResponse{}, unavailable(reuseErr)
+		}
 		candidate, idErr := randomUUID()
 		if idErr != nil {
 			_ = transaction.Rollback(context.Background())

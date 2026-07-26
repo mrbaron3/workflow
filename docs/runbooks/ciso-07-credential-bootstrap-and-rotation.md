@@ -29,7 +29,10 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    or credential bytes enter runtime argv/logs; the source path is redacted from errors.
 4. Run `agentopsctl start --mode MONITOR_ONLY --build`, register only
    `mrbaron3/workflow` through the Dashboard/API, verify readiness and repository state, then
-   explicitly run `agentopsctl start --mode ACTIVE`.
+   explicitly run `agentopsctl start --mode ACTIVE`. `MONITOR_ONLY` receives no provider
+   token, Codex credential volume, or provider egress. `ACTIVE` parses the copied Codex
+   credential structure and runs a bounded nonlogging provider-authentication probe before
+   readiness can pass.
 
 ## Rotation
 
@@ -43,8 +46,10 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    either value in argv or logs. The command rejects `OFF`, `MONITOR_ONLY`, `ACTIVE`, live
    leases, in-flight attempts, reused application-role passwords, and reused administrator
    passwords.
-2. Run `agentopsctl stop`, promote the verified next administrator value to
-   `AGENTOPS_POSTGRES_PASSWORD`, and unset `AGENTOPS_NEXT_POSTGRES_PASSWORD`. Do not reseed
+2. Immediately promote the verified next administrator value to
+   `AGENTOPS_POSTGRES_PASSWORD`, then run `agentopsctl stop` with that verified value and
+   unset `AGENTOPS_NEXT_POSTGRES_PASSWORD` only after `OFF` is observed. The old value can
+   no longer authenticate, so using it for `stop` intentionally fails closed. Do not reseed
    any credential volume while a runner is attached. Replace any other intended
    operator-side values while `OFF`; the next bootstrap transaction rotates the distinct
    control and runner database roles. For Codex login rotation, atomically replace
@@ -54,9 +59,11 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    failed copy, failed migration, readiness failure, or topology drift returns nonzero,
    records the failure when the database is available, compensates toward the prior safe
    mode, and is not rewritten as success. A running PostgreSQL container is bound to the
-   sealed image digest and full spec (including the administrator credential); mutable-tag
-   or spec drift requires this volume-preserving drain/stop/restart path and is never
-   silently accepted.
+   sealed image digest and credential-redacted canonical spec. Actual credential values are
+   compared only in memory and verified with bounded authentication probes; no label or
+   evidence digest is derived from credential bytes. Mutable-tag, spec, or authentication
+   drift requires this volume-preserving drain/stop/restart path and is never silently
+   accepted.
 4. Verify each rotated role can authenticate and its old credential fails. Verify exact
    container mounts/publications and then explicitly return to `ACTIVE`.
 

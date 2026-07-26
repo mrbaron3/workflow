@@ -190,6 +190,7 @@ func run() error {
 	egressProxy, err := runnerEgressProxy(
 		strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN")),
 		environment("AGENTOPS_RUNNER_PROVIDER", "codex"),
+		environment("AGENTOPS_RUNNER_PROVIDER_AUTH", "none"),
 	)
 	if err != nil {
 		return err

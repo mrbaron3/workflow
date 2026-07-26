@@ -1,7 +1,11 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   loadRunnerStartup,
   minimalExecutionEnvironment,
+  validateCodexAuthFile,
 } from '../src/runner/security.js';
 
 function safeEnv(): NodeJS.ProcessEnv {
@@ -11,6 +15,8 @@ function safeEnv(): NodeJS.ProcessEnv {
     LANG: 'C.UTF-8',
     AGENTOPS_RUNNER_WORKER_ID: 'runner-test-1',
     AGENTOPS_RUNNER_PROVIDER: 'codex',
+    AGENTOPS_RUNNER_PROVIDER_AUTH: 'api-key',
+    AGENTOPS_OPERATING_MODE: 'ACTIVE',
     AGENTOPS_RUNNER_DATABASE_URL:
       'postgresql://agentops_runner:db-secret@postgres:5432/agentops',
     AGENTOPS_RUNNER_GITHUB_TOKEN: 'github-secret',
@@ -40,12 +46,12 @@ function safeRuntimeBoundary() {
 }
 
 describe('runner startup isolation', () => {
-  it('accepts one private named volume, zero ports, separated credentials, and controlled outbound', () => {
+  it('accepts ACTIVE with one private volume and exact provider egress', () => {
     const loaded = loadRunnerStartup(safeEnv(), '/app', safeRuntimeBoundary());
     expect(loaded.config).toMatchObject({
       workspaceRoot: '/workspace',
       provider: 'codex',
-      operatingMode: 'MONITOR_ONLY',
+      operatingMode: 'ACTIVE',
       publishedPorts: [],
       mounts: [{
         source: 'agentops-runner-workspace',
@@ -55,13 +61,45 @@ describe('runner startup isolation', () => {
     });
   });
 
-  it('accepts ACTIVE only when explicitly configured', () => {
+  it('accepts provider-free MONITOR_ONLY with no provider destination', () => {
+    const environment = safeEnv();
+    delete environment.OPENAI_API_KEY;
     const loaded = loadRunnerStartup(
-      { ...safeEnv(), AGENTOPS_OPERATING_MODE: 'ACTIVE' },
+      {
+        ...environment,
+        AGENTOPS_OPERATING_MODE: 'MONITOR_ONLY',
+        AGENTOPS_RUNNER_PROVIDER_AUTH: 'none',
+        AGENTOPS_RUNNER_OUTBOUND_JSON: JSON.stringify([
+          { host: 'postgres', port: 5432 },
+          { host: 'github.com', port: 443 },
+          { host: 'api.github.com', port: 443 },
+        ]),
+      },
       '/app',
       safeRuntimeBoundary(),
     );
-    expect(loaded.config.operatingMode).toBe('ACTIVE');
+    expect(loaded.config.operatingMode).toBe('MONITOR_ONLY');
+    expect(loaded.config.providerAuth).toBe('none');
+    expect(loaded.credentials.providerToken).toBeNull();
+  });
+
+  it('rejects malformed or structurally incomplete private Codex auth files', () => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ciso07-auth-'));
+    const authPath = path.join(directory, 'auth.json');
+    try {
+      for (const content of [
+        'not-json',
+        JSON.stringify({ auth_mode: 'chatgpt' }),
+        JSON.stringify({ auth_mode: 'apikey', OPENAI_API_KEY: 'short' }),
+      ]) {
+        fs.writeFileSync(authPath, content, { mode: 0o600 });
+        expect(() => validateCodexAuthFile(authPath)).toThrow(
+          /invalid private credential structure/,
+        );
+      }
+    } finally {
+      fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it.each([

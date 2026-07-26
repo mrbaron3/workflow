@@ -60,7 +60,7 @@ func TestBuildContainerArgsEnforcesPublicationAndNamedMounts(t *testing.T) {
 	}
 }
 
-func TestContainerSpecDigestBindsImageEnvironmentAndInit(t *testing.T) {
+func TestContainerSpecDigestBindsNonSecretEnvironmentWithoutCredentialFingerprint(t *testing.T) {
 	spec := ContainerSpec{
 		Name: "agentops-control", Role: "control", Image: "control:test",
 		Networks: []string{"default", "agentops-internal"},
@@ -103,8 +103,19 @@ func TestContainerSpecDigestBindsImageEnvironmentAndInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rotatedDigest == digest {
-		t.Fatal("environment rotation did not change the canonical digest")
+	if rotatedDigest != digest {
+		t.Fatal("credential rotation created a durable credential fingerprint")
+	}
+	rotated.Environment["AGENTOPS_OPERATING_MODE"] = "MONITOR_ONLY"
+	nonSecretDigest, err := SpecDigest(
+		rotated,
+		"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nonSecretDigest == digest {
+		t.Fatal("non-secret environment drift did not change the canonical digest")
 	}
 	imageDigest, err := SpecDigest(
 		spec,
