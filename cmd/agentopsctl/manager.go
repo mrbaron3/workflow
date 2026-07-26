@@ -985,7 +985,7 @@ func (manager *manager) ensureRunnerVolumeOwner(ctx context.Context) error {
 		Command: []string{
 			"-c",
 			"mkdir -p /workspace/registrations /workspace/store && " +
-				"chown -R 65532:65532 /workspace/registrations /workspace/store",
+				"chown 65532:65532 /workspace/registrations /workspace/store",
 		},
 		CapDropAll: true,
 		CapAdd:     []string{"CAP_CHOWN"},
