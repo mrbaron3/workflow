@@ -1793,12 +1793,21 @@ func validateManagedActual(
 		if !actual.Configuration.ReadOnly ||
 			!containsString(actual.Configuration.CapDrop, "ALL") ||
 			len(actual.Configuration.CapAdd) != 0 ||
-			(actual.Configuration.InitProcess.User.ID.UID != 65532 &&
-				actual.Configuration.InitProcess.User.Raw.UserString != "agentops") {
+			!managedNonRootUser(
+				actual.Configuration.InitProcess.User.ID.UID,
+				actual.Configuration.InitProcess.User.Raw.UserString,
+			) {
 			return fmt.Errorf("%s runtime hardening does not match", name)
 		}
 	}
 	return nil
+}
+
+func managedNonRootUser(uid int, raw string) bool {
+	return uid == 65532 ||
+		raw == "agentops" ||
+		raw == "65532" ||
+		raw == "65532:65532"
 }
 
 func imageReferenceMatches(actual, expected string) bool {

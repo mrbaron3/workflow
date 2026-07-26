@@ -147,6 +147,35 @@ func TestRedactContainerStatusRemovesCredentialEnvironmentValues(t *testing.T) {
 	}
 }
 
+func TestManagedNonRootUserAcceptsAppleNumericIdentityWithoutRoot(t *testing.T) {
+	for _, user := range []struct {
+		uid int
+		raw string
+	}{
+		{uid: 65532},
+		{raw: "agentops"},
+		{raw: "65532"},
+		{raw: "65532:65532"},
+	} {
+		if !managedNonRootUser(user.uid, user.raw) {
+			t.Fatalf("managed identity was rejected: %#v", user)
+		}
+	}
+	for _, user := range []struct {
+		uid int
+		raw string
+	}{
+		{},
+		{raw: "root"},
+		{raw: "0:0"},
+		{raw: "65532:0"},
+	} {
+		if managedNonRootUser(user.uid, user.raw) {
+			t.Fatalf("unsafe identity was accepted: %#v", user)
+		}
+	}
+}
+
 func TestPostgresSpecRejectsMutableTagImageAndCredentialDrift(t *testing.T) {
 	cfg := testManagerConfig()
 	cfg.PostgresPassword = "postgres-password-first-value-0001"
