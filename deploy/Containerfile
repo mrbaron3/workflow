@@ -112,7 +112,6 @@ RUN apt-get update \
     && gh pr merge --help | grep -q -- '--match-head-commit' \
     && codex --version \
     && claude --version \
-    && npm prune --omit=dev --ignore-scripts --prefix /app \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx \
     && rm -rf /var/lib/apt/lists/*

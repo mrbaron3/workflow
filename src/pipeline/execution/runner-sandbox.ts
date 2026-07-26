@@ -6,6 +6,7 @@ const registrationRootPattern =
 
 export const RUNNER_SANDBOX_MARKER = 'AGENTOPS_RUNNER_PROCESS_SANDBOX';
 export const RUNNER_SANDBOX_ROOT = 'AGENTOPS_RUNNER_REGISTRATION_ROOT';
+export const RUNNER_DEPENDENCY_ROOT = 'AGENTOPS_RUNNER_DEPENDENCY_ROOT';
 
 export function runnerSandboxRoot(env: NodeJS.ProcessEnv): string | null {
   if (env[RUNNER_SANDBOX_MARKER] !== 'bubblewrap-v1') return null;
@@ -26,6 +27,7 @@ export function runnerSandboxArgs(
   cwd: string,
   command: string,
   args: readonly string[],
+  dependencyRoot?: string,
 ): string[] {
   const resolvedCwd = path.resolve(cwd);
   if (
@@ -53,6 +55,9 @@ export function runnerSandboxArgs(
       : []),
     ...(fs.existsSync(worktreeMetadata)
       ? ['--ro-bind', worktreeMetadata, worktreeMetadata]
+      : []),
+    ...(dependencyRoot
+      ? ['--ro-bind', dependencyRoot, path.join(resolvedCwd, 'node_modules')]
       : []),
     '--tmpfs', '/tmp',
     '--bind', '/home/agentops', '/home/agentops',

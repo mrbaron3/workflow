@@ -696,7 +696,10 @@ export function isolatedGraderEnvironment(
     NO_COLOR: '1',
     AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
     ...(registrationRoot
-      ? { AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot }
+      ? {
+          AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
+          AGENTOPS_RUNNER_DEPENDENCY_ROOT: '/app/node_modules',
+        }
       : {}),
   };
 }

@@ -57,14 +57,48 @@ export function runGraderCommand(
   }
   const [cmd, ...args] = tokens;
   const registrationRoot = runnerSandboxRoot(options.environment ?? {});
+  const dependencyRoot = registrationRoot
+    ? options.environment?.AGENTOPS_RUNNER_DEPENDENCY_ROOT
+    : undefined;
+  let dependencyMountCreated = false;
+  const dependencyMountTarget = path.join(cwd, 'node_modules');
+  if (dependencyRoot) {
+    if (
+      dependencyRoot !== '/app/node_modules'
+      || !fs.statSync(dependencyRoot).isDirectory()
+    ) {
+      throw new Error('isolated runner dependency root is absent or invalid');
+    }
+    if (fs.existsSync(dependencyMountTarget)) {
+      if (
+        fs.lstatSync(dependencyMountTarget).isSymbolicLink()
+        || !fs.statSync(dependencyMountTarget).isDirectory()
+      ) {
+        throw new Error('runner grader node_modules mount target is unsafe');
+      }
+    } else {
+      fs.mkdirSync(dependencyMountTarget);
+      dependencyMountCreated = true;
+    }
+  }
   const execution = options.isolated
     ? prepareIsolatedExecutionResources(cmd!, args, cwd)
     : registrationRoot
       ? {
           command: 'bwrap',
-          args: runnerSandboxArgs(registrationRoot, cwd, cmd!, args),
+          args: runnerSandboxArgs(
+            registrationRoot,
+            cwd,
+            cmd!,
+            args,
+            dependencyRoot,
+          ),
           env: options.environment!,
-          cleanup: () => {},
+          cleanup: () => {
+            if (dependencyMountCreated) {
+              fs.rmSync(dependencyMountTarget, { recursive: true, force: true });
+            }
+          },
         }
     : {
         command: cmd!,

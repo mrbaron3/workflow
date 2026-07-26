@@ -16,12 +16,17 @@ describe('runner subprocess filesystem sandbox', () => {
       `${registrationRoot}/jobs/db837db2-30d7-4788-a56f-00056f5d550e/attempt-1/worktree`,
       'npm',
       ['test'],
+      '/app/node_modules',
     );
     expect(args).toContain('--tmpfs');
     expect(args).toContain('/workspace');
     expect(args).toContain('--unshare-pid');
     expect(args).toContain('--proc');
     expect(args).toContain(registrationRoot);
+    expect(args).toContain('/app/node_modules');
+    expect(args).toContain(
+      `${registrationRoot}/jobs/db837db2-30d7-4788-a56f-00056f5d550e/attempt-1/worktree/node_modules`,
+    );
     expect(args.slice(-3)).toEqual(['--', 'npm', 'test']);
   });
 
