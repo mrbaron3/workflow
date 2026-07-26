@@ -80,7 +80,6 @@ function schedule(): void {
         }
       });
   }, input.intervalMs);
-  timer.unref();
 }
 
 parentPort?.on('message', (message: unknown) => {

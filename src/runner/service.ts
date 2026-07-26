@@ -88,7 +88,7 @@ class LeaseHeartbeat {
         );
       });
       this.worker.on('exit', (code) => {
-        if (this.worker && code !== 0) {
+        if (this.worker) {
           const detail = `heartbeat worker exited unexpectedly with code ${code}`;
           this.fence.markLost(detail);
           this.log(`runner ${detail} for lease ${this.lease.id}`);
