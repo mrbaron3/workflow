@@ -22,6 +22,7 @@ describe('runner subprocess filesystem sandbox', () => {
     expect(args).toContain('/workspace');
     expect(args).toContain('--unshare-pid');
     expect(args).toContain('--proc');
+    expect(args).toContain('--dev');
     expect(args).toContain(registrationRoot);
     expect(args).toContain('/app/node_modules');
     expect(args).toContain(

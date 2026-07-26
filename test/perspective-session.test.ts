@@ -293,8 +293,9 @@ describe('restricted repository-PR reviewers', () => {
           'LANG',
           'PATH',
           'TMPDIR',
-          // macOS injects this locale/encoding hint after spawn even for env -i.
-          '__CF_USER_TEXT_ENCODING',
+          // macOS injects this locale/encoding hint after spawn even for env -i;
+          // the standard OCI Linux runner does not.
+          ...(process.platform === 'darwin' ? ['__CF_USER_TEXT_ENCODING'] : []),
         ]);
         expect(actual.HOME).toBe(execution.home);
         expect(actual.HOME).not.toContain(operatorHome);

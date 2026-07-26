@@ -46,6 +46,7 @@ export function runnerSandboxArgs(
     '--unshare-uts',
     '--ro-bind', '/', '/',
     '--proc', '/proc',
+    '--dev', '/dev',
     '--tmpfs', '/workspace',
     '--dir', '/workspace/registrations',
     '--dir', registrationRoot,
