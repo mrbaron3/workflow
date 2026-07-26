@@ -261,18 +261,26 @@ the same idempotent queue.
 ```bash
 AGENTOPS_DATABASE_URL='postgresql://…' npm run control-store:migrate
 export AGENTOPS_DATABASE_URL='postgresql://…'
-export AGENTOPS_CONTROL_TOKEN='<random operator bearer token>'
+export AGENTOPS_CONTROL_TOKEN='<32+ byte random operator bearer token>'
+export AGENTOPS_OPERATING_MODE='MONITOR_ONLY' # ACTIVE is explicit
+export AGENTOPS_DASHBOARD_ORIGIN='http://127.0.0.1:8080'
+# Optional deterministic bootstrap; omitted generates and logs a random one-time value.
+export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<random single-use bootstrap token>'
 export AGENTOPS_GITHUB_WEBHOOK_SECRET='<GitHub webhook secret>'
 export GH_TOKEN='<GitHub token>'
 go run ./cmd/agentops-control
 ```
 
-The operator API defaults to port 8080 and should be published to loopback only; PostgreSQL and
-runner ports must stay internal. Its contract is
+The operator API defaults to `127.0.0.1:8080`; the container target keeps it on
+`127.0.0.1:8081` behind an in-process port-8080 publication proxy, and publishes that proxy to host
+loopback only. PostgreSQL and runner ports stay internal.
+Open the one-time bootstrap URL logged at startup; browser code receives no bearer credential and
+uses only an HttpOnly same-origin session cookie plus a memory-only CSRF proof. Its contract is
 [`contracts/control-api/v1/openapi.yaml`](contracts/control-api/v1/openapi.yaml). Create requires
-`Idempotency-Key`, update/disable requires `If-Match: "<registration version>"`, and all operator
-routes require `Authorization: Bearer …`. Public webhook ingress is disabled unless the HMAC secret
-is configured.
+`Idempotency-Key`; update/disable require both it and `If-Match: "<registration version>"`; retry
+also fences the Registration identity/version and observed route attempts. Non-browser automation
+may use `Authorization: Bearer …`, while browser mutation requires the exact configured
+Origin/fetch metadata/CSRF tuple. Public webhook ingress is disabled unless the HMAC secret is configured.
 
 Polling defaults to one minute and shares the same per-repository single-flight queue as webhook
 deliveries. Configure `AGENTOPS_GITHUB_POLL_INTERVAL` and
@@ -280,6 +288,9 @@ deliveries. Configure `AGENTOPS_GITHUB_POLL_INTERVAL` and
 wake-up: periodic PostgreSQL reconciliation remains the recovery path after missed notifications,
 control restart, forwarder exit, or DB reconnect. Unknown, disabled, stale, or disconnected
 Registrations never create jobs.
+`MONITOR_ONLY` continues Issue/PR/Forwarder observation but neither routing nor the isolated runner
+may enqueue/claim executable work. The runner defaults to the same fail-closed mode and must receive
+`AGENTOPS_OPERATING_MODE=ACTIVE` explicitly when execution is authorized.
 
 The old TypeScript GUI/router types remain as a non-durable PR #9 compatibility oracle. The legacy
 `webhook-daemon` production command remains fail closed; no production entry point reads or writes
@@ -316,4 +327,5 @@ methods run once per criterion with `AGENTOPS_AC_ID`, `AGENTOPS_ISSUE_ID`,
 ```bash
 npm run typecheck
 npm run test
+npm run test:dashboard # requires AGENTOPS_TEST_DATABASE_URL
 ```

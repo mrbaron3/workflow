@@ -1,0 +1,127 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#15",
+  "acceptanceCriterion": "AC-CISO-010",
+  "baseCommit": "af16c6ac9e75aac949c9a4e81d6f1877a292e313",
+  "recordedAt": "2026-07-26T01:49:09Z",
+  "designLineage": {
+    "requestChangesDecisionId": "workflow-ciso05-dashboard-r01-request-changes",
+    "requestChangesMessageId": "msg_59eb810e6bdd",
+    "requestChangesRevisionId": "workflow-ciso05-dashboard-r01",
+    "requestChangesBundleDigest": "sha256:56eb4d7283d6f1e2dd72cc931c48af2cee98c88103fc1709a106dd192725ba95",
+    "providerTaskId": "task_da045ec60918",
+    "providerDispatchId": "ctx_830948d0618e",
+    "providerWorkerDoneMessageId": "msg_905012fdf368",
+    "correctionTaskId": "task_9bcf4a5422b6",
+    "correctionDispatchId": "ctx_26c26176794c",
+    "correctionWorkerDoneMessageId": "msg_0516463f06bd",
+    "approvedDecisionId": "workflow-ciso05-dashboard-r02-approve",
+    "approvalMessageId": "msg_0a870fc115e3",
+    "approvalDecisionGateMessageId": "msg_bd36617cc1f5",
+    "approvedRevisionId": "workflow-ciso05-dashboard-r02",
+    "approvedBundleDigest": "sha256:4f7357e099985d2dce5c1941b8ee25231e3208808727362b9f87d725084b70fa",
+    "capabilityReconciliationDigest": "sha256:f67fed2c8de6836072cd8fb34ce53e70bf3801717989ba9c1dc25a1793d5a1db",
+    "capabilityCount": 7
+  },
+  "validation": [
+    {
+      "boundary": "design schema, digest, decision, and seven-capability reconciliation",
+      "command": "go test ./internal/designgate",
+      "result": "passed"
+    },
+    {
+      "boundary": "focused and full Go control API, security, model, and owner tests",
+      "command": "go test ./...",
+      "result": "passed"
+    },
+    {
+      "boundary": "Go race with real PostgreSQL Registration integration",
+      "command": "AGENTOPS_TEST_DATABASE_URL=<loopback-test-dsn> go test -race ./...",
+      "result": "passed"
+    },
+    {
+      "boundary": "Go static analysis",
+      "command": "go vet ./...",
+      "result": "passed"
+    },
+    {
+      "boundary": "TypeScript typecheck and full unit suite",
+      "command": "npm test",
+      "result": "passed",
+      "details": {
+        "filesPassed": 98,
+        "filesSkipped": 1,
+        "testsPassed": 820,
+        "testsSkipped": 25
+      }
+    },
+    {
+      "boundary": "Registration store integration",
+      "command": "AGENTOPS_TEST_DATABASE_URL=<loopback-test-dsn> npm run test:postgres",
+      "result": "passed",
+      "details": {
+        "testsPassed": 24
+      }
+    },
+    {
+      "boundary": "headless Chromium dashboard CRUD, divergence, retry, disconnect, keyboard, focus, labels, announcements, 320px layout, and same-origin network allowlist",
+      "command": "AGENTOPS_TEST_DATABASE_URL=<loopback-test-dsn> npm run test:dashboard",
+      "result": "passed",
+      "details": {
+        "testsPassed": 1,
+        "browser": "Chromium"
+      }
+    },
+    {
+      "boundary": "TypeScript build",
+      "command": "npm run build",
+      "result": "passed"
+    },
+    {
+      "boundary": "high-severity dependency audit",
+      "command": "npm audit --audit-level=high",
+      "result": "passed",
+      "details": {
+        "vulnerabilities": 0
+      }
+    },
+    {
+      "boundary": "standard OCI control image",
+      "command": "docker build --target control -t agentops-control:ciso05-local -f deploy/Containerfile .",
+      "result": "passed",
+      "details": {
+        "manifestDigest": "sha256:24db791e68f5d8508fda313668aea2dc7a2774f8223689f48266f47e2b2c85b9",
+        "runtimeUser": "agentops",
+        "runtimeUid": 65532,
+        "exposedPorts": [
+          "8080/tcp"
+        ],
+        "controlBackend": "127.0.0.1:8081",
+        "publicationProxy": "0.0.0.0:8080"
+      }
+    },
+    {
+      "boundary": "smallest necessary Apple Container publish, session, PostgreSQL disconnect/reconnect, CRUD, desired/actual, and restart persistence",
+      "command": "npm run smoke:dashboard:apple",
+      "result": "passed",
+      "evidencePath": "evidence/ciso-05/dashboard-apple-container-smoke.json",
+      "evidenceSha256": "ca40bbc06adf35f421e0f22b58ba4e641e5600670a43cf2a0eecfe0254c402cb",
+      "details": {
+        "readOnlyRootFilesystem": true,
+        "capabilitiesDropped": "ALL",
+        "hostFilesystemMounts": 0,
+        "containerSocketMounts": 0
+      }
+    }
+  ],
+  "browserNetworkPolicy": {
+    "allowedOrigin": "the exact configured Control API origin",
+    "observedExternalOrigins": 0,
+    "bearerExposedToBrowser": false,
+    "persistentBrowserCredentialStorage": false
+  },
+  "residualRisk": [
+    "Apple Container smoke grounds the smallest arm64 host boundary; CI and standard OCI build cover the repository's normal Linux matrix.",
+    "The operator session is intentionally process-memory scoped and must be bootstrapped again after a control restart."
+  ]
+}

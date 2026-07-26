@@ -973,6 +973,7 @@ integration('PostgreSQL control store', () => {
       },
     };
     const service = new IsolatedRunnerService({
+      operatingMode: 'ACTIVE',
       workerId: 'runner-service',
       workspaceRoot: root,
       provider: 'codex',

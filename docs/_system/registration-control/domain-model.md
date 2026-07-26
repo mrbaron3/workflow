@@ -15,6 +15,15 @@
 - **DOM-registration-control-006 Approved Design Lineage** — provider tag/commit、request、
   revision、bundle digest、human decision、capability coverage の不可分な組。異 revision の混在や ambiguity は
   Control API contract の入力になれない。
+- **DOM-registration-control-007 Five-component status** — Issue Monitor、PR Monitor、Forwarder、
+  Execution、Queueを別componentとして扱い、それぞれdesired、actual、observedAt、freshness、stale reason、
+  last-good、last error、recoveryを持つ。Queueはdurable depthとactive leased job identity/state/versionを併記する。
+- **DOM-registration-control-008 Operator session** — one-time bootstrap、opaque server-side session、
+  HttpOnly cookie、session-bound CSRF proof、expiry/logoutを一つのsame-origin security aggregateとして扱う。
+- **DOM-registration-control-009 Fenced command** — create/update/disable/retryのnormalized request、
+  bounded idempotency key、resource identity、observed/current Registration version（retryはroute attemptも）、
+  immutable outcomeを同じtransactional identityへ束縛する。
 
 不変条件: disabled/unknown/stale Registration から job を作らない、persist-before-ack、repository ごとの active job は
-高々1件、actual state を desired state と取り違えない、PostgreSQL 以外へ control state を dual-write しない。
+高々1件、actual state を desired state と取り違えない、MONITOR_ONLYからjobをclaimしない、
+PostgreSQL 以外へ control state を dual-write しない。

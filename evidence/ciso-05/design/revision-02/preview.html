@@ -1,0 +1,2238 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'none'; base-uri 'none'; form-action 'none'">
+    <title>CISO-05 Dashboard — Revised Experience Proposal r02</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink-950: #0b121a;
+        --ink-800: #1f2a36;
+        --ink-650: #435261;
+        --ink-300: #adb7c0;
+        --ink-150: #d8dee4;
+        --ink-075: #edf0f3;
+        --ink-025: #f9fafb;
+        --white: #fff;
+        --red-800: #7a1219;
+        --red-650: #b01825;
+        --red-100: #fee6e8;
+        --amber-850: #603805;
+        --amber-600: #b06b09;
+        --amber-100: #fff2d1;
+        --green-800: #095635;
+        --green-650: #097c4b;
+        --green-100: #daf6e7;
+        --blue-800: #0f4285;
+        --blue-650: #0e64bd;
+        --blue-100: #e1edfd;
+        --violet-700: #582da3;
+        --shadow: 0 10px 30px rgb(11 18 26 / 9%);
+        --radius-control: 8px;
+        --radius-panel: 12px;
+        --focus: 0 0 0 3px var(--violet-700);
+        --max: 1440px;
+        font-family: Inter, "Hiragino Sans", "Yu Gothic UI", system-ui, sans-serif;
+        font-size: 16px;
+        line-height: 1.5;
+        color: var(--ink-950);
+        background: var(--ink-025);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background:
+          radial-gradient(circle at 0 0, rgb(14 100 189 / 7%), transparent 34rem),
+          var(--ink-025);
+      }
+
+      button,
+      input {
+        font: inherit;
+      }
+
+      button,
+      input[type="checkbox"] {
+        accent-color: var(--blue-650);
+      }
+
+      button {
+        min-height: 44px;
+        border: 1px solid var(--ink-300);
+        border-radius: var(--radius-control);
+        padding: 0.6rem 0.9rem;
+        color: var(--ink-950);
+        background: var(--white);
+        cursor: pointer;
+        font-weight: 650;
+      }
+
+      button:hover:not(:disabled) {
+        border-color: var(--blue-650);
+        background: var(--blue-100);
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      summary:focus-visible,
+      a:focus-visible {
+        outline: 0;
+        box-shadow: var(--focus);
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.54;
+      }
+
+      .button-primary {
+        border-color: var(--blue-800);
+        color: var(--white);
+        background: var(--blue-800);
+      }
+
+      .button-primary:hover:not(:disabled) {
+        color: var(--white);
+        background: var(--blue-650);
+      }
+
+      .button-danger {
+        border-color: var(--red-650);
+        color: var(--red-800);
+        background: var(--white);
+      }
+
+      .button-danger:hover:not(:disabled) {
+        background: var(--red-100);
+      }
+
+      .button-quiet {
+        border-color: transparent;
+        background: transparent;
+      }
+
+      .skip-link {
+        position: fixed;
+        z-index: 100;
+        top: 0.75rem;
+        left: 0.75rem;
+        transform: translateY(-180%);
+        padding: 0.6rem 0.9rem;
+        color: var(--white);
+        background: var(--ink-950);
+        border-radius: var(--radius-control);
+      }
+
+      .skip-link:focus {
+        transform: translateY(0);
+      }
+
+      .proposal-bar {
+        border-bottom: 1px solid #cbb7ee;
+        color: #3f1f77;
+        background: #f0e9fc;
+      }
+
+      .proposal-bar__inner {
+        max-width: var(--max);
+        margin: 0 auto;
+        padding: 0.7rem clamp(1rem, 3vw, 2rem);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 1rem;
+        align-items: center;
+      }
+
+      .proposal-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        padding: 0.18rem 0.55rem;
+        border: 1px solid #9475cc;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 800;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        background: var(--white);
+      }
+
+      .proposal-bar code,
+      .review-meta code,
+      .mono {
+        font-family: SFMono-Regular, Consolas, "Liberation Mono", monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .preview-lab {
+        border-bottom: 1px solid var(--ink-150);
+        background: var(--white);
+      }
+
+      .preview-lab__inner {
+        max-width: var(--max);
+        margin: 0 auto;
+        padding: 0.85rem clamp(1rem, 3vw, 2rem);
+      }
+
+      .preview-lab h2 {
+        margin: 0 0 0.5rem;
+        font-size: 0.9rem;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .state-controls {
+        display: flex;
+        gap: 0.5rem;
+        overflow-x: auto;
+        padding: 0.2rem 0.15rem 0.35rem;
+      }
+
+      .state-controls button {
+        flex: 0 0 auto;
+        min-height: 38px;
+        padding: 0.4rem 0.7rem;
+        font-size: 0.85rem;
+      }
+
+      .state-controls button[aria-pressed="true"] {
+        border: 2px solid var(--violet-700);
+        color: #3f1f77;
+        background: #f0e9fc;
+      }
+
+      .app-shell {
+        max-width: var(--max);
+        margin: 0 auto;
+        padding: clamp(1rem, 3vw, 2rem);
+      }
+
+      .page-heading {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        justify-content: space-between;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+
+      .page-heading h1 {
+        margin: 0;
+        font-size: clamp(1.6rem, 3vw, 2.45rem);
+        line-height: 1.12;
+        letter-spacing: -0.035em;
+      }
+
+      .page-heading p {
+        max-width: 72ch;
+        margin: 0.5rem 0 0;
+        color: var(--ink-650);
+      }
+
+      .mode-chip {
+        display: inline-flex;
+        min-height: 44px;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.45rem 0.8rem;
+        border: 1px solid #a993d1;
+        border-radius: 999px;
+        color: #3f1f77;
+        background: #f0e9fc;
+        font-weight: 750;
+      }
+
+      .mode-chip::before,
+      .status-dot::before {
+        width: 0.68rem;
+        height: 0.68rem;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .connection-banner {
+        display: grid;
+        grid-template-columns: minmax(13rem, 1fr) repeat(3, minmax(9rem, auto)) auto;
+        gap: 0.75rem 1rem;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding: 0.9rem 1rem;
+        border: 1px solid var(--green-650);
+        border-radius: var(--radius-panel);
+        color: var(--green-800);
+        background: var(--green-100);
+      }
+
+      .connection-banner[data-tone="warning"] {
+        border-color: var(--amber-600);
+        color: var(--amber-850);
+        background: var(--amber-100);
+      }
+
+      .connection-banner[data-tone="critical"] {
+        border-color: var(--red-650);
+        color: var(--red-800);
+        background: var(--red-100);
+      }
+
+      .connection-main {
+        display: flex;
+        gap: 0.6rem;
+        align-items: center;
+        font-weight: 800;
+      }
+
+      .connection-meta {
+        font-size: 0.84rem;
+      }
+
+      .connection-meta strong {
+        display: block;
+        color: currentColor;
+      }
+
+      .connection-banner button {
+        color: currentColor;
+        border-color: currentColor;
+        background: rgb(255 255 255 / 72%);
+      }
+
+      .live-status {
+        min-height: 2.5rem;
+        margin: 0 0 1rem;
+        padding: 0.55rem 0.8rem;
+        border-left: 4px solid var(--blue-650);
+        color: var(--ink-800);
+        background: var(--blue-100);
+      }
+
+      .live-status[data-tone="critical"] {
+        border-color: var(--red-650);
+        color: var(--red-800);
+        background: var(--red-100);
+      }
+
+      .live-status[data-tone="warning"] {
+        border-color: var(--amber-600);
+        color: var(--amber-850);
+        background: var(--amber-100);
+      }
+
+      .live-status[data-tone="success"] {
+        border-color: var(--green-650);
+        color: var(--green-800);
+        background: var(--green-100);
+      }
+
+      .summary-row {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin-bottom: 1rem;
+      }
+
+      .summary-card {
+        min-height: 6.4rem;
+        padding: 0.85rem 0.9rem;
+        border: 1px solid var(--ink-150);
+        border-radius: var(--radius-panel);
+        background: var(--white);
+      }
+
+      .summary-card[data-tone="critical"] {
+        border-color: var(--red-650);
+        background: var(--red-100);
+      }
+
+      .summary-card[data-tone="warning"] {
+        border-color: var(--amber-600);
+        background: var(--amber-100);
+      }
+
+      .summary-card__value {
+        display: block;
+        margin-top: 0.2rem;
+        font-size: 1.65rem;
+        line-height: 1;
+        font-weight: 820;
+      }
+
+      .summary-card__label {
+        display: block;
+        color: var(--ink-650);
+        font-size: 0.82rem;
+      }
+
+      .summary-card__detail {
+        display: block;
+        margin-top: 0.45rem;
+        color: var(--ink-650);
+        font-size: 0.75rem;
+      }
+
+      .overview-tools {
+        display: grid;
+        grid-template-columns: minmax(12rem, 1fr) minmax(18rem, auto);
+        gap: 0.75rem;
+        align-items: end;
+        margin-bottom: 1rem;
+      }
+
+      .field label,
+      .fieldset-label {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-size: 0.84rem;
+        font-weight: 750;
+      }
+
+      .field input[type="search"],
+      .field input[type="text"] {
+        width: 100%;
+        min-height: 44px;
+        border: 1px solid var(--ink-300);
+        border-radius: var(--radius-control);
+        padding: 0.55rem 0.7rem;
+        color: var(--ink-950);
+        background: var(--white);
+      }
+
+      details.legend {
+        padding: 0.7rem 0.85rem;
+        border: 1px solid var(--ink-150);
+        border-radius: var(--radius-control);
+        background: var(--white);
+      }
+
+      details.legend summary {
+        cursor: pointer;
+        font-weight: 700;
+      }
+
+      .legend-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem 0.8rem;
+        margin: 0.7rem 0 0;
+        padding: 0;
+        list-style: none;
+        font-size: 0.82rem;
+      }
+
+      .status-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.38rem;
+        width: fit-content;
+        padding: 0.2rem 0.52rem;
+        border: 1px solid var(--ink-300);
+        border-radius: 999px;
+        color: var(--ink-650);
+        background: var(--ink-075);
+        font-size: 0.75rem;
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .status-label::before {
+        width: 0.54rem;
+        height: 0.54rem;
+        border: 2px solid currentColor;
+        border-radius: 50%;
+        content: "";
+      }
+
+      .status-label[data-tone="critical"] {
+        border-color: var(--red-650);
+        color: var(--red-800);
+        background: var(--red-100);
+      }
+
+      .status-label[data-tone="critical"]::before {
+        border-radius: 2px;
+        background: currentColor;
+        transform: rotate(45deg);
+      }
+
+      .status-label[data-tone="warning"] {
+        border-color: var(--amber-600);
+        color: var(--amber-850);
+        background: var(--amber-100);
+      }
+
+      .status-label[data-tone="warning"]::before {
+        border-radius: 0;
+        border-width: 0 0.32rem 0.56rem;
+        border-style: solid;
+        border-color: transparent transparent currentColor;
+        background: transparent;
+      }
+
+      .status-label[data-tone="success"] {
+        border-color: var(--green-650);
+        color: var(--green-800);
+        background: var(--green-100);
+      }
+
+      .status-label[data-tone="success"]::before {
+        border: 0;
+        background: currentColor;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(18rem, 24rem) minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+      }
+
+      .panel {
+        border: 1px solid var(--ink-150);
+        border-radius: var(--radius-panel);
+        background: var(--white);
+        box-shadow: var(--shadow);
+      }
+
+      .panel-header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1rem;
+        border-bottom: 1px solid var(--ink-150);
+      }
+
+      .panel-header h2,
+      .panel-header h3 {
+        margin: 0;
+        font-size: 1.05rem;
+      }
+
+      .registration-list {
+        display: grid;
+        gap: 0.6rem;
+        padding: 0.75rem;
+      }
+
+      .registration-card {
+        width: 100%;
+        min-height: 0;
+        padding: 0.85rem;
+        text-align: left;
+        border: 1px solid var(--ink-150);
+        background: var(--white);
+      }
+
+      .registration-card[aria-current="true"] {
+        border: 2px solid var(--blue-650);
+        background: var(--blue-100);
+      }
+
+      .registration-card__top {
+        display: flex;
+        gap: 0.5rem;
+        justify-content: space-between;
+        align-items: start;
+      }
+
+      .registration-card__name {
+        display: block;
+        font-family: SFMono-Regular, Consolas, "Liberation Mono", monospace;
+        overflow-wrap: anywhere;
+        font-size: 0.91rem;
+        font-weight: 800;
+      }
+
+      .registration-card__meta {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 0.2rem 0.5rem;
+        margin-top: 0.65rem;
+        color: var(--ink-650);
+        font-size: 0.78rem;
+      }
+
+      .registration-card__meta strong {
+        color: var(--ink-800);
+        text-align: right;
+      }
+
+      .list-empty,
+      .list-loading {
+        padding: 2rem 1rem;
+        text-align: center;
+        color: var(--ink-650);
+      }
+
+      .list-empty strong,
+      .list-loading strong {
+        display: block;
+        color: var(--ink-950);
+        font-size: 1rem;
+      }
+
+      .skeleton {
+        height: 5rem;
+        border-radius: var(--radius-control);
+        background: linear-gradient(90deg, var(--ink-075), var(--white), var(--ink-075));
+        background-size: 200% 100%;
+        animation: shimmer 1.4s linear infinite;
+      }
+
+      .detail {
+        min-width: 0;
+      }
+
+      .detail-body {
+        padding: 1rem;
+      }
+
+      .detail-heading {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.7rem;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 1rem;
+      }
+
+      .detail-heading h2 {
+        margin: 0;
+        overflow-wrap: anywhere;
+        font-family: SFMono-Regular, Consolas, "Liberation Mono", monospace;
+        font-size: clamp(1.1rem, 2vw, 1.5rem);
+      }
+
+      .detail-heading p {
+        margin: 0.25rem 0 0;
+        color: var(--ink-650);
+        font-size: 0.82rem;
+      }
+
+      .detail-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .identity-grid,
+      .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.6rem;
+        margin: 0;
+      }
+
+      .identity-grid > div,
+      .metrics-grid > div {
+        min-width: 0;
+        padding: 0.7rem;
+        border: 1px solid var(--ink-150);
+        border-radius: var(--radius-control);
+        background: var(--ink-025);
+      }
+
+      dt {
+        color: var(--ink-650);
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+      }
+
+      dd {
+        margin: 0.15rem 0 0;
+        overflow-wrap: anywhere;
+        font-weight: 750;
+      }
+
+      .section-heading {
+        margin: 1.4rem 0 0.65rem;
+        font-size: 0.95rem;
+      }
+
+      .desired-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .desired-row li {
+        padding: 0.35rem 0.6rem;
+        border: 1px solid var(--ink-150);
+        border-radius: 999px;
+        background: var(--ink-075);
+        font-size: 0.78rem;
+      }
+
+      .desired-row strong {
+        color: var(--ink-800);
+      }
+
+      .matrix-wrap {
+        overflow-x: auto;
+        border: 1px solid var(--ink-150);
+        border-radius: var(--radius-control);
+      }
+
+      .state-matrix {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+      }
+
+      .state-matrix th,
+      .state-matrix td {
+        padding: 0.62rem 0.7rem;
+        border-bottom: 1px solid var(--ink-150);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .state-matrix th {
+        color: var(--ink-650);
+        background: var(--ink-025);
+        font-size: 0.72rem;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+
+      .state-matrix tbody tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .state-matrix td:first-child {
+        font-weight: 800;
+      }
+
+      .cell-label {
+        display: none;
+      }
+
+      .time-note {
+        display: block;
+        margin-top: 0.25rem;
+        color: var(--ink-650);
+        font-size: 0.72rem;
+      }
+
+      .alert {
+        margin-top: 1rem;
+        padding: 0.9rem 1rem;
+        border: 1px solid var(--red-650);
+        border-radius: var(--radius-control);
+        color: var(--red-800);
+        background: var(--red-100);
+      }
+
+      .alert[data-tone="warning"] {
+        border-color: var(--amber-600);
+        color: var(--amber-850);
+        background: var(--amber-100);
+      }
+
+      .alert[data-tone="success"] {
+        border-color: var(--green-650);
+        color: var(--green-800);
+        background: var(--green-100);
+      }
+
+      .alert h3 {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+
+      .alert p {
+        margin: 0.35rem 0 0;
+      }
+
+      .alert details {
+        margin-top: 0.6rem;
+      }
+
+      .delivery-panel {
+        margin-top: 1rem;
+        border: 1px solid var(--ink-150);
+        border-radius: var(--radius-control);
+        overflow: hidden;
+      }
+
+      .delivery-panel__header {
+        padding: 0.75rem 0.85rem;
+        border-bottom: 1px solid var(--ink-150);
+        background: var(--ink-025);
+      }
+
+      .delivery-panel__header h3 {
+        margin: 0;
+        font-size: 0.95rem;
+      }
+
+      .delivery-layout {
+        display: grid;
+        grid-template-columns: minmax(13rem, 0.75fr) minmax(0, 1.25fr);
+      }
+
+      .failure-list {
+        margin: 0;
+        padding: 0.6rem;
+        border-right: 1px solid var(--ink-150);
+        list-style: none;
+      }
+
+      .failure-list button {
+        width: 100%;
+        min-height: 0;
+        padding: 0.65rem;
+        text-align: left;
+      }
+
+      .failure-list button[aria-current="true"] {
+        border: 2px solid var(--red-650);
+        background: var(--red-100);
+      }
+
+      .failure-list small {
+        display: block;
+        margin-top: 0.25rem;
+        color: var(--ink-650);
+      }
+
+      .delivery-detail {
+        min-width: 0;
+        padding: 0.85rem;
+      }
+
+      .delivery-detail dl {
+        display: grid;
+        grid-template-columns: 8.5rem minmax(0, 1fr);
+        gap: 0.35rem 0.7rem;
+        margin: 0;
+      }
+
+      .delivery-detail dd {
+        margin: 0;
+        font-weight: 600;
+      }
+
+      .delivery-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        align-items: center;
+        margin-top: 0.8rem;
+      }
+
+      .command-outcome {
+        flex: 1 1 18rem;
+        min-height: 44px;
+        padding: 0.55rem 0.7rem;
+        border-left: 4px solid var(--ink-300);
+        background: var(--ink-075);
+      }
+
+      .command-outcome[data-tone="critical"] {
+        border-color: var(--red-650);
+        color: var(--red-800);
+        background: var(--red-100);
+      }
+
+      .command-outcome[data-tone="warning"] {
+        border-color: var(--amber-600);
+        color: var(--amber-850);
+        background: var(--amber-100);
+      }
+
+      .command-outcome[data-tone="success"] {
+        border-color: var(--green-650);
+        color: var(--green-800);
+        background: var(--green-100);
+      }
+
+      .review-section {
+        max-width: var(--max);
+        margin: 1rem auto 3rem;
+        padding: 0 clamp(1rem, 3vw, 2rem);
+      }
+
+      .review-section > h2 {
+        margin: 2rem 0 0.75rem;
+      }
+
+      .review-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+        min-width: 0;
+      }
+
+      .review-card {
+        min-width: 0;
+        padding: 1rem;
+        border: 1px solid var(--ink-150);
+        border-radius: var(--radius-panel);
+        background: var(--white);
+        overflow-wrap: anywhere;
+      }
+
+      .review-card[data-wide="true"] {
+        grid-column: 1 / -1;
+      }
+
+      .review-card h3 {
+        margin: 0 0 0.55rem;
+        font-size: 1rem;
+      }
+
+      .review-card h4 {
+        margin: 1rem 0 0.3rem;
+        font-size: 0.86rem;
+      }
+
+      .review-card p,
+      .review-card ul,
+      .review-card ol {
+        margin-top: 0.45rem;
+        margin-bottom: 0;
+      }
+
+      .review-card li + li {
+        margin-top: 0.32rem;
+      }
+
+      .review-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+      }
+
+      .review-card > .review-table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+      }
+
+      .review-table th,
+      .review-table td {
+        padding: 0.5rem;
+        border: 1px solid var(--ink-150);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      .review-table th {
+        background: var(--ink-075);
+      }
+
+      dialog {
+        width: min(36rem, calc(100% - 2rem));
+        max-height: calc(100dvh - 2rem);
+        overflow: auto;
+        border: 1px solid var(--ink-300);
+        border-radius: var(--radius-panel);
+        padding: 0;
+        color: var(--ink-950);
+        background: var(--white);
+        box-shadow: 0 24px 80px rgb(11 18 26 / 30%);
+      }
+
+      dialog::backdrop {
+        background: rgb(11 18 26 / 58%);
+      }
+
+      .dialog-header {
+        padding: 1rem;
+        border-bottom: 1px solid var(--ink-150);
+      }
+
+      .dialog-header h2 {
+        margin: 0;
+        font-size: 1.2rem;
+      }
+
+      .dialog-header p {
+        margin: 0.3rem 0 0;
+        color: var(--ink-650);
+      }
+
+      .dialog-body {
+        padding: 1rem;
+      }
+
+      .dialog-error {
+        display: none;
+        margin-bottom: 0.9rem;
+        padding: 0.75rem;
+        border: 1px solid var(--red-650);
+        border-radius: var(--radius-control);
+        color: var(--red-800);
+        background: var(--red-100);
+      }
+
+      .dialog-error[data-visible="true"] {
+        display: block;
+      }
+
+      .dialog-grid {
+        display: grid;
+        gap: 0.85rem;
+      }
+
+      .switch-list {
+        display: grid;
+        gap: 0.5rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .switch-list label {
+        display: flex;
+        min-height: 44px;
+        gap: 0.65rem;
+        align-items: center;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid var(--ink-150);
+        border-radius: var(--radius-control);
+      }
+
+      .switch-list input {
+        width: 1.2rem;
+        height: 1.2rem;
+      }
+
+      .security-note {
+        padding: 0.7rem;
+        border-left: 4px solid var(--blue-650);
+        background: var(--blue-100);
+        font-size: 0.82rem;
+      }
+
+      .dialog-actions {
+        position: sticky;
+        bottom: 0;
+        display: flex;
+        gap: 0.6rem;
+        justify-content: flex-end;
+        padding: 0.85rem 1rem;
+        border-top: 1px solid var(--ink-150);
+        background: rgb(255 255 255 / 96%);
+      }
+
+      .visually-hidden {
+        position: absolute !important;
+        width: 1px !important;
+        height: 1px !important;
+        padding: 0 !important;
+        margin: -1px !important;
+        overflow: hidden !important;
+        clip: rect(0, 0, 0, 0) !important;
+        white-space: nowrap !important;
+        border: 0 !important;
+      }
+
+      @keyframes shimmer {
+        to {
+          background-position: -200% 0;
+        }
+      }
+
+      @media (max-width: 980px) {
+        .connection-banner {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .connection-banner button {
+          justify-self: start;
+        }
+
+        .summary-row {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+
+        .identity-grid,
+        .metrics-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 767px) {
+        .proposal-bar__inner,
+        .preview-lab__inner,
+        .app-shell {
+          padding-inline: 1rem;
+        }
+
+        .connection-banner,
+        .overview-tools,
+        .review-grid {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .connection-meta {
+          display: grid;
+          grid-template-columns: 8.5rem 1fr;
+          gap: 0.35rem;
+        }
+
+        .connection-meta strong {
+          display: inline;
+        }
+
+        .detail-heading,
+        .detail-actions {
+          display: grid;
+          grid-template-columns: 1fr;
+        }
+
+        .identity-grid,
+        .metrics-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .matrix-wrap {
+          overflow: visible;
+          border: 0;
+        }
+
+        .state-matrix,
+        .state-matrix tbody {
+          display: grid;
+          gap: 0.65rem;
+        }
+
+        .state-matrix thead {
+          display: none;
+        }
+
+        .state-matrix tr {
+          display: grid;
+          gap: 0.45rem;
+          padding: 0.75rem;
+          border: 1px solid var(--ink-150);
+          border-radius: var(--radius-control);
+        }
+
+        .state-matrix td {
+          display: grid;
+          grid-template-columns: 7rem minmax(0, 1fr);
+          gap: 0.5rem;
+          min-width: 0;
+          padding: 0;
+          border: 0;
+        }
+
+        .state-matrix td > * {
+          min-width: 0;
+        }
+
+        .state-matrix .status-label {
+          max-width: 100%;
+          line-height: 1.35;
+          overflow-wrap: anywhere;
+          white-space: normal;
+        }
+
+        .state-matrix .status-label::before {
+          flex: 0 0 auto;
+        }
+
+        .state-matrix td:first-child {
+          display: block;
+          font-size: 0.95rem;
+        }
+
+        .cell-label {
+          display: inline;
+          color: var(--ink-650);
+          font-size: 0.72rem;
+          font-weight: 700;
+          letter-spacing: 0.02em;
+          text-transform: uppercase;
+        }
+
+        .delivery-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .failure-list {
+          border-right: 0;
+          border-bottom: 1px solid var(--ink-150);
+        }
+
+        .delivery-detail dl {
+          grid-template-columns: 1fr;
+        }
+
+        .delivery-detail dd + dt {
+          margin-top: 0.4rem;
+        }
+      }
+
+      @media (max-width: 460px) {
+        .summary-row {
+          grid-template-columns: 1fr;
+        }
+
+        .page-heading {
+          align-items: stretch;
+        }
+
+        .mode-chip {
+          width: 100%;
+          justify-content: center;
+        }
+
+        .panel-header,
+        .dialog-actions {
+          display: grid;
+          grid-template-columns: 1fr;
+        }
+
+        .dialog-actions button {
+          width: 100%;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#product-preview">Product previewへ移動</a>
+
+    <header class="proposal-bar" aria-label="Proposal metadata">
+      <div class="proposal-bar__inner">
+        <span class="proposal-label">Revision 02 · awaiting human decision</span>
+        <span>Request <code>workflow-ciso05-dashboard-20260726</code></span>
+        <span>Revision <code>workflow-ciso05-dashboard-r02</code></span>
+        <span>Previous <code>workflow-ciso05-dashboard-r01</code></span>
+      </div>
+    </header>
+
+    <section class="preview-lab" aria-labelledby="preview-lab-heading">
+      <div class="preview-lab__inner">
+        <h2 id="preview-lab-heading">Static preview state lab</h2>
+        <div class="state-controls" role="group" aria-label="表示状態を切り替える">
+          <button type="button" data-preview-state="anomaly" aria-pressed="true">Anomaly</button>
+          <button type="button" data-preview-state="active" aria-pressed="false">ACTIVE mode</button>
+          <button type="button" data-preview-state="loading" aria-pressed="false">Loading</button>
+          <button type="button" data-preview-state="empty" aria-pressed="false">Empty</button>
+          <button type="button" data-preview-state="stale" aria-pressed="false">Stale</button>
+          <button type="button" data-preview-state="disconnected" aria-pressed="false">Disconnected</button>
+          <button type="button" data-preview-state="sessionExpired" aria-pressed="false">Session expired</button>
+          <button type="button" data-preview-state="applied" aria-pressed="false">Applied / verifying</button>
+          <button type="button" data-preview-state="duplicate" aria-pressed="false">Duplicate</button>
+          <button type="button" data-preview-state="rejected" aria-pressed="false">Rejected</button>
+          <button type="button" data-preview-state="conflict" aria-pressed="false">Conflict</button>
+          <button type="button" data-preview-state="indeterminate" aria-pressed="false">Indeterminate</button>
+          <button type="button" data-preview-state="success" aria-pressed="false">Verified success</button>
+        </div>
+      </div>
+    </section>
+
+    <main id="product-preview" class="app-shell" tabindex="-1">
+      <div class="page-heading" data-region-id="region-global-status" data-element-id="element-page-purpose">
+        <div>
+          <h1>Repository Operations</h1>
+          <p>異常のあるRepositoryを発見し、desiredとactualの差、原因、最終正常時刻を理解して安全な次の操作を選びます。</p>
+        </div>
+        <div class="mode-chip" data-element-id="element-mode-status">
+          Mode: <span id="mode-value">MONITOR_ONLY</span>
+        </div>
+      </div>
+
+      <section id="connection-banner" class="connection-banner" data-tone="success" data-element-id="element-connection-freshness" aria-labelledby="connection-label">
+        <div class="connection-main">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="connection-label">Connected · fresh snapshot</span>
+        </div>
+        <div class="connection-meta">
+          <span>Observed</span>
+          <strong id="observed-time">2026-07-26 00:07:42 JST</strong>
+        </div>
+        <div class="connection-meta">
+          <span>Last successful read</span>
+          <strong id="last-success-time">just now</strong>
+        </div>
+        <div class="connection-meta">
+          <span>Browser session</span>
+          <strong id="session-state">Authenticated · expires 00:37 JST</strong>
+        </div>
+        <button id="refresh-button" type="button" data-element-id="element-refresh-status">Refresh status</button>
+      </section>
+
+      <p id="live-status" class="live-status" data-tone="info" data-element-id="element-live-status" role="status" aria-live="polite">
+        3 Registrationsを読み込みました。2件に対応が必要です。
+      </p>
+
+      <section aria-labelledby="attention-heading" data-region-id="region-anomaly-overview">
+        <h2 id="attention-heading" class="visually-hidden">Needs attention</h2>
+        <div class="summary-row" data-element-id="element-anomaly-summary">
+          <article class="summary-card" data-tone="critical">
+            <span class="summary-card__label">Failed / disconnected</span>
+            <strong id="summary-critical" class="summary-card__value">1</strong>
+            <span class="summary-card__detail">最優先。現在のtruthがない、または処理失敗。</span>
+          </article>
+          <article class="summary-card" data-tone="warning">
+            <span class="summary-card__label">Stale / divergent</span>
+            <strong id="summary-warning" class="summary-card__value">1</strong>
+            <span class="summary-card__detail">last-goodと観測時刻を確認。</span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-card__label">Active jobs</span>
+            <strong id="summary-jobs" class="summary-card__value">1</strong>
+            <span class="summary-card__detail">操作不可。状態とversionのみ表示。</span>
+          </article>
+          <article class="summary-card">
+            <span class="summary-card__label">Registered</span>
+            <strong id="summary-total" class="summary-card__value">3</strong>
+            <span class="summary-card__detail">snapshot内のRegistration総数。</span>
+          </article>
+        </div>
+
+        <div class="overview-tools">
+          <div class="field" data-element-id="element-repository-filter">
+            <label for="repository-filter">Filter repositories</label>
+            <input id="repository-filter" type="search" autocomplete="off" placeholder="owner/name">
+          </div>
+          <details class="legend" data-element-id="element-status-legend">
+            <summary>State meaning</summary>
+            <ul class="legend-list">
+              <li><span class="status-label" data-tone="critical">Failed</span> 原因と回復が必要</li>
+              <li><span class="status-label" data-tone="warning">Stale</span> current truthではない</li>
+              <li><span class="status-label" data-tone="success">Healthy</span> fresh observed state</li>
+              <li><span class="status-label">Stopped</span> desiredまたはmodeによる停止</li>
+            </ul>
+          </details>
+        </div>
+      </section>
+
+      <div class="workspace">
+        <section class="panel" aria-labelledby="registration-list-heading" data-region-id="region-registration-list">
+          <div class="panel-header">
+            <h2 id="registration-list-heading">Registrations</h2>
+            <button id="create-button" class="button-primary" type="button" data-element-id="element-create-registration">Register repository</button>
+          </div>
+          <div id="registration-list" class="registration-list" data-element-id="element-registration-card" aria-busy="false"></div>
+          <div class="panel-header">
+            <span id="list-count" aria-live="polite">3 of 3 shown</span>
+            <button id="load-more-button" type="button" data-element-id="element-list-pagination" disabled>Load more</button>
+          </div>
+        </section>
+
+        <section class="panel detail" aria-labelledby="detail-heading" data-region-id="region-registration-detail">
+          <div id="detail-body" class="detail-body"></div>
+        </section>
+      </div>
+    </main>
+
+    <section class="review-section" aria-labelledby="review-heading">
+      <h2 id="review-heading">Design review notes</h2>
+      <div class="review-grid">
+        <article class="review-card">
+          <h3>Page Purpose</h3>
+          <p><strong>Primary:</strong> 異常Repositoryを発見し、desired／actual差、原因、影響、last-goodを理解して安全な次の操作を選ぶ。</p>
+          <p><strong>Success:</strong> unknown、stale、disconnected、rejectedをhealthy／successと誤認せず、同一pageで対象・原因・回復候補を判断できる。</p>
+          <h4>Out of scope</h4>
+          <p>mode変更、container lifecycle、runner／queue内部操作、PostgreSQL直接接続、任意command／path／credential登録。</p>
+        </article>
+
+        <article class="review-card">
+          <h3>Attention hierarchy</h3>
+          <ol>
+            <li><strong>Global truth + anomalies:</strong> mode、connection、failed／disconnected、desired／actual差、error／recovery。</li>
+            <li><strong>Diagnostic evidence:</strong> last poll／delivery、observed／last-good、queue、active job、delivery attempts。</li>
+            <li><strong>Safe actions:</strong> update、disable、retryはcontextとversionを読んだ後。</li>
+            <li><strong>Supporting:</strong> filter、legend、pagination、review annotations。</li>
+          </ol>
+        </article>
+
+        <article class="review-card" data-wide="true">
+          <h3>Per-task Effort Budget</h3>
+          <div style="overflow-x:auto">
+            <table class="review-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Primary actions</th>
+                  <th>Decisions</th>
+                  <th>Context switches</th>
+                  <th>Protected intent</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>Diagnose anomaly</td><td>≤ 2</td><td>≤ 1</td><td>0</td><td>異常選択＋必要時refreshで同一pageに留まる</td></tr>
+                <tr><td>Create Registration</td><td>≤ 2</td><td>≤ 1</td><td>0</td><td>Open＋Save。identity再入力なし</td></tr>
+                <tr><td>Update desired state</td><td>≤ 2</td><td>≤ 1</td><td>0</td><td>Open＋Save。conflict時だけ再判断</td></tr>
+                <tr><td>Disable Registration</td><td>≤ 2</td><td>≤ 2</td><td>0</td><td>影響とversion確認の必要摩擦を残す</td></tr>
+                <tr><td>Retry delivery</td><td>≤ 2</td><td>≤ 1</td><td>0</td><td>Failure選択＋Retry。ID／attempt再入力なし</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="review-card">
+          <h3>Truthful state contract</h3>
+          <ul>
+            <li><strong>Loading:</strong> 結果領域をbusyにし、skeletonをhealthy dataに見せない。</li>
+            <li><strong>Empty:</strong> fresh authoritative zero resultだけを「登録なし」と表示。</li>
+            <li><strong>Stale:</strong> observed、last-good、reasonを示してcurrent healthyにしない。</li>
+            <li><strong>Disconnected:</strong> last knownとlast successful readを区別しmutationを止める。</li>
+            <li><strong>Applied / duplicate:</strong> durable command evidenceであり、まだsuccessではない。</li>
+            <li><strong>Rejected:</strong> 理由と修正方法をaction近傍へ出し、入力を保持。</li>
+            <li><strong>Conflict:</strong> current version／attemptを再読込し、自動上書きしない。</li>
+            <li><strong>Indeterminate:</strong> successにせず、同じkey／inputでの再送かauthoritative queryだけを案内。</li>
+            <li><strong>Verified success:</strong> identity、version／attempt、desired／recoveryがauthoritative re-queryで一致した後だけ。</li>
+          </ul>
+        </article>
+
+        <article class="review-card">
+          <h3>Browser security boundary</h3>
+          <ul>
+            <li>Browserはsame-origin Control API以外へ接続しない。</li>
+            <li><code>GET /dashboard/bootstrap</code>だけをno-Origin例外とし、loopback peer、exact Host、expiry、single use、constant-time token比較後にasset load前のclean URLへredirect。</li>
+            <li>opaque session IDはserver-side。cookieはHttpOnly、SameSite=Strict、path-scoped、expiring、HTTPS時Secure。</li>
+            <li><code>GET /v1/browser-session</code>のCSRF proofはmemoryだけに保持し、全unsafe methodでexact Origin、same-origin Sec-Fetch-Site、<code>X-CSRF-Token</code>をbusiness inputより先に検証。</li>
+            <li>bearer／session ID／CSRF proof／provider／DB／runner／container credentialをHTML、JavaScript、DOM、URL、storage、log、payloadへ公開しない。</li>
+            <li>Registration inputはowner/name＋4 switchesのみ。command、host path、image、mount、credential、任意configurationなし。</li>
+            <li>CSP self-only、frame／object／base禁止、nosniff、no-referrer、no-store、no permissive CORS。mode変更、job cancel、container start／stop、DB direct accessはUIに置かない。</li>
+          </ul>
+        </article>
+
+        <article class="review-card" data-wide="true">
+          <h3>Seven-capability reconciliation — proposed for #15 / AC-CISO-010</h3>
+          <table class="review-table">
+            <thead>
+              <tr>
+                <th>Capability</th>
+                <th>Exact planned Control API operations</th>
+                <th>Architecture elements</th>
+                <th>UI / verification obligation</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>cap-establish-browser-control-session</code></td>
+                <td><code>GET /dashboard/bootstrap</code><br><code>GET /v1/browser-session</code><br><code>DELETE /v1/browser-session</code></td>
+                <td><code>ARCH-registration-control-009</code>, <code>-010</code></td>
+                <td>script-free bootstrap、server-side session、exact Origin／CSRF、zero bearer exposure</td>
+              </tr>
+              <tr>
+                <td><code>cap-list-registration-status</code></td>
+                <td><code>GET /v1/registrations</code></td>
+                <td><code>-001</code>–<code>-003</code>, <code>-011</code></td>
+                <td>MONITOR_ONLY|ACTIVE＋5 component truth＋all authoritative post-command checks</td>
+              </tr>
+              <tr>
+                <td><code>cap-create-registration</code></td>
+                <td><code>POST /v1/registrations</code></td>
+                <td><code>-012</code>, <code>-013</code></td>
+                <td>Idempotency-Key、strict input、identity／initial version re-query match</td>
+              </tr>
+              <tr>
+                <td><code>cap-update-registration</code></td>
+                <td><code>PATCH /v1/registrations/{registrationId}</code></td>
+                <td><code>-012</code>, <code>-013</code></td>
+                <td>Idempotency-Key＋If-Match、new version／desired fields re-query match</td>
+              </tr>
+              <tr>
+                <td><code>cap-disable-registration</code></td>
+                <td><code>POST /v1/registrations/{registrationId}/disable</code></td>
+                <td><code>-012</code>, <code>-013</code></td>
+                <td>Idempotency-Key＋If-Match、old-work fence、enabled=false re-query match</td>
+              </tr>
+              <tr>
+                <td><code>cap-inspect-delivery-status</code></td>
+                <td><code>GET /v1/deliveries/{deliveryId}</code></td>
+                <td><code>-005</code>, <code>-006</code>, <code>-014</code></td>
+                <td>durable delivery／attempt／Registration binding and recovery projection</td>
+              </tr>
+              <tr>
+                <td><code>cap-retry-delivery</code></td>
+                <td><code>POST /v1/deliveries/{deliveryId}/retry</code></td>
+                <td><code>-004</code>–<code>-006</code>, <code>-012</code>–<code>-014</code></td>
+                <td>Idempotency-Key＋attempts＋Registration version、attempt／recovery re-query match</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>全行のownerは<code>mrbaron3/workflow#15</code> / <code>AC-CISO-010</code>。既存<code>AC-CISO-001/002</code>はlineageであり代替ownershipではありません。詳細な実装／test obligationは<code>capability-reconciliation.json</code>にあります。</p>
+        </article>
+
+        <article class="review-card">
+          <h3>Design-system decisions</h3>
+          <ul>
+            <li><strong>Reuse:</strong> Alert。</li>
+            <li><strong>Extend:</strong> Repository Status Card、Failure Recovery。</li>
+            <li><strong>Create:</strong> Connection/Freshness Banner、Desired/Actual Matrix、Delivery Recovery Panel、Command Verification Status、truthful state／anomaly-first／loopback session patterns、status tokens。</li>
+            <li><strong>Feature-local:</strong> Registration Editor、safe mutation pattern。</li>
+          </ul>
+        </article>
+
+        <article class="review-card review-meta">
+          <h3>Lineage and review status</h3>
+          <p>Source: <code>mrbaron3/workflow#15</code> at <code>2026-07-25T07:10:01Z</code>.</p>
+          <p>Design Request: <code>workflow-ciso05-dashboard-20260726</code>.</p>
+          <p>Revision: <code>workflow-ciso05-dashboard-r02</code>.</p>
+          <p>Previous revision: <code>workflow-ciso05-dashboard-r01</code>, rejected bundle <code>sha256:56eb4d72…</code>.</p>
+          <p>Human request-changes: <code>workflow-ciso05-dashboard-r01-request-changes</code>.</p>
+          <p><strong>No approval is included.</strong> All authored ambiguities are closed and the seven capability proposals are reconciled, but implementation remains blocked until a separate Human Design Decision approves this exact revisionId and bundleDigest.</p>
+        </article>
+      </div>
+    </section>
+
+    <dialog id="registration-dialog" data-region-id="region-registration-editor" aria-labelledby="dialog-title" aria-describedby="dialog-description">
+      <form id="registration-form" data-element-id="element-registration-form" novalidate>
+        <div class="dialog-header">
+          <h2 id="dialog-title" tabindex="-1">Register repository</h2>
+          <p id="dialog-description">許可されたRegistration fieldsだけを送信します。</p>
+        </div>
+        <div class="dialog-body">
+          <div id="dialog-error" class="dialog-error" data-element-id="element-validation-summary" data-visible="false" role="alert" tabindex="-1"></div>
+          <div id="dialog-content" class="dialog-grid"></div>
+        </div>
+        <div class="dialog-actions" data-element-id="element-editor-actions">
+          <button id="dialog-cancel" type="button">Cancel</button>
+          <button id="dialog-submit" class="button-primary" type="submit">Save Registration</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const baseRegistrations = [
+          {
+            id: "reg_01HZX5CISO050001",
+            repository: "mrbaron3/workflow",
+            version: 12,
+            enabled: true,
+            issue: true,
+            pr: true,
+            execution: true,
+            tone: "critical",
+            label: "Forwarder failed",
+            lastGood: "23 min ago",
+            updated: "2026-07-26 00:05:18 JST",
+            queueDepth: 3,
+            activeJob: "job_01HZX5…9AB",
+            lastPollIssue: "2 min ago",
+            lastPollPR: "17 min ago",
+            lastDelivery: "8 min ago",
+            error: "Webhook Forwarder disconnected after 3 route attempts.",
+            recovery: "Periodic reconciliation is running. Retry the failed delivery only after the Forwarder is fresh.",
+            components: [
+              ["Issue Monitor", "On", "Running", "success", "Fresh", "2 min ago", "300 s", "2 min ago", "None", "None"],
+              ["PR Monitor", "On", "Stale", "warning", "Stale", "17 min ago", "300 s", "19 min ago", "Observation exceeded budget", "Scheduled: next poll"],
+              ["Forwarder", "On", "Failed", "critical", "Fresh", "8 min ago", "60 s", "23 min ago", "Disconnected after 3 attempts", "In progress: reconnect"],
+              ["Execution", "On", "paused_by_mode", "neutral", "Fresh", "1 min ago", "30 s", "1 min ago", "None", "Blocked by MONITOR_ONLY"],
+              ["Queue", "Accepting", "Depth 3 · leased job v12", "warning", "Fresh", "1 min ago", "15 s", "6 min ago", "None", "In progress: durable drain"]
+            ]
+          },
+          {
+            id: "reg_01HZX5CISO050002",
+            repository: "mrbaron3/designflow",
+            version: 7,
+            enabled: true,
+            issue: true,
+            pr: true,
+            execution: false,
+            tone: "warning",
+            label: "PR observation stale",
+            lastGood: "14 min ago",
+            updated: "2026-07-25 23:48:02 JST",
+            queueDepth: 0,
+            activeJob: "None",
+            lastPollIssue: "1 min ago",
+            lastPollPR: "14 min ago",
+            lastDelivery: "Never",
+            error: "PR Monitor observation is older than the 5 minute freshness budget.",
+            recovery: "Waiting for the next authoritative poll. Execution remains off by desired state.",
+            components: [
+              ["Issue Monitor", "On", "Running", "success", "Fresh", "1 min ago", "300 s", "1 min ago", "None", "None"],
+              ["PR Monitor", "On", "Stale", "warning", "Stale", "14 min ago", "300 s", "14 min ago", "Observation exceeded budget", "Scheduled: next poll"],
+              ["Forwarder", "On", "Running", "success", "Fresh", "1 min ago", "60 s", "1 min ago", "None", "None"],
+              ["Execution", "Off", "Stopped", "neutral", "Fresh", "1 min ago", "30 s", "Not applicable", "None", "None: stopped by desired"],
+              ["Queue", "Not accepting", "Depth 0", "neutral", "Fresh", "1 min ago", "15 s", "Not applicable", "None", "None: execution disabled"]
+            ]
+          },
+          {
+            id: "reg_01HZX5CISO050003",
+            repository: "example/archived-repo",
+            version: 4,
+            enabled: false,
+            issue: false,
+            pr: false,
+            execution: false,
+            tone: "neutral",
+            label: "Disabled",
+            lastGood: "2026-07-24 18:20 JST",
+            updated: "2026-07-25 20:04:11 JST",
+            queueDepth: 0,
+            activeJob: "None",
+            lastPollIssue: "Stopped",
+            lastPollPR: "Stopped",
+            lastDelivery: "2026-07-24 18:20 JST",
+            error: "",
+            recovery: "No recovery required. All desired switches are off.",
+            components: [
+              ["Issue Monitor", "Off", "Stopped", "neutral", "Fresh", "2 h ago", "300 s", "2026-07-24 18:20", "None", "None: stopped by desired"],
+              ["PR Monitor", "Off", "Stopped", "neutral", "Fresh", "2 h ago", "300 s", "2026-07-24 18:20", "None", "None: stopped by desired"],
+              ["Forwarder", "Off", "Stopped", "neutral", "Fresh", "2 h ago", "60 s", "2026-07-24 18:20", "None", "None: stopped by desired"],
+              ["Execution", "Off", "Stopped", "neutral", "Fresh", "2 h ago", "30 s", "Not applicable", "None", "None: stopped by desired"],
+              ["Queue", "Not accepting", "Depth 0", "neutral", "Fresh", "2 h ago", "15 s", "Not applicable", "None", "None: no active work"]
+            ]
+          }
+        ];
+
+        const stateDescriptions = {
+          anomaly: {
+            mode: "MONITOR_ONLY",
+            tone: "success",
+            connection: "Connected · fresh snapshot",
+            observed: "2026-07-26 00:07:42 JST",
+            lastSuccess: "just now",
+            announcement: "3 Registrationsを読み込みました。2件に対応が必要です。",
+            announcementTone: "info"
+          },
+          active: {
+            mode: "ACTIVE",
+            tone: "success",
+            connection: "Connected · fresh snapshot",
+            observed: "2026-07-26 00:07:50 JST",
+            lastSuccess: "just now",
+            announcement: "authoritative modeはACTIVEです。Execution actualはrunnerとjob evidenceから表示します。",
+            announcementTone: "info"
+          },
+          loading: {
+            mode: "Unknown",
+            tone: "warning",
+            connection: "Loading authoritative status",
+            observed: "Pending",
+            lastSuccess: "No snapshot in this view",
+            announcement: "Registration statusを読み込んでいます。現在の状態はまだ確定していません。",
+            announcementTone: "warning"
+          },
+          empty: {
+            mode: "MONITOR_ONLY",
+            tone: "success",
+            connection: "Connected · fresh empty snapshot",
+            observed: "2026-07-26 00:07:42 JST",
+            lastSuccess: "just now",
+            announcement: "authoritative snapshotは0 Registrationsを返しました。これは「登録なし」であり「全件healthy」ではありません。",
+            announcementTone: "info"
+          },
+          stale: {
+            mode: "MONITOR_ONLY",
+            tone: "warning",
+            connection: "Connected · snapshot stale",
+            observed: "2026-07-25 23:46:11 JST",
+            lastSuccess: "21 min ago",
+            announcement: "表示は21分前のlast known snapshotです。current healthy stateとして使用しないでください。",
+            announcementTone: "warning"
+          },
+          disconnected: {
+            mode: "Unknown",
+            tone: "critical",
+            connection: "Disconnected · current state unavailable",
+            observed: "Unavailable",
+            lastSuccess: "2026-07-25 23:46:11 JST",
+            announcement: "Control APIへ接続できません。表示はlast knownで、Registration操作とRetryは無効です。",
+            announcementTone: "critical"
+          },
+          sessionExpired: {
+            mode: "Unknown",
+            tone: "critical",
+            connection: "Session expired · mutation disabled",
+            observed: "Unavailable",
+            lastSuccess: "2026-07-26 00:07:42 JST",
+            announcement: "Opaque browser sessionが期限切れです。CSRF proofは失効し、全mutationを無効化しました。bearer入力欄はありません。",
+            announcementTone: "critical"
+          },
+          applied: {
+            mode: "MONITOR_ONLY",
+            tone: "warning",
+            connection: "Connected · command applied, verifying",
+            observed: "2026-07-26 00:08:01 JST",
+            lastSuccess: "just now",
+            announcement: "Applied: commandはdurableに記録されました。GET /v1/registrationsのauthoritative一致を検証中で、まだsuccessではありません。",
+            announcementTone: "warning"
+          },
+          duplicate: {
+            mode: "MONITOR_ONLY",
+            tone: "warning",
+            connection: "Connected · duplicate outcome, verifying",
+            observed: "2026-07-26 00:08:01 JST",
+            lastSuccess: "just now",
+            announcement: "Duplicate: 同じIdempotency-Keyと入力は同じoutcomeへ収束しました。authoritative re-query完了までsuccessではありません。",
+            announcementTone: "warning"
+          },
+          rejected: {
+            mode: "MONITOR_ONLY",
+            tone: "success",
+            connection: "Connected · fresh snapshot",
+            observed: "2026-07-26 00:07:42 JST",
+            lastSuccess: "just now",
+            announcement: "Registration updateは拒否されました。unsafe fieldが含まれていたため、stateは変更されていません。",
+            announcementTone: "critical"
+          },
+          conflict: {
+            mode: "MONITOR_ONLY",
+            tone: "success",
+            connection: "Connected · fresh snapshot",
+            observed: "2026-07-26 00:07:42 JST",
+            lastSuccess: "just now",
+            announcement: "Version conflict: 表示していたv11に対してcurrentはv12です。再読込して差分を再判断してください。",
+            announcementTone: "warning"
+          },
+          indeterminate: {
+            mode: "MONITOR_ONLY",
+            tone: "warning",
+            connection: "Connected · command outcome indeterminate",
+            observed: "2026-07-26 00:08:02 JST",
+            lastSuccess: "just now",
+            announcement: "Indeterminate: commit結果を確認できません。同じIdempotency-Keyと同じ入力で再送するかauthoritative resourceを再取得してください。",
+            announcementTone: "warning"
+          },
+          success: {
+            mode: "MONITOR_ONLY",
+            tone: "success",
+            connection: "Connected · fresh snapshot",
+            observed: "2026-07-26 00:08:03 JST",
+            lastSuccess: "just now",
+            announcement: "Verified success: authoritative snapshotでRegistration v12のpersistを確認しました。actual componentsは収束中です。",
+            announcementTone: "success"
+          }
+        };
+
+        const list = document.getElementById("registration-list");
+        const detailBody = document.getElementById("detail-body");
+        const filter = document.getElementById("repository-filter");
+        const dialog = document.getElementById("registration-dialog");
+        const dialogTitle = document.getElementById("dialog-title");
+        const dialogDescription = document.getElementById("dialog-description");
+        const dialogContent = document.getElementById("dialog-content");
+        const dialogError = document.getElementById("dialog-error");
+        const dialogSubmit = document.getElementById("dialog-submit");
+        const dialogCancel = document.getElementById("dialog-cancel");
+        const form = document.getElementById("registration-form");
+        const liveStatus = document.getElementById("live-status");
+        const createButton = document.getElementById("create-button");
+        const refreshButton = document.getElementById("refresh-button");
+        const stateButtons = [...document.querySelectorAll("[data-preview-state]")];
+
+        let currentState = "anomaly";
+        let currentRegistrations = baseRegistrations.map((item) => structuredClone(item));
+        let selectedId = currentRegistrations[0].id;
+        let dialogMode = "create";
+        let dialogTrigger = null;
+
+        function escapeHTML(value) {
+          return String(value)
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#039;");
+        }
+
+        function toneForComponent(tone) {
+          return tone === "neutral" ? "" : tone;
+        }
+
+        function setAnnouncement(message, tone = "info", assertive = false) {
+          liveStatus.textContent = message;
+          liveStatus.dataset.tone = tone;
+          liveStatus.setAttribute("aria-live", assertive ? "assertive" : "polite");
+        }
+
+        function renderList() {
+          const query = filter.value.trim().toLowerCase();
+          const filtered = currentRegistrations.filter((registration) =>
+            registration.repository.toLowerCase().includes(query)
+          );
+
+          list.setAttribute("aria-busy", currentState === "loading" ? "true" : "false");
+          document.getElementById("list-count").textContent =
+            currentState === "loading" ? "Loading…" : `${filtered.length} of ${currentRegistrations.length} shown`;
+          document.getElementById("summary-total").textContent =
+            currentState === "loading" ? "—" : currentRegistrations.length;
+          document.getElementById("summary-critical").textContent =
+            currentState === "loading" || currentState === "empty"
+              ? currentState === "empty" ? "0" : "—"
+              : currentRegistrations.filter((item) => item.tone === "critical").length;
+          document.getElementById("summary-warning").textContent =
+            currentState === "loading" || currentState === "empty"
+              ? currentState === "empty" ? "0" : "—"
+              : currentRegistrations.filter((item) => item.tone === "warning").length;
+          document.getElementById("summary-jobs").textContent =
+            currentState === "loading" || currentState === "empty"
+              ? currentState === "empty" ? "0" : "—"
+              : currentRegistrations.filter((item) => item.activeJob !== "None").length;
+
+          if (currentState === "loading") {
+            list.dataset.elementId = "element-list-loading";
+            list.innerHTML = `
+              <div class="list-loading">
+                <strong>Loading Registration status</strong>
+                <p>authoritative snapshotを待っています。</p>
+                <div class="skeleton" aria-hidden="true"></div>
+              </div>`;
+            return;
+          }
+
+          if (currentState === "empty" || filtered.length === 0) {
+            list.dataset.elementId = "element-list-empty";
+            const isFilterEmpty = currentState !== "empty" && query;
+            list.innerHTML = `
+              <div class="list-empty">
+                <strong>${isFilterEmpty ? "No matching repositories" : "No repositories registered"}</strong>
+                <p>${isFilterEmpty ? "filterを変更してください。" : "fresh snapshotは0 Registrationsを返しました。"}</p>
+                ${isFilterEmpty ? "" : '<button class="button-primary" type="button" data-empty-create>Register repository</button>'}
+              </div>`;
+            const emptyCreate = list.querySelector("[data-empty-create]");
+            if (emptyCreate) {
+              emptyCreate.disabled = isMutationBlocked();
+              emptyCreate.addEventListener("click", (event) => openEditor("create", event.currentTarget));
+            }
+            return;
+          }
+
+          list.dataset.elementId = "element-registration-card";
+          list.innerHTML = filtered.map((registration) => `
+            <button
+              class="registration-card"
+              type="button"
+              data-registration-id="${escapeHTML(registration.id)}"
+              aria-current="${registration.id === selectedId ? "true" : "false"}"
+            >
+              <span class="registration-card__top">
+                <span class="registration-card__name">${escapeHTML(registration.repository)}</span>
+                <span class="status-label" data-tone="${toneForComponent(registration.tone)}">${escapeHTML(registration.label)}</span>
+              </span>
+              <span class="registration-card__meta">
+                <span>Registration version</span><strong>v${registration.version}</strong>
+                <span>Desired</span><strong>${registration.enabled ? "Enabled" : "Disabled"}</strong>
+                <span>Last-good</span><strong>${escapeHTML(registration.lastGood)}</strong>
+              </span>
+            </button>`).join("");
+
+          list.querySelectorAll("[data-registration-id]").forEach((button) => {
+            button.addEventListener("click", () => {
+              selectedId = button.dataset.registrationId;
+              renderList();
+              renderDetail();
+              const selected = currentRegistrations.find((item) => item.id === selectedId);
+              setAnnouncement(`${selected.repository} v${selected.version}のdetailを表示しました。${selected.label}。`);
+            });
+          });
+        }
+
+        function renderDetail() {
+          const registration = currentRegistrations.find((item) => item.id === selectedId);
+          if (!registration || currentState === "loading" || currentState === "empty") {
+            detailBody.innerHTML = `
+              <div class="list-empty">
+                <strong>${currentState === "loading" ? "Detail loading" : "Select or register a repository"}</strong>
+                <p>${currentState === "loading" ? "current truthはまだ利用できません。" : "Registrationが選択されるとdesired／actual detailを表示します。"}</p>
+              </div>`;
+            return;
+          }
+
+          const blocked = isMutationBlocked();
+          const staleOverride = currentState === "stale";
+          const disconnectedOverride = currentState === "disconnected" || currentState === "sessionExpired";
+          const activeOverride = currentState === "active";
+          const matrixRows = registration.components.map((component) => {
+            const [name, desired, actualOriginal, toneOriginal, freshnessOriginal, observedOriginal, budget, lastGood, lastErrorOriginal, recoveryOriginal] = component;
+            const actual = disconnectedOverride
+              ? "Unknown"
+              : staleOverride
+                ? "Stale"
+                : activeOverride && name === "Execution" && desired === "On"
+                  ? "Running"
+                  : activeOverride && name === "Queue" && desired === "Accepting"
+                    ? "Depth 3 · leased job v12"
+                    : actualOriginal;
+            const tone = disconnectedOverride
+              ? "critical"
+              : staleOverride
+                ? "warning"
+                : activeOverride && name === "Execution" && desired === "On"
+                  ? "success"
+                  : toneOriginal;
+            const freshness = disconnectedOverride ? "Unknown" : staleOverride ? "Stale" : freshnessOriginal;
+            const observed = disconnectedOverride ? "Unavailable" : staleOverride ? "21 min ago" : observedOriginal;
+            const lastError = disconnectedOverride ? "Current evidence unavailable" : lastErrorOriginal;
+            const recovery = disconnectedOverride
+              ? "Unknown · reconnect then re-query"
+              : staleOverride
+                ? `Blocked · last known: ${recoveryOriginal}`
+                : activeOverride && name === "Execution" && desired === "On"
+                  ? "None · authoritative runner evidence"
+                  : recoveryOriginal;
+            return `
+              <tr>
+                <td>${escapeHTML(name)}</td>
+                <td><span class="cell-label">Desired</span>${escapeHTML(desired)}</td>
+                <td><span class="cell-label">Actual</span><span class="status-label" data-tone="${toneForComponent(tone)}">${escapeHTML(actual)}</span></td>
+                <td><span class="cell-label">Freshness</span>${escapeHTML(freshness)}<span class="time-note">Observed: ${escapeHTML(observed)} · budget ${escapeHTML(budget)}</span></td>
+                <td><span class="cell-label">Last-good</span>${escapeHTML(lastGood)}<span class="time-note">Historical only</span></td>
+                <td><span class="cell-label">Last error</span>${escapeHTML(lastError)}</td>
+                <td><span class="cell-label">Recovery</span>${escapeHTML(recovery)}</td>
+              </tr>`;
+          }).join("");
+
+          const globalOutcome = currentState === "applied"
+            ? { tone: "warning", text: `Applied · v${registration.version} command recorded. Authoritative re-query is running; not verified.` }
+            : currentState === "duplicate"
+              ? { tone: "warning", text: `Duplicate · same command outcome v${registration.version}. Authoritative re-query is still required.` }
+              : currentState === "indeterminate"
+                ? { tone: "warning", text: "Indeterminate · do not claim success; use the same Idempotency-Key/input or re-query." }
+                : currentState === "rejected"
+            ? { tone: "critical", text: "Rejected · unsafe field was not accepted. No state changed." }
+            : currentState === "conflict"
+              ? { tone: "warning", text: `Conflict · viewed v${Math.max(1, registration.version - 1)}, current v${registration.version}. Reload before retry.` }
+              : currentState === "success"
+                ? { tone: "success", text: `Verified success · authoritative snapshot confirms v${registration.version}. Actual state is still converging.` }
+                : { tone: "", text: "No command in progress." };
+
+          const errorTone = disconnectedOverride || registration.tone === "critical" ? "critical" : "warning";
+          const errorTitle = disconnectedOverride
+            ? "Current state unavailable"
+            : registration.error
+              ? registration.label
+              : "No current error";
+          const errorText = disconnectedOverride
+            ? `Last successful read: ${stateDescriptions.disconnected.lastSuccess}. Values below are last known and mutation is disabled.`
+            : staleOverride
+              ? `Snapshot observed ${stateDescriptions.stale.observed}. ${registration.error || "No current error was observable."}`
+              : registration.error || "Fresh snapshot reports no failure. Disabled by desire is not an anomaly.";
+          const recoveryText = disconnectedOverride
+            ? "Recover the Control API connection, then refresh. Do not infer health from last known values."
+            : registration.recovery;
+
+          detailBody.innerHTML = `
+            <div class="detail-heading">
+              <div data-element-id="element-registration-identity-version">
+                <h2 id="detail-heading" tabindex="-1">${escapeHTML(registration.repository)}</h2>
+                <p>${escapeHTML(registration.id)} · current version v${registration.version} · updated ${escapeHTML(registration.updated)}</p>
+              </div>
+              <div class="detail-actions">
+                <button type="button" data-open-update data-element-id="element-update-registration" ${blocked ? "disabled" : ""}>Edit desired state</button>
+                <button type="button" class="button-danger" data-open-disable data-element-id="element-disable-registration" ${blocked || !registration.enabled ? "disabled" : ""}>Disable Registration</button>
+              </div>
+            </div>
+
+            <dl class="identity-grid">
+              <div><dt>Registration ID</dt><dd class="mono">${escapeHTML(registration.id)}</dd></div>
+              <div><dt>Version fence</dt><dd>v${registration.version}</dd></div>
+              <div><dt>Mode impact</dt><dd>${stateDescriptions[currentState].mode === "MONITOR_ONLY" ? "Execution paused_by_mode" : stateDescriptions[currentState].mode === "ACTIVE" ? "Execution uses runner/job evidence" : "Unknown"}</dd></div>
+              <div><dt>Mutation</dt><dd>${blocked ? "Unavailable" : "Allowed by preview session"}</dd></div>
+            </dl>
+
+            <h3 class="section-heading">Desired Registration state</h3>
+            <ul class="desired-row" data-element-id="element-desired-state">
+              <li><strong>Enabled:</strong> ${registration.enabled ? "On" : "Off"}</li>
+              <li><strong>Issue Monitor:</strong> ${registration.issue ? "On" : "Off"}</li>
+              <li><strong>PR Monitor:</strong> ${registration.pr ? "On" : "Off"}</li>
+              <li><strong>Execution:</strong> ${registration.execution ? "On" : "Off"}</li>
+            </ul>
+
+            <h3 class="section-heading">Desired / Actual / Freshness / Recovery</h3>
+            <div class="matrix-wrap" data-element-id="element-component-matrix">
+              <table class="state-matrix">
+                <thead><tr><th>Component</th><th>Desired</th><th>Actual</th><th>Freshness / observed</th><th>Last-good</th><th>Last error</th><th>Recovery</th></tr></thead>
+                <tbody>${matrixRows}</tbody>
+              </table>
+            </div>
+
+            <h3 class="section-heading">Observation timeline and work</h3>
+            <dl class="metrics-grid">
+              <div data-element-id="element-observation-timeline"><dt>Last Issue poll</dt><dd>${escapeHTML(registration.lastPollIssue)}</dd></div>
+              <div data-element-id="element-observation-timeline"><dt>Last PR poll</dt><dd>${escapeHTML(registration.lastPollPR)}</dd></div>
+              <div data-element-id="element-observation-timeline"><dt>Last delivery</dt><dd>${escapeHTML(registration.lastDelivery)}</dd></div>
+              <div data-element-id="element-queue-active-job"><dt>Queue / active job</dt><dd>Depth ${registration.queueDepth} · ${escapeHTML(registration.activeJob)}</dd></div>
+            </dl>
+
+            <article class="alert" data-tone="${errorTone}" data-element-id="element-error-recovery">
+              <h3>${escapeHTML(errorTitle)}</h3>
+              <p>${escapeHTML(errorText)}</p>
+              <p><strong>Recovery:</strong> ${escapeHTML(recoveryText)}</p>
+              <details><summary>Debug detail</summary><p class="mono">registration=${escapeHTML(registration.id)} version=${registration.version} state=${escapeHTML(currentState)}</p></details>
+            </article>
+
+            <section class="delivery-panel" data-region-id="region-delivery-recovery">
+              <div class="delivery-panel__header"><h3>Recent failed or ignored deliveries</h3></div>
+              <div class="delivery-layout">
+                <ul class="failure-list" data-element-id="element-delivery-failure-list">
+                  <li>
+                    <button type="button" aria-current="true">
+                      <span class="status-label" data-tone="critical">Failed</span>
+                      <strong class="mono">delivery-7b9c…2d1</strong>
+                      <small>issues · 3 attempts · 8 min ago</small>
+                    </button>
+                  </li>
+                </ul>
+                <div class="delivery-detail" data-element-id="element-delivery-detail">
+                  <dl>
+                    <dt>Delivery</dt><dd class="mono">delivery-7b9c…2d1</dd>
+                    <dt>Status</dt><dd>Failed · forwarder unavailable</dd>
+                    <dt>Route attempts</dt><dd>3 observed</dd>
+                    <dt>Registration fence</dt><dd>v${registration.version}</dd>
+                    <dt>Duplicate fence</dt><dd>Idempotency-Key generated in memory</dd>
+                    <dt>Last attempt</dt><dd>2026-07-26 00:00:13 JST · rejected=false</dd>
+                  </dl>
+                  <div class="delivery-actions">
+                    <button type="button" class="button-primary" data-retry data-element-id="element-retry-delivery" ${blocked || !registration.enabled ? "disabled" : ""}>Retry failed delivery</button>
+                    <div id="command-outcome" class="command-outcome" data-tone="${globalOutcome.tone}" data-element-id="element-command-outcome" role="status">${escapeHTML(globalOutcome.text)}</div>
+                  </div>
+                </div>
+              </div>
+            </section>`;
+
+          const updateButton = detailBody.querySelector("[data-open-update]");
+          const disableButton = detailBody.querySelector("[data-open-disable]");
+          const retryButton = detailBody.querySelector("[data-retry]");
+          if (updateButton) updateButton.addEventListener("click", (event) => openEditor("update", event.currentTarget));
+          if (disableButton) disableButton.addEventListener("click", (event) => openEditor("disable", event.currentTarget));
+          if (retryButton) {
+            retryButton.addEventListener("click", () => {
+              retryButton.disabled = true;
+              const outcome = document.getElementById("command-outcome");
+              outcome.dataset.tone = "";
+              outcome.dataset.tone = "warning";
+              outcome.textContent = `Applied · attempt retry-01J…A7 is pending; fenced by 3 route attempts and Registration v${registration.version}. Authoritative re-query is required.`;
+              setAnnouncement(`Applied: retry attempt retry-01J…A7 is pending with Registration v${registration.version}. This is not verified success.`);
+            });
+          }
+        }
+
+        function isMutationBlocked() {
+          return currentState === "loading" || currentState === "stale" || currentState === "disconnected" || currentState === "sessionExpired";
+        }
+
+        function setPreviewState(state) {
+          currentState = state;
+          const descriptor = stateDescriptions[state];
+          currentRegistrations = state === "empty" ? [] : baseRegistrations.map((item) => structuredClone(item));
+          selectedId = currentRegistrations[0]?.id || null;
+
+          stateButtons.forEach((button) => {
+            button.setAttribute("aria-pressed", String(button.dataset.previewState === state));
+          });
+
+          const banner = document.getElementById("connection-banner");
+          banner.dataset.tone = descriptor.tone;
+          document.getElementById("connection-label").textContent = descriptor.connection;
+          document.getElementById("observed-time").textContent = descriptor.observed;
+          document.getElementById("last-success-time").textContent = descriptor.lastSuccess;
+          document.getElementById("mode-value").textContent = descriptor.mode;
+          document.getElementById("session-state").textContent =
+            state === "sessionExpired"
+              ? "Expired · CSRF invalidated"
+              : state === "disconnected"
+                ? "Last known · mutation disabled"
+                : "Authenticated · expires 00:37 JST";
+          createButton.disabled = isMutationBlocked();
+          refreshButton.disabled = state === "loading";
+          filter.disabled = state === "loading";
+
+          setAnnouncement(
+            descriptor.announcement,
+            descriptor.announcementTone,
+            state === "disconnected" || state === "sessionExpired" || state === "rejected"
+          );
+          renderList();
+          renderDetail();
+        }
+
+        function openEditor(mode, trigger) {
+          dialogMode = mode;
+          dialog.dataset.elementId = mode === "disable" ? "element-disable-confirmation" : "element-registration-form";
+          dialogTrigger = trigger;
+          dialogError.dataset.visible = "false";
+          dialogError.textContent = "";
+          const selected = currentRegistrations.find((item) => item.id === selectedId) || baseRegistrations[0];
+
+          if (mode === "create") {
+            dialogTitle.textContent = "Register repository";
+            dialogDescription.textContent = "canonical owner/nameと4つのdesired switchesだけをrequest-specific Idempotency-Keyで保存します。";
+            dialogSubmit.textContent = "Save Registration";
+            dialogSubmit.className = "button-primary";
+            dialogContent.innerHTML = `
+              <div class="field">
+                <label for="repository-input">Repository identity <span aria-hidden="true">*</span></label>
+                <input id="repository-input" name="repository" type="text" required pattern="[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+" autocomplete="off" aria-describedby="repository-help">
+                <small id="repository-help">canonical owner/name。URL、path、credentialは入力できません。</small>
+              </div>
+              ${switchFields({ enabled: true, issue: true, pr: true, execution: true })}
+              ${securityNote()}`;
+          } else if (mode === "update") {
+            dialogTitle.textContent = "Edit desired state";
+            dialogDescription.textContent = `${selected.repository} · If-Match v${selected.version} · request-specific Idempotency-Key`;
+            dialogSubmit.textContent = "Save v" + selected.version + " changes";
+            dialogSubmit.className = "button-primary";
+            dialogContent.innerHTML = `
+              <div class="field">
+                <label for="repository-input">Repository identity</label>
+                <input id="repository-input" name="repository" type="text" readonly value="${escapeHTML(selected.repository)}">
+              </div>
+              ${switchFields(selected)}
+              ${securityNote()}`;
+          } else {
+            dialogTitle.textContent = "Disable Registration?";
+            dialogDescription.textContent = `${selected.repository} · If-Match v${selected.version} · request-specific Idempotency-Key`;
+            dialogSubmit.textContent = "Disable Registration";
+            dialogSubmit.className = "button-danger";
+            dialogContent.innerHTML = `
+              <article class="alert" data-tone="warning">
+                <h3>Impact confirmation</h3>
+                <p>Issue Monitor、PR Monitor、Forwarder、Executionのdesired stateを停止し、新しいworkを開始しません。</p>
+                <p>古いqueued／leased workは成功とせず、rejectedまたはrecovery outcomeをstatusで確認します。</p>
+              </article>
+              <dl class="identity-grid">
+                <div><dt>Repository</dt><dd class="mono">${escapeHTML(selected.repository)}</dd></div>
+                <div><dt>Version</dt><dd>v${selected.version}</dd></div>
+              </dl>
+              ${securityNote()}`;
+          }
+
+          dialog.showModal();
+          requestAnimationFrame(() => dialogTitle.focus());
+        }
+
+        function switchFields(values) {
+          return `
+            <div>
+              <span class="fieldset-label">Desired switches</span>
+              <ul class="switch-list">
+                ${switchField("enabled-input", "enabled", "Registration enabled", values.enabled)}
+                ${switchField("issue-input", "issue", "Issue Monitor enabled", values.issue)}
+                ${switchField("pr-input", "pr", "PR Monitor enabled", values.pr)}
+                ${switchField("execution-input", "execution", "Execution enabled", values.execution)}
+              </ul>
+            </div>`;
+        }
+
+        function switchField(id, name, label, checked) {
+          return `<li><label for="${id}"><input id="${id}" name="${name}" type="checkbox" ${checked ? "checked" : ""}><span>${label}</span></label></li>`;
+        }
+
+        function securityNote() {
+          return `<p class="security-note"><strong>Security boundary:</strong> opaque HttpOnly session＋exact Host／Origin＋same-origin Sec-Fetch-Site＋memory-only X-CSRF-Token＋version／Idempotency-Key fence。Bearerはbrowser codeに存在しません。任意command、host path、image、mount、credential、configuration fieldはありません。</p>`;
+        }
+
+        function closeDialog() {
+          dialog.close();
+          if (dialogTrigger && document.contains(dialogTrigger)) dialogTrigger.focus();
+        }
+
+        stateButtons.forEach((button) => {
+          button.addEventListener("click", () => setPreviewState(button.dataset.previewState));
+        });
+
+        filter.addEventListener("input", () => {
+          renderList();
+          const count = currentRegistrations.filter((item) =>
+            item.repository.toLowerCase().includes(filter.value.trim().toLowerCase())
+          ).length;
+          setAnnouncement(`${count} Registrationsがfilter条件に一致しました。`);
+        });
+
+        createButton.addEventListener("click", (event) => openEditor("create", event.currentTarget));
+
+        refreshButton.addEventListener("click", () => {
+          refreshButton.disabled = true;
+          refreshButton.textContent = "Refreshing…";
+          setAnnouncement("Authoritative statusを再取得しています。既存値はlast knownとして保持します。");
+          window.setTimeout(() => {
+            refreshButton.textContent = "Refresh status";
+            setPreviewState("anomaly");
+            refreshButton.focus();
+          }, 500);
+        });
+
+        dialogCancel.addEventListener("click", closeDialog);
+        dialog.addEventListener("cancel", (event) => {
+          event.preventDefault();
+          closeDialog();
+        });
+
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          if (dialogMode === "create") {
+            const repositoryInput = document.getElementById("repository-input");
+            const canonicalRepository = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+            if (!canonicalRepository.test(repositoryInput.value)) {
+              dialogError.textContent = "Repository identityはcanonical owner/nameで入力してください。URL、path、spaceは使用できません。";
+              dialogError.dataset.visible = "true";
+              dialogError.focus();
+              return;
+            }
+          }
+          dialogSubmit.disabled = true;
+          dialogCancel.disabled = true;
+          dialogDescription.textContent = "Applied · durable command outcomeを受領しました。authoritative resourceをre-query中です。まだsuccessではありません。";
+          setPreviewState("applied");
+          window.setTimeout(() => {
+            setPreviewState("success");
+            dialogDescription.textContent = "Verified success · authoritative identity、version、desired fieldsがcommand outcomeと一致しました。";
+            dialog.close();
+            dialogSubmit.disabled = false;
+            dialogCancel.disabled = false;
+            if (dialogTrigger && document.contains(dialogTrigger)) {
+              dialogTrigger.focus();
+            } else {
+              document.querySelector(`[data-registration-id="${selectedId}"]`)?.focus();
+            }
+          }, 700);
+        });
+
+        dialog.addEventListener("keydown", (event) => {
+          if (event.key !== "Tab") return;
+          const focusable = [...dialog.querySelectorAll("button:not(:disabled), input:not(:disabled), [tabindex='0']")]
+            .filter((element) => element.offsetParent !== null);
+          if (!focusable.length) return;
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        });
+
+        setPreviewState("anomaly");
+      })();
+    </script>
+  </body>
+</html>

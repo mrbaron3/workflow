@@ -70,15 +70,25 @@ Apple Containerのext4 named volumeには`lost+found`があるため、volumeは
 container build --target control -t agentops-control:dev -f deploy/Containerfile .
 container run --detach --name agentops-control \
   --network <internal-network> \
+  --read-only --cap-drop ALL --tmpfs /tmp \
   --publish 127.0.0.1:8080:8080 \
   --env AGENTOPS_DATABASE_URL='postgresql://…' \
-  --env AGENTOPS_CONTROL_TOKEN='<operator-token>' \
+  --env AGENTOPS_CONTROL_TOKEN='<32+ byte random operator-token>' \
+  --env AGENTOPS_OPERATING_MODE='MONITOR_ONLY' \
+  --env AGENTOPS_DASHBOARD_ORIGIN='http://127.0.0.1:8080' \
+  --env AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<single-use-random-token>' \
   --env AGENTOPS_GITHUB_WEBHOOK_SECRET='<webhook-secret>' \
   --env GH_TOKEN='<github-token>' \
   agentops-control:dev
 ```
 
-`control`だけをloopbackへpublishし、PostgreSQL/runnerはpublishしない。通常起動はDDLを変更せずschema version 3と
+container内のControl API本体は`127.0.0.1:8081`にbindし、port 8080の同一process publication proxyだけを
+host loopbackへpublishする。PostgreSQL/runnerはpublishしない。browserは起動logの
+`/dashboard/bootstrap?token=…` を一度だけ開き、clean URLへredirect後はHttpOnly session cookieとmemory-only
+CSRF proofだけを使う。host側portが8080以外なら`AGENTOPS_DASHBOARD_ORIGIN`もそのexact loopback originへ合わせる。
+root filesystemはread-only、capabilityはALL drop、writable領域は`/tmp`のtmpfsだけとし、host filesystemや
+container runtime socketはmount/publishしない。
+通常起動はDDLを変更せずschema version 3と
 全migration checksumをverifyする。起動前にpinned Experience Design Bundleのapproval/revision/digest/capability
 coverageも検証し、不一致ならHTTP serverを開始しない。
 
@@ -89,7 +99,8 @@ control restart reconstruction、publish surfaceを接地する:
 npm run smoke:control:apple
 ```
 
-証跡は`evidence/ciso-03/apple-container-smoke.json`へ出力される。
+Issue #15 dashboard boundaryまで含む証跡は`npm run smoke:dashboard:apple`で
+`evidence/ciso-05/dashboard-apple-container-smoke.json`へ出力される。
 
 ## Isolated AgentOps runner（CISO-04）
 
@@ -102,6 +113,8 @@ npm run smoke:runner:apple
 capability drop ALL、host publishなしで起動する。起動時にmount/publish/outboundとMac HOME／開発root／SSH agent／
 Apple Container socket／control credential不在を検証し、provider/GitHub子processにはDB credentialを渡さない。
 job/result/failureは`contracts/control-store/v1/runner-*.schema.json`のversion 1だけを受理し、unknown schemaは拒否する。
+runnerは`AGENTOPS_OPERATING_MODE`省略時に`MONITOR_ONLY`でleaseを取得せず、実行を許可する配置だけが
+`ACTIVE`を明示する。control/runnerで同じmodeを設定する。
 
 Apple Container smokeはinternal network上のrunner/PostgreSQL、lease競合・expiry・restart recovery、全critical boundaryの
 Registration stale race、lease loss、artifact tamper、zero host port、private volumeを接地し、

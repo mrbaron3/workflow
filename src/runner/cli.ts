@@ -33,6 +33,7 @@ async function main(): Promise<void> {
       workerId: config.workerId,
       workspaceRoot: config.workspaceRoot,
       provider: config.provider,
+      operatingMode: config.operatingMode,
       leaseDurationMs: config.leaseDurationMs,
       heartbeatIntervalMs: config.heartbeatIntervalMs,
       heartbeatDatabaseUrl: config.databaseUrl,
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
       eventType: 'runner.startup.validated',
       details: {
         provider: config.provider,
+        operatingMode: config.operatingMode,
         workspaceRoot: config.workspaceRoot,
         publishedPortCount: config.publishedPorts.length,
         mountSources: config.mounts.map((mount) => mount.source),

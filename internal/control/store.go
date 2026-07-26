@@ -286,7 +286,13 @@ func (store *Store) CreateRegistration(
 		"registration.created",
 		&registration.ID,
 		nil,
-		map[string]any{"repository": registration.Repository, "version": registration.Version},
+		map[string]any{
+			"repository":            registration.Repository,
+			"version":               registration.Version,
+			"desiredState":          registrationDesiredAudit(registration),
+			"outcome":               "applied",
+			"commandIdentityDigest": "sha256:" + sha256Hex([]byte(idempotencyKey)),
+		},
 	); err != nil {
 		return Registration{}, false, err
 	}
@@ -374,6 +380,200 @@ func (store *Store) UpdateRegistration(
 		return Registration{}, unavailable(err)
 	}
 	return registration, nil
+}
+
+func (store *Store) UpdateRegistrationCommand(
+	ctx context.Context,
+	id string,
+	expectedVersion int64,
+	patch RegistrationPatch,
+	idempotencyKey, actorID, eventType string,
+) (Registration, bool, error) {
+	if err := patch.Validate(); err != nil {
+		return Registration{}, false, err
+	}
+	requestBody, _ := json.Marshal(map[string]any{
+		"id":              id,
+		"expectedVersion": expectedVersion,
+		"patch":           patch,
+		"eventType":       eventType,
+	})
+	requestHash := sha256Hex(requestBody)
+	scope := "registration:command:" + id
+	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Registration{}, false, unavailable(err)
+	}
+	defer func() { _ = transaction.Rollback(context.Background()) }()
+	if _, err := transaction.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+		advisoryRequestKey(scope, idempotencyKey),
+	); err != nil {
+		return Registration{}, false, unavailable(err)
+	}
+	var storedHash string
+	var storedResponse []byte
+	err = transaction.QueryRow(ctx,
+		`SELECT request_hash, response
+		   FROM agentops_control.control_api_requests
+		  WHERE scope = $1 AND idempotency_key = $2
+		  FOR UPDATE`,
+		scope,
+		idempotencyKey,
+	).Scan(&storedHash, &storedResponse)
+	if err == nil {
+		if storedHash != requestHash {
+			return Registration{}, false, ErrIdempotencyConflict
+		}
+		var registration Registration
+		if err := json.Unmarshal(storedResponse, &registration); err != nil {
+			return Registration{}, false, unavailable(err)
+		}
+		if err := transaction.Commit(ctx); err != nil {
+			return Registration{}, false, unavailable(err)
+		}
+		return registration, true, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Registration{}, false, unavailable(err)
+	}
+	previous, err := scanRegistration(transaction.QueryRow(
+		ctx,
+		registrationSelect+` WHERE id = $1 FOR UPDATE`,
+		id,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Registration{}, false, ErrNotFound
+	}
+	if err != nil {
+		return Registration{}, false, unavailable(err)
+	}
+	if previous.Version != expectedVersion {
+		return previous, false, ErrConflict
+	}
+	if !registrationPatchChanges(patch, previous) {
+		return previous, false, ErrNoChange
+	}
+	var configuration any
+	if len(patch.Configuration) > 0 {
+		configuration = patch.Configuration
+	}
+	registration, err := scanRegistration(transaction.QueryRow(ctx,
+		`UPDATE agentops_control.repository_registrations
+		    SET enabled = COALESCE($3, enabled),
+		        issue_monitor_enabled = COALESCE($4, issue_monitor_enabled),
+		        pr_monitor_enabled = COALESCE($5, pr_monitor_enabled),
+		        execution_enabled = COALESCE($6, execution_enabled),
+		        configuration = COALESCE($7::jsonb, configuration),
+		        version = version + 1,
+		        updated_at = clock_timestamp()
+		  WHERE id = $1 AND version = $2
+		  RETURNING id, repository, enabled, issue_monitor_enabled,
+		            pr_monitor_enabled, execution_enabled, configuration,
+		            version, created_at, updated_at`,
+		id,
+		expectedVersion,
+		patch.Enabled,
+		patch.IssueMonitorEnabled,
+		patch.PRMonitorEnabled,
+		patch.ExecutionEnabled,
+		configuration,
+	))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return previous, false, ErrConflict
+	}
+	if err != nil {
+		return Registration{}, false, classifyPostgres(err)
+	}
+	response, _ := json.Marshal(registration)
+	if _, err := transaction.Exec(ctx,
+		`INSERT INTO agentops_control.control_api_requests(
+		   scope, idempotency_key, request_hash, status_code, response, actor_id
+		 ) VALUES ($1, $2, $3, 200, $4, $5)`,
+		scope,
+		idempotencyKey,
+		requestHash,
+		response,
+		actorID,
+	); err != nil {
+		return Registration{}, false, classifyPostgres(err)
+	}
+	if err := appendAuditTx(
+		ctx,
+		transaction,
+		actorID,
+		eventType,
+		&registration.ID,
+		nil,
+		map[string]any{
+			"previousVersion":       expectedVersion,
+			"version":               registration.Version,
+			"previousDesiredState":  registrationDesiredAudit(previous),
+			"desiredState":          registrationDesiredAudit(registration),
+			"changedFields":         registrationChangedFields(patch, previous, registration),
+			"outcome":               "applied",
+			"commandIdentityDigest": "sha256:" + sha256Hex([]byte(idempotencyKey)),
+		},
+	); err != nil {
+		return Registration{}, false, err
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return Registration{}, false, unavailable(err)
+	}
+	return registration, false, nil
+}
+
+func registrationDesiredAudit(registration Registration) map[string]bool {
+	return map[string]bool{
+		"enabled":             registration.Enabled,
+		"issueMonitorEnabled": registration.IssueMonitorEnabled,
+		"prMonitorEnabled":    registration.PRMonitorEnabled,
+		"executionEnabled":    registration.ExecutionEnabled,
+	}
+}
+
+func registrationChangedFields(
+	patch RegistrationPatch,
+	previous, current Registration,
+) map[string]map[string]bool {
+	changed := make(map[string]map[string]bool)
+	if patch.Enabled != nil {
+		changed["enabled"] = map[string]bool{
+			"previous": previous.Enabled,
+			"current":  current.Enabled,
+		}
+	}
+	if patch.IssueMonitorEnabled != nil {
+		changed["issueMonitorEnabled"] = map[string]bool{
+			"previous": previous.IssueMonitorEnabled,
+			"current":  current.IssueMonitorEnabled,
+		}
+	}
+	if patch.PRMonitorEnabled != nil {
+		changed["prMonitorEnabled"] = map[string]bool{
+			"previous": previous.PRMonitorEnabled,
+			"current":  current.PRMonitorEnabled,
+		}
+	}
+	if patch.ExecutionEnabled != nil {
+		changed["executionEnabled"] = map[string]bool{
+			"previous": previous.ExecutionEnabled,
+			"current":  current.ExecutionEnabled,
+		}
+	}
+	return changed
+}
+
+func registrationPatchChanges(patch RegistrationPatch, previous Registration) bool {
+	return (patch.Enabled != nil && *patch.Enabled != previous.Enabled) ||
+		(patch.IssueMonitorEnabled != nil &&
+			*patch.IssueMonitorEnabled != previous.IssueMonitorEnabled) ||
+		(patch.PRMonitorEnabled != nil &&
+			*patch.PRMonitorEnabled != previous.PRMonitorEnabled) ||
+		(patch.ExecutionEnabled != nil &&
+			*patch.ExecutionEnabled != previous.ExecutionEnabled) ||
+		len(patch.Configuration) > 0
 }
 
 func (store *Store) UpsertActualState(
@@ -703,7 +903,7 @@ func (store *Store) ReceiveWebhook(
 		return WebhookReceipt{}, fmt.Errorf("X-GitHub-Delivery is required")
 	}
 	repository = strings.ToLower(strings.TrimSpace(repository))
-	if !repositoryPattern.MatchString(repository) {
+	if !safeRepositoryIdentity(repository) {
 		return WebhookReceipt{}, fmt.Errorf("payload repository.full_name is invalid")
 	}
 	if !supportedWebhookEvent(event) {
@@ -1026,10 +1226,14 @@ func (store *Store) RetryWebhook(
 	ctx context.Context,
 	deliveryID, idempotencyKey, actorID string,
 	observedAttempts int,
+	expectedRegistrationID string,
+	expectedRegistrationVersion int64,
 ) (RetryResult, bool, error) {
 	requestBody, _ := json.Marshal(map[string]any{
-		"deliveryId":       deliveryID,
-		"observedAttempts": observedAttempts,
+		"deliveryId":                  deliveryID,
+		"expectedRegistrationId":      expectedRegistrationID,
+		"expectedRegistrationVersion": expectedRegistrationVersion,
+		"observedAttempts":            observedAttempts,
 	})
 	requestHash := sha256Hex(requestBody)
 	scope := "delivery:retry:" + deliveryID
@@ -1097,6 +1301,30 @@ func (store *Store) RetryWebhook(
 		}
 		return RetryResult{}, false, unavailable(err)
 	}
+	if registrationID == nil || registrationVersion == nil ||
+		*registrationID != expectedRegistrationID ||
+		*registrationVersion != expectedRegistrationVersion {
+		conflict := &DeliveryRetryConflict{
+			Reason: "registration_fence_mismatch", State: status, RouteAttempts: routeAttempts,
+		}
+		if registrationID != nil {
+			conflict.RegistrationID = *registrationID
+		}
+		if registrationVersion != nil {
+			conflict.RegistrationVersion = *registrationVersion
+		}
+		return persistRetryRejection(
+			ctx,
+			transaction,
+			deliveryID,
+			idempotencyKey,
+			actorID,
+			observedAttempts,
+			requestHash,
+			registrationID,
+			conflict,
+		)
+	}
 	if status != "failed" || routeAttempts != observedAttempts {
 		reason := "observed_attempts_stale"
 		if status != "failed" {
@@ -1104,6 +1332,12 @@ func (store *Store) RetryWebhook(
 		}
 		conflict := &DeliveryRetryConflict{
 			Reason: reason, State: status, RouteAttempts: routeAttempts,
+		}
+		if registrationID != nil {
+			conflict.RegistrationID = *registrationID
+		}
+		if registrationVersion != nil {
+			conflict.RegistrationVersion = *registrationVersion
 		}
 		return persistRetryRejection(
 			ctx,
@@ -1130,6 +1364,8 @@ func (store *Store) RetryWebhook(
 			if errors.Is(err, pgx.ErrNoRows) {
 				conflict := &DeliveryRetryConflict{
 					Reason: "registration_missing", State: status, RouteAttempts: routeAttempts,
+					RegistrationID:      *registrationID,
+					RegistrationVersion: *registrationVersion,
 				}
 				return persistRetryRejection(
 					ctx, transaction, deliveryID, idempotencyKey, actorID,
@@ -1141,6 +1377,8 @@ func (store *Store) RetryWebhook(
 		if !enabled {
 			conflict := &DeliveryRetryConflict{
 				Reason: "registration_disabled", State: status, RouteAttempts: routeAttempts,
+				RegistrationID:      *registrationID,
+				RegistrationVersion: currentVersion,
 			}
 			return persistRetryRejection(
 				ctx, transaction, deliveryID, idempotencyKey, actorID,
@@ -1150,6 +1388,8 @@ func (store *Store) RetryWebhook(
 		if registrationVersion == nil || currentVersion != *registrationVersion {
 			conflict := &DeliveryRetryConflict{
 				Reason: "registration_stale", State: status, RouteAttempts: routeAttempts,
+				RegistrationID:      *registrationID,
+				RegistrationVersion: currentVersion,
 			}
 			return persistRetryRejection(
 				ctx, transaction, deliveryID, idempotencyKey, actorID,
@@ -1161,16 +1401,18 @@ func (store *Store) RetryWebhook(
 	if err != nil {
 		return RetryResult{}, false, err
 	}
-	if _, err := transaction.Exec(ctx,
+	var recordedAt time.Time
+	if err := transaction.QueryRow(ctx,
 		`INSERT INTO agentops_control.delivery_retry_attempts(
 		   id, delivery_id, idempotency_key, observed_route_attempts, actor_id, status
-		 ) VALUES ($1, $2, $3, $4, $5, 'accepted')`,
+		 ) VALUES ($1, $2, $3, $4, $5, 'accepted')
+		 RETURNING created_at`,
 		attemptID,
 		deliveryID,
 		idempotencyKey,
 		observedAttempts,
 		actorID,
-	); err != nil {
+	).Scan(&recordedAt); err != nil {
 		return RetryResult{}, false, classifyPostgres(err)
 	}
 	if _, err := transaction.Exec(ctx,
@@ -1184,6 +1426,7 @@ func (store *Store) RetryWebhook(
 	}
 	result := RetryResult{
 		AttemptID: attemptID, DeliveryID: deliveryID, State: "pending", Cancellable: false,
+		RecordedAt: recordedAt,
 	}
 	response, _ := json.Marshal(result)
 	if _, err := transaction.Exec(ctx,
@@ -1206,9 +1449,11 @@ func (store *Store) RetryWebhook(
 		registrationID,
 		nil,
 		map[string]any{
-			"deliveryId":            deliveryID,
-			"attemptId":             attemptID,
-			"observedRouteAttempts": observedAttempts,
+			"deliveryId":                  deliveryID,
+			"attemptId":                   attemptID,
+			"observedRouteAttempts":       observedAttempts,
+			"expectedRegistrationId":      expectedRegistrationID,
+			"expectedRegistrationVersion": expectedRegistrationVersion,
 		},
 	); err != nil {
 		return RetryResult{}, false, err
@@ -1233,18 +1478,19 @@ func persistRetryRejection(
 		return RetryResult{}, false, err
 	}
 	conflict.AttemptID = attemptID
-	if _, err := transaction.Exec(ctx,
+	if err := transaction.QueryRow(ctx,
 		`INSERT INTO agentops_control.delivery_retry_attempts(
 		   id, delivery_id, idempotency_key, observed_route_attempts,
 		   actor_id, status, reason
-		 ) VALUES ($1, $2, $3, $4, $5, 'rejected', $6)`,
+		 ) VALUES ($1, $2, $3, $4, $5, 'rejected', $6)
+		 RETURNING created_at`,
 		attemptID,
 		deliveryID,
 		idempotencyKey,
 		observedAttempts,
 		actorID,
 		conflict.Reason,
-	); err != nil {
+	).Scan(&conflict.RecordedAt); err != nil {
 		return RetryResult{}, false, classifyPostgres(err)
 	}
 	response, _ := json.Marshal(conflict)
@@ -1305,7 +1551,7 @@ func (store *Store) AppendAudit(
 
 func (store *Store) Projections(
 	ctx context.Context,
-	staleAfter time.Duration,
+	_ time.Duration,
 ) ([]RegistrationProjection, error) {
 	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
@@ -1374,6 +1620,7 @@ func (store *Store) Projections(
 	for _, registration := range registrations {
 		projection := RegistrationProjection{
 			Registration:           registration,
+			Mode:                   ModeActive,
 			Components:             make(map[string]ComponentProjection),
 			LastPoll:               map[string]*time.Time{"issue": nil, "pull_request": nil},
 			RecentDeliveryFailures: make([]DeliveryFailureProjection, 0),
@@ -1385,23 +1632,45 @@ func (store *Store) Projections(
 		} {
 			observed, present := actual[registration.ID][component]
 			componentProjection := ComponentProjection{
-				Desired: registration.Desired(component),
-				State:   "unknown",
-				Stale:   true,
+				Desired:       registration.Desired(component),
+				Actual:        "unknown",
+				State:         "unknown",
+				Freshness:     "unknown",
+				RecoveryState: "unknown",
+				Stale:         true,
 			}
 			if present {
+				componentProjection.Actual = observed.State
 				componentProjection.State = observed.State
 				componentProjection.ObservedAt = &observed.ObservedAt
+				componentProjection.LastGoodAt = observed.LastHealthyAt
 				componentProjection.LastHealthyAt = observed.LastHealthyAt
 				componentProjection.LastError = observed.LastError
 				componentProjection.Stale =
 					observed.RegistrationVersion != registration.Version ||
-						databaseNow.Sub(observed.ObservedAt) > staleAfter
+						databaseNow.Sub(observed.ObservedAt) >
+							componentFreshnessBudget(component)
 				if componentProjection.Stale {
-					componentProjection.State = "stale"
+					componentProjection.Freshness = "stale"
+					reason := "freshness_budget_exceeded"
+					if observed.RegistrationVersion != registration.Version {
+						reason = "registration_version_mismatch"
+					}
+					componentProjection.StaleReason = &reason
+					componentProjection.RecoveryState = "blocked"
+				} else {
+					componentProjection.Freshness = "fresh"
+					if observed.State == "failed" {
+						componentProjection.RecoveryState = "scheduled"
+					} else {
+						componentProjection.RecoveryState = "none"
+					}
 				}
 			} else if !componentProjection.Desired {
+				componentProjection.Actual = "stopped"
 				componentProjection.State = "stopped"
+				componentProjection.Freshness = "fresh"
+				componentProjection.RecoveryState = "none"
 				componentProjection.Stale = false
 			}
 			projection.Components[component] = componentProjection
@@ -1434,15 +1703,35 @@ func (store *Store) Projections(
 			return nil, unavailable(err)
 		}
 		var activeJobID *string
+		var activeJobStatus *string
+		var activeJobRegistrationVersion *int64
+		var activeJobUpdatedAt *time.Time
 		if err := transaction.QueryRow(ctx,
-			`SELECT count(*), min(id::text)
-			   FROM agentops_control.jobs
-			  WHERE registration_id = $1 AND status IN ('queued', 'leased')`,
+			`SELECT
+			   count(*) FILTER (WHERE status = 'queued'),
+			   (array_agg(id::text ORDER BY updated_at DESC, id DESC)
+			      FILTER (WHERE status = 'leased'))[1],
+			   (array_agg(status ORDER BY updated_at DESC, id DESC)
+			      FILTER (WHERE status IN ('leased', 'queued')))[1],
+			   (array_agg(registration_version ORDER BY updated_at DESC, id DESC)
+			      FILTER (WHERE status IN ('leased', 'queued')))[1],
+			   (array_agg(updated_at ORDER BY updated_at DESC, id DESC)
+			      FILTER (WHERE status IN ('leased', 'queued')))[1]
+			 FROM agentops_control.jobs
+			WHERE registration_id = $1`,
 			registration.ID,
-		).Scan(&projection.QueueDepth, &activeJobID); err != nil {
+		).Scan(
+			&projection.QueueDepth,
+			&activeJobID,
+			&activeJobStatus,
+			&activeJobRegistrationVersion,
+			&activeJobUpdatedAt,
+		); err != nil {
 			return nil, unavailable(err)
 		}
 		projection.ActiveJobID = activeJobID
+		projection.ActiveJobState = activeJobStatus
+		projection.ActiveJobRegistrationVersion = activeJobRegistrationVersion
 		var jobFailure JobFailureProjection
 		err = transaction.QueryRow(ctx,
 			`SELECT id, registration_version, job_type, status, last_error, updated_at
@@ -1465,6 +1754,162 @@ func (store *Store) Projections(
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return nil, unavailable(err)
 		}
+		var latestJobStatus *string
+		var latestJobVersion *int64
+		var latestJobUpdatedAt *time.Time
+		var latestJobError *string
+		err = transaction.QueryRow(ctx,
+			`SELECT status, registration_version, updated_at, last_error
+			   FROM agentops_control.jobs
+			  WHERE registration_id = $1
+			  ORDER BY updated_at DESC, id DESC
+			  LIMIT 1`,
+			registration.ID,
+		).Scan(
+			&latestJobStatus,
+			&latestJobVersion,
+			&latestJobUpdatedAt,
+			&latestJobError,
+		)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, unavailable(err)
+		}
+		execution := ComponentProjection{
+			Desired:       registration.Desired(ComponentExecution),
+			Actual:        "unknown",
+			State:         "unknown",
+			Freshness:     "unknown",
+			RecoveryState: "unknown",
+			Stale:         true,
+		}
+		queue := ComponentProjection{
+			Desired:       registration.Desired(ComponentQueue),
+			Actual:        "idle",
+			State:         "idle",
+			ObservedAt:    &databaseNow,
+			Freshness:     "fresh",
+			RecoveryState: "none",
+		}
+		if activeJobStatus == nil &&
+			latestJobVersion != nil &&
+			*latestJobVersion != registration.Version {
+			reason := "registration_version_mismatch"
+			execution.Actual, execution.State = "stale", "stale"
+			execution.ObservedAt = latestJobUpdatedAt
+			execution.Freshness = "stale"
+			execution.StaleReason = &reason
+			execution.LastError = &reason
+			execution.RecoveryState = "blocked"
+			execution.Stale = true
+			queue.Actual, queue.State = "blocked_by_mode", "blocked_by_mode"
+			queue.ObservedAt = latestJobUpdatedAt
+			queue.Freshness = "stale"
+			queue.StaleReason = &reason
+			queue.LastError = &reason
+			queue.RecoveryState = "blocked"
+		} else if !execution.Desired {
+			execution.Actual, execution.State = "stopped", "stopped"
+			execution.ObservedAt = &registration.UpdatedAt
+			execution.LastGoodAt = &registration.UpdatedAt
+			execution.Freshness = "fresh"
+			execution.RecoveryState = "none"
+			execution.Stale = false
+		} else if activeJobStatus != nil {
+			execution.ObservedAt = activeJobUpdatedAt
+			execution.Stale = false
+			if activeJobRegistrationVersion == nil ||
+				*activeJobRegistrationVersion != registration.Version {
+				reason := "registration_version_mismatch"
+				execution.Actual, execution.State = "stale", "stale"
+				execution.Freshness = "stale"
+				execution.StaleReason = &reason
+				execution.LastError = &reason
+				execution.RecoveryState = "blocked"
+				queue.StaleReason = &reason
+				queue.LastError = &reason
+				queue.Freshness = "stale"
+				queue.RecoveryState = "blocked"
+			} else if activeJobUpdatedAt != nil &&
+				databaseNow.Sub(*activeJobUpdatedAt) > 30*time.Second {
+				reason := "freshness_budget_exceeded"
+				execution.Freshness = "stale"
+				execution.StaleReason = &reason
+				execution.RecoveryState = "blocked"
+				queue.Freshness = "stale"
+				queue.StaleReason = &reason
+				queue.RecoveryState = "blocked"
+			} else {
+				execution.Freshness = "fresh"
+			}
+			if *activeJobStatus == "leased" {
+				if execution.Actual != "stale" {
+					execution.Actual, execution.State = "running", "running"
+					if execution.RecoveryState != "blocked" {
+						execution.RecoveryState = "in_progress"
+					}
+					execution.LastGoodAt = activeJobUpdatedAt
+				}
+				queue.Actual, queue.State = "leased", "leased"
+				if queue.RecoveryState != "blocked" {
+					queue.RecoveryState = "in_progress"
+				}
+			} else {
+				if execution.Actual != "stale" {
+					execution.Actual, execution.State = "waiting", "waiting"
+					if execution.RecoveryState != "blocked" {
+						execution.RecoveryState = "scheduled"
+					}
+				}
+				queue.Actual, queue.State = "queued", "queued"
+				if queue.RecoveryState != "blocked" {
+					queue.RecoveryState = "scheduled"
+				}
+			}
+			queue.ObservedAt = activeJobUpdatedAt
+			queue.LastGoodAt = activeJobUpdatedAt
+			if activeJobUpdatedAt != nil &&
+				databaseNow.Sub(*activeJobUpdatedAt) > 15*time.Second {
+				reason := "freshness_budget_exceeded"
+				queue.Freshness = "stale"
+				queue.StaleReason = &reason
+			}
+		} else if latestJobStatus != nil &&
+			latestJobVersion != nil &&
+			*latestJobVersion == registration.Version {
+			execution.ObservedAt = latestJobUpdatedAt
+			execution.Stale = false
+			if latestJobUpdatedAt != nil &&
+				databaseNow.Sub(*latestJobUpdatedAt) > 30*time.Second {
+				reason := "freshness_budget_exceeded"
+				execution.Freshness = "stale"
+				execution.StaleReason = &reason
+			} else {
+				execution.Freshness = "fresh"
+			}
+			if *latestJobStatus == "succeeded" {
+				execution.Actual, execution.State = "idle", "idle"
+				execution.LastGoodAt = latestJobUpdatedAt
+				execution.RecoveryState = "recovered"
+			} else if *latestJobStatus == "failed" ||
+				*latestJobStatus == "cancelled" ||
+				*latestJobStatus == "rejected" {
+				execution.Actual, execution.State = "failed", "failed"
+				execution.LastError = latestJobError
+				execution.RecoveryState = "scheduled"
+				queue.Actual, queue.State = "failed", "failed"
+				queue.ObservedAt = latestJobUpdatedAt
+				queue.LastError = latestJobError
+				queue.RecoveryState = "scheduled"
+				if latestJobUpdatedAt != nil &&
+					databaseNow.Sub(*latestJobUpdatedAt) > 15*time.Second {
+					reason := "freshness_budget_exceeded"
+					queue.Freshness = "stale"
+					queue.StaleReason = &reason
+				}
+			}
+		}
+		projection.Components[ComponentExecution] = execution
+		projection.Components[ComponentQueue] = queue
 		failureRows, err := transaction.Query(ctx,
 			`SELECT id, delivery_key, event, action, status, ignored_reason,
 			        last_error, route_attempts, registration_version, updated_at
@@ -1695,10 +2140,33 @@ func nullIfEmpty(value string) any {
 
 func projectionHasAnomaly(projection RegistrationProjection) bool {
 	for _, component := range projection.Components {
-		if component.Stale || component.State == "failed" || component.State == "disconnected" ||
-			(component.Desired && component.State != "running") {
+		if component.Freshness != "fresh" ||
+			component.Actual == "failed" ||
+			component.Actual == "disconnected" ||
+			component.Actual == "unknown" ||
+			(component.Desired &&
+				component.Actual != "running" &&
+				component.Actual != "idle" &&
+				component.Actual != "waiting" &&
+				component.Actual != "paused_by_mode" &&
+				component.Actual != "blocked_by_mode") {
 			return true
 		}
 	}
 	return false
+}
+
+func componentFreshnessBudget(component string) time.Duration {
+	switch component {
+	case ComponentIssueMonitor, ComponentPRMonitor:
+		return 300 * time.Second
+	case ComponentForwarder:
+		return 60 * time.Second
+	case ComponentExecution:
+		return 30 * time.Second
+	case ComponentQueue:
+		return 15 * time.Second
+	default:
+		return 15 * time.Second
+	}
 }

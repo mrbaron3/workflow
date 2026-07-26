@@ -78,6 +78,67 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		t.Fatalf("configuration update = %#v, %v", configured, err)
 	}
 	created = configured
+	prEnabled := false
+	commandUpdated, replay, err := store.UpdateRegistrationCommand(
+		ctx,
+		created.ID,
+		created.Version,
+		RegistrationPatch{PRMonitorEnabled: &prEnabled},
+		"update-command-1",
+		"operator",
+		"registration.updated",
+	)
+	if err != nil || replay || commandUpdated.Version != created.Version+1 {
+		t.Fatalf("UpdateRegistrationCommand() = %#v, %v, %v", commandUpdated, replay, err)
+	}
+	var auditedPrevious, auditedCurrent bool
+	var auditedOutcome string
+	if err := store.pool.QueryRow(ctx,
+		`SELECT
+		   (details->'changedFields'->'prMonitorEnabled'->>'previous')::boolean,
+		   (details->'changedFields'->'prMonitorEnabled'->>'current')::boolean,
+		   details->>'outcome'
+		 FROM agentops_control.runtime_audit
+		WHERE event_type = 'registration.updated'
+		  AND details->>'commandIdentityDigest' IS NOT NULL
+		ORDER BY occurred_at DESC
+		LIMIT 1`,
+	).Scan(&auditedPrevious, &auditedCurrent, &auditedOutcome); err != nil {
+		t.Fatal(err)
+	}
+	if !auditedPrevious || auditedCurrent || auditedOutcome != "applied" {
+		t.Fatalf(
+			"update audit previous=%v current=%v outcome=%s",
+			auditedPrevious,
+			auditedCurrent,
+			auditedOutcome,
+		)
+	}
+	commandReplay, replay, err := store.UpdateRegistrationCommand(
+		ctx,
+		created.ID,
+		created.Version,
+		RegistrationPatch{PRMonitorEnabled: &prEnabled},
+		"update-command-1",
+		"operator",
+		"registration.updated",
+	)
+	if err != nil || !replay || commandReplay.Version != commandUpdated.Version {
+		t.Fatalf("update command replay = %#v, %v, %v", commandReplay, replay, err)
+	}
+	differentPREnabled := true
+	if _, _, err := store.UpdateRegistrationCommand(
+		ctx,
+		created.ID,
+		created.Version,
+		RegistrationPatch{PRMonitorEnabled: &differentPREnabled},
+		"update-command-1",
+		"operator",
+		"registration.updated",
+	); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("update command identity conflict = %v", err)
+	}
+	created = commandUpdated
 	if err := store.UpsertActualState(
 		ctx,
 		created,
@@ -389,7 +450,7 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		t.Fatal("expected a pending delivery")
 	}
 	// The first claim can be the registered delivery. Process claims until the unknown one is ignored.
-	router := &Router{Store: store}
+	router := &Router{Store: store, Mode: ModeActive}
 	for claim != nil {
 		if err := router.route(ctx, *claim); err != nil {
 			_ = store.FinishWebhook(ctx, *claim, "failed", err.Error())
@@ -451,14 +512,25 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		createdProjection.RecentDeliveryFailures[0].LastError == nil {
 		t.Fatalf("failed delivery projection = %#v", createdProjection)
 	}
+	if createdProjection.Components[ComponentExecution].Actual != "waiting" ||
+		createdProjection.Components[ComponentQueue].Actual != "queued" ||
+		createdProjection.ActiveJobState == nil ||
+		*createdProjection.ActiveJobState != "queued" ||
+		createdProjection.ActiveJobRegistrationVersion == nil ||
+		*createdProjection.ActiveJobRegistrationVersion != created.Version {
+		t.Fatalf("active work projection = %#v", createdProjection)
+	}
 	retry, replay, err := store.RetryWebhook(
 		ctx,
 		failedReceipt.DeliveryID,
 		"retry-key",
 		"operator",
 		failedClaim.RouteAttempts,
+		created.ID,
+		created.Version,
 	)
-	if err != nil || replay || retry.State != "pending" || retry.Cancellable {
+	if err != nil || replay || retry.State != "pending" || retry.Cancellable ||
+		retry.RecordedAt.IsZero() {
 		t.Fatalf("RetryWebhook() = %#v, %v, %v", retry, replay, err)
 	}
 	deliveryStatus, err := store.DeliveryStatus(ctx, failedReceipt.DeliveryID)
@@ -475,8 +547,11 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		"retry-key",
 		"operator",
 		failedClaim.RouteAttempts,
+		created.ID,
+		created.Version,
 	)
-	if err != nil || !replay || retryReplay.AttemptID != retry.AttemptID {
+	if err != nil || !replay || retryReplay.AttemptID != retry.AttemptID ||
+		!retryReplay.RecordedAt.Equal(retry.RecordedAt) {
 		t.Fatalf("retry replay = %#v, %v, %v", retryReplay, replay, err)
 	}
 	_, replay, err = store.RetryWebhook(
@@ -485,6 +560,8 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		"retry-rejected",
 		"operator",
 		failedClaim.RouteAttempts,
+		created.ID,
+		created.Version,
 	)
 	var retryConflict *DeliveryRetryConflict
 	if replay || !errors.As(err, &retryConflict) || retryConflict.AttemptID == "" ||
@@ -492,15 +569,19 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		t.Fatalf("rejected retry = replay=%v conflict=%#v err=%v", replay, retryConflict, err)
 	}
 	rejectedAttemptID := retryConflict.AttemptID
+	rejectedRecordedAt := retryConflict.RecordedAt
 	_, replay, err = store.RetryWebhook(
 		ctx,
 		failedReceipt.DeliveryID,
 		"retry-rejected",
 		"operator",
 		failedClaim.RouteAttempts,
+		created.ID,
+		created.Version,
 	)
 	if !replay || !errors.As(err, &retryConflict) ||
-		retryConflict.AttemptID != rejectedAttemptID {
+		retryConflict.AttemptID != rejectedAttemptID ||
+		!retryConflict.RecordedAt.Equal(rejectedRecordedAt) {
 		t.Fatalf("rejected retry replay = replay=%v conflict=%#v err=%v", replay, retryConflict, err)
 	}
 	var rejectedAttempts, rejectedAudits int
@@ -561,6 +642,11 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		createdProjection.LastJobFailure.ID != jobID ||
 		createdProjection.LastJobFailure.Status != "rejected" {
 		t.Fatalf("job failure projection = %#v", createdProjection)
+	}
+	if createdProjection.Components[ComponentExecution].Actual != "stale" ||
+		createdProjection.Components[ComponentExecution].Freshness != "stale" ||
+		createdProjection.Components[ComponentExecution].RecoveryState != "blocked" {
+		t.Fatalf("stale execution projection = %#v", createdProjection.Components[ComponentExecution])
 	}
 	if _, _, err := store.EnqueueWork(
 		ctx,

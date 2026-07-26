@@ -2,10 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -47,6 +52,17 @@ func run() error {
 		"bundleDigest", gate.BundleDigest,
 		"capabilities", gate.CapabilityIDs,
 	)
+	dashboardGate, err := designgate.ValidateDashboard(root)
+	if err != nil {
+		return fmt.Errorf("approved #15 dashboard gate rejected Control API startup: %w", err)
+	}
+	log.Info(
+		"approved #15 dashboard gate accepted",
+		"revisionId", dashboardGate.RevisionID,
+		"bundleDigest", dashboardGate.BundleDigest,
+		"decisionId", dashboardGate.DecisionID,
+		"capabilities", dashboardGate.CapabilityIDs,
+	)
 
 	databaseURL := strings.TrimSpace(os.Getenv("AGENTOPS_DATABASE_URL"))
 	if databaseURL == "" {
@@ -55,6 +71,21 @@ func run() error {
 	controlToken := strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_TOKEN"))
 	if controlToken == "" {
 		return fmt.Errorf("AGENTOPS_CONTROL_TOKEN is required")
+	}
+	if len(controlToken) < 32 || len(controlToken) > 512 {
+		return fmt.Errorf("AGENTOPS_CONTROL_TOKEN must be 32..512 bytes")
+	}
+	mode, err := control.ParseOperatingMode(environment("AGENTOPS_OPERATING_MODE", "MONITOR_ONLY"))
+	if err != nil {
+		return err
+	}
+	canonicalOrigin := environment("AGENTOPS_DASHBOARD_ORIGIN", "http://127.0.0.1:8080")
+	bootstrapToken := strings.TrimSpace(os.Getenv("AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN"))
+	if bootstrapToken == "" {
+		bootstrapToken, err = secureToken()
+		if err != nil {
+			return fmt.Errorf("generate one-time dashboard bootstrap token: %w", err)
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -80,6 +111,7 @@ func run() error {
 			BaseURL: environment("AGENTOPS_GITHUB_API_URL", "https://api.github.com"),
 			Token:   firstNonEmpty(os.Getenv("GH_TOKEN"), os.Getenv("GITHUB_TOKEN")),
 		},
+		Mode:           mode,
 		SupervisorID:   supervisorID,
 		PollInterval:   pollInterval,
 		ForwarderRetry: 2 * time.Second,
@@ -95,26 +127,42 @@ func run() error {
 	)
 	router := &control.Router{
 		Store:    store,
+		Mode:     mode,
 		Interval: reconciliationInterval,
 		Lease:    30 * time.Second,
 		Wake:     make(chan struct{}, 1),
 		Log:      log,
 	}
 	api := &control.API{
-		Store:         store,
-		ControlToken:  controlToken,
-		WebhookSecret: strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_WEBHOOK_SECRET")),
-		StaleAfter:    max(3*reconciliationInterval, 3*pollInterval, time.Minute),
-		RouterWake:    router.Signal,
-		Log:           log,
+		Store:           store,
+		ControlToken:    controlToken,
+		WebhookSecret:   strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_WEBHOOK_SECRET")),
+		StaleAfter:      max(3*reconciliationInterval, 3*pollInterval, time.Minute),
+		Mode:            mode,
+		CanonicalOrigin: canonicalOrigin,
+		BootstrapToken:  bootstrapToken,
+		SessionTTL:      durationEnvironment("AGENTOPS_DASHBOARD_SESSION_TTL", 8*time.Hour),
+		RouterWake:      router.Signal,
+		Log:             log,
+	}
+	if err := api.Initialize(); err != nil {
+		return fmt.Errorf("initialize dashboard security boundary: %w", err)
 	}
 	server := &http.Server{
-		Addr:              environment("AGENTOPS_CONTROL_LISTEN", "0.0.0.0:8080"),
+		Addr:              environment("AGENTOPS_CONTROL_LISTEN", "127.0.0.1:8080"),
 		Handler:           api.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       time.Minute,
+	}
+	proxyServer, err := loopbackPublishProxy(
+		strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_PROXY_LISTEN")),
+		server.Addr,
+		canonicalOrigin,
+	)
+	if err != nil {
+		return err
 	}
 
 	go func() {
@@ -132,11 +180,27 @@ func run() error {
 	go listenLoop(ctx, store, "agentops_registration_wake", supervisor.Wake, log)
 	go listenLoop(ctx, store, "agentops_webhook_wake", router.Signal, log)
 
-	serverError := make(chan error, 1)
+	serverError := make(chan error, 2)
 	go func() {
-		log.Info("agentops-control listening", "address", server.Addr)
+		log.Info(
+			"agentops-control listening",
+			"address", server.Addr,
+			"operatingMode", mode,
+			"dashboardBootstrapUrl",
+			canonicalOrigin+"/dashboard/bootstrap?token="+url.QueryEscape(bootstrapToken),
+		)
 		serverError <- server.ListenAndServe()
 	}()
+	if proxyServer != nil {
+		go func() {
+			log.Info(
+				"agentops-control loopback publication proxy listening",
+				"address", proxyServer.Addr,
+				"backend", server.Addr,
+			)
+			serverError <- proxyServer.ListenAndServe()
+		}()
+	}
 	select {
 	case <-ctx.Done():
 	case err := <-serverError:
@@ -146,7 +210,72 @@ func run() error {
 	}
 	shutdownContext, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
+	if proxyServer != nil {
+		if err := proxyServer.Shutdown(shutdownContext); err != nil {
+			return err
+		}
+	}
 	return server.Shutdown(shutdownContext)
+}
+
+func loopbackPublishProxy(
+	listenAddress, backendAddress, canonicalOrigin string,
+) (*http.Server, error) {
+	if listenAddress == "" {
+		return nil, nil
+	}
+	backendHost, _, err := net.SplitHostPort(backendAddress)
+	if err != nil {
+		return nil, fmt.Errorf("invalid AGENTOPS_CONTROL_LISTEN for publication proxy: %w", err)
+	}
+	backendIP := net.ParseIP(strings.Trim(backendHost, "[]"))
+	if backendIP == nil || !backendIP.IsLoopback() {
+		return nil, fmt.Errorf("publication proxy backend must be a loopback listener")
+	}
+	origin, err := url.Parse(canonicalOrigin)
+	if err != nil || origin.Host == "" {
+		return nil, fmt.Errorf("invalid AGENTOPS_DASHBOARD_ORIGIN for publication proxy")
+	}
+	target, err := url.Parse("http://" + backendAddress)
+	if err != nil {
+		return nil, fmt.Errorf("invalid publication proxy backend: %w", err)
+	}
+	proxy := &httputil.ReverseProxy{
+		Rewrite: func(request *httputil.ProxyRequest) {
+			request.SetURL(target)
+			request.Out.Host = request.In.Host
+			request.Out.Header.Del("Forwarded")
+			request.Out.Header.Del("X-Forwarded-Host")
+			request.Out.Header.Del("X-Forwarded-Proto")
+			request.Out.Header["X-Forwarded-For"] = nil
+		},
+		ErrorHandler: func(writer http.ResponseWriter, _ *http.Request, _ error) {
+			http.Error(writer, "loopback Control API unavailable", http.StatusBadGateway)
+		},
+	}
+	handler := http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Host != origin.Host {
+			http.Error(writer, "invalid Control API Host", http.StatusForbidden)
+			return
+		}
+		proxy.ServeHTTP(writer, request)
+	})
+	return &http.Server{
+		Addr:              listenAddress,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       time.Minute,
+	}, nil
+}
+
+func secureToken() (string, error) {
+	value := make([]byte, 32)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(value), nil
 }
 
 func listenLoop(

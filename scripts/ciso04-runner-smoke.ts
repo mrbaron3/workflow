@@ -366,6 +366,8 @@ async function main(): Promise<void> {
     '--env',
     'AGENTOPS_RUNNER_PROVIDER=codex',
     '--env',
+    'AGENTOPS_OPERATING_MODE=ACTIVE',
+    '--env',
     `AGENTOPS_RUNNER_DATABASE_URL=${runnerUrl}`,
     '--env',
     'AGENTOPS_RUNNER_GITHUB_TOKEN=grounded-no-side-effect-token',

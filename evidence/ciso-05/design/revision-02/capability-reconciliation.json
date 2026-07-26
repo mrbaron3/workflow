@@ -1,0 +1,692 @@
+{
+  "schemaVersion": "1.0",
+  "documentType": "workflow-ciso05-capability-reconciliation",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "revisionId": "workflow-ciso05-dashboard-r02",
+  "previousRevisionId": "workflow-ciso05-dashboard-r01",
+  "sourceIssue": {
+    "externalId": "mrbaron3/workflow#15",
+    "acceptanceCriterion": "AC-CISO-010",
+    "snapshotRevision": "2026-07-25T07:10:01Z",
+    "snapshotDigest": "sha256:3293a23b56229c7c135eb9199bb0927ad46f0c6d22793ad326c9c554966b6d99"
+  },
+  "proposalStatus": "complete-design-proposal-not-implemented",
+  "contractBoundary": {
+    "controlApiRef": "contracts/control-api/v1/openapi.yaml",
+    "currentContractRevision": "af16c6ac9e75aac949c9a4e81d6f1877a292e313",
+    "statement": "The operations and architecture elements in this document are exact proposed obligations for mrbaron3/workflow#15. They do not claim that the current base implements the revision-02 contract.",
+    "browserAllowedOriginCount": 1,
+    "browserAllowedNetworkBoundary": "the exact configured same-origin loopback Control API only",
+    "forbiddenBrowserBoundaries": [
+      "PostgreSQL",
+      "provider APIs",
+      "runner control",
+      "container runtime or Apple Container socket",
+      "host filesystem",
+      "non-Control-API hosts"
+    ]
+  },
+  "browserSessionContract": {
+    "canonicalOrigin": {
+      "configuration": "one exact scheme://host:port value",
+      "hostValidation": "every dashboard and API request must match the configured Host exactly",
+      "unsafeOriginValidation": "Origin must equal the canonical origin byte-for-byte",
+      "fetchMetadataValidation": "unsafe methods require Sec-Fetch-Site compatible with same-origin",
+      "rejectedVariants": [
+        "missing Origin",
+        "null Origin",
+        "alternate loopback spelling",
+        "different scheme",
+        "different port",
+        "user-info variant",
+        "prefix variant",
+        "suffix variant"
+      ]
+    },
+    "bootstrap": {
+      "operation": "GET /dashboard/bootstrap",
+      "scriptFree": true,
+      "onlyNoOriginException": true,
+      "requirements": [
+        "loopback peer",
+        "exact Host",
+        "unexpired token",
+        "single-use token",
+        "constant-time token comparison",
+        "redirect to a clean URL before application assets load"
+      ]
+    },
+    "session": {
+      "storage": "server-side",
+      "browserCredential": "opaque session ID cookie",
+      "cookieAttributes": [
+        "HttpOnly",
+        "SameSite=Strict",
+        "path-scoped",
+        "expiring",
+        "Secure when HTTPS"
+      ],
+      "browserBearerExposure": "forbidden"
+    },
+    "csrf": {
+      "retrievalOperation": "GET /v1/browser-session",
+      "proofClassification": "non-secret per-session proof",
+      "browserStorage": "JavaScript memory only",
+      "requestHeader": "X-CSRF-Token",
+      "requiredOn": "every unsafe method",
+      "rotateOn": [
+        "session establishment",
+        "session renewal"
+      ],
+      "invalidateOn": [
+        "logout",
+        "session expiry"
+      ],
+      "forbiddenLocations": [
+        "logs",
+        "persistent browser storage",
+        "URL",
+        "DOM"
+      ]
+    },
+    "securityHeaders": [
+      "Content-Security-Policy: default-src 'self'; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "X-Content-Type-Options: nosniff",
+      "Referrer-Policy: no-referrer",
+      "Cache-Control: no-store for bootstrap, session, and command data",
+      "no permissive CORS"
+    ]
+  },
+  "truthContract": {
+    "operatingMode": {
+      "authoritativeValues": [
+        "MONITOR_ONLY",
+        "ACTIVE"
+      ],
+      "unavailableRepresentation": "unknown",
+      "dashboardCanMutateMode": false
+    },
+    "snapshotConsistency": "mode, Registration identity/version, all five components, poll/delivery metrics, queue and active lease are returned from one consistent Registration-version-bound snapshot",
+    "componentFields": [
+      "desired",
+      "actual",
+      "observedAt",
+      "freshness",
+      "staleReason",
+      "lastGoodAt",
+      "lastError",
+      "recoveryState"
+    ],
+    "freshnessValues": [
+      "fresh",
+      "stale",
+      "unknown"
+    ],
+    "freshnessBudgetsSeconds": {
+      "operatingMode": 15,
+      "issueMonitor": 300,
+      "prMonitor": 300,
+      "forwarder": 60,
+      "execution": 30,
+      "queue": 15
+    },
+    "recoveryValues": [
+      "none",
+      "scheduled",
+      "in_progress",
+      "blocked",
+      "recovered",
+      "unknown"
+    ],
+    "componentSemantics": {
+      "issueMonitor": {
+        "desiredSource": "Registration enabled and issueMonitorEnabled",
+        "actualValues": [
+          "starting",
+          "running",
+          "stopped",
+          "failed",
+          "disconnected",
+          "unknown"
+        ]
+      },
+      "prMonitor": {
+        "desiredSource": "Registration enabled and prMonitorEnabled",
+        "actualValues": [
+          "starting",
+          "running",
+          "stopped",
+          "failed",
+          "disconnected",
+          "unknown"
+        ]
+      },
+      "forwarder": {
+        "desiredSource": "Registration enabled",
+        "actualValues": [
+          "starting",
+          "running",
+          "stopped",
+          "failed",
+          "disconnected",
+          "unknown"
+        ]
+      },
+      "execution": {
+        "desiredSource": "Registration enabled and executionEnabled",
+        "monitorOnlyRule": "when desired is enabled, MONITOR_ONLY requires actual=paused_by_mode",
+        "activeActualValues": [
+          "running",
+          "waiting",
+          "idle",
+          "failed",
+          "stale",
+          "unknown"
+        ],
+        "evidenceRule": "ACTIVE values come only from authoritative job and runner evidence"
+      },
+      "queue": {
+        "desiredSource": "Registration enabled and executionEnabled",
+        "actualFields": [
+          "durableDepth",
+          "activeLeasedJobId",
+          "activeLeasedJobState",
+          "activeLeasedJobRegistrationVersion"
+        ],
+        "actualValues": [
+          "idle",
+          "queued",
+          "leased",
+          "blocked_by_mode",
+          "failed",
+          "disconnected",
+          "unknown"
+        ]
+      }
+    },
+    "truthfulnessRules": [
+      "a successful query timestamp is not a component last-good timestamp",
+      "last-good is historical evidence and never paints a current failure healthy",
+      "missing or failed evidence is unknown, stale, failed, or disconnected, never inferred healthy",
+      "disconnect preserves prior data only as visibly last-known and disables mutation",
+      "recovery is announced only after a new authoritative successful snapshot"
+    ]
+  },
+  "commandOutcomeContract": {
+    "outcomeValues": [
+      "applied",
+      "duplicate",
+      "version_conflict",
+      "rejected",
+      "indeterminate"
+    ],
+    "commonFields": [
+      "outcome",
+      "commandIdentityDigest",
+      "resourceIdentity",
+      "observedFence",
+      "currentFence",
+      "resultVersionOrAttemptIdentity",
+      "reason",
+      "recoverability",
+      "recordedAt"
+    ],
+    "idempotency": {
+      "header": "Idempotency-Key",
+      "scope": "request-specific for create, update, disable, and retry",
+      "sameKeySameNormalizedInput": "returns the same durable outcome",
+      "sameKeyDifferentInput": "rejected without mutation"
+    },
+    "fences": {
+      "create": "repository uniqueness plus the idempotent initial Registration identity/version result",
+      "update": "If-Match with the observed positive Registration version",
+      "disable": "If-Match with the observed positive Registration version",
+      "retry": "observed route attempts plus current Registration identity/version"
+    },
+    "disableSafety": [
+      "increments the Registration version exactly once",
+      "records actor and outcome transactionally",
+      "rejects queued old-version work",
+      "prevents leased old-version work from crossing the next critical side-effect fence"
+    ],
+    "verificationRule": "A 2xx response is command acceptance or applied evidence, not verified UI success. The UI must re-query the authoritative Registration or Delivery resource and match identity, version, desired fields, attempt identity, and resulting actual/recovery state.",
+    "verificationFailureStates": [
+      "pending",
+      "conflict",
+      "rejected",
+      "unknown"
+    ]
+  },
+  "architectureElements": [
+    {
+      "id": "ARCH-registration-control-001",
+      "status": "existing",
+      "meaning": "Control API repeatable-read anomaly-first Registration status projection"
+    },
+    {
+      "id": "ARCH-registration-control-002",
+      "status": "existing",
+      "meaning": "Registration-version-bound supervisor for Issue Monitor, PR Monitor, and Forwarder"
+    },
+    {
+      "id": "ARCH-registration-control-003",
+      "status": "existing",
+      "meaning": "database and schema fail-closed boundary"
+    },
+    {
+      "id": "ARCH-registration-control-004",
+      "status": "existing",
+      "meaning": "delivery retry and create idempotency lineage"
+    },
+    {
+      "id": "ARCH-registration-control-005",
+      "status": "existing",
+      "meaning": "durable delivery router and version-aware work convergence"
+    },
+    {
+      "id": "ARCH-registration-control-006",
+      "status": "existing",
+      "meaning": "transactional runtime audit"
+    },
+    {
+      "id": "ARCH-registration-control-009",
+      "status": "proposed-for-issue-15",
+      "meaning": "loopback-only dashboard asset/bootstrap boundary; no browser access to PostgreSQL, providers, container runtime/socket, host filesystem, or non-Control-API hosts"
+    },
+    {
+      "id": "ARCH-registration-control-010",
+      "status": "proposed-for-issue-15",
+      "meaning": "server-side browser-session boundary with single-use script-free bootstrap, clean redirect, opaque HttpOnly cookie, exact Host/Origin, memory-only CSRF lifecycle, and zero bearer exposure to browser code"
+    },
+    {
+      "id": "ARCH-registration-control-011",
+      "status": "proposed-for-issue-15",
+      "meaning": "authoritative MONITOR_ONLY|ACTIVE and five-component desired/actual/freshness/last-good/error/recovery projection from a consistent Registration-version-bound snapshot"
+    },
+    {
+      "id": "ARCH-registration-control-012",
+      "status": "proposed-for-issue-15",
+      "meaning": "duplicate-safe structured command outcomes using Idempotency-Key, If-Match for update/disable, and observed attempts plus Registration version for retry"
+    },
+    {
+      "id": "ARCH-registration-control-013",
+      "status": "proposed-for-issue-15",
+      "meaning": "disable/version fencing and transactional audit that rejects queued old-version work and blocks leased old-version work at the next critical side-effect fence"
+    },
+    {
+      "id": "ARCH-registration-control-014",
+      "status": "proposed-for-issue-15",
+      "meaning": "authoritative recovery projection and post-command re-query verification; command acceptance is never UI completion"
+    }
+  ],
+  "capabilities": [
+    {
+      "capabilityId": "cap-establish-browser-control-session",
+      "plannedHttpOperations": [
+        {
+          "method": "GET",
+          "path": "/dashboard/bootstrap",
+          "purpose": "consume the one-time script-free bootstrap and redirect to a clean same-origin URL"
+        },
+        {
+          "method": "GET",
+          "path": "/v1/browser-session",
+          "purpose": "return authenticated state, expiry, and the non-secret memory-only CSRF proof"
+        },
+        {
+          "method": "DELETE",
+          "path": "/v1/browser-session",
+          "purpose": "logout and invalidate the opaque session and CSRF proof"
+        }
+      ],
+      "architectureElementIds": [
+        "ARCH-registration-control-009",
+        "ARCH-registration-control-010"
+      ],
+      "ownership": {
+        "issue": "mrbaron3/workflow#15",
+        "acceptanceCriterion": "AC-CISO-010"
+      },
+      "sourceInteractionIds": [
+        "interaction-open-dashboard"
+      ],
+      "uiInteractions": [
+        "script-free bootstrap navigation",
+        "session status and expiry banner",
+        "logout",
+        "mutation disablement after expiry or rejection"
+      ],
+      "successSemantics": "opaque server-side session established; expiry and CSRF proof available; clean URL loaded; no bearer exposure",
+      "failureSemantics": [
+        "Host/Origin/fetch-metadata/CSRF mismatch fails closed before business input",
+        "expired or reused bootstrap creates no session",
+        "session/store failure shows rejected or disconnected and disables mutation"
+      ],
+      "implementationObligations": [
+        "loopback bind and one exact configured origin",
+        "single-use constant-time bootstrap validation and pre-asset clean redirect",
+        "server-side session store and cookie attributes",
+        "CSRF rotation/invalidation and security headers",
+        "retain bearer authentication only as a non-browser path"
+      ],
+      "testEvidenceObligations": [
+        "API matrix for exact Host and every rejected Origin variant",
+        "single-use/expiry/constant-time bootstrap test",
+        "browser assertion that bearer is absent from HTML, JavaScript, DOM, URL, storage, logs, and payloads",
+        "CSRF missing/mismatch/rotation/logout tests",
+        "CSP, no-store, no-CORS, frame and referrer header tests"
+      ],
+      "reconciliationState": "proposed-complete"
+    },
+    {
+      "capabilityId": "cap-list-registration-status",
+      "plannedHttpOperations": [
+        {
+          "method": "GET",
+          "path": "/v1/registrations",
+          "purpose": "return the anomaly-first, mode-aware, five-component authoritative snapshot"
+        }
+      ],
+      "architectureElementIds": [
+        "ARCH-registration-control-001",
+        "ARCH-registration-control-002",
+        "ARCH-registration-control-003",
+        "ARCH-registration-control-011"
+      ],
+      "ownership": {
+        "issue": "mrbaron3/workflow#15",
+        "acceptanceCriterion": "AC-CISO-010",
+        "lineageAcceptanceCriteria": [
+          "AC-CISO-001",
+          "AC-CISO-002"
+        ],
+        "lineageNote": "the #13 criteria remain lineage and do not substitute for #15 ownership"
+      },
+      "sourceInteractionIds": [
+        "interaction-open-dashboard",
+        "interaction-scan-anomalies",
+        "interaction-inspect-registration",
+        "interaction-refresh-status",
+        "interaction-verify-create",
+        "interaction-verify-update",
+        "interaction-verify-disable",
+        "interaction-verify-retry"
+      ],
+      "uiInteractions": [
+        "initial load and manual refresh",
+        "anomaly-first scan and filtering",
+        "Registration detail selection",
+        "post-create/update/disable/retry authoritative verification"
+      ],
+      "successSemantics": "one Registration-version-bound snapshot exposes exact mode and truthful desired/actual/freshness/last-good/error/recovery for all five components",
+      "failureSemantics": [
+        "store disconnect returns no current truth and labels retained values last-known",
+        "stale/missing evidence remains stale or unknown",
+        "mode unavailable is unknown and never inferred",
+        "mutation remains disabled until a new authoritative successful snapshot"
+      ],
+      "implementationObligations": [
+        "extend the current projection with ARCH-registration-control-011",
+        "enforce the exact freshness budgets and component state domains",
+        "project durable queue depth and leased job/version",
+        "bind continuation to stable anomaly-first snapshot lineage"
+      ],
+      "testEvidenceObligations": [
+        "API schema and repeatable-read integration tests for all five components",
+        "MONITOR_ONLY paused_by_mode and ACTIVE evidence tests",
+        "fresh/stale/unknown budget-boundary tests",
+        "disconnect/last-known/recovery tests",
+        "Playwright anomaly order, empty, responsive matrix, and screen-reader label tests"
+      ],
+      "reconciliationState": "proposed-complete"
+    },
+    {
+      "capabilityId": "cap-create-registration",
+      "plannedHttpOperations": [
+        {
+          "method": "POST",
+          "path": "/v1/registrations",
+          "purpose": "create one Registration through strict input and duplicate-safe command outcome semantics"
+        }
+      ],
+      "architectureElementIds": [
+        "ARCH-registration-control-012",
+        "ARCH-registration-control-013"
+      ],
+      "ownership": {
+        "issue": "mrbaron3/workflow#15",
+        "acceptanceCriterion": "AC-CISO-010"
+      },
+      "sourceInteractionIds": [
+        "interaction-submit-create"
+      ],
+      "uiInteractions": [
+        "Registration create dialog",
+        "strict field error summary",
+        "command outcome status",
+        "authoritative list re-query verification"
+      ],
+      "successSemantics": "applied or duplicate returns one identity and initial version; verified success waits for exact identity/version/desired-field re-query match",
+      "failureSemantics": [
+        "invalid/unknown/unsafe fields are rejected without mutation",
+        "same repository conflict identifies the existing Registration",
+        "same key/different input is rejected",
+        "transport uncertainty is indeterminate, never success"
+      ],
+      "implementationObligations": [
+        "Idempotency-Key plus normalized request hash in the mutation transaction",
+        "structured outcome schema",
+        "strict allowlist with no arbitrary configuration",
+        "transactional actor/outcome audit"
+      ],
+      "testEvidenceObligations": [
+        "same-key same-input and same-key different-input API tests",
+        "concurrent repository uniqueness test",
+        "malicious/unknown field rejection tests",
+        "restart persistence and re-query verification Playwright test"
+      ],
+      "reconciliationState": "proposed-complete"
+    },
+    {
+      "capabilityId": "cap-update-registration",
+      "plannedHttpOperations": [
+        {
+          "method": "PATCH",
+          "path": "/v1/registrations/{registrationId}",
+          "purpose": "apply an allowlisted desired-state patch through idempotency and Registration-version fences"
+        }
+      ],
+      "architectureElementIds": [
+        "ARCH-registration-control-012",
+        "ARCH-registration-control-013"
+      ],
+      "ownership": {
+        "issue": "mrbaron3/workflow#15",
+        "acceptanceCriterion": "AC-CISO-010"
+      },
+      "sourceInteractionIds": [
+        "interaction-submit-update"
+      ],
+      "uiInteractions": [
+        "version-displaying update dialog",
+        "If-Match conflict summary",
+        "structured outcome status",
+        "authoritative list re-query verification"
+      ],
+      "successSemantics": "one version increment for applied; duplicate returns the same new version; verified success waits for exact identity/version/all-desired-fields match",
+      "failureSemantics": [
+        "stale If-Match is version_conflict with current version",
+        "same key/different patch or version is rejected",
+        "empty/unsafe patch is rejected",
+        "transport uncertainty remains indeterminate"
+      ],
+      "implementationObligations": [
+        "require Idempotency-Key and If-Match",
+        "persist normalized patch hash and structured outcome transactionally",
+        "return observed/current/result versions",
+        "never blind-retry version conflicts"
+      ],
+      "testEvidenceObligations": [
+        "concurrent same-version update test",
+        "duplicate transport retry without double increment",
+        "structured conflict/current-version API test",
+        "Playwright focus retention and verified re-query test"
+      ],
+      "reconciliationState": "proposed-complete"
+    },
+    {
+      "capabilityId": "cap-disable-registration",
+      "plannedHttpOperations": [
+        {
+          "method": "POST",
+          "path": "/v1/registrations/{registrationId}/disable",
+          "purpose": "disable a Registration once and fence old-version work"
+        }
+      ],
+      "architectureElementIds": [
+        "ARCH-registration-control-012",
+        "ARCH-registration-control-013"
+      ],
+      "ownership": {
+        "issue": "mrbaron3/workflow#15",
+        "acceptanceCriterion": "AC-CISO-010"
+      },
+      "sourceInteractionIds": [
+        "interaction-confirm-disable"
+      ],
+      "uiInteractions": [
+        "destructive confirmation with target and If-Match version",
+        "old-work impact explanation",
+        "structured outcome status",
+        "authoritative disabled/work-fence re-query verification"
+      ],
+      "successSemantics": "one version increment and enabled=false; old queued work rejected and leased work blocked at the next side-effect fence; verified success waits for authoritative projection",
+      "failureSemantics": [
+        "stale If-Match is version_conflict",
+        "same key/different input is rejected",
+        "already disabled returns current state without fabricating a new applied event",
+        "transport uncertainty remains indeterminate"
+      ],
+      "implementationObligations": [
+        "require Idempotency-Key and If-Match",
+        "transactionally audit actor/outcome and reject queued old-version work",
+        "enforce the leased-work critical side-effect fence",
+        "project old-work outcome and recovery"
+      ],
+      "testEvidenceObligations": [
+        "duplicate disable without double version/audit test",
+        "update-versus-disable race test",
+        "queued and leased old-version fence integration tests",
+        "restart persistence and Playwright verification-state test"
+      ],
+      "reconciliationState": "proposed-complete"
+    },
+    {
+      "capabilityId": "cap-inspect-delivery-status",
+      "plannedHttpOperations": [
+        {
+          "method": "GET",
+          "path": "/v1/deliveries/{deliveryId}",
+          "purpose": "return the authoritative delivery, attempt, Registration binding, and recovery projection"
+        }
+      ],
+      "architectureElementIds": [
+        "ARCH-registration-control-005",
+        "ARCH-registration-control-006",
+        "ARCH-registration-control-014"
+      ],
+      "ownership": {
+        "issue": "mrbaron3/workflow#15",
+        "acceptanceCriterion": "AC-CISO-010"
+      },
+      "sourceInteractionIds": [
+        "interaction-open-delivery",
+        "interaction-verify-retry"
+      ],
+      "uiInteractions": [
+        "failure item selection",
+        "delivery detail and attempt history",
+        "post-retry authoritative verification"
+      ],
+      "successSemantics": "one durable snapshot returns delivery state, attempts, Registration identity/version, and recovery evidence",
+      "failureSemantics": [
+        "not found and unauthorized are not empty success",
+        "disconnect leaves only visibly last-known detail and disables retry",
+        "pending remains pending until authoritative evidence changes"
+      ],
+      "implementationObligations": [
+        "extend delivery response with verification and recovery fields",
+        "return bounded non-secret attempt history",
+        "make delivery/attempt/Registration binding snapshot-consistent"
+      ],
+      "testEvidenceObligations": [
+        "concurrent retry/read snapshot test",
+        "disconnect/last-known behavior test",
+        "no webhook payload or secret leakage test",
+        "Playwright selected-detail and pending-versus-verified test"
+      ],
+      "reconciliationState": "proposed-complete"
+    },
+    {
+      "capabilityId": "cap-retry-delivery",
+      "plannedHttpOperations": [
+        {
+          "method": "POST",
+          "path": "/v1/deliveries/{deliveryId}/retry",
+          "purpose": "create at most one retry attempt through delivery-attempt and Registration-version fences"
+        }
+      ],
+      "architectureElementIds": [
+        "ARCH-registration-control-004",
+        "ARCH-registration-control-005",
+        "ARCH-registration-control-006",
+        "ARCH-registration-control-012",
+        "ARCH-registration-control-013",
+        "ARCH-registration-control-014"
+      ],
+      "ownership": {
+        "issue": "mrbaron3/workflow#15",
+        "acceptanceCriterion": "AC-CISO-010"
+      },
+      "sourceInteractionIds": [
+        "interaction-retry-delivery"
+      ],
+      "uiInteractions": [
+        "retry action beside current reason/attempts/version",
+        "structured attempt outcome",
+        "authoritative delivery and Registration re-query verification"
+      ],
+      "successSemantics": "applied or duplicate returns one attempt identity and bound Registration version; 202 remains pending evidence until delivery re-query verifies the durable result",
+      "failureSemantics": [
+        "route-attempt or Registration-version mismatch is version_conflict",
+        "disabled/missing/unsafe Registration is rejected with a durable reason",
+        "same key/different delivery/attempt/version input is rejected",
+        "transport uncertainty remains indeterminate and permits only same-key same-input replay"
+      ],
+      "implementationObligations": [
+        "require Idempotency-Key, observed route attempts, and current Registration identity/version",
+        "lock and revalidate delivery and Registration fences",
+        "persist accepted and rejected attempt outcomes transactionally",
+        "return structured outcome and cancellable=false",
+        "verify through ARCH-registration-control-014"
+      ],
+      "testEvidenceObligations": [
+        "concurrent retry single-attempt test",
+        "same-key replay and conflicting-key-input tests",
+        "attempt and Registration-version conflict tests",
+        "disabled/missing Registration fail-closed test",
+        "Playwright accepted/pending/rejected/conflict/indeterminate/verified announcements"
+      ],
+      "reconciliationState": "proposed-complete"
+    }
+  ],
+  "coverageSummary": {
+    "capabilityCount": 7,
+    "reconciledCapabilityCount": 7,
+    "unreconciledCapabilityIds": [],
+    "allOwnedByIssue": "mrbaron3/workflow#15",
+    "allOwnedByAcceptanceCriterion": "AC-CISO-010",
+    "implementationGate": "requires a separate Human Design Decision approving the exact revisionId and bundleDigest; this reconciliation alone is not approval"
+  },
+  "ambiguities": []
+}

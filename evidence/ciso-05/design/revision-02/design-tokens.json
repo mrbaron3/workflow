@@ -1,0 +1,608 @@
+{
+  "$description": "CISO-05 Dashboard semantic token delta. Status colors always require text labels and, where space permits, an icon or shape.",
+  "color": {
+    "primitive": {
+      "ink": {
+        "$type": "color",
+        "950": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.043,
+              0.071,
+              0.102
+            ],
+            "alpha": 1
+          }
+        },
+        "800": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.12,
+              0.165,
+              0.212
+            ],
+            "alpha": 1
+          }
+        },
+        "650": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.263,
+              0.322,
+              0.38
+            ],
+            "alpha": 1
+          }
+        },
+        "300": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.68,
+              0.718,
+              0.753
+            ],
+            "alpha": 1
+          }
+        },
+        "150": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.847,
+              0.871,
+              0.894
+            ],
+            "alpha": 1
+          }
+        },
+        "075": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.929,
+              0.941,
+              0.953
+            ],
+            "alpha": 1
+          }
+        },
+        "025": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.976,
+              0.98,
+              0.984
+            ],
+            "alpha": 1
+          }
+        },
+        "000": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              1,
+              1
+            ],
+            "alpha": 1
+          }
+        }
+      },
+      "red": {
+        "$type": "color",
+        "800": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.478,
+              0.071,
+              0.098
+            ],
+            "alpha": 1
+          }
+        },
+        "650": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.69,
+              0.094,
+              0.145
+            ],
+            "alpha": 1
+          }
+        },
+        "100": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.996,
+              0.902,
+              0.91
+            ],
+            "alpha": 1
+          }
+        }
+      },
+      "amber": {
+        "$type": "color",
+        "850": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.376,
+              0.22,
+              0.02
+            ],
+            "alpha": 1
+          }
+        },
+        "600": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.69,
+              0.42,
+              0.035
+            ],
+            "alpha": 1
+          }
+        },
+        "100": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              1,
+              0.949,
+              0.82
+            ],
+            "alpha": 1
+          }
+        }
+      },
+      "green": {
+        "$type": "color",
+        "800": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.035,
+              0.337,
+              0.208
+            ],
+            "alpha": 1
+          }
+        },
+        "650": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.035,
+              0.486,
+              0.294
+            ],
+            "alpha": 1
+          }
+        },
+        "100": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.855,
+              0.965,
+              0.906
+            ],
+            "alpha": 1
+          }
+        }
+      },
+      "blue": {
+        "$type": "color",
+        "800": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.059,
+              0.255,
+              0.522
+            ],
+            "alpha": 1
+          }
+        },
+        "650": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.055,
+              0.392,
+              0.741
+            ],
+            "alpha": 1
+          }
+        },
+        "100": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.882,
+              0.929,
+              0.992
+            ],
+            "alpha": 1
+          }
+        }
+      },
+      "violet": {
+        "$type": "color",
+        "700": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.345,
+              0.176,
+              0.639
+            ],
+            "alpha": 1
+          }
+        },
+        "100": {
+          "$value": {
+            "colorSpace": "srgb",
+            "components": [
+              0.941,
+              0.914,
+              0.992
+            ],
+            "alpha": 1
+          }
+        }
+      }
+    },
+    "surface": {
+      "$type": "color",
+      "canvas": {
+        "$value": "{color.primitive.ink.025}",
+        "$description": "Page background"
+      },
+      "panel": {
+        "$value": "{color.primitive.ink.000}",
+        "$description": "Primary content panel"
+      },
+      "subtle": {
+        "$value": "{color.primitive.ink.075}",
+        "$description": "Secondary grouping surface"
+      },
+      "selected": {
+        "$value": "{color.primitive.blue.100}",
+        "$description": "Selected Registration surface; selection also uses border and aria-current"
+      },
+      "critical": {
+        "$value": "{color.primitive.red.100}",
+        "$description": "Critical status background"
+      },
+      "warning": {
+        "$value": "{color.primitive.amber.100}",
+        "$description": "Stale, conflict, and degraded status background"
+      },
+      "success": {
+        "$value": "{color.primitive.green.100}",
+        "$description": "Verified success background; never used for accepted-only or pending commands"
+      }
+    },
+    "text": {
+      "$type": "color",
+      "primary": {
+        "$value": "{color.primitive.ink.950}"
+      },
+      "secondary": {
+        "$value": "{color.primitive.ink.650}"
+      },
+      "inverse": {
+        "$value": "{color.primitive.ink.000}"
+      },
+      "critical": {
+        "$value": "{color.primitive.red.800}"
+      },
+      "warning": {
+        "$value": "{color.primitive.amber.850}"
+      },
+      "success": {
+        "$value": "{color.primitive.green.800}"
+      },
+      "link": {
+        "$value": "{color.primitive.blue.800}"
+      }
+    },
+    "border": {
+      "$type": "color",
+      "default": {
+        "$value": "{color.primitive.ink.150}"
+      },
+      "strong": {
+        "$value": "{color.primitive.ink.650}"
+      },
+      "critical": {
+        "$value": "{color.primitive.red.650}"
+      },
+      "warning": {
+        "$value": "{color.primitive.amber.600}"
+      },
+      "success": {
+        "$value": "{color.primitive.green.650}"
+      },
+      "selected": {
+        "$value": "{color.primitive.blue.650}"
+      },
+      "focus": {
+        "$value": "{color.primitive.violet.700}",
+        "$description": "High-contrast focus indicator"
+      }
+    },
+    "status": {
+      "critical": {
+        "$type": "color",
+        "foreground": {
+          "$value": "{color.text.critical}",
+          "$description": "Failed or rejected foreground"
+        },
+        "background": {
+          "$value": "{color.surface.critical}"
+        },
+        "border": {
+          "$value": "{color.border.critical}"
+        }
+      },
+      "stale": {
+        "$type": "color",
+        "foreground": {
+          "$value": "{color.text.warning}",
+          "$description": "Stale or version-divergent foreground"
+        },
+        "background": {
+          "$value": "{color.surface.warning}"
+        },
+        "border": {
+          "$value": "{color.border.warning}"
+        }
+      },
+      "disconnected": {
+        "$type": "color",
+        "foreground": {
+          "$value": "{color.text.critical}",
+          "$description": "Authoritative source unavailable"
+        },
+        "background": {
+          "$value": "{color.surface.critical}"
+        },
+        "border": {
+          "$value": "{color.border.critical}"
+        }
+      },
+      "healthy": {
+        "$type": "color",
+        "foreground": {
+          "$value": "{color.text.success}",
+          "$description": "Fresh observed healthy state"
+        },
+        "background": {
+          "$value": "{color.surface.success}"
+        },
+        "border": {
+          "$value": "{color.border.success}"
+        }
+      },
+      "neutral": {
+        "$type": "color",
+        "foreground": {
+          "$value": "{color.text.secondary}",
+          "$description": "Stopped by desired state, unknown before first observation, or informational"
+        },
+        "background": {
+          "$value": "{color.surface.subtle}"
+        },
+        "border": {
+          "$value": "{color.border.default}"
+        }
+      }
+    }
+  },
+  "space": {
+    "$type": "dimension",
+    "050": {
+      "$value": {
+        "value": 4,
+        "unit": "px"
+      }
+    },
+    "100": {
+      "$value": {
+        "value": 8,
+        "unit": "px"
+      }
+    },
+    "150": {
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      }
+    },
+    "200": {
+      "$value": {
+        "value": 16,
+        "unit": "px"
+      }
+    },
+    "300": {
+      "$value": {
+        "value": 24,
+        "unit": "px"
+      }
+    },
+    "400": {
+      "$value": {
+        "value": 32,
+        "unit": "px"
+      }
+    },
+    "600": {
+      "$value": {
+        "value": 48,
+        "unit": "px"
+      }
+    }
+  },
+  "size": {
+    "target": {
+      "$type": "dimension",
+      "minimum": {
+        "$value": {
+          "value": 44,
+          "unit": "px"
+        },
+        "$description": "Minimum primary pointer target"
+      }
+    },
+    "content": {
+      "$type": "dimension",
+      "maximum": {
+        "$value": {
+          "value": 1440,
+          "unit": "px"
+        }
+      },
+      "registrationList": {
+        "$value": {
+          "value": 384,
+          "unit": "px"
+        }
+      }
+    }
+  },
+  "radius": {
+    "$type": "dimension",
+    "control": {
+      "$value": {
+        "value": 8,
+        "unit": "px"
+      }
+    },
+    "panel": {
+      "$value": {
+        "value": 12,
+        "unit": "px"
+      }
+    },
+    "pill": {
+      "$value": {
+        "value": 999,
+        "unit": "px"
+      }
+    }
+  },
+  "border": {
+    "width": {
+      "$type": "dimension",
+      "default": {
+        "$value": {
+          "value": 1,
+          "unit": "px"
+        }
+      },
+      "selected": {
+        "$value": {
+          "value": 2,
+          "unit": "px"
+        }
+      },
+      "focus": {
+        "$value": {
+          "value": 3,
+          "unit": "px"
+        }
+      }
+    }
+  },
+  "font": {
+    "family": {
+      "$type": "fontFamily",
+      "ui": {
+        "$value": [
+          "Inter",
+          "Hiragino Sans",
+          "Yu Gothic UI",
+          "system-ui",
+          "sans-serif"
+        ]
+      },
+      "mono": {
+        "$value": [
+          "SFMono-Regular",
+          "Consolas",
+          "Liberation Mono",
+          "monospace"
+        ]
+      }
+    },
+    "weight": {
+      "$type": "fontWeight",
+      "regular": {
+        "$value": 400
+      },
+      "medium": {
+        "$value": 600
+      },
+      "strong": {
+        "$value": 700
+      }
+    }
+  },
+  "motion": {
+    "duration": {
+      "$type": "duration",
+      "state": {
+        "$value": {
+          "value": 120,
+          "unit": "ms"
+        },
+        "$description": "Short state transition; resolves to zero when reduced motion is requested"
+      }
+    }
+  },
+  "component": {
+    "connectionBanner": {
+      "criticalBackground": {
+        "$type": "color",
+        "$value": "{color.status.disconnected.background}"
+      },
+      "staleBackground": {
+        "$type": "color",
+        "$value": "{color.status.stale.background}"
+      }
+    },
+    "registrationCard": {
+      "selectedBackground": {
+        "$type": "color",
+        "$value": "{color.surface.selected}"
+      },
+      "selectedBorder": {
+        "$type": "color",
+        "$value": "{color.border.selected}"
+      }
+    },
+    "focusRing": {
+      "color": {
+        "$type": "color",
+        "$value": "{color.border.focus}"
+      },
+      "width": {
+        "$type": "dimension",
+        "$value": "{border.width.focus}"
+      }
+    }
+  }
+}

@@ -23,6 +23,7 @@ export interface RunnerServiceConfig {
   workerId: string;
   workspaceRoot: string;
   provider: 'codex' | 'claude';
+  operatingMode?: 'MONITOR_ONLY' | 'ACTIVE';
   leaseDurationMs: number;
   heartbeatIntervalMs: number;
   /** Kept only in workerData; never restored to provider/grader process env. */
@@ -311,6 +312,7 @@ export class IsolatedRunnerService {
 
   async runOnce(): Promise<boolean> {
     if (this.stopping) return false;
+    if (this.config.operatingMode !== 'ACTIVE') return false;
     await this.store.reclaimExpiredLeases(this.config.maxAttempts, {
       jobType: 'agentops.runner',
       retryBaseMs: this.config.retryBaseMs,

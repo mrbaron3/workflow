@@ -20,6 +20,23 @@ func TestValidateApprovedPinnedBundleAndCoverage(t *testing.T) {
 	}
 }
 
+func TestValidateApprovedDashboardRevisionAndReconciliation(t *testing.T) {
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := ValidateDashboard(repositoryRoot)
+	if err != nil {
+		t.Fatalf("ValidateDashboard() error = %v", err)
+	}
+	if result.RevisionID != "workflow-ciso05-dashboard-r02" ||
+		result.BundleDigest != ApprovedDashboardBundleDigest ||
+		result.DecisionID != "workflow-ciso05-dashboard-r02-approve" ||
+		result.CoverageBinding != 7 {
+		t.Fatalf("unexpected dashboard result: %#v", result)
+	}
+}
+
 func TestValidateFailsClosedForApprovalAndCoverageDefects(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -64,6 +64,7 @@ type CommandFactory func(context.Context, string, ...string) Command
 type ProductionRunner struct {
 	Store          MonitorStore
 	Source         MonitorSource
+	Mode           OperatingMode
 	SupervisorID   string
 	PollInterval   time.Duration
 	ForwarderRetry time.Duration
@@ -121,7 +122,16 @@ func (runner *ProductionRunner) pollOnce(
 	if err != nil {
 		return err
 	}
-	if !registration.ExecutionEnabled {
+	if !registration.ExecutionEnabled || runner.Mode != ModeActive {
+		if err := runner.Store.SaveMonitorCursor(
+			ctx,
+			registration.ID,
+			kind,
+			nextCursor,
+			observedAt,
+		); err != nil {
+			return err
+		}
 		return runner.Store.UpsertActualState(
 			ctx,
 			registration,
@@ -517,22 +527,16 @@ func (source GitHubSource) Poll(
 }
 
 func forwarderEvents(registration Registration) []string {
-	var events []string
-	if registration.IssueMonitorEnabled {
-		events = append(events, "issues", "issue_comment")
+	return []string{
+		"issues",
+		"issue_comment",
+		"pull_request",
+		"pull_request_review",
+		"pull_request_review_comment",
+		"check_run",
+		"check_suite",
+		"push",
 	}
-	if registration.PRMonitorEnabled {
-		events = append(
-			events,
-			"pull_request",
-			"pull_request_review",
-			"pull_request_review_comment",
-			"check_run",
-			"check_suite",
-			"push",
-		)
-	}
-	return events
 }
 
 func collectLastLine(reader io.Reader, result chan<- string) {
@@ -555,7 +559,7 @@ func webhookRepository(payload map[string]any) (string, error) {
 		return "", fmt.Errorf("payload repository.full_name is missing")
 	}
 	fullName = strings.ToLower(strings.TrimSpace(fullName))
-	if !repositoryPattern.MatchString(fullName) {
+	if !safeRepositoryIdentity(fullName) {
 		return "", fmt.Errorf("payload repository.full_name is invalid")
 	}
 	return fullName, nil

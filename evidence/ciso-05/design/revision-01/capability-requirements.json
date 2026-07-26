@@ -1,0 +1,351 @@
+{
+  "schemaVersion": "1.0",
+  "requestId": "workflow-ciso05-dashboard-20260726",
+  "revisionId": "workflow-ciso05-dashboard-r01",
+  "capabilities": [
+    {
+      "id": "cap-establish-browser-control-session",
+      "kind": "command",
+      "userIntent": "loopback Dashboardを開き、browserへ長期operator secretを露出せずsame-origin Control APIを安全に利用する",
+      "sourceInteractionIds": [
+        "interaction-open-dashboard"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ],
+      "inputDescription": "loopback browser context、exact Origin、既存operator authorization boundary、session bootstrap request metadata。repository、command、path、credentialその他のproduct inputは含めない",
+      "successOutcome": "same-originかつ短命なoperator session、mutationごとのanti-CSRF proof、session expiry情報を返し、browserはControl API以外へcredential付き通信を行わない",
+      "failureSemantics": [
+        {
+          "condition": "request OriginまたはHostが許可されたexact loopback originと一致しない",
+          "userVisibleOutcome": "sessionを作成せず「このoriginからはDashboardを利用できない」と表示し、全mutationを無効化する",
+          "recoverability": "許可されたloopback URLを開き直す。UIからorigin例外を追加させない"
+        },
+        {
+          "condition": "operator authorizationが存在しない、期限切れ、または不正である",
+          "userVisibleOutcome": "状態を読み込んだふりをせずsession rejectedとして表示する",
+          "recoverability": "外部の許可済みoperator bootstrap手順へ戻る。secret入力fieldをDashboardへ追加しない"
+        },
+        {
+          "condition": "session storeまたはControl APIが利用不能である",
+          "userVisibleOutcome": "disconnectedとlast successful session timeを表示し、既存snapshotがあればlast knownとしてだけ残す",
+          "recoverability": "bounded retryまたは手動refreshを許可し、復旧までmutationを受け付けない"
+        }
+      ],
+      "authorization": "loopback到達だけを認可とせず、既存operator権限を検証する。browserへbearer token、provider credential、DB credential、container credentialを返さない",
+      "latencyExpectation": "初期page表示中にloading状態を提示できる短い応答とし、待機が継続する場合は接続不能へ遷移する",
+      "freshnessExpectation": "session expiryとanti-CSRF proofの有効範囲を明示し、expired sessionをconnectedとして扱わない",
+      "concurrencySemantics": "複数tabのsessionはactorへ関連付けるがCSRF proofとcommand identityを混同せず、logout／expiry後のmutationをfail closedにする",
+      "idempotencySemantics": "同じ安全なbootstrap再送は重複actor sessionによる権限拡張を生まず、既存有効sessionの再利用または置換規則を一意にする",
+      "retrySemantics": "network failure時のbootstrapはbounded retryできるが、authorization rejectionは自動反復しない",
+      "cancellationSemantics": "page離脱または新しいbootstrap開始時は古い応答を適用せず、失効済みproofを保存しない",
+      "paginationSemantics": "適用なし",
+      "auditSemantics": "session作成、拒否、expiry、Origin不一致をactorまたは匿名request metadata、reason、timeとともに監査し、secretやCSRF proof自体は記録しない"
+    },
+    {
+      "id": "cap-list-registration-status",
+      "kind": "query",
+      "userIntent": "Registrationごとのdesired／actual、異常、観測鮮度、最終正常時刻、回復状態を比較し、安全な次の操作を選ぶ",
+      "sourceInteractionIds": [
+        "interaction-open-dashboard",
+        "interaction-scan-anomalies",
+        "interaction-inspect-registration",
+        "interaction-refresh-status",
+        "interaction-verify-create",
+        "interaction-verify-update",
+        "interaction-verify-disable",
+        "interaction-verify-retry"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-001",
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-004",
+        "REQ-CISO05-006"
+      ],
+      "inputDescription": "認証済みoperator context、任意のcanonical repository filter、bounded page size、前pageから得たopaque continuation identity",
+      "successOutcome": "authoritativeな全体modeとsnapshot observed time、Registration identity／version／desired switches、Issue Monitor／PR Monitor／Forwarder／Execution／Queueのactual stateとobservedAt／last-good／stale／last error／recovery、last poll、last delivery、queue depth、active job、recent failureを同一snapshot lineageで返す。Registrationが0件なら成功したempty resultを返す",
+      "failureSemantics": [
+        {
+          "condition": "Control storeまたはauthoritative projectionへ到達できない",
+          "userVisibleOutcome": "現在状態を返さずdisconnected、last successful read、bounded retry hintを表示する。既存値はlast knownとして明示する",
+          "recoverability": "bounded automatic retryと手動refreshを許可し、新しい成功snapshotまでmutationを無効化する"
+        },
+        {
+          "condition": "component観測が欠落、Registration version不一致、またはfreshness budgetを超過する",
+          "userVisibleOutcome": "unknownまたはstaleとしてactual state、observedAt、last-good、影響を表示し、healthyへ補完しない",
+          "recoverability": "周期reconciliationと手動refreshの結果を待ち、必要ならlast errorに示された運用回復を選ぶ"
+        },
+        {
+          "condition": "全体modeが不明、またはmodeとExecution actual stateの関係を確定できない",
+          "userVisibleOutcome": "modeとExecutionをunknownとして表示し、execution停止を正常または障害のどちらにも推測しない",
+          "recoverability": "authoritative mode projectionの復旧後に再取得する"
+        },
+        {
+          "condition": "filter、page size、continuation identityが不正または別snapshot lineageに属する",
+          "userVisibleOutcome": "一覧を部分成功にせず入力拒否またはpagination conflictを表示する",
+          "recoverability": "filterを修正するか先頭pageから新しいqueryを開始する"
+        },
+        {
+          "condition": "operator sessionが期限切れまたはread権限を持たない",
+          "userVisibleOutcome": "authorization rejectedとして表示し、古いsnapshotをcurrentとして残さない",
+          "recoverability": "session bootstrapをやり直し、権限がない場合は操作を終了する"
+        }
+      ],
+      "authorization": "control-plane status read権限を持つsame-origin operator sessionだけが利用できる。responseへprovider、DB、runner、container credentialを含めない",
+      "latencyExpectation": "初期queryは即座にloading stateへ入り、通常のloopback操作で認識可能な短時間にfirst pageを返す。時間を要する集計はsnapshotの鮮度を犠牲にせずbounded responseとする",
+      "freshnessExpectation": "全体snapshotと各actual componentにobserved timeを持ち、freshness budget、Registration version、mode lineageからstaleを判定する。last-goodをcurrent healthyの代用にしない",
+      "concurrencySemantics": "1 response page内のRegistration、component、poll、delivery、queue、jobは同一consistent snapshotから構成し、version混在を許さない。新query開始後に古い応答をUIへ適用しない",
+      "idempotencySemantics": "read-onlyでdurable stateを変更せず、同じsnapshot continuationの再読込は意味的に同じpageを返す",
+      "retrySemantics": "一時的なstore／transport失敗はserver hintに従ってbounded retryし、継続失敗をdisconnectedとして可視化する。authorizationやinvalid inputは自動retryしない",
+      "cancellationSemantics": "filter変更、manual refresh、新しいsnapshot開始、page離脱で旧queryをcancelまたは結果破棄できる",
+      "paginationSemantics": "first pageはanomaly-firstの安定順序を持ち、opaque continuationは同じsnapshot lineageへ束縛する。page間で重複・欠落を発生させず、異常を後続pageへ無自覚に押し出さない",
+      "auditSemantics": "read自体の個別business auditは不要だが、authorization rejection、projection failure、invalid continuation、stale modeをcredentialを含めずstructured operational logへ残す"
+    },
+    {
+      "id": "cap-create-registration",
+      "kind": "command",
+      "userIntent": "canonical repository identityと許可済みdesired switchesだけで新しいRegistrationを永続化する",
+      "sourceInteractionIds": [
+        "interaction-submit-create"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ],
+      "inputDescription": "canonical owner/name、enabled、issue monitor enabled、PR monitor enabled、execution enabled、same-origin operator session、anti-CSRF proof、client生成のcommand idempotency identity。任意configuration、command、path、credential、image、mount、URL、environmentは受け付けない",
+      "successOutcome": "一意なRegistration identity、正規化repository、persisted desired switches、初期の単調増加version、created／updated timeを返し、authoritative status queryで再確認可能にする",
+      "failureSemantics": [
+        {
+          "condition": "repository identityがcanonical owner/nameでない、未知fieldがある、または禁止inputが含まれる",
+          "userVisibleOutcome": "作成せずfield errorまたはstrict schema rejectionを表示し、入力を保持する",
+          "recoverability": "許可されたfieldだけに修正して新しいvalid requestを送る"
+        },
+        {
+          "condition": "同じrepositoryが既に登録済みである",
+          "userVisibleOutcome": "重複作成せず既存Registration identityと競合理由を表示する",
+          "recoverability": "既存Registrationを選択し、必要ならversion-bound updateを行う"
+        },
+        {
+          "condition": "同じidempotency identityが異なるrequestへ再利用された",
+          "userVisibleOutcome": "idempotency conflictとして作成を拒否し、どの入力も成功表示しない",
+          "recoverability": "同じ論理commandなら元requestを再送し、別commandなら新しいidentityを生成する"
+        },
+        {
+          "condition": "session、Origin、CSRF、authorization検証に失敗する",
+          "userVisibleOutcome": "authorizationまたはrequest rejectionを表示し、Registrationを作成しない",
+          "recoverability": "same-origin sessionを再確立し、権限がない場合は終了する"
+        },
+        {
+          "condition": "store commit前後の結果を確認できない",
+          "userVisibleOutcome": "成功と断定せずoutcome unknownとして同じidempotency identityでの安全な照会／再送を案内する",
+          "recoverability": "同一identityで再送またはauthoritative status queryを行い、重複作成しない"
+        }
+      ],
+      "authorization": "Registration mutation権限を持つsame-origin operator sessionと有効なanti-CSRF proofを要求する。loopback到達だけでは許可しない",
+      "latencyExpectation": "validationとdurable commitの受付結果をdialog内で待てる短時間に返し、pending中は同じSaveを二重発火させない",
+      "freshnessExpectation": "成功responseはcommitされたversionを返し、UIはauthoritative queryで同versionを確認後にverified successを表示する",
+      "concurrencySemantics": "repository identityの一意性をauthoritative storeで保証し、同時createは高々1つだけが新Registrationを作る",
+      "idempotencySemantics": "同一command identityと同一canonical requestの再送は同じRegistrationとresponseを返し、異request再利用を拒否する",
+      "retrySemantics": "transport不明時は同じcommand identityで再送できる。validation、authorization、semantic conflictは修正なしに自動retryしない",
+      "cancellationSemantics": "送信前はCancelできる。durable commit受付後は取消済みと仮定せず、必要なら別のversion-bound disable commandとして扱う",
+      "paginationSemantics": "適用なし",
+      "auditSemantics": "actor、normalized repository、desired switches、command identityのdigest、outcome、Registration identity／version、timeをstate mutationと同じdurability boundaryで記録し、secretを残さない"
+    },
+    {
+      "id": "cap-update-registration",
+      "kind": "command",
+      "userIntent": "選択したRegistrationのcurrent versionに対して許可済みdesired switchesだけを変更する",
+      "sourceInteractionIds": [
+        "interaction-submit-update"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ],
+      "inputDescription": "immutable Registration identity、operatorが確認したpositive version、変更するenabled／issue monitor／PR monitor／execution switchesのstrict差分、same-origin operator session、anti-CSRF proof。repository identityと任意configurationは変更対象に含めない",
+      "successOutcome": "同一Registration identityの新しい単調増加version、persisted desired switches、updated timeを返し、actual stateがそのversionへ収束中かどうかをauthoritative queryで確認可能にする",
+      "failureSemantics": [
+        {
+          "condition": "observed versionがcurrent versionと一致しない",
+          "userVisibleOutcome": "version conflictとしてcurrent versionと再読込導線を表示し、変更を成功表示しない",
+          "recoverability": "current snapshotを再取得し、差分と影響を再判断してから新versionへcommandを送る"
+        },
+        {
+          "condition": "Registrationが存在しない、または既に別のlifecycle状態へ遷移した",
+          "userVisibleOutcome": "not foundまたはstate conflictを表示し、dialogの対象identityを維持する",
+          "recoverability": "一覧を再取得し、対象のcurrent lifecycleを確認する"
+        },
+        {
+          "condition": "未知field、空差分、禁止input、型不一致がある",
+          "userVisibleOutcome": "strict rejectionとfield errorを表示し、stateを変更しない",
+          "recoverability": "許可されたswitchの有効な差分に修正する"
+        },
+        {
+          "condition": "session、Origin、CSRF、authorizationまたはstore commitが失敗する",
+          "userVisibleOutcome": "rejected、disconnected、outcome unknownを区別し、成功として閉じない",
+          "recoverability": "session再確立、bounded retry、またはauthoritative queryでversionを確認する"
+        }
+      ],
+      "authorization": "Registration mutation権限を持つsame-origin operator sessionと有効なanti-CSRF proofを要求する",
+      "latencyExpectation": "version検証とdurable commit結果をdialog内で待てる短時間に返し、pending中の重複Saveを防ぐ",
+      "freshnessExpectation": "operatorが見たversionへcommandを束縛し、成功後は新versionをauthoritative queryで確認する。actual state収束前にhealthyと表示しない",
+      "concurrencySemantics": "current versionへのcompare-and-changeを保証し、同じversionへの競合commandは高々1つだけが成功する",
+      "idempotencySemantics": "version-bound同一mutationのtransport再送が二重version incrementを生まないcommand identityまたは同等のdedup semanticsを提供する",
+      "retrySemantics": "outcome unknownだけを同じidentityで安全に再送する。version conflictは自動retryせず人間の再判断を要求する",
+      "cancellationSemantics": "送信前はCancelできる。durable commit後は取消ではなく新versionへの明示的なupdateとして戻す",
+      "paginationSemantics": "適用なし",
+      "auditSemantics": "actor、Registration identity、old／new version、変更field、old／new desired values、outcome、reason、timeをmutationと同じdurability boundaryへ記録する"
+    },
+    {
+      "id": "cap-disable-registration",
+      "kind": "command",
+      "userIntent": "対象と影響を確認したRegistrationをcurrent versionに束縛して無効化し、古いworkを再有効化しない",
+      "sourceInteractionIds": [
+        "interaction-confirm-disable"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-002",
+        "REQ-CISO05-003",
+        "REQ-CISO05-005",
+        "REQ-CISO05-006"
+      ],
+      "inputDescription": "Registration identity、operatorが確認したpositive version、same-origin operator session、anti-CSRF proof、明示的なdisable intent。job、lease、container、DB rowを直接指定するinputは含めない",
+      "successOutcome": "enabled=falseの新しいpersisted versionと時刻を返し、新規monitor／forwarder／execution workが開始されず、古いqueued／leased workのrejectedまたはrecovery outcomeをauthoritative statusで追跡可能にする",
+      "failureSemantics": [
+        {
+          "condition": "observed versionがcurrent versionと一致しない",
+          "userVisibleOutcome": "disableを実行せずversion conflictとcurrent versionを表示する",
+          "recoverability": "current snapshotで対象、active job、影響を再確認してから再判断する"
+        },
+        {
+          "condition": "Registrationが存在しない、または既にdisabledである",
+          "userVisibleOutcome": "not foundまたはcurrent disabled stateを表示し、新たな成功eventを作らない",
+          "recoverability": "一覧を再取得してcurrent lifecycleを確認する"
+        },
+        {
+          "condition": "store transactionが失敗、切断、または結果不明になる",
+          "userVisibleOutcome": "無効化済みと表示せずdisconnectedまたはoutcome unknownを表示する",
+          "recoverability": "同じlogical command identityで安全に再送するかauthoritative queryでenabledとversionを確認する"
+        },
+        {
+          "condition": "session、Origin、CSRFまたはauthorizationが不正である",
+          "userVisibleOutcome": "disableを拒否し、全mutationを無効化する",
+          "recoverability": "same-origin sessionを再確立し、権限がない場合は終了する"
+        }
+      ],
+      "authorization": "Registration disable権限を持つsame-origin operator sessionと有効なanti-CSRF proofを要求し、browserへcontainer lifecycle権限を与えない",
+      "latencyExpectation": "durable disable commitの結果をconfirmation内で返し、component停止やwork recoveryは非同期statusとして追跡する",
+      "freshnessExpectation": "commandは確認時versionへ束縛し、UIは新versionとenabled=falseをauthoritative queryで検証する。component stoppedやjob rejectedが未観測ならconvergingとして表示する",
+      "concurrencySemantics": "同一versionへのupdate／disable競合は高々1つだけが成功し、stale commandを拒否する",
+      "idempotencySemantics": "同一versionとlogical disable identityの再送は二重audit／version incrementを生まず同じoutcomeへ収束する",
+      "retrySemantics": "transport不明時だけ同じidentityで再送できる。version conflictは自動retryしない",
+      "cancellationSemantics": "確認前はCancelできる。durable disable後に自動re-enableせず、将来の明示的なversion-bound updateとして扱う",
+      "paginationSemantics": "適用なし",
+      "auditSemantics": "actor、Registration identity、old／new version、active work observation、disable outcome、rejected／recovery reason、timeをtransactionalに監査する"
+    },
+    {
+      "id": "cap-inspect-delivery-status",
+      "kind": "query",
+      "userIntent": "失敗deliveryのcurrent durable state、原因、attempt、Registration bindingを確認してretry可否を判断する",
+      "sourceInteractionIds": [
+        "interaction-open-delivery",
+        "interaction-verify-retry"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ],
+      "inputDescription": "認証済みoperator contextとstatus snapshotから選択したopaque delivery identity",
+      "successOutcome": "delivery identity、repository、event、status、ignored／failure reason、route attempts、Registration identity／version、received／updated time、retry attempt identity／accepted-or-rejected state／reason／observed attemptsを一貫したdurable snapshotで返す",
+      "failureSemantics": [
+        {
+          "condition": "deliveryが存在しない、閲覧権限がない、または別Registration contextである",
+          "userVisibleOutcome": "detailを空の成功stateにせずnot foundまたはauthorization rejectionを表示する",
+          "recoverability": "Registration statusを再取得し、現行failure listから対象を再選択する"
+        },
+        {
+          "condition": "Control storeへ到達できない",
+          "userVisibleOutcome": "delivery current stateを推測せずdisconnectedとlast known detailの時刻を表示する",
+          "recoverability": "bounded retryし、復旧までRetry actionを無効化する"
+        },
+        {
+          "condition": "deliveryまたはattemptがquery中に更新される",
+          "userVisibleOutcome": "返されたsnapshot observed timeを表示し、pendingをprocessedと推測しない",
+          "recoverability": "新しいqueryでcurrent durable stateを再取得する"
+        }
+      ],
+      "authorization": "delivery recovery read権限を持つsame-origin operator sessionだけが利用でき、webhook payload、secret header、credentialを返さない",
+      "latencyExpectation": "failure item選択後に同一panelのloading stateを経て短時間に返す",
+      "freshnessExpectation": "delivery、route attempt、retry attempts、Registration bindingを同一snapshotから返し、updated timeを表示する",
+      "concurrencySemantics": "retry commandと同時でも1 responseは一貫したattempt集合を返し、古いquery結果を新しいselectionへ適用しない",
+      "idempotencySemantics": "read-onlyでdelivery、attempt、routeを変更しない",
+      "retrySemantics": "一時的なstore／transport失敗はbounded retryし、not found／authorization rejectionは自動retryしない",
+      "cancellationSemantics": "別deliveryの選択、Registration変更、panel closeで旧queryをcancelまたは結果破棄する",
+      "paginationSemantics": "単一delivery detailには適用なし。attempt履歴が上限を持つ場合は最新結果とretry判断に必要なobserved attemptsを必ず含め、履歴省略を明示する",
+      "auditSemantics": "read障害とauthorization rejectionをstructured operational logへ残し、通常readの個別business audit rowは不要とする"
+    },
+    {
+      "id": "cap-retry-delivery",
+      "kind": "command",
+      "userIntent": "原因確認済みの失敗deliveryをcurrent attemptsとRegistration versionに照らして重複なくretryする",
+      "sourceInteractionIds": [
+        "interaction-retry-delivery"
+      ],
+      "sourceRequirementIds": [
+        "REQ-CISO05-003",
+        "REQ-CISO05-006",
+        "REQ-CISO05-007"
+      ],
+      "inputDescription": "opaque delivery identity、operatorが確認したnon-negative route attempts、same-origin operator session、anti-CSRF proof、client生成のretry idempotency identity",
+      "successOutcome": "重複しないretry attempt identity、delivery identity、accepted state、cancellation可否を返し、その後のdurable delivery／attempt stateをquery可能にする。受付を処理完了とは表現しない",
+      "failureSemantics": [
+        {
+          "condition": "deliveryがprocessing、processed、既にretry済み、またはretry対象外である",
+          "userVisibleOutcome": "新attemptを作らずcurrent state、route attempts、reason、監査可能なrejection identityを表示する",
+          "recoverability": "current delivery statusを再取得し、待機または結果確認へ進む"
+        },
+        {
+          "condition": "observed route attemptsがcurrent attemptsと一致しない",
+          "userVisibleOutcome": "attempt conflictとしてcurrent attemptsを表示し、retry成功とは表示しない",
+          "recoverability": "delivery detailを再取得し、原因とattemptを再確認する"
+        },
+        {
+          "condition": "Registrationがmissing、disabled、version不一致、execution不許可、またはauthoritative state不明である",
+          "userVisibleOutcome": "fail closedのrejection reason、current Registration binding、recovery候補を表示する",
+          "recoverability": "Registration statusを確認し、状態が安全に回復した場合だけ新しい判断でretryする"
+        },
+        {
+          "condition": "同じidempotency identityが異なるdeliveryまたはattempt inputへ再利用された",
+          "userVisibleOutcome": "idempotency conflictを表示し、新しいattemptを作らない",
+          "recoverability": "同じlogical retryなら元requestを再送し、別retryなら新identityを生成する"
+        },
+        {
+          "condition": "session、Origin、CSRF、authorization、store commitまたはtransportが失敗する",
+          "userVisibleOutcome": "rejected、disconnected、outcome unknownを区別し、成功や完了を表示しない",
+          "recoverability": "session再確立、同一identityでの安全な再送、またはdelivery status queryでattempt identityを確認する"
+        }
+      ],
+      "authorization": "delivery recovery権限を持つsame-origin operator sessionと有効なanti-CSRF proofを要求する。browserからrunner、queue、DBを直接操作させない",
+      "latencyExpectation": "retry acceptanceまたはrejectionを同一recovery panelで短時間に返し、実処理は追跡可能な非同期stateとする",
+      "freshnessExpectation": "command直前にdelivery state、route attempts、Registration identity／version／enabled／execution permissionをauthoritative storeで再検証する",
+      "concurrencySemantics": "同一deliveryとobserved attemptsへの競合retryは高々1つだけが新attemptを作り、他は同じattemptまたは明示rejectionへ収束する",
+      "idempotencySemantics": "同一retry identityと同一requestの再送は同じattempt identityとoutcomeを返し、異request再利用を拒否する",
+      "retrySemantics": "transport不明時は同一identityで安全に再送できる。semantic rejectionとattempt conflictは自動retryしない",
+      "cancellationSemantics": "送信前はCancelできる。accepted attemptのcancel可否を明示し、cancel不能ならDashboardからcancel controlを提供しない",
+      "paginationSemantics": "適用なし",
+      "auditSemantics": "acceptedとrejectedの双方についてactor、delivery、attempt identity、observed／current attempts、Registration identity／version、reason、timeをstate判断と同じdurability boundaryで記録する"
+    }
+  ],
+  "ambiguities": [
+    "#13の既存capability coverageはcap-list-registration-statusとcap-retry-deliveryだけであり、本revisionのsession、create、update、disable、delivery detail各capabilityへのAPI／system／AC traceが存在しない",
+    "authoritative operating modeの所有元、許可value、observed time、Control API status snapshotとの整合性契約が未定義である",
+    "ExecutionとQueueのactual state、freshness budget、last-good、recovery state、およびMONITOR_ONLY時の期待stateを返すcapabilityが未定義である",
+    "browser session、exact Origin、anti-CSRF、same-origin credential delivery、security headerの能力と監査境界が未定義である",
+    "update／disable commandのtransport retryを二重version incrementなしで収束させるidempotency semanticsと、disable後のqueued／leased work outcome projectionが未定義である"
+  ]
+}

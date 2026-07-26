@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#15",
+  "runtime": "Apple Container",
+  "runtimeVersion": "container CLI version 1.1.0 (build: release, commit: unspeci)",
+  "images": {
+    "githubStubImage": "node:22-bookworm-slim",
+    "controlImage": "agentops-control:ciso03-39571-1785030483127",
+    "controlTestImage": "agentops-control-test:ciso03-39571-1785030483127"
+  },
+  "checks": {
+    "standardOciControlBuild": "passed",
+    "pinnedForwarderExtensionReady": "passed",
+    "githubStubInternalOnly": "passed",
+    "goRacePostgresIntegration": "passed",
+    "designGateAtControlStartup": "passed",
+    "loopbackBrowserSessionBoundary": "passed",
+    "exactOriginCsrfAndSecurityHeaders": "passed",
+    "postgresInternalOnly": "passed",
+    "controlLoopbackOnly": "passed",
+    "controlReadOnlyRootAndCapabilitiesDropped": "passed",
+    "noContainerRuntimeSocketOrHostFilesystemMount": "passed",
+    "registrationCreateEnableDisableWithoutRestart": "passed",
+    "desiredActualProjection": "passed",
+    "databaseDisconnectFailClosed": "passed",
+    "databaseReconnectReconstruction": "passed",
+    "controlRestartReconstruction": "passed"
+  },
+  "topology": {
+    "controlPublications": [
+      {
+        "containerPort": 8080,
+        "count": 1,
+        "hostAddress": "127.0.0.1",
+        "hostPort": 58617,
+        "proto": "tcp"
+      }
+    ],
+    "postgresPublications": [],
+    "githubStubPublications": [],
+    "runnerWasLongRunning": false,
+    "runnerPublications": []
+  },
+  "registration": {
+    "id": "7a33cc5f-dd11-44d2-8445-e60b81f266ef",
+    "createdVersion": 1,
+    "enabledVersion": 2,
+    "disabledVersion": 3,
+    "restoredVersion": 4
+  },
+  "completedAt": "2026-07-26T01:48:53.549Z"
+}
