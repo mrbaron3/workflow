@@ -152,8 +152,9 @@ export function runVitest(
   extraEnv?: Record<string, string>,
   options?: GraderExecutionOptions,
 ): VitestReport {
+  const containerRegistrationRoot = runnerSandboxRoot(options?.environment ?? {});
   const out = path.join(
-    options?.isolated ? cwd : os.tmpdir(),
+    options?.isolated || containerRegistrationRoot ? cwd : os.tmpdir(),
     `.agentops-vitest-${process.pid}-${reportSeq++}.json`,
   );
   const configLoader = options?.isolated && !command.includes('--configLoader')
