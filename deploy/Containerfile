@@ -55,9 +55,9 @@ FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca440
 # git is part of the harness grader/runner toolchain (it shells out to git); install it reproducibly.
 RUN rm -f /etc/apt/sources.list.d/debian.sources \
     && printf '%s\n' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
       > /etc/apt/sources.list \
     && apt-get update && apt-get install -y --no-install-recommends \
       git=1:2.39.5-0+deb12u3 \
@@ -117,9 +117,9 @@ ARG TARGETARCH
 ARG GH_WEBHOOK_VERSION=v0.2.0
 RUN rm -f /etc/apt/sources.list.d/debian.sources \
     && printf '%s\n' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
-      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
       > /etc/apt/sources.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
