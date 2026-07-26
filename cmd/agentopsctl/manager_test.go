@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -114,6 +115,35 @@ func TestValidateSpecActualRejectsImageAndConfigurationDrift(t *testing.T) {
 	spec.Environment["SECRET"] = "rotated"
 	if err := validateSpecActual(actual, spec); err == nil {
 		t.Fatal("environment drift was accepted")
+	}
+}
+
+func TestRedactContainerStatusRemovesCredentialEnvironmentValues(t *testing.T) {
+	actual := &lifecycle.ContainerActual{}
+	actual.Configuration.InitProcess.Environment = []string{
+		"AGENTOPS_DATABASE_URL=postgresql://role:database-secret@db/agentops",
+		"AGENTOPS_RUNNER_GITHUB_TOKEN=github-secret",
+		"AGENTOPS_OPERATING_MODE=ACTIVE",
+	}
+	redacted := redactContainerStatus(actual)
+	encoded, err := json.Marshal(redacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(encoded)
+	for _, secret := range []string{"database-secret", "github-secret"} {
+		if strings.Contains(rendered, secret) {
+			t.Fatalf("status JSON leaked %q: %s", secret, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "AGENTOPS_DATABASE_URL=***") ||
+		!strings.Contains(rendered, "AGENTOPS_RUNNER_GITHUB_TOKEN=***") ||
+		!strings.Contains(rendered, "AGENTOPS_OPERATING_MODE=ACTIVE") {
+		t.Fatalf("unexpected redacted status JSON: %s", rendered)
+	}
+	if actual.Configuration.InitProcess.Environment[0] ==
+		"AGENTOPS_DATABASE_URL=***" {
+		t.Fatal("redaction mutated the runtime inspection source")
 	}
 }
 

@@ -433,7 +433,7 @@ func (manager *manager) Status(ctx context.Context) (combinedStatus, error) {
 		if err != nil {
 			return combinedStatus{}, err
 		}
-		result.Containers[role] = actual
+		result.Containers[role] = redactContainerStatus(actual)
 	}
 	if result.Containers["postgres"] != nil &&
 		result.Containers["postgres"].Status.State == "running" &&
@@ -464,6 +464,28 @@ func (manager *manager) Status(ctx context.Context) (combinedStatus, error) {
 		result.LoopbackOnly = !result.ControlReachable && !result.OffLoopbackReachable
 	}
 	return result, nil
+}
+
+func redactContainerStatus(
+	actual *lifecycle.ContainerActual,
+) *lifecycle.ContainerActual {
+	if actual == nil {
+		return nil
+	}
+	redacted := *actual
+	redacted.Configuration = actual.Configuration
+	redacted.Configuration.InitProcess = actual.Configuration.InitProcess
+	redacted.Configuration.InitProcess.Environment = append(
+		[]string(nil),
+		actual.Configuration.InitProcess.Environment...,
+	)
+	for index, entry := range redacted.Configuration.InitProcess.Environment {
+		key, _, present := strings.Cut(entry, "=")
+		if present && lifecycle.CredentialEnvironmentKey(key) {
+			redacted.Configuration.InitProcess.Environment[index] = key + "=***"
+		}
+	}
+	return &redacted
 }
 
 func printStatus(status combinedStatus) {
