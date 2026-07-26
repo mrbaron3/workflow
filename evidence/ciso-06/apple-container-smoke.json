@@ -213,6 +213,38 @@
       ],
       "secretValuesPresentInError": false,
       "outputArtifactSha256": "19dc0c489809a4d7f278574b3e22030413edf7a919ff564e8d166388ea1c660b"
+    },
+    {
+      "name": "round-1-stable-proxy-drain",
+      "requestId": "grounded-r1-drain-stable-1",
+      "result": "passed",
+      "controlInternalAddressBefore": "192.168.128.148/24",
+      "controlInternalAddressAfter": "192.168.128.148/24",
+      "persistedMode": "DRAINING",
+      "runner": "stopped",
+      "control": "running"
+    },
+    {
+      "name": "round-1-stale-replay",
+      "requestId": "grounded-r1-drain-stable-1",
+      "result": "failed closed as expected",
+      "stateBefore": "ACTIVE",
+      "stateAfter": "ACTIVE",
+      "runnerBefore": "running",
+      "runnerAfter": "running",
+      "error": "lifecycle transition replay is stale"
+    },
+    {
+      "name": "round-1-expired-runner-recovery",
+      "requestId": "grounded-r1-expired-recovery-1",
+      "injectedCrash": "runner SIGKILL with one already-expired active lease and running attempt",
+      "result": "passed",
+      "recoveredAttemptStatus": "timed_out",
+      "recoveredLeaseStatus": "expired",
+      "recoveredJobStatus": "queued",
+      "recoveryAuditCount": 1,
+      "finalMode": "ACTIVE",
+      "runner": "running"
     }
   ],
   "commandsCovered": [

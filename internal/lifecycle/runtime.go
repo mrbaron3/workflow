@@ -155,11 +155,26 @@ type Resource struct {
 type ContainerActual struct {
 	ID            string `json:"id"`
 	Configuration struct {
-		Labels         map[string]string `json:"labels"`
-		ReadOnly       bool              `json:"readOnly"`
-		CapDrop        []string          `json:"capDrop"`
-		PublishedPorts []map[string]any  `json:"publishedPorts"`
-		PublishedSock  []map[string]any  `json:"publishedSockets"`
+		Labels   map[string]string `json:"labels"`
+		ReadOnly bool              `json:"readOnly"`
+		CapAdd   []string          `json:"capAdd"`
+		CapDrop  []string          `json:"capDrop"`
+		Image    struct {
+			Reference string `json:"reference"`
+		} `json:"image"`
+		InitProcess struct {
+			User struct {
+				ID struct {
+					UID int `json:"uid"`
+					GID int `json:"gid"`
+				} `json:"id"`
+				Raw struct {
+					UserString string `json:"userString"`
+				} `json:"raw"`
+			} `json:"user"`
+		} `json:"initProcess"`
+		PublishedPorts []map[string]any `json:"publishedPorts"`
+		PublishedSock  []map[string]any `json:"publishedSockets"`
 		Mounts         []struct {
 			Destination string         `json:"destination"`
 			Source      string         `json:"source"`

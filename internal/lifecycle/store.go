@@ -18,6 +18,8 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
+var ErrStaleReplay = errors.New("lifecycle transition replay is stale")
+
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
@@ -88,7 +90,23 @@ func (store *Store) Transition(
 			       drain_deadline_at, drain_timed_out, last_error, updated_at
 			  FROM agentops_control.lifecycle_state WHERE singleton
 		`))
-		return existing, state, stateErr
+		if stateErr != nil {
+			return existing, state, stateErr
+		}
+		if existing.Status == "rejected" {
+			if existing.Error != nil {
+				return existing, state, fmt.Errorf("%s", *existing.Error)
+			}
+			return existing, state, fmt.Errorf("rejected lifecycle transition replay")
+		}
+		if state.TransitionID == nil || *state.TransitionID != existing.ID {
+			return existing, state, fmt.Errorf(
+				"%w: key %q belongs to an earlier lifecycle generation",
+				ErrStaleReplay,
+				idempotencyKey,
+			)
+		}
+		return existing, state, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Transition{}, State{}, err
@@ -186,6 +204,183 @@ func (store *Store) Transition(
 		return result, current, fmt.Errorf("%s", *transitionError)
 	}
 	return result, current, nil
+}
+
+func (store *Store) ReconcileExpiredRunnerWork(
+	ctx context.Context,
+	maxAttempts int,
+	retryBase time.Duration,
+) (int64, error) {
+	if maxAttempts < 1 {
+		return 0, fmt.Errorf("max attempts must be positive")
+	}
+	if retryBase < 0 {
+		return 0, fmt.Errorf("retry base must be non-negative")
+	}
+	transaction, err := store.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = transaction.Rollback(context.Background()) }()
+	rows, err := transaction.Query(ctx, `
+		SELECT l.id, l.job_id, l.attempt_id, a.attempt_number,
+		       r.enabled, r.execution_enabled,
+		       r.version = j.registration_version
+		  FROM agentops_control.job_leases l
+		  JOIN agentops_control.job_attempts a ON a.id = l.attempt_id
+		  JOIN agentops_control.jobs j ON j.id = l.job_id
+		  JOIN agentops_control.repository_registrations r
+		    ON r.id = j.registration_id
+		 WHERE l.status = 'active'
+		   AND l.expires_at <= clock_timestamp()
+		   AND j.job_type = 'agentops.runner'
+		 ORDER BY l.expires_at
+		 FOR UPDATE OF l, a, j, r SKIP LOCKED
+	`)
+	if err != nil {
+		return 0, err
+	}
+	type expiredLease struct {
+		leaseID, jobID, attemptID            string
+		attempt                              int
+		enabled, executionEnabled, versionOK bool
+	}
+	var expired []expiredLease
+	for rows.Next() {
+		var item expiredLease
+		if err := rows.Scan(
+			&item.leaseID,
+			&item.jobID,
+			&item.attemptID,
+			&item.attempt,
+			&item.enabled,
+			&item.executionEnabled,
+			&item.versionOK,
+		); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		expired = append(expired, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	for _, item := range expired {
+		retryable := item.enabled &&
+			item.executionEnabled &&
+			item.versionOK &&
+			item.attempt < maxAttempts
+		jobStatus := "rejected"
+		lastError := "lease expired after registration changed"
+		if item.enabled && item.executionEnabled && item.versionOK {
+			jobStatus = "failed"
+			lastError = "lease expired and max attempts exhausted"
+			if retryable {
+				jobStatus = "queued"
+				lastError = "lease expired"
+			}
+		}
+		if _, err := transaction.Exec(ctx, `
+			UPDATE agentops_control.job_leases
+			   SET status = 'expired', released_at = clock_timestamp()
+			 WHERE id = $1
+		`, item.leaseID); err != nil {
+			return 0, err
+		}
+		if _, err := transaction.Exec(ctx, `
+			UPDATE agentops_control.job_attempts
+			   SET status = 'timed_out',
+			       finished_at = clock_timestamp(),
+			       error = 'lease expired',
+			       failure = jsonb_build_object(
+			         'schemaVersion', 1,
+			         'status', 'failed',
+			         'code', 'lease_lost',
+			         'message', 'lease expired',
+			         'retryable', $2::boolean,
+			         'boundary', NULL,
+			         'observedAt', to_char(
+			           clock_timestamp() AT TIME ZONE 'UTC',
+			           'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+			         )
+			       )
+			 WHERE id = $1 AND status = 'running'
+		`, item.attemptID, retryable); err != nil {
+			return 0, err
+		}
+		retryDelay := retryBase * time.Duration(
+			1<<min(item.attempt-1, 10),
+		)
+		if retryDelay > time.Hour {
+			retryDelay = time.Hour
+		}
+		if _, err := transaction.Exec(ctx, `
+			UPDATE agentops_control.jobs
+			   SET status = $2,
+			       available_at = CASE
+			         WHEN $2 = 'queued'
+			         THEN clock_timestamp() + ($3 * interval '1 millisecond')
+			         ELSE available_at
+			       END,
+			       finished_at = CASE
+			         WHEN $2 = 'queued' THEN NULL
+			         ELSE clock_timestamp()
+			       END,
+			       updated_at = clock_timestamp(),
+			       last_error = $4,
+			       failure = CASE
+			         WHEN $2 = 'queued' THEN NULL
+			         WHEN $2 = 'failed' THEN jsonb_build_object(
+			           'schemaVersion', 1,
+			           'status', 'failed',
+			           'code', 'lease_lost',
+			           'message', 'lease expired and max attempts exhausted',
+			           'retryable', false,
+			           'boundary', NULL,
+			           'observedAt', to_char(
+			             clock_timestamp() AT TIME ZONE 'UTC',
+			             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+			           )
+			         )
+			         ELSE jsonb_build_object(
+			           'schemaVersion', 1,
+			           'status', 'failed',
+			           'code', 'registration_stale',
+			           'message', 'lease expired after registration changed',
+			           'retryable', false,
+			           'boundary', 'claim',
+			           'observedAt', to_char(
+			             clock_timestamp() AT TIME ZONE 'UTC',
+			             'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+			           )
+			         )
+			       END
+			 WHERE id = $1 AND status = 'leased'
+		`, item.jobID, jobStatus, retryDelay.Milliseconds(), lastError); err != nil {
+			return 0, err
+		}
+		if _, err := transaction.Exec(ctx, `
+			INSERT INTO agentops_control.runtime_audit(
+			  actor_type, actor_id, event_type, job_id, details
+			) VALUES (
+			  'lifecycle', 'agentopsctl-recovery',
+			  'lifecycle.recovery.lease_expired', $1, $2
+			)
+		`, item.jobID, map[string]any{
+			"attemptNumber": item.attempt,
+			"maxAttempts":   maxAttempts,
+			"retryDelayMs":  retryDelay.Milliseconds(),
+			"outcome":       jobStatus,
+		}); err != nil {
+			return 0, err
+		}
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return int64(len(expired)), nil
 }
 
 func (store *Store) RecordFailure(

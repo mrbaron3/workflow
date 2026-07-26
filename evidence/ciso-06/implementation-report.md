@@ -18,14 +18,17 @@ rejected/idempotent/applied audit、drain deadline/timeout/last errorをPostgreS
 delivery routing/enqueue/leaseはrow lockで直列化し、job INSERT triggerもACTIVE以外を拒否する。
 
 drainはDRAINING commit後にrunnerへSIGTERMを送り、lease/attemptがゼロかつrunner停止まで待つ。timeout時はforce killせず
-failureを保存する。restartはpersisted mode/lease/attemptとactual topologyを照合し、欠損ACTIVEをDRAININGへ寄せる。
+failureを保存する。controlを再作成しないため、runnerが参照中のproxy address/tunnelはdrain完了まで安定する。
+restartはpersisted mode/lease/attemptとactual topologyを照合し、欠損ACTIVEをDRAININGへ寄せる。crash後に期限切れとなった
+leaseはowner-only reconciliationがattemptをtimed_out、leaseをexpired、jobをretry/terminalへ原子的に回収して監査する。
 partial start補償はそのstartが変更したcontainerだけを削除し、通常stopと失敗時のどちらもnamed volumeを保存する。
 
 ## grounded境界
 
 実Apple Container 1.1.0/arm64で、標準OCI control/runner build、ACTIVE起動、exact publish/security inspect、
 ACTIVE→DRAINING、同一drain replay、DRAININGからの復旧、ACTIVE→DRAINING→OFF、volume-backed MONITOR_ONLY再起動、
-repeated stop、port conflictによるpartial-start compensationを実行した。machine-readable結果は
+repeated stop、port conflictによるpartial-start compensation、control address不変drain、stale replay拒否、
+crashed/expired attempt recoveryを実行した。machine-readable結果は
 `evidence/ciso-06/apple-container-smoke.json`に固定した。
 
 fake/inert credentialと空queueを使ったためprovider/GitHub外部side effectは発生していない。`open`の実装は

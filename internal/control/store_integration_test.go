@@ -84,12 +84,95 @@ func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
 	if _, _, err := store.Transition(
 		ctx,
 		"integration",
+		"active-to-draining",
+		lifecyclestore.ModeDraining,
+		&deadline,
+		nil,
+	); !errors.Is(err, lifecyclestore.ErrStaleReplay) {
+		t.Fatalf("old transition replay was not rejected as stale: %v", err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
 		"monitor-active",
 		lifecyclestore.ModeActive,
 		nil,
 		nil,
 	); err != nil {
 		t.Fatal(err)
+	}
+	if _, _, err := store.Transition(
+		ctx,
+		"integration",
+		"invalid-draining-active",
+		lifecyclestore.ModeActive,
+		nil,
+		nil,
+	); err == nil {
+		t.Fatal("rejected transition replay unexpectedly succeeded")
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.repository_registrations(id, repository)
+		VALUES ('10000000-0000-4000-8000-000000000001', 'owner/recovery');
+		INSERT INTO agentops_control.jobs(
+		  id, registration_id, registration_version, source_kind, source_key,
+		  idempotency_key, job_type, payload, status
+		) VALUES (
+		  '20000000-0000-4000-8000-000000000001',
+		  '10000000-0000-4000-8000-000000000001',
+		  1, 'recovery', 'expired-attempt', 'expired-attempt',
+		  'agentops.runner', '{}', 'leased'
+		);
+		INSERT INTO agentops_control.job_attempts(
+		  id, job_id, attempt_number, worker_id, status
+		) VALUES (
+		  '30000000-0000-4000-8000-000000000001',
+		  '20000000-0000-4000-8000-000000000001',
+		  1, 'crashed-runner', 'running'
+		);
+		INSERT INTO agentops_control.job_leases(
+		  id, job_id, attempt_id, lease_token, worker_id, status,
+		  acquired_at, heartbeat_at, expires_at
+		) VALUES (
+		  '40000000-0000-4000-8000-000000000001',
+		  '20000000-0000-4000-8000-000000000001',
+		  '30000000-0000-4000-8000-000000000001',
+		  '50000000-0000-4000-8000-000000000001',
+		  'crashed-runner', 'active',
+		  clock_timestamp() - interval '2 minutes',
+		  clock_timestamp() - interval '2 minutes',
+		  clock_timestamp() - interval '1 minute'
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	reconciled, err := store.ReconcileExpiredRunnerWork(
+		ctx,
+		3,
+		5*time.Second,
+	)
+	if err != nil || reconciled != 1 {
+		t.Fatalf("expired recovery reconciled=%d err=%v", reconciled, err)
+	}
+	var jobStatus, attemptStatus, leaseStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT j.status, a.status, l.status
+		  FROM agentops_control.jobs j
+		  JOIN agentops_control.job_attempts a ON a.job_id = j.id
+		  JOIN agentops_control.job_leases l ON l.attempt_id = a.id
+		 WHERE j.id = '20000000-0000-4000-8000-000000000001'
+	`).Scan(&jobStatus, &attemptStatus, &leaseStatus); err != nil {
+		t.Fatal(err)
+	}
+	if jobStatus != "queued" ||
+		attemptStatus != "timed_out" ||
+		leaseStatus != "expired" {
+		t.Fatalf(
+			"recovered states job=%s attempt=%s lease=%s",
+			jobStatus,
+			attemptStatus,
+			leaseStatus,
+		)
 	}
 	if err := store.RecordFailure(
 		ctx,

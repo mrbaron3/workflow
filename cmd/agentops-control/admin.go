@@ -59,7 +59,9 @@ func runLifecycleCommand(
 	args []string,
 ) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: agentops-control lifecycle status|transition|failure")
+		return fmt.Errorf(
+			"usage: agentops-control lifecycle status|transition|failure|reconcile-expired",
+		)
 	}
 	store, err := lifecycle.Open(ctx, databaseURL)
 	if err != nil {
@@ -144,6 +146,25 @@ func runLifecycleCommand(
 			return err
 		}
 		return writeJSON(map[string]any{"recorded": true})
+	case "reconcile-expired":
+		flags := flag.NewFlagSet("lifecycle reconcile-expired", flag.ContinueOnError)
+		maxAttempts := flags.Int("max-attempts", 3, "terminal attempt ceiling")
+		retryBase := flags.Duration("retry-base", 5*time.Second, "retry backoff base")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 {
+			return fmt.Errorf("unexpected lifecycle reconciliation arguments")
+		}
+		reconciled, err := store.ReconcileExpiredRunnerWork(
+			ctx,
+			*maxAttempts,
+			*retryBase,
+		)
+		if err != nil {
+			return err
+		}
+		return writeJSON(map[string]any{"reconciled": reconciled})
 	default:
 		return fmt.Errorf("unknown lifecycle command %q", args[0])
 	}

@@ -39,7 +39,7 @@ control、runner、PostgreSQLを個別の手操作で起動すると、MacのLis
 
 - MONITOR_ONLYは監視/Dashboardだけを保ち、ACTIVEだけがenqueue/leaseを許す。
 - DRAININGはCISO-05の公開API語彙へ追加せず、PostgreSQLとCLI statusだけが権威として表示する。control processは
-  MONITOR_ONLYで残り、既存runnerのegress proxyをdrain完了まで維持する。
+  address/configを変更せず残し、DB fenceで新規workを止めながら既存runnerのegress proxyをdrain完了まで維持する。
 - Apple Containerのcustom network DNSへ依存せず、actual inspectで得たinternal IPv4を短命起動ごとに解決する。
 - 実provider/GitHub credentialを用いた外部side effect実行はこの安全なlifecycle smokeの対象外であり、既存runnerの
   expected-head/lease fenceが引き続き副作用境界を所有する。

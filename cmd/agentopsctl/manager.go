@@ -101,13 +101,22 @@ func (manager *manager) Start(
 	if err != nil {
 		return err
 	}
+	if err := manager.validateExistingTopology(ctx); err != nil {
+		return err
+	}
 	if persisted.State.Mode == lifecycle.ModeActive {
-		actualControl, _ := manager.runtime.Container(ctx, manager.config.ControlContainer)
-		actualRunner, _ := manager.runtime.Container(ctx, manager.config.RunnerContainer)
+		actualControl, err := manager.runtime.Container(ctx, manager.config.ControlContainer)
+		if err != nil {
+			return err
+		}
+		actualRunner, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
+		if err != nil {
+			return err
+		}
 		if mode == lifecycle.ModeActive &&
 			actualControl != nil && actualControl.Status.State == "running" &&
 			actualRunner != nil && actualRunner.Status.State == "running" {
-			return manager.verifyPublishedSurface(ctx, true)
+			return manager.verifyPublishedSurface(ctx, true, true)
 		}
 		if _, err := manager.transition(
 			ctx,
@@ -123,12 +132,9 @@ func (manager *manager) Start(
 		}
 	}
 	if persisted.State.Mode == lifecycle.ModeDraining {
-		if persisted.ActiveLeases != 0 || persisted.InFlightAttempts != 0 {
-			return fmt.Errorf(
-				"recovery remains DRAINING with %d active leases and %d in-flight attempts; run drain",
-				persisted.ActiveLeases,
-				persisted.InFlightAttempts,
-			)
+		persisted, err = manager.recoverDraining(ctx, persisted)
+		if err != nil {
+			return err
 		}
 		if _, err := manager.transition(
 			ctx,
@@ -185,8 +191,16 @@ func (manager *manager) Start(
 				return err
 			}
 		}
+	} else {
+		if err := manager.removeRunner(ctx); err != nil {
+			return err
+		}
 	}
-	return manager.verifyPublishedSurface(ctx, true)
+	return manager.verifyPublishedSurface(
+		ctx,
+		true,
+		mode == lifecycle.ModeActive,
+	)
 }
 
 func (manager *manager) Drain(
@@ -219,14 +233,9 @@ func (manager *manager) Drain(
 	); err != nil {
 		return err
 	}
-	// Keep the CISO-05 Dashboard/API process in its published MONITOR_ONLY
-	// vocabulary while PostgreSQL carries the authoritative DRAINING mode.
-	// Its DB gates prohibit routing/enqueue, and its internal CONNECT proxy
-	// remains available so an already-leased runner can reach a natural stop.
-	if err := manager.replaceControl(ctx, lifecycle.ModeMonitorOnly); err != nil {
-		_ = manager.recordFailure(ctx, "drain.control", err.Error(), false)
-		return err
-	}
+	// Keep the existing control process and its current internal address alive.
+	// PostgreSQL fences routing/enqueue/lease after the DRAINING commit, while
+	// the stable CONNECT proxy lets the current attempt reach a natural stop.
 	runner, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
 	if err != nil {
 		return err
@@ -337,7 +346,7 @@ func (manager *manager) Stop(
 	if err := manager.runtime.Delete(ctx, manager.config.PostgresContainer); err != nil {
 		return err
 	}
-	return manager.verifyPublishedSurface(ctx, false)
+	return manager.verifyPublishedSurface(ctx, false, false)
 }
 
 type combinedStatus struct {
@@ -615,12 +624,64 @@ func (manager *manager) databaseStatus(ctx context.Context) (lifecycle.Status, e
 	return status, nil
 }
 
+func (manager *manager) recoverDraining(
+	ctx context.Context,
+	status lifecycle.Status,
+) (lifecycle.Status, error) {
+	deadline := time.Now().UTC().Add(10 * time.Minute)
+	if status.State.DrainDeadlineAt != nil {
+		deadline = *status.State.DrainDeadlineAt
+	}
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := manager.admin(
+			ctx,
+			[]string{
+				"lifecycle",
+				"reconcile-expired",
+				"--max-attempts", "3",
+				"--retry-base", "5s",
+			},
+			nil,
+		); err != nil {
+			return lifecycle.Status{}, err
+		}
+		current, err := manager.databaseStatus(ctx)
+		if err != nil {
+			return lifecycle.Status{}, err
+		}
+		if current.ActiveLeases == 0 && current.InFlightAttempts == 0 {
+			return current, nil
+		}
+		if !time.Now().UTC().Before(deadline) {
+			message := fmt.Sprintf(
+				"recovery drain deadline reached with %d active leases and %d in-flight attempts",
+				current.ActiveLeases,
+				current.InFlightAttempts,
+			)
+			_ = manager.recordFailure(
+				context.Background(),
+				"start.recovery",
+				message,
+				true,
+			)
+			return lifecycle.Status{}, fmt.Errorf("%s", message)
+		}
+		select {
+		case <-ctx.Done():
+			return lifecycle.Status{}, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
 func (manager *manager) transition(
 	ctx context.Context,
 	to lifecycle.Mode,
 	requestID string,
 	deadline time.Time,
-) (string, error) {
+) (lifecycle.State, error) {
 	command := []string{
 		"lifecycle", "transition",
 		"--to", string(to),
@@ -634,7 +695,35 @@ func (manager *manager) transition(
 			deadline.UTC().Format(time.RFC3339Nano),
 		)
 	}
-	return manager.admin(ctx, command, nil)
+	output, err := manager.admin(ctx, command, nil)
+	if err != nil {
+		return lifecycle.State{}, err
+	}
+	var result struct {
+		State lifecycle.State `json:"state"`
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		return lifecycle.State{}, fmt.Errorf("parse lifecycle transition: %w", err)
+	}
+	if result.State.Mode != to {
+		return result.State, fmt.Errorf(
+			"lifecycle transition did not establish %s (current=%s)",
+			to,
+			result.State.Mode,
+		)
+	}
+	return result.State, nil
+}
+
+func (manager *manager) removeRunner(ctx context.Context) error {
+	if err := manager.gracefulStop(
+		ctx,
+		manager.config.RunnerContainer,
+		20*time.Second,
+	); err != nil {
+		return err
+	}
+	return manager.runtime.Delete(ctx, manager.config.RunnerContainer)
 }
 
 func (manager *manager) recordFailure(
@@ -975,7 +1064,7 @@ func (manager *manager) compensateStart(
 
 func (manager *manager) verifyPublishedSurface(
 	ctx context.Context,
-	controlExpected bool,
+	controlExpected, runnerExpected bool,
 ) error {
 	reachable := tcpReachable(
 		"127.0.0.1",
@@ -1005,6 +1094,11 @@ func (manager *manager) verifyPublishedSurface(
 	) {
 		return fmt.Errorf("control does not have exactly one loopback-only publication")
 	}
+	if controlExpected {
+		if err := manager.verifyManagedTopology(ctx, runnerExpected); err != nil {
+			return err
+		}
+	}
 	for _, role := range []string{
 		manager.config.RunnerContainer,
 		manager.config.PostgresContainer,
@@ -1020,6 +1114,213 @@ func (manager *manager) verifyPublishedSurface(
 		}
 	}
 	return nil
+}
+
+func (manager *manager) verifyManagedTopology(
+	ctx context.Context,
+	runnerExpected bool,
+) error {
+	control, err := manager.runtime.Container(ctx, manager.config.ControlContainer)
+	if err != nil {
+		return err
+	}
+	postgres, err := manager.runtime.Container(ctx, manager.config.PostgresContainer)
+	if err != nil {
+		return err
+	}
+	runner, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
+	if err != nil {
+		return err
+	}
+	if err := validateControlActual(control, manager.config); err != nil {
+		return err
+	}
+	if err := validatePostgresActual(postgres, manager.config); err != nil {
+		return err
+	}
+	if runnerExpected {
+		return validateRunnerActual(runner, manager.config)
+	}
+	if runner != nil {
+		return fmt.Errorf("runner must be absent outside ACTIVE")
+	}
+	return nil
+}
+
+func (manager *manager) validateExistingTopology(ctx context.Context) error {
+	for _, item := range []struct {
+		name     string
+		validate func(*lifecycle.ContainerActual, config) error
+	}{
+		{manager.config.ControlContainer, validateControlActual},
+		{manager.config.RunnerContainer, validateRunnerActual},
+		{manager.config.PostgresContainer, validatePostgresActual},
+	} {
+		actual, err := manager.runtime.Container(ctx, item.name)
+		if err != nil {
+			return err
+		}
+		if actual != nil && actual.Status.State == "running" {
+			if err := item.validate(actual, manager.config); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateControlActual(
+	actual *lifecycle.ContainerActual,
+	config config,
+) error {
+	if err := validateManagedActual(
+		actual,
+		config.ControlContainer,
+		"control",
+		config.ControlImage,
+		[]string{"default", config.Network},
+		true,
+	); err != nil {
+		return err
+	}
+	if !exactLoopbackPublication(actual, config.ControlHostPort) {
+		return fmt.Errorf("control publication does not match the expected loopback port")
+	}
+	if !exactMounts(actual, map[string]string{"/tmp": "tmpfs"}) {
+		return fmt.Errorf("control mounts do not match the hardened topology")
+	}
+	return nil
+}
+
+func validateRunnerActual(
+	actual *lifecycle.ContainerActual,
+	config config,
+) error {
+	if err := validateManagedActual(
+		actual,
+		config.RunnerContainer,
+		"runner",
+		config.RunnerImage,
+		[]string{config.Network},
+		true,
+	); err != nil {
+		return err
+	}
+	if len(actual.Configuration.PublishedPorts) != 0 ||
+		len(actual.Configuration.PublishedSock) != 0 {
+		return fmt.Errorf("runner exposes a host port or socket")
+	}
+	if !exactMounts(actual, map[string]string{
+		"/tmp":           "tmpfs",
+		"/home/agentops": "tmpfs",
+		"/workspace":     config.RunnerVolume,
+	}) {
+		return fmt.Errorf("runner mounts do not match the hardened topology")
+	}
+	return nil
+}
+
+func validatePostgresActual(
+	actual *lifecycle.ContainerActual,
+	config config,
+) error {
+	if err := validateManagedActual(
+		actual,
+		config.PostgresContainer,
+		"postgres",
+		config.PostgresImage,
+		[]string{config.Network},
+		false,
+	); err != nil {
+		return err
+	}
+	if len(actual.Configuration.PublishedPorts) != 0 ||
+		len(actual.Configuration.PublishedSock) != 0 {
+		return fmt.Errorf("PostgreSQL exposes a host port or socket")
+	}
+	if !exactMounts(actual, map[string]string{
+		"/tmp":                "tmpfs",
+		"/run/postgresql":     "tmpfs",
+		"/var/lib/postgresql": config.PostgresVolume,
+	}) {
+		return fmt.Errorf("PostgreSQL mounts do not match the managed topology")
+	}
+	return nil
+}
+
+func validateManagedActual(
+	actual *lifecycle.ContainerActual,
+	name, role, image string,
+	networks []string,
+	hardened bool,
+) error {
+	if actual == nil || actual.Status.State != "running" {
+		return fmt.Errorf("%s container is not running", name)
+	}
+	if actual.ID != name ||
+		actual.Configuration.Labels["com.mrbaron3.workflow.agentopsctl"] != "v1" ||
+		actual.Configuration.Labels["com.mrbaron3.workflow.role"] != role {
+		return fmt.Errorf("%s ownership or role label does not match", name)
+	}
+	if !imageReferenceMatches(actual.Configuration.Image.Reference, image) {
+		return fmt.Errorf("%s image does not match %s", name, image)
+	}
+	actualNetworks := make([]string, 0, len(actual.Configuration.Networks))
+	for _, network := range actual.Configuration.Networks {
+		actualNetworks = append(actualNetworks, network.Network)
+	}
+	if strings.Join(actualNetworks, "\x00") != strings.Join(networks, "\x00") {
+		return fmt.Errorf("%s networks do not match the managed topology", name)
+	}
+	if hardened {
+		if !actual.Configuration.ReadOnly ||
+			!containsString(actual.Configuration.CapDrop, "ALL") ||
+			len(actual.Configuration.CapAdd) != 0 ||
+			(actual.Configuration.InitProcess.User.ID.UID != 65532 &&
+				actual.Configuration.InitProcess.User.Raw.UserString != "agentops") {
+			return fmt.Errorf("%s runtime hardening does not match", name)
+		}
+	}
+	return nil
+}
+
+func imageReferenceMatches(actual, expected string) bool {
+	return actual == expected || strings.HasSuffix(actual, "/"+expected)
+}
+
+func exactMounts(
+	actual *lifecycle.ContainerActual,
+	expected map[string]string,
+) bool {
+	if actual == nil || len(actual.Configuration.Mounts) != len(expected) {
+		return false
+	}
+	for _, mount := range actual.Configuration.Mounts {
+		kind, present := expected[mount.Destination]
+		if !present {
+			return false
+		}
+		if kind == "tmpfs" {
+			if _, present := mount.Type["tmpfs"]; !present {
+				return false
+			}
+			continue
+		}
+		volume, present := mount.Type["volume"].(map[string]any)
+		if !present || volume["name"] != kind {
+			return false
+		}
+	}
+	return true
+}
+
+func containsString(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }
 
 func exactLoopbackPublication(

@@ -38,6 +38,57 @@ func TestExactLoopbackPublication(t *testing.T) {
 	}
 }
 
+func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
+	cfg := config{
+		Network:         "agentops-internal",
+		RunnerContainer: "agentops-runner",
+		RunnerImage:     "agentops-runner:dev",
+		RunnerVolume:    "agentops-runner-workspace",
+	}
+	actual := &lifecycle.ContainerActual{ID: cfg.RunnerContainer}
+	actual.Status.State = "running"
+	actual.Configuration.Labels = map[string]string{
+		"com.mrbaron3.workflow.agentopsctl": "v1",
+		"com.mrbaron3.workflow.role":        "runner",
+	}
+	actual.Configuration.Image.Reference = "docker.io/library/agentops-runner:dev"
+	actual.Configuration.Networks = append(
+		actual.Configuration.Networks,
+		struct {
+			Network string `json:"network"`
+		}{Network: cfg.Network},
+	)
+	actual.Configuration.ReadOnly = true
+	actual.Configuration.CapDrop = []string{"ALL"}
+	actual.Configuration.InitProcess.User.ID.UID = 65532
+	for destination, kind := range map[string]string{
+		"/tmp":           "tmpfs",
+		"/home/agentops": "tmpfs",
+		"/workspace":     cfg.RunnerVolume,
+	} {
+		mount := struct {
+			Destination string         `json:"destination"`
+			Source      string         `json:"source"`
+			Type        map[string]any `json:"type"`
+		}{Destination: destination}
+		if kind == "tmpfs" {
+			mount.Type = map[string]any{"tmpfs": map[string]any{}}
+		} else {
+			mount.Type = map[string]any{
+				"volume": map[string]any{"name": kind},
+			}
+		}
+		actual.Configuration.Mounts = append(actual.Configuration.Mounts, mount)
+	}
+	if err := validateRunnerActual(actual, cfg); err != nil {
+		t.Fatalf("valid runner topology rejected: %v", err)
+	}
+	actual.Configuration.CapAdd = []string{"CAP_SYS_ADMIN"}
+	if err := validateRunnerActual(actual, cfg); err == nil {
+		t.Fatal("runner with added capability was accepted")
+	}
+}
+
 func TestStartCredentialSeparation(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "deploy"), 0o700); err != nil {
