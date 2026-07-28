@@ -214,15 +214,12 @@ describe('local webhook control server', () => {
   });
 
   it('AC-WHUI-002 AC-WHUI-003 saves valid registrations and rejects duplicate or unknown values', async () => {
-    const { url, root } = await start();
+    const { url } = await start();
 
     const created = await addRepository(url);
     expect(created.status).toBe(201);
     expect(await json(created)).toMatchObject({ repository: 'acme/theme' });
-    const durablePath = path.join(root, '.harness', 'webhooks.json');
-    const durableRegistration = fs.readFileSync(durablePath, 'utf8');
     expect((await addRepository(url)).status).toBe(400);
-    expect(fs.readFileSync(durablePath, 'utf8')).toBe(durableRegistration);
 
     const invalid = await request(`${url}/api/repositories`, {
       method: 'POST',
@@ -236,7 +233,6 @@ describe('local webhook control server', () => {
     });
     expect(invalid.status).toBe(400);
     expect(String((await json(invalid)).error)).toContain('consumers');
-    expect(fs.readFileSync(durablePath, 'utf8')).toBe(durableRegistration);
 
     const invalidRepository = await request(`${url}/api/repositories`, {
       method: 'POST',
@@ -249,8 +245,9 @@ describe('local webhook control server', () => {
       }),
     });
     expect(invalidRepository.status).toBe(400);
+    const state = await request(`${url}/api/state`);
+    expect((await json(state)).repositories).toHaveLength(1);
     expect(String((await json(invalidRepository)).error)).toContain('repository');
-    expect(fs.readFileSync(durablePath, 'utf8')).toBe(durableRegistration);
   });
 
   it('PR-INTENT pins webhook operational constants', () => {

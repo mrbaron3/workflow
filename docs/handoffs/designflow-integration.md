@@ -1,7 +1,8 @@
 # Designflow consumer実装ハンドオフ
 
-- 更新日: 2026-07-25
-- 状態: workflow側の計画確定。実装未着手
+- 更新日: 2026-07-28
+- 状態: CISO-03/05で固定contractとDashboard固有gateのbootstrap済み。
+  汎用workflow consumerは未着手
 - 判断: [ADR-0012](../decisions/ADR-0012-external-designflow-provider.md)
 - 公開境界: [`mrbaron3/designflow`](https://github.com/mrbaron3/designflow)の
   `contract-v1.0.0-rc.1`
@@ -14,6 +15,21 @@
 
 frontend実装前に承認済みDesign Bundleを読み、UIから導かれたbackend capabilityを最終API/Issue計画へ
 反映する。workflowはDesignflowを実装・起動・運用せず、固定contract releaseのconsumerとしてだけ振る舞う。
+
+## 既にmainへ入ったbaseline（再実装しない）
+
+PR #34の計画後、CISO-03/05が次を`main`へ着地させた。
+
+- `contracts/designflow/contract-v1.0.0-rc.1/`: provider provenance、schema、example、digest fixture。
+- `internal/designgate/`: schema、artifact／bundle digest、human decision、ambiguity、
+  capability coverage、OpenAPI operation対応を検証するGo gate。
+- `evidence/ciso-05/design/`: Source Issue #15、Design Request、request-changes revision、
+  digest-bound approve、7 capability reconciliation、preview、UX/a11y/Playwright evidence。
+
+このbaselineはcontractと判断の実行可能性を証明する。一方、gateはCISO Dashboard固有のapproved digest、
+reconciliation path、Issue/ACをtrust anchorとしており、`src/intake`／`src/planning`の標準経路には
+接続されていない。後続taskは既存fixtureとnegative testを共有し、CISO固有定数をコピーして
+第二のvalidatorを作らない。
 
 ## 並行開発を成立させる境界
 
@@ -44,7 +60,8 @@ frontend実装前に承認済みDesign Bundleを読み、UIから導かれたbac
 
 ```text
 contract-v1.0.0-rc.1
-  ├─ WF-DF-001 contract consumer / fixture
+  ├─ CISO baseline: pinned contract + Dashboard-specific gate
+  ├─ WF-DF-001 reusable workflow consumer / fixture
   │      ├─▶ WF-DF-002 provider port / fake adapter
   │      └─▶ WF-DF-003 planning draft split
   ├─ WF-DF-004 digest-bound decision gate
@@ -52,23 +69,23 @@ contract-v1.0.0-rc.1
 
 WF-DF-002 + 003 + 004 ─▶ WF-DF-006 capability reconciliation
 WF-DF-005 + 006       ─▶ WF-DF-007 legacy migration
-WF-DF-007             ─▶ WF-DF-008 Dashboard grounded run
+WF-DF-007             ─▶ WF-DF-008 standard-intake grounded run
 ```
 
 WF-DF-001、WF-DF-004、WF-DF-005は同時着手できる。いずれもDesignflow runtimeを必要としない。
 
 ## workflow task
 
-| Key | Issue | 内容 | workflow内の依存 | 完了証拠 |
+| Key | Issue | 現在の差分 | workflow内の依存 | 完了証拠 |
 |---|---|---|---|---|
-| WF-DF-001 | [#26](https://github.com/mrbaron3/workflow/issues/26) | contract tag取得、schema validator、fixture pin | なし | valid/invalid fixture test |
+| WF-DF-001 | [#26](https://github.com/mrbaron3/workflow/issues/26) | CISO pinを再利用し、Dashboard固有Go gateから独立した汎用workflow consumer／lock metadataを作る | なし | 同じpinned fixtureでvalid/invalidを検証し、別validator実装を増やさない |
 | WF-DF-002 | [#27](https://github.com/mrbaron3/workflow/issues/27) | `DesignflowProvider` port＋in-memory/file fake | WF-DF-001 | external processなしのadapter test |
 | WF-DF-003 | [#28](https://github.com/mrbaron3/workflow/issues/28) | planning outputをdraft requirementsとfinal Issue Contractへ分離 | WF-DF-001 | backend-only回帰＋UI draft停止 |
-| WF-DF-004 | [#29](https://github.com/mrbaron3/workflow/issues/29) | schema/artifact/bundle digest＋Human Decision gate | なし（contract RC直接） | stale approval／digest mutation拒否 |
-| WF-DF-005 | [#30](https://github.com/mrbaron3/workflow/issues/30) | purpose/effort/attention/rationale/capabilityのreview projection | なし（contract RC直接） | raw JSON不要のsnapshot test |
-| WF-DF-006 | [#31](https://github.com/mrbaron3/workflow/issues/31) | Capability→API/system/Issue/AC coverage | WF-DF-002,003,004 | zero/dangling/異revision拒否 |
+| WF-DF-004 | [#29](https://github.com/mrbaron3/workflow/issues/29) | CISO固有compiled digest/pathを除き、任意candidateへ使えるschema/artifact/bundle digest＋Human Decision gateへ抽出 | なし（contract RC＋CISO negative fixtures） | stale approval／digest mutation拒否＋CISO gate回帰 |
+| WF-DF-005 | [#30](https://github.com/mrbaron3/workflow/issues/30) | CISO preview/evidenceをgolden入力に、purpose/effort/attention/rationale/capabilityの汎用review projectionを実装 | なし（contract RC直接） | raw JSON不要のsnapshot test |
+| WF-DF-006 | [#31](https://github.com/mrbaron3/workflow/issues/31) | CISOの固定#15 reconciliationを一般化し、Capability→API/system/Issue/AC coverageをplanner出力として永続化 | WF-DF-002,003,004 | zero/dangling/異revision拒否＋CISO 7 capability replay |
 | WF-DF-007 | [#32](https://github.com/mrbaron3/workflow/issues/32) | legacy `UiDesignArtifact`から明示provider選択へ移行 | WF-DF-005,006 | dual-write／暗黙fallback拒否 |
-| WF-DF-008 | [#33](https://github.com/mrbaron3/workflow/issues/33) | #13/#15 Dashboard grounded run | WF-DF-007 | source→bundle→API→UI→release lineage |
+| WF-DF-008 | [#33](https://github.com/mrbaron3/workflow/issues/33) | CISO-05をgolden replayし、さらに新規frontend/fullstack Source IssueをCISO固有digest/pathなしの標準intakeでgrounded実走 | WF-DF-007 | source→bundle→API→UI→release lineage＋CISO fixture同値 |
 
 ## 実装原則
 
@@ -96,14 +113,16 @@ WF-DF-001、WF-DF-004、WF-DF-005は同時着手できる。いずれもDesignfl
 - 後からCLI/HTTP adapterを追加してもdomain gateとplanningを変更しない。
 - live Designflow availabilityをworkflow unit/acceptance testの前提にしない。
 
-## Dashboard grounded完了条件
+## 標準intake grounded完了条件
 
-1. #15のWHATをDesign Requestへ変換する。
-2. v1 contractに適合するbundleを人間が1回以上request-changesする。
-3. 改訂bundleをdigest-boundでapproveする。
-4. Capability Requirementsを#13 API／system設計へtraceする。
-5. #15 frontendをapproved Experience Contractへtraceする。
-6. Playwright、UX、a11y evidenceを同じrevision lineageへ記録してreleaseする。
+1. CISO-05の#15 WHAT→Design Request→revision 2 approve→capability reconciliationを
+   golden fixtureとして新consumerで同値にreplayする。
+2. 新規frontend/fullstack Source Issueを標準GitHub intakeから取り込む。
+3. v1 contractに適合するbundleを人間が1回以上request-changesする。
+4. 改訂bundleをdigest-boundでapproveし、Capability Requirementsを新規API/system/Issue/ACへtraceする。
+5. frontendをapproved Experience Contractへtraceし、Playwright、UX、a11y evidenceを
+   同じrevision lineageへ記録してreleaseする。
+6. 全経路からCISO固有bundle digest、repository path、#13/#15固定判定を除く。
 
 ## 再開手順
 

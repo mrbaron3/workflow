@@ -1,0 +1,56 @@
+{
+  "schemaVersion": "1.0",
+  "bundleId": "design-bundle-001",
+  "requestId": "design-dashboard-001",
+  "revisionId": "design-revision-001",
+  "previousRevisionId": null,
+  "sourceDigest": "sha256:53f50e60acdf44bc78fa0eac5c122b5a3c08214f2ca3974cdb33edb2e01165a9",
+  "designSystemBaseRevision": {
+    "provider": "git",
+    "externalId": "control-plane-design-system",
+    "uri": "https://example.com/acme/design-system",
+    "revision": "main",
+    "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "artifacts": {
+    "experience": {
+      "path": "contracts/v1/examples/experience-contract.example.json",
+      "digest": "sha256:f1e4da783b860c91e477850921d0272b87e4e34c2806c3759b7d4bd18c16c732",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:experience-contract"
+    },
+    "designSystemDelta": {
+      "path": "contracts/v1/examples/design-system-delta.example.json",
+      "digest": "sha256:b3974e57a7f49b6443ad21bea9a0347741cc361fc5730ddbeba09d87f0fe6687",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:design-system-delta"
+    },
+    "designTokens": {
+      "path": "contracts/v1/examples/dashboard.tokens.json",
+      "digest": "sha256:bb50b5fdfce61daef50f456e16b1acdce0a003f969fd28f96c002ff1929bd1c7",
+      "mediaType": "application/design-tokens+json",
+      "schemaRef": "https://www.designtokens.org/TR/2025.10/format/"
+    },
+    "capabilityRequirements": {
+      "path": "contracts/v1/examples/capability-requirements.example.json",
+      "digest": "sha256:db452301b6ee642ce5988d0975e32509faac514d0502bb14d45d0653eabea164",
+      "mediaType": "application/json",
+      "schemaRef": "urn:designflow:schema:v1:capability-requirements"
+    },
+    "preview": {
+      "path": "contracts/v1/examples/preview.html",
+      "digest": "sha256:bb75faf61ee74d436037f7c189c7baf3a24f5b6eaf275819120ca47ad8c765e5",
+      "mediaType": "text/html",
+      "schemaRef": "none"
+    }
+  },
+  "authorInvocationRefs": [
+    {
+      "provider": "mock",
+      "externalId": "authoring-invocation-001",
+      "revision": "1"
+    }
+  ],
+  "bundleDigest": "sha256:df3e1fd9de05cd602a626aa77faa23d930e31a86cecbb3777a76bd6bdeb9dc97",
+  "createdAt": "2026-07-25T03:30:00.000Z"
+}

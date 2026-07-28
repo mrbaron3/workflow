@@ -111,6 +111,7 @@ seed/              sample-roadmap.yaml — drives the demo
 src/
   domain/          zod contracts (schema.ts) + state machine (states.ts) + artifact types
   store/           the JSON-backed Eval Result DB (store.ts)
+  control-store/   PostgreSQL control-plane repositories, migrations, queue and lease contract
   agents/          AgentRunner: mock.ts (default) + cli.ts (real CLI adapter)
   graders/         hard gates + composite score (index.ts)
   pipeline/        evaluate · repair · coordinator · curator · analyst
@@ -251,48 +252,53 @@ values fall back to `DEFAULT_GITHUB_WATCH_INTERVAL_MS` (30000 ms).
 
 ### Multi-repository webhook control
 
-Webhook is the immediate trigger; the same daemon also runs polling reconciliation, so a missed,
-late, or out-of-order delivery cannot become the source of truth. Start the loopback control plane:
+Webhook remains an immediate trigger and polling remains the truth-recovery path.
+`agentops-control` is the PostgreSQL Registration-driven production process: it exposes the
+operator Control API, supervises per-Registration Issue/PR monitors and signed HTTP webhook
+ingress, persists webhook deliveries before acknowledgement, and routes webhook/poll observations
+through the same idempotent queue. The standard OCI control process never executes `gh`.
 
 ```bash
-export AGENTOPS_WEBHOOK_CONTROL_TOKEN='<random local bearer token>'
+AGENTOPS_DATABASE_URL='postgresql://…' npm run control-store:migrate
+export AGENTOPS_DATABASE_URL='postgresql://…'
+export AGENTOPS_CONTROL_TOKEN='<32+ byte random operator bearer token>'
+export AGENTOPS_OPERATING_MODE='MONITOR_ONLY' # ACTIVE is explicit
+export AGENTOPS_DASHBOARD_ORIGIN='http://127.0.0.1:8080'
+# Optional deterministic bootstrap; omitted generates and logs a random one-time value.
+export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<random single-use bootstrap token>'
 export AGENTOPS_GITHUB_WEBHOOK_SECRET='<GitHub webhook secret>'
-npm run harness -- webhook-daemon --open
+export GH_TOKEN='<GitHub token>'
+go run ./cmd/agentops-control
 ```
 
-Both credentials are mandatory and must be non-empty; the daemon refuses to listen if either is
-missing. Without `--open`, startup prints a short-lived, single-use browser login URL; with
-`--open`, it opens one automatically. The launch establishes an HttpOnly same-site browser session
-and immediately redirects to the clean GUI URL; subsequent GUI API calls authenticate through that
-session automatically. Scripts may instead send the control token as `Authorization: Bearer …`.
-The supervised `gh webhook forward` process receives the same webhook secret used by `/hook` to
-verify `X-Hub-Signature-256` before persistence.
+The operator API defaults to `127.0.0.1:8080`; the container target keeps it on
+`127.0.0.1:8081` behind an in-process port-8080 publication proxy, and publishes that proxy to host
+loopback only. PostgreSQL and runner ports stay internal.
+Open the one-time bootstrap URL logged at startup; browser code receives no bearer credential and
+uses only an HttpOnly same-origin session cookie plus a memory-only CSRF proof. Its contract is
+[`contracts/control-api/v1/openapi.yaml`](contracts/control-api/v1/openapi.yaml). Create requires
+`Idempotency-Key`; update/disable require both it and `If-Match: "<registration version>"`; retry
+also fences the Registration identity/version and observed route attempts. Non-browser automation
+may use `Authorization: Bearer …`, while browser mutation requires the exact configured
+Origin/fetch metadata/CSRF tuple. Public webhook ingress is disabled unless the HMAC secret is configured.
 
-The GUI at `http://127.0.0.1:8377` adds/toggles repositories, selects allow-listed events and
-consumers, shows each forwarder state and recent durable deliveries, and retries failures.
-Registrations and payloads are stored atomically in `.harness/webhooks.json`, separately from the
-Eval DB. One `gh webhook forward` child is supervised per enabled repository; this requires the
-`gh webhook` extension. Use `--no-forward` when another ingress sends to `/hook`.
+Polling defaults to one minute and shares the same per-repository single-flight queue as webhook
+deliveries. Configure `AGENTOPS_GITHUB_POLL_INTERVAL` and
+`AGENTOPS_RECONCILIATION_INTERVAL` with positive Go durations. `LISTEN/NOTIFY` only accelerates
+wake-up: periodic PostgreSQL reconciliation remains the recovery path after missed notifications,
+control restart, forwarder exit, or DB reconnect. Unknown, disabled, stale, or disconnected
+Registrations never create jobs.
+`MONITOR_ONLY` continues private Issue/PR observation through the runner-only typed GitHub broker
+and signed-webhook-ingress observation, but neither routing nor the isolated runner may
+enqueue/claim executable work. Its runner receives the scoped GitHub credential and GitHub-only
+broker egress, but no Codex/provider credential, provider egress, or execution authority; control
+never receives a GitHub credential or executes `gh`. `ACTIVE` adds the execution-provider
+credential/egress and explicit execution authority without moving the GitHub credential into
+control.
 
-The `agentops` consumer runs the fixed `github-turn` entry point—never a registration-supplied
-shell command. Each registration's `workspaceRoot` must contain a harness config whose
-`intake.repository` matches the registered `owner/name`; separate repositories may therefore use
-separate workspaces while sharing this daemon and GUI. When set in the registration,
-`readyLabel` and `baseBranch` are validated invocation-scoped overrides for that turn and take
-precedence over the workspace's `intake.readyLabel` and gate/base branch without rewriting its
-config file. Empty registration values defer to the workspace configuration. The optional
-`orca-worktree-sync` adapter
-uses `--orca-sync-script F` (or `AGENTOPS_ORCA_SYNC_SCRIPT`) and preserves the old merged-PR/push
-event mapping without hard-coding a macOS path.
-
-Polling reconciliation defaults to 30000 ms and shares the same per-repository single-flight queue
-as webhook deliveries. Configure it with `--reconcile-interval-ms N`; use `--no-reconcile` only
-for diagnostics. Do not run `watch-github` against the same workspace at the same time as this
-daemon. Repository registration is the only intake boundary: each turn also discovers existing
-and new same-repository Open PRs targeting the configured base branch, imports each PR number
-idempotently, and reviews every unseen current head. Draft heads are reviewed but remain pending
-until ready; fork heads are not auto-repaired because target-repository write authority is not
-assumed.
+The old TypeScript GUI/router types remain as a non-durable PR #9 compatibility oracle. The legacy
+`webhook-daemon` production command remains fail closed; no production entry point reads or writes
+a JSON control store, and evaluation-domain `.harness/db.json` is unchanged.
 
 Claiming removes `ready` and adds `agent-claimed`. The first source snapshot and every planning /
 UI-design / generation / perspective invocation retain stable provenance in `.harness/db.json`; restarts reuse
@@ -325,4 +331,5 @@ methods run once per criterion with `AGENTOPS_AC_ID`, `AGENTOPS_ISSUE_ID`,
 ```bash
 npm run typecheck
 npm run test
+npm run test:dashboard # requires AGENTOPS_TEST_DATABASE_URL
 ```

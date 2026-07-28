@@ -1,0 +1,17 @@
+{
+  "contractVersion": 1,
+  "id": "db837db2-30d7-4788-a56f-00056f5d550e",
+  "registrationId": "ca3126a8-b83f-4698-90af-462523880c20",
+  "registrationVersion": 3,
+  "source": {
+    "kind": "webhook",
+    "key": "github-delivery-123"
+  },
+  "idempotencyKey": "github:mrbaron3/workflow:issue:12:head:81002aed",
+  "jobType": "github_issue_turn",
+  "payload": {
+    "issueNumber": 12
+  },
+  "status": "queued",
+  "createdAt": "2026-07-25T00:00:00.000Z"
+}

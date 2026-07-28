@@ -1,0 +1,80 @@
+{
+  "schemaVersion": "1.0",
+  "round": 1,
+  "frozenHead": "b79b4e82d462fa2925d9cd6ec7042ac7d4d2032f",
+  "reviewers": [
+    {
+      "provider": "codex",
+      "taskId": "task_355e299b7abf",
+      "dispatchId": "ctx_ac98278a1e96",
+      "workerDoneMessageId": "msg_9375cde58b14",
+      "independent": true,
+      "readOnly": true,
+      "findingCount": 7
+    },
+    {
+      "provider": "claude",
+      "taskId": "task_ffefe8459344",
+      "dispatchId": "ctx_08950b0b0ffa",
+      "workerDoneMessageId": "msg_50acd5753a76",
+      "independent": true,
+      "readOnly": true,
+      "findingCount": 0
+    }
+  ],
+  "ownerDisposition": [
+    {
+      "id": "R1-CODEX-001",
+      "severity": "high",
+      "finding": "Leased Execution and Queue freshness ignored the authoritative job lease heartbeat.",
+      "confirmed": true,
+      "repair": "Projection queries now use active job_leases.heartbeat_at and integration coverage proves a fresh heartbeat overrides an old jobs.updated_at."
+    },
+    {
+      "id": "R1-CODEX-002",
+      "severity": "medium",
+      "finding": "Registration command rejections did not durably consume their idempotency identity or preserve recordedAt.",
+      "confirmed": true,
+      "repair": "Not-found, version-conflict, and no-change outcomes are now transactionally stored and audited, replay with the same timestamp, and reject a changed request under the consumed key."
+    },
+    {
+      "id": "R1-CODEX-003",
+      "severity": "medium",
+      "finding": "Retry verification required pending even though the router can already advance the accepted delivery.",
+      "confirmed": true,
+      "repair": "The authoritative retry-attempt identity and accepted status are now the verification fence, independent of subsequent delivery progress."
+    },
+    {
+      "id": "R1-CODEX-004",
+      "severity": "medium",
+      "finding": "Session rejection and invalid continuation were mislabeled as a Control API or database disconnect.",
+      "confirmed": true,
+      "repair": "The browser now separates session-expired, request-rejected, continuation-expired, store-unavailable, and network-failure recovery paths."
+    },
+    {
+      "id": "R1-CODEX-005",
+      "severity": "medium",
+      "finding": "The approved anomaly count filters, status legend, and visible command outcome were absent.",
+      "confirmed": true,
+      "repair": "The dashboard now renders failed, disconnected, stale, and divergent counts as filters, a textual legend, and a visible status synchronized with live announcements."
+    },
+    {
+      "id": "R1-CODEX-006",
+      "severity": "medium",
+      "finding": "Focus contrast and a delivery action target did not meet the approved tokens and 44px target contract.",
+      "confirmed": true,
+      "repair": "Focus uses the approved #582da3 token and every delivery action retains a 44px minimum target."
+    },
+    {
+      "id": "R1-CODEX-007",
+      "severity": "medium",
+      "finding": "The startup gate verified digests but did not execute each declared artifact schema.",
+      "confirmed": true,
+      "repair": "Exact provider-commit JSON Schemas are embedded and applied at startup; the Design Tokens artifact receives fail-closed DTCG structural validation and unknown schema refs are rejected."
+    }
+  ],
+  "claudeResidualRisksAcknowledged": [
+    "MONITOR_ONLY and execution-disabled poll cursor advancement intentionally avoids hidden backlog and is covered by tests.",
+    "During mode transition a still-leased raw job may remain visible while authoritative mode prevents new execution; the explicit mode and raw job fields preserve that truth."
+  ]
+}

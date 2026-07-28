@@ -1,6 +1,7 @@
 # ADR-0012: UX/UI設計を独立したDesignflow Providerへ分離する
 
-- 状態: 採択（2026-07-25。契約bootstrap済み、workflow adapter未実装）
+- 状態: 採択（2026-07-25。CISO-03/05で契約bootstrapとDashboard固有gateを実証済み、
+  汎用workflow intake adapter未実装）
 - relates:
   - ADR-0002（Published Language）
   - ADR-0008（GitHub Issue intake）
@@ -81,6 +82,22 @@ frontend/fullstackを含む要求は次の順で処理する。
 - backend-only要求はExperience Contract gateを要求しない。
 - provider不達、schema不正、digest不一致、ambiguity残存、decision不在、capability未反映は
   `needs-human-review`へfail-closedする。
+
+### CISO-03/05で得たbootstrap baseline
+
+CISO-03/05は本ADRの標準intake配線より先に、固定contractをControl API／Dashboardの実装gateとして
+grounded実走した。これは後続taskが再実装せず再利用するbaselineである。
+
+- `contracts/designflow/contract-v1.0.0-rc.1/`にprovider provenance、schema、example、digest fixtureをpinした。
+- `internal/designgate/`がschema、artifact／bundle digest、human decision、ambiguity、
+  Capability RequirementsとOpenAPI operationの完全性をfail-closedで検証する。
+- CISO-05はDesign Request→request-changes→revision 2のdigest-bound approve→7 capabilityの
+  reconciliation→Dashboard実装→Playwright／UX／a11y evidenceを同一lineageで実証した。
+
+ただし現行gateはCISO Dashboardのapproved digestとreconciliationをcompiled trust anchorとして持つ。
+Source IssueからDesign Requestを作る汎用port、draft→design→final planning、candidate単位provider選択、
+bundleからの人間向けprojectionは未実装である。したがってCISO evidenceはADRの成立証拠だが、
+WF-DF-001..008の標準workflow consumer完了を意味しない。
 
 ### 並行開発
 

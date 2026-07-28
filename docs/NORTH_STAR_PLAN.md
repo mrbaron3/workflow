@@ -54,6 +54,14 @@
   review→blocking findingを同branchへ修正→全観点再review→gate通過時に自動merge→次task**。
   **D8（PR-native delivery）**をADR-0009/EPIC-11へ追加。同時に既存Octolink daemonを汎用化する
   **D9（Webhook trigger＋poll reconciliation＋複数repo GUI）**をADR-0010/EPIC-12へ追加。
+- **（2026-07-25〜26・CISO-01..07 grounded）隔離production基盤とbounded self-dogfoodが成立**:
+  Go control＋TypeScript runner＋PostgreSQLをApple Containerの3コンテナへ統合し、Registration起点の
+  Issue/PR monitor、private broker、webhook/poll dedup、MONITOR_ONLY→ACTIVE→DRAINING→OFF、
+  restart persistence、real Codex job、Codex/Claude 2ラウンドcurrent-head review、repair、
+  expected-head mergeを実証した。CISO-05では固定Designflow contractからrequest-changes→revision 2の
+  digest-bound approve→7 capability reconciliation→Dashboard→Playwright/UX/a11yまでを実走した。
+  ただしCISO-07はpre-main bootstrapを明示したbounded cutoverであり、D7/D8の通常watch turn、
+  D9の複数repo常駐forwarder、A5/A6のstore計器付き標準経路を完了扱いにはしない。
 
 残りを一言で: **(a) 測れていない軸を測る、(b) 横幅（規模・並行・多様性）、
 (c) 縦深（診断→改善の精度）、(d) 自分以外を開発する実証。**
@@ -74,7 +82,7 @@
 | A5 | **✅ 構造実装済み（2026-07-14）／grounded release待ち** — `AgentInvocation`、Claude/Codex interactive adapter、role/Perspective routingを実装。security=Codex・他=Claude等を同一panelへ配線でき、EvalRun→invocation→実provider/modelを監査可能。旧PromptRecordはlegacy保持 | 北極星の「誰の・何のため」（複数エージェント前提）に対する欠け | **EPIC-07 FEAT-013..015 実装済み** | 残り: claude以外を含む実remote runで1 released・provider別計器のgrounded証拠 |
 | A6 | **✅ 構造実装済み（FEAT-019）／grounded実走待ち** — method-keyed command registry、AC単位env、未設定fail-closed、artifact evidence、Curator/Regression captureを実装。unit_test legacy aliasも維持 | 実プロダクト（D1）の AC を宣言methodそのもので証拠採点する | EPIC-09 / FEAT-019 | 残り: playwright等unit_test以外のmethodで実target AC 1件をgrounded採点・回帰する |
 | A7 | **✅ 構造実装済み（FEAT-020/021）／grounded UI実走待ち** — frontend/fullstack Candidateごとに専用route/fresh contextのUI designerがprinciples/token/component/state/interaction/a11yをACへtraceして著述。schema・trace・Invocation provenanceのall-or-nothing gate通過後だけIssueへ写り、generator/reviewerが同じ契約を参照。不在・曖昧・不正はneeds-human-review | UI を要する theme で HOW 自律の被覆が UI 設計まで及ぶこと | EPIC-10 FEAT-020/021実装済み | 残り: UIを要する実target 1 featureでartifact著述→playwright採点→ux/a11y review→releaseをgrounded実測する |
-| A8 | **Experience設計が最終Issue Contractの後段・issue-local** — A7は構造的UI契約を添付できるが、page purpose／task effort／attention hierarchy／全elementの配置根拠を人間がpreviewで審査できず、共有design systemの再利用判断とUI起点のbackend capabilityを最終API・Issue DAGへ戻せない | 「WHATだけから動くソフトウェア」には、実装前に目的達成の労力と視認性を人間が判断でき、frontend/backendを同じ体験根拠から設計できることが必要 | ADR-0012／`designflow` contract releaseを入力にしたworkflow独立task DAG | DashboardでWHAT→Design Request→revision差戻し→digest-bound承認→capability reconciliation→frontend/backend実装→UX/a11y releaseを同一lineageでgrounded実測 |
+| A8 | **✅ 契約とDashboard固有grounded baseline成立／汎用intake配線待ち** — CISO-03/05で固定contract pin、digest/decision/capability gate、request-changes→revision 2 approve→7 capability reconciliation→Dashboard→Playwright/UX/a11yを実証した。一方、現行`internal/designgate`はCISO固有trust anchorであり、Source Issue→Design Request、draft→design→final planning、provider port、candidate単位移行は未実装 | 「WHATだけから動くソフトウェア」には、実装前に目的達成の労力と視認性を人間が判断でき、frontend/backendを同じ体験根拠から設計できることが必要 | ADR-0012／#24・#26〜#33。CISO baselineを再利用し汎用化 | 新規frontend/fullstack Source Issueが標準intakeでDesignflow revisionを経てreleaseされ、CISO固有digest/pathなしで同じlineage gateを通る |
 
 ### ② 評価（操舵: 証拠裏付き判定率 ↑・false-pass 率 ↓）
 
@@ -103,9 +111,9 @@
 | D4 | ~~外部 target の WHAT 著述が harness repo 固定~~ **✅ released（⑮・PR #3）** — `resolveTargetRoot`（config.ts）が spawn-specs/sign の起点を統一。**ただし direct engineering 経路**（harness の通常運転＝sign→spawn-issues→contract-draft→assign→drive を経ていない）。channel-compass への EPIC-01 実 drive で実地検証済み（4 issue released） | M4 の repo 分離モデルが上流チェーンの入口で成立することを grounded 実証 | 完了 | 外部 repo への spawn→署名→spawn-issues→contract→drive 一気通貫 ✅（gate backend は `store` のみ実証・`github` は channel-compass に remote が無く未実証） |
 | D5 | **✅ 構造実装済み（FEAT-011）** — 1 store=1 canonical target binding、全mutation CLI preflight、legacy明示bind、mismatch fail-closed。現storeも明示移行済み | ADR-0001の組織境界 | EPIC-06 / FEAT-011 | 残り: 外部target往復時のgrounded mismatch証拠 |
 | D6 | **✅ 構造実装済み（FEAT-012）** — reviewer checkoutとevidence sidecarを分離。既知lockfile副作用は帰属してfindings保持、source/config変更は従来どおりdiscard | ②評価のfalse-escalation抑止 | EPIC-06 / FEAT-012 | 残り: 次の実live panelで3/4発生が消えるgrounded観測 |
-| D7 | **✅ 入口配線実装済み／実remote縦断待ち（FEAT-016..018）** — store-first GitHub claim、planning detached session、全AC source/system trace gate、`github-turn`/`watch-github`→既存runLoopLive/PR gateを実装。fake external/provider/drive縦断は恒久test済み | 究極目標「人間は WHAT のみ」の入口 | EPIC-08 | 残り: 実remote ready Issue→異種provider panel→GitHub PRのgrounded実測とHOW介入0計器 |
-| D8 | **✅ 構造実装済み／実remote縦断待ち（FEAT-022..024）** — PRを初回Perspective前に作成し、EvalRun/Invocationを`(prId, headSha)`へ束縛。head更新で旧revisionをstale化し、approve付きmajor/P1・未解決P0/P1 thread・check・mergeabilityをcurrent-head gateで拒否。同branch repairをfresh attemptとしてresumeし、全通過時だけ`--match-head-commit`でauto-merge。分割Source Issueは全子released後だけclose | 「承認済みなのに同じrevisionへP1」のfalse-passを禁止し、人間mergeを通常経路から外す | EPIC-11 / FEAT-022..024実装済み | 実GitHub PRでP1→修正push→全観点再review→expected-SHA merge→released→次taskをgrounded実測 |
-| D9 | **✅ 構造実装済み／常駐実走待ち（FEAT-025..027）** — persist-before-ack/delivery dedup/retry/restart recovery、repo registry/router、repo別`gh webhook forward`監督、固定AgentOps/Orca adapter、loopback GUI、同一single-flightのpoll reconciliationをNodeで実装。`.harness/webhooks.json`はEval DBと分離 | Issue/PR/review/checkを即時に同じ自律loopへ戻し、複数targetを運用可能にする | EPIC-12 / FEAT-025..027実装済み | 旧Octolink launchdを新daemonへ移行し、複数repoのdelivery/forwarder/reconciliationをgrounded実測 |
+| D7 | **✅ 入口配線＋bounded self-dogfood済み／通常外部target縦断待ち** — store-first GitHub claim、planning detached session、全AC source/system trace gate、`github-turn`/`watch-github`→既存runLoopLive/PR gateを実装。CISO-07 #17はSource Snapshotとplanning provenanceを保存して実remote PR/releaseまで到達したが、pre-main bootstrapを含む自己更新cutoverだった | 究極目標「人間は WHAT のみ」の入口 | EPIC-08 | 残り: cutover特例なしの外部target ready Issue→異種provider panel→GitHub PR→releaseとHOW介入0計器 |
+| D8 | **✅ 構造実装＋CISO-07 current-head/repair/expected-head merge実証済み／通常継続turn待ち** — PRを初回Perspective前に作成し、EvalRun/Invocationを`(prId, headSha)`へ束縛。CISO-07でCodex/Claudeのread-only 2ラウンド、confirmed finding修正、Round 3なし、最終CI、expected-head mergeを証拠化した。ただしbounded cutoverのため次task自動継続までの通常経路は未観測 | 「承認済みなのに同じrevisionへP1」のfalse-passを禁止し、人間mergeを通常経路から外す | EPIC-11 / FEAT-022..024実装済み | 残り: 通常watch turnでP1→修正push→全観点再review→merge→released→次taskを連続実測 |
+| D9 | **✅ Go/PostgreSQL隔離controlへ移行・単一登録grounded済み／複数repo常駐待ち** — CISO-07でpersist-before-ack、webhook/poll dedup、Registration router、private Issue/PR broker、restart recovery、loopback GUIをApple Container上で実証。credentialをargvへ出す旧`gh webhook forward`は正直に失敗記録し、成功根拠にしていない | Issue/PR/review/checkを即時に同じ自律loopへ戻し、複数targetを運用可能にする | EPIC-12＋CISO #10でGo controlへstrangler移行 | 残り: 2+ repoの常駐delivery/forwarder/reconciliationと安全なlocal forwarder transportをgrounded実測 |
 
 ## 3. マイルストーン（依存順・「測る→広げる→深める→実証する」）
 
@@ -147,6 +155,10 @@
   まだ厳密には満たしていない**（INTV-0001..0004・decide のたび Claude Code 権限分類器が
   self-approval を検出＝§3⑮）。A1 計器を M4 の channel-compass 分離 store 側でも計測するか
   どうかは未確定（現状 workflow 本体の自律軸には合算されない）。
+  **2026-07-26追記**: CISO-07はworkflow自身を実remote Source Issueから隔離基盤へ通す
+  bounded self-dogfoodを成立させ、D7/D8/D9の環境・current-head・merge境界をgroundedにした。
+  ただしpre-main bootstrapを含むため、M4出口は外部targetで同じ通常経路とHOW介入0計器を
+  再現した時点まで開いたままとする。
 
 ## 4. planned 在庫の処遇（⑧・2026-07-08 人間確定）
 

@@ -1,0 +1,259 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#13",
+  "pullRequest": 37,
+  "implementationOwner": "Codex",
+  "policy": {
+    "requiredRounds": 2,
+    "completedRounds": 2,
+    "thirdRoundRan": false,
+    "reviewersReadOnly": true,
+    "claudeWasNeverImplementationOwner": true
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "frozenHead": "f1044777d5694e479f9ee67c40cfe2e5d91f3088",
+      "reviewers": [
+        {
+          "kind": "codex",
+          "terminal": "term_3558ddfa-96f4-4501-bc84-9900d7cb1ecb",
+          "taskId": "task_fd29529408c2",
+          "dispatchId": "ctx_0a41620f6694",
+          "completionMessage": "msg_24b3d0b25775",
+          "readOnly": true
+        },
+        {
+          "kind": "claude",
+          "terminal": "term_99784b15-ea24-4e31-a5bc-4aaf366ebde1",
+          "taskId": "task_66cd1d16a81a",
+          "dispatchId": "ctx_51005b192c8d",
+          "completionMessage": "msg_76bbd7ff6b9f",
+          "reportPath": "/private/tmp/claude-501/-Users-yu-Company-Development-workflow-ciso-03-registration-control/da78f8ef-db99-4b49-a9ff-368e0458c1b5/scratchpad/ciso03-round1-claude-review.md",
+          "readOnly": true
+        }
+      ],
+      "findings": [
+        {
+          "id": "CISO03-R1-CX-001",
+          "summary": "control image did not prove the fixed gh-webhook extension was executable",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "pinned per-architecture checksums and build-time gh webhook --help"
+        },
+        {
+          "id": "CISO03-R1-CX-002",
+          "summary": "supervisor did not stop every component on all actual-state persistence failures",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "all reconciliation write failures invoke stopAll"
+        },
+        {
+          "id": "CISO03-R1-CX-003",
+          "summary": "fixed provider examples contain sample-domain identities",
+          "confirmed": false,
+          "disposition": "rejected",
+          "evidence": "Issue #13 requires the fixed contract-v1.0.0-rc.1 provider input byte-for-byte; exact trust anchoring was separately confirmed and fixed as CISO03-R2-CX-003"
+        },
+        {
+          "id": "CISO03-R1-CX-004",
+          "summary": "status omitted recent job and delivery failure identities",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "repeatable-read projections include lastJobFailure and recentDeliveryFailures"
+        },
+        {
+          "id": "CISO03-R1-CX-005",
+          "summary": "execution-disabled monitors skipped observation behavior",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "polls observe without enqueueing or advancing cursors"
+        },
+        {
+          "id": "CISO03-R1-CX-006",
+          "summary": "check and push events were acknowledged without typed durable work",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "check_run, check_suite, and push produce validated WorkItems"
+        },
+        {
+          "id": "CISO03-R1-CX-007",
+          "summary": "rejected retry outcomes lacked durable attempt and replay audit identity",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "accepted and rejected retry attempts and idempotent responses are transactional"
+        },
+        {
+          "id": "CISO03-R1-CX-008",
+          "summary": "same-key webhook and poll enqueue could race into repository single-flight conflict",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "same length-framed advisory lock key serializes both Go and TypeScript adapters"
+        },
+        {
+          "id": "CISO03-R1-CX-009",
+          "summary": "forwarder child inherited unrelated control-plane secrets",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "child environment is an explicit GitHub/network/locale allowlist"
+        },
+        {
+          "id": "CISO03-R1-CL-001",
+          "summary": "repository-busy monitor handling could churn and advance state incorrectly",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "busy is projected as running backpressure and cursor remains unchanged"
+        },
+        {
+          "id": "CISO03-R1-CL-002",
+          "summary": "dedup compared decoded JSON numbers instead of PostgreSQL jsonb value equality",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "delivery and job equality checks use jsonb equality"
+        },
+        {
+          "id": "CISO03-R1-CL-003",
+          "summary": "retry scheduling mixed application and PostgreSQL clocks",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "retry deadlines are derived from clock_timestamp"
+        }
+      ],
+      "ownerRepairCommit": "b3b0bb7fecba4433622c74bb6b6a0b69de177939"
+    },
+    {
+      "round": 2,
+      "frozenHead": "b3b0bb7fecba4433622c74bb6b6a0b69de177939",
+      "reviewers": [
+        {
+          "kind": "codex",
+          "terminal": "term_37f26a71-bcac-4262-8f5f-6398425a8531",
+          "taskId": "task_2ca1d349ae33",
+          "dispatchId": "ctx_052a734b6e20",
+          "completionMessage": "msg_7a87400c6c61",
+          "reportPath": "/private/tmp/ciso03-pr37-round2-codex-review.md",
+          "readOnly": true
+        },
+        {
+          "kind": "claude",
+          "terminal": "term_ad199641-b30e-46e0-850d-4a977e6d5888",
+          "taskId": "task_5786dc41a8df",
+          "dispatchId": "ctx_3bf8a9a10804",
+          "completionMessage": "msg_04f51de4ba0b",
+          "reportPath": "/private/tmp/claude-501/-Users-yu-Company-Development-workflow-ciso-03-registration-control/86955a65-d71e-4811-9fdc-50fc7e3e4f2e/scratchpad/ciso03-round2-claude-review.md",
+          "readOnly": true,
+          "actualReportReceived": true
+        }
+      ],
+      "findings": [
+        {
+          "id": "CISO03-R2-CX-001",
+          "severity": "high",
+          "summary": "push identity aliased the same commit across branches",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "length-framed canonical ref plus after SHA and distinct-branch regression"
+        },
+        {
+          "id": "CISO03-R2-CX-002",
+          "severity": "high",
+          "summary": "Registration version rejection could become an unrecoverable dedup tombstone",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "stale-only rejected observations are atomically rebound, requeued, and audited under the current version in both adapters"
+        },
+        {
+          "id": "CISO03-R2-CX-003",
+          "severity": "high",
+          "summary": "Experience gate accepted a self-consistent replacement bundle",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "compiled exact approved bundleDigest trust anchor and fully rebound semantic-tamper negative test"
+        },
+        {
+          "id": "CISO03-R2-CX-004",
+          "severity": "medium",
+          "summary": "forwarder heartbeat write failure left the child running",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "heartbeat error races process output, cancels the child, and exits the supervised slot"
+        },
+        {
+          "id": "CISO03-R2-CX-005",
+          "severity": "medium",
+          "summary": "accepted retry had no queryable current delivery state",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "authenticated GET /v1/deliveries/{deliveryId} returns the current delivery and durable retry-attempt history"
+        },
+        {
+          "id": "CISO03-R2-CX-006",
+          "severity": "medium",
+          "summary": "TypeScript and JSON Registration contracts allowed configuration rejected by Go",
+          "confirmed": true,
+          "disposition": "fixed",
+          "evidence": "strict empty-object Zod, maxProperties zero JSON Schema, SQL CHECK, and cross-language regressions"
+        },
+        {
+          "id": "CISO03-R2-CL-N1",
+          "severity": "low",
+          "summary": "two dead helpers remained",
+          "confirmed": true,
+          "disposition": "fixed_hardening",
+          "evidence": "helpers removed"
+        },
+        {
+          "id": "CISO03-R2-CL-N2",
+          "severity": "low",
+          "summary": "projection staleness mixed application and database clocks",
+          "confirmed": true,
+          "disposition": "fixed_hardening",
+          "evidence": "one PostgreSQL clock_timestamp value drives the repeatable-read projection"
+        },
+        {
+          "id": "CISO03-R2-CL-N3",
+          "severity": "low",
+          "summary": "control image did not explicitly set HOME",
+          "confirmed": true,
+          "disposition": "fixed_hardening",
+          "evidence": "HOME=/home/agentops is fixed in the control image"
+        }
+      ],
+      "ownerRepairCommit": "6c8e996c1984bf559823609c5e54fe0cb07d3863"
+    }
+  ],
+  "validationAfterRound2Repairs": {
+    "goUnitAndRace": {
+      "result": "passed",
+      "testFunctions": 28
+    },
+    "goVet": {
+      "result": "passed"
+    },
+    "typescriptTypecheck": {
+      "result": "passed"
+    },
+    "typescriptFull": {
+      "result": "passed",
+      "filesPassed": 91,
+      "filesSkipped": 1,
+      "testsPassed": 774,
+      "testsSkipped": 18
+    },
+    "typescriptPostgres": {
+      "result": "passed",
+      "testsPassed": 17,
+      "hostPublishedPorts": 0
+    },
+    "ociBuild": {
+      "result": "passed"
+    },
+    "appleContainerBoundary": {
+      "result": "passed",
+      "checksPassed": 12,
+      "checksTotal": 12,
+      "postgresPublishedPorts": 0,
+      "runnerPublishedPorts": 0
+    }
+  }
+}

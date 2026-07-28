@@ -228,10 +228,11 @@ function finalizeMergedRevision(
   authorization: ReturnType<typeof approvePR>,
   runner: PrNativeGithubRunner,
   cwd: string,
+  options: AutoMergeOptions,
 ): AutoMergeResult {
   const mergeBinding = bindMergeRevisionToPR(authorization);
   const mergedPr = mergeApprovedPR(pr, mergeBinding);
-  return persistMergedRevision(store, mergedPr, revision, runner, cwd);
+  return persistMergedRevision(store, mergedPr, revision, runner, cwd, options);
 }
 
 function persistMergedRevision(
@@ -240,7 +241,9 @@ function persistMergedRevision(
   revision: Extract<PrRevision, { status: 'approved' }>,
   runner: PrNativeGithubRunner,
   cwd: string,
+  options: AutoMergeOptions,
 ): AutoMergeResult {
+  options.beforeRelease?.();
   const mergedRevision = store.replacePrRevision(transitionPrRevision(revision, {
     status: 'merged',
     completedAt: nowISO(),
@@ -268,6 +271,7 @@ export function reconcilePrNativeGates(
   runner: PrNativeGithubRunner,
   cwd: string,
   requiredPerspectives: string[],
+  options: AutoMergeOptions = {},
 ): AutoMergeResult[] {
   if ((config.gate?.backend ?? 'store') !== 'github') return [];
   const candidates = store.db.prs
@@ -279,7 +283,15 @@ export function reconcilePrNativeGates(
     });
   const results = candidates.map((pr): AutoMergeResult => {
     try {
-      return autoMergeCurrentRevision(store, config, pr, runner, cwd, requiredPerspectives);
+      return autoMergeCurrentRevision(
+        store,
+        config,
+        pr,
+        runner,
+        cwd,
+        requiredPerspectives,
+        options,
+      );
     } catch (error) {
       return {
         prId: pr.id,
@@ -334,6 +346,7 @@ export function autoMergeCurrentRevision(
   runner: PrNativeGithubRunner,
   cwd: string,
   requiredPerspectives: string[],
+  options: AutoMergeOptions = {},
 ): AutoMergeResult {
   const externalRef = pr.externalRef;
   if (!externalRef) throw new Error(`${pr.id} is not projected to GitHub`);
@@ -403,6 +416,7 @@ export function autoMergeCurrentRevision(
       revision,
       runner,
       cwd,
+      options,
     );
   }
   if (github.state === 'closed') {
@@ -528,5 +542,18 @@ export function autoMergeCurrentRevision(
   if (pr.status !== 'approved' || revision.status !== 'approved') {
     throw new Error('merge finalization requires approved PR and revision variants');
   }
-  return finalizeMergedRevision(store, pr, revision, authorization, runner, cwd);
+  return finalizeMergedRevision(
+    store,
+    pr,
+    revision,
+    authorization,
+    runner,
+    cwd,
+    options,
+  );
+}
+
+export interface AutoMergeOptions {
+  /** Exact isolated-runner release boundary; absent for non-runner callers. */
+  beforeRelease?: () => void;
 }

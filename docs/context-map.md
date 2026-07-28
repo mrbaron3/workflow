@@ -6,11 +6,11 @@
 > （per-context の `ubiquitous-language.md` ＋ ここでの翻訳点）。
 
 - 種別: system（macro 索引）
-- 状態: ドラフト（planning・execution・workspace・agent-runtime・intake は4ビュー実体化済み・他は移行待ち）
+- 状態: ドラフト（planning・execution・workspace・agent-runtime・intake・container-runtime・registration-control は4ビュー実体化済み・他は移行待ち）
 
 ## 境界コンテキスト一覧
 
-ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると9つ。技術レイヤー（Product/…）ではなく
+ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると12。技術レイヤー（Product/…）ではなく
 **言語の境界**で分ける。**execution は旧 ARCHITECTURE の技術層「Execution」ではない**——orchestration /
 session / panel / sentinel という固有のユビキタス言語を持つ境界として立てる（[ADR-0005](decisions/ADR-0005-execution-layer-tmux-orchestration.md)）。
 evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
@@ -26,6 +26,9 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
 | **agent-runtime** | planning/UI-design/generation/reviewのAI呼出しを共通identityで監査し、provider/model固有差をadapterとrouteへ閉じる | `src/agents/`・`src/pipeline/execution/` | `_system/agent-runtime/` ✅ | Agent Invocation・Provider・Model・Role・Perspective Route・Provider Adapter |
 | **intake** | target GitHub Issueをclaimし、planningと条件付きUI著述をtrace/provenance gate経由でIssueへ投影する | `src/intake/` | `_system/intake/` ✅ | Source Issue・Acceptance Trace・UI Design Artifact・Claim・Enrichment |
 | **webhook** | GitHub deliveryをdurable inboxへ受け、複数repoをtransport非依存eventとしてconsumerへrouteし、pollで照合する | `src/webhook/` | `_system/webhook/` ✅ | Delivery Envelope・Durable Inbox・Repository Registration・Normalized Event・Reconciliation |
+| **container-runtime** | 標準OCIアプリイメージをbuildし、Apple Container等の**コンテナ**runtime操作をadapter境界へ隔離、network/volume/port/capabilityを起動前にfail-closed検査する（AC-CISO-011） | `src/runtime/`・`deploy/Containerfile` | `_system/container-runtime/` ✅ | Container Runtime Adapter・Standard OCI Image・Runtime Preflight・Publish Invariant・Container-Neutral Path |
+| **control-store** | Registration、delivery、job、lease、attempt、audit、build defectをPostgreSQL transactionへ永続化し、queue/single-flight/recoveryを保証 | `src/control-store/`・`db/control-store/`・`contracts/control-store/` | `_system/control-store/` ✅ | Registration Version・Idempotency Key・Active Job・Lease・Attempt・Wake・Reconciliation・Escape |
+| **registration-control** | PostgreSQL RegistrationをControl API・Issue/PR monitor・forwarder・durable routerのdesired/actualへ動的収束 | `cmd/agentops-control/`・`internal/control/`・`internal/designgate/` | `_system/registration-control/` ✅ | Desired State・Actual State・Dynamic Supervision・Convergent Work Identity・Experience Design Gate |
 
 **共有カーネル（Shared Kernel）**: `src/domain/`（`schema.ts` の zod 契約 ＋ `states.ts` の状態機械）と
 `src/store/`（Eval Result DB）は各状態コンテキストが共有する。これがコンテキスト間の **Published Language**
@@ -71,8 +74,16 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
   intakeはversioned Design Requestだけを外部providerへ渡し、Design Bundle、preview、Capability Requirements、
   digest-bound Human Design Decisionを受ける。providerの内部model/store/runtimeは共有しない。planningは
   approve済みcapabilityを最終Issue Contract/API設計へreconcileし、intakeの決定論gateがschema/digest/trace/
-  decision/coverageを検証してからexecutionへ投影する（ADR-0012）。
+  decision/coverageを検証してからexecutionへ投影する（ADR-0012）。CISO-03/05の`internal/designgate`と
+  固定Dashboard bundleはこの境界のgrounded bootstrapであり、汎用intake portそのものではない。
 - **evaluation → planning**（改善フィードバック・Customer-Supplier）: Harness Analyst が `type:harness`/`type:eval` の改善 issue を計画の木へ戻し、Curator が失敗を回帰として育てる。北極星の「改善」軸の閉路。
+- **全稼働コンテキスト → container-runtime**（Customer-Supplier・OS非依存port）: 稼働コンテキストは role／topology／container-neutral path 契約を供給し、container-runtime が標準 OCI イメージと Apple Container 等の runtime 操作へ翻訳する。core は Provider CLI 形や macOS 詳細を知らず、Apple Container 固有は adapter 配下のみ（AC-CISO-011）。CISO epic #10 の #12 以降はこの port 越しに runtime を使う。**agent-runtime（AI呼出し）とは別境界**で、共有語は "runtime" のみ。
+- **registration-control/runner → control-store**（Customer-Supplier・Published Language）: TypeScript runnerとGo controlは
+  version付きSQL/JSON Schema契約へ順応し、Registration/cursor/delivery/job/lease/auditをPostgreSQL transactionで共有する。
+  LISTEN/NOTIFYはwakeだけ、periodic reconciliationは真実回収経路として残す（AC-CISO-003〜005）。
+- **Experience Provider → registration-control**（Customer-Supplier・Published Language）: pinned provider bundleの
+  human-approved revision/digestとCapability RequirementだけをControl API contractへ取り込み、API/system/Issue ACの
+  lineageが欠ける入力を起動前に拒否する（AC-CISO-001〜002、ADR-0014）。
 - **Shared Kernel**: 各状態コンテキストは `domain`（契約・状態機械）と `store`（Eval DB）を共有する。契約が Published Language として境界を跨ぐ唯一の語彙。
 
 ## GLOSSARY.md / ARCHITECTURE.md 移行マップ

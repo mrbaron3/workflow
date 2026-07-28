@@ -10,7 +10,10 @@ const GithubSha = z.string().regex(/^[0-9a-f]{40}$/i, 'expected a 40-character G
 const GithubCheck = z.object({
   name: z.string().min(1).optional(),
   context: z.string().min(1).optional(),
-  conclusion: z.enum(['SUCCESS', 'NEUTRAL', 'SKIPPED', 'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE']).nullable().optional(),
+  conclusion: z.preprocess(
+    (value) => value === '' ? null : value,
+    z.enum(['SUCCESS', 'NEUTRAL', 'SKIPPED', 'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE']).nullable().optional(),
+  ),
   state: z.enum(['EXPECTED', 'ERROR', 'FAILURE', 'PENDING', 'SUCCESS']).optional(),
   status: z.enum(['QUEUED', 'IN_PROGRESS', 'COMPLETED', 'PENDING', 'SUCCESS', 'FAILURE']).optional(),
 }).refine((check) => Boolean(check.name ?? check.context), 'check requires name or context')
@@ -72,6 +75,7 @@ export function listOpenGithubPullRequests(
   commandRunner: GithubCommandRunner,
   cwd: string,
   baseBranch: string,
+  repository?: string,
 ): GithubOpenPullRequest[] {
   const pages = GhPrApiPagesResponse.parse(JSON.parse(commandRunner('gh', [
     'api',
@@ -81,7 +85,7 @@ export function listOpenGithubPullRequests(
     '-f', 'state=open',
     '-f', `base=${baseBranch}`,
     '-f', 'per_page=100',
-    'repos/{owner}/{repo}/pulls',
+    repository ? `repos/${repository}/pulls` : 'repos/{owner}/{repo}/pulls',
   ], cwd)));
   return pages.flatMap((page) => page.map((row) => ({
     number: row.number,
@@ -186,11 +190,16 @@ function blockingReviewThreads(cwd: string, nodeId: string): RevisionReviewThrea
 /** Concrete GitHub CLI transport; domain gate policy remains in pr-native.ts. */
 export function realPrNativeGithubRunner(
   mergeMethod: NonNullable<HarnessConfig['gate']>['mergeMethod'] = 'squash',
+  repository?: string,
 ): PrNativeGithubRunner {
+  const repoArgs = repository ? ['--repo', repository] : [];
+  const remote = repository
+    ? `https://github.com/${repository}.git`
+    : 'origin';
   return {
     viewRevision(cwd, prNumber) {
       const raw = GhPrViewResponse.parse(JSON.parse(run('gh', [
-        'pr', 'view', String(prNumber), '--json',
+        'pr', 'view', String(prNumber), ...repoArgs, '--json',
         'id,state,isDraft,headRefOid,mergeable,reviewDecision,statusCheckRollup',
       ], cwd)));
       const checks = (raw.statusCheckRollup ?? []).map((check) => ({
@@ -219,19 +228,19 @@ export function realPrNativeGithubRunner(
       };
     },
     listOpenPullRequests(cwd, baseBranch) {
-      return listOpenGithubPullRequests(run, cwd, baseBranch);
+      return listOpenGithubPullRequests(run, cwd, baseBranch, repository);
     },
     fetchPullRequestHead(cwd, prNumber, expectedHeadSha, headRefName, baseRefName) {
       const localRef = `refs/agentops/pull/${prNumber}`;
       const remoteBaseRef = `refs/remotes/origin/${baseRefName}`;
       run('git', [
-        'fetch', '--no-tags', 'origin',
+        'fetch', '--no-tags', remote,
         `+refs/pull/${prNumber}/head:${localRef}`,
         `+refs/heads/${headRefName}:refs/remotes/origin/${headRefName}`,
         ...(baseRefName !== headRefName
           ? [`+refs/heads/${baseRefName}:refs/remotes/origin/${baseRefName}`]
           : []),
-      ], cwd);
+      ], cwd, { credentials: 'github' });
       const fetchedHeadSha = GithubSha.parse(
         run('git', ['rev-parse', '--verify', `${localRef}^{commit}`], cwd).trim(),
       );
@@ -246,11 +255,13 @@ export function realPrNativeGithubRunner(
       return { headSha: fetchedHeadSha, baseSha: fetchedBaseSha };
     },
     pullRequestChangedFiles: (cwd, prNumber) => run(
-      'gh', ['pr', 'diff', String(prNumber), '--name-only'], cwd,
+      'gh', [
+        'pr', 'diff', String(prNumber), ...repoArgs, '--name-only',
+      ], cwd,
     ).split('\n').map((line) => line.trim()).filter(Boolean),
     merge(cwd, prNumber, expectedHeadSha) {
       run('gh', [
-        'pr', 'merge', String(prNumber), `--${mergeMethod}`,
+        'pr', 'merge', String(prNumber), ...repoArgs, `--${mergeMethod}`,
         '--match-head-commit', expectedHeadSha, '--delete-branch',
       ], cwd);
     },

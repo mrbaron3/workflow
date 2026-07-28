@@ -1,0 +1,132 @@
+{
+  "schemaVersion": "1.0",
+  "round": 2,
+  "reviewedHead": "685cd67d083ae7efc37d5a12e534f32d5eda5402",
+  "immutableBase": "257dc557753b099a646c94d3e3cc700468ffb32a",
+  "repairImplementationHead": "74761d0edaa2e9d4bc6ca222479f1a5d82c78b5a",
+  "round3Created": false,
+  "reviewers": [
+    {
+      "provider": "codex",
+      "taskId": "task_893ffeca3635",
+      "dispatchId": "ctx_6a21e7bc5a70",
+      "terminal": "term_b36d6da7-fe4b-483a-8a54-c628e5b2d3ab",
+      "findingsMessageId": "msg_a7a2444254cb",
+      "completionMessageId": "msg_6f2af5074b2f",
+      "independent": true,
+      "strictlyReadOnly": true,
+      "repositoryMutations": 0,
+      "githubMutations": 0
+    },
+    {
+      "provider": "claude",
+      "taskId": "task_26f8749b5832",
+      "dispatchId": "ctx_29d3445d04d7",
+      "terminal": "term_ee7a28be-cd18-46c3-b17a-afa6dca123ab",
+      "findingsMessageId": "msg_b1d020966814",
+      "completionMessageId": "msg_e0b411f59304",
+      "independent": true,
+      "strictlyReadOnly": true,
+      "repositoryMutations": 0,
+      "githubMutations": 0
+    }
+  ],
+  "dispositions": [
+    {
+      "reviewer": "codex",
+      "severity": "high",
+      "finding": "Durable spec labels were unsalted credential-derived verifiers.",
+      "disposition": "repaired",
+      "repair": "SpecDigest now canonicalizes every credential environment value to a constant marker. Actual values are compared only in memory and final credentials are rotated; pre-review credential-derived values were retracted from evidence."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "high",
+      "finding": "The PostgreSQL rotation runbook stopped with the already-invalid old administrator credential.",
+      "disposition": "repaired",
+      "repair": "The verified next value is promoted before stop and is unset only after OFF; the runbook states the old value intentionally fails closed."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "high",
+      "finding": "Structurally complete evidence could pass while heads, roles, reviews, recovery, and artifacts were semantically incoherent.",
+      "disposition": "repaired",
+      "repair": "Added a release semantic validator and CLI binding every final head, image/topology role, review actor/head/verdict, ordered recovery lineage, exact mount set, and distinct required artifact kind. Complete adversarial fixtures cover every invariant; schema role/path/contains constraints were tightened."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "medium",
+      "finding": "One serial broker worker could miss the concurrent Issue/PR control deadline.",
+      "disposition": "repaired",
+      "repair": "The runner now has exactly two typed broker workers with independent bounded reads and a dual-delayed-request concurrency regression."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "medium",
+      "finding": "MONITOR_ONLY unnecessarily received provider credentials, credential volume, and provider egress.",
+      "disposition": "repaired",
+      "repair": "MONITOR_ONLY uses providerAuth=none, has no provider secret/volume/destination, and is covered by Go configuration/topology and TypeScript startup regressions."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "medium",
+      "finding": "ACTIVE readiness accepted malformed or unusable provider authentication.",
+      "disposition": "repaired",
+      "repair": "Runner startup validates private Codex auth metadata and JSON structure; agentopsctl then performs a bounded nonlogging provider authentication probe and returns only constant failure text. Malformed-file and rejected-probe regressions were added."
+    },
+    {
+      "reviewer": "codex",
+      "severity": "low",
+      "finding": "Mutable Debian mirrors and globally installed provider CLIs left the OCI transitive graph nonreproducible.",
+      "disposition": "repaired",
+      "repair": "All Debian installs use a dated snapshot and both exact provider CLI graphs are installed with npm ci from a committed integrity lock."
+    },
+    {
+      "reviewer": "claude",
+      "severity": "medium",
+      "finding": "The production gh CLI broker read branch had no direct tests.",
+      "disposition": "repaired",
+      "repair": "An injectable exec boundary now directly tests production multi-page parsing/cursor advance, credential-free argv, page and byte limits, and provider timeout."
+    },
+    {
+      "reviewer": "claude",
+      "severity": "low",
+      "finding": "Terminal broker request rows had no retention policy.",
+      "disposition": "repaired",
+      "repair": "Request creation prunes terminal rows older than seven days while runtime_audit remains the durable audit record."
+    },
+    {
+      "reviewer": "claude",
+      "severity": "low",
+      "finding": "A control timeout could orphan a newly succeeded response and repeat a provider read.",
+      "disposition": "repaired",
+      "repair": "Control reuses the most recent succeeded response for the exact Registration version, kind, and cursor digest before creating a request."
+    },
+    {
+      "reviewer": "claude",
+      "severity": "info",
+      "finding": "The stale-registration rejection query assumed a single broker worker.",
+      "disposition": "repaired",
+      "repair": "The rejection path now selects candidates with FOR UPDATE SKIP LOCKED before update, matching the two-worker claim concurrency."
+    }
+  ],
+  "validation": {
+    "typescript": {
+      "filesPassed": 101,
+      "testsPassed": 848,
+      "testsSkipped": 27,
+      "typecheck": "passed",
+      "build": "passed",
+      "npmAuditHigh": "passed"
+    },
+    "go": {
+      "unit": "passed",
+      "vet": "passed",
+      "race": "passed"
+    },
+    "evidenceSchemaStrictCompile": "passed",
+    "semanticAdversarialCases": 11,
+    "productionBrokerTransportTests": "passed"
+  },
+  "result": "completed"
+}

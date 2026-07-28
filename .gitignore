@@ -2,4 +2,6 @@ node_modules/
 dist/
 .harness/
 *.log
+test-results/
+playwright-report/
 .DS_Store

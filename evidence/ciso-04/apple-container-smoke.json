@@ -1,0 +1,166 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#14",
+  "runtime": "Apple Container",
+  "runtimeVersion": "container CLI version 1.1.0 (build: release, commit: unspeci)",
+  "images": {
+    "runtimeImage": "agentops-runtime:ciso04-31649-1784991183777",
+    "runnerImage": "agentops-runner:ciso04-31649-1784991183777"
+  },
+  "topology": {
+    "internalNetwork": "agentops-ciso04-31649-1784991183777",
+    "runnerPublishedPorts": [],
+    "postgresPublishedPorts": [],
+    "runnerPrivateVolume": "agentops-ciso04-runner-31649-1784991183777",
+    "postgresPrivateVolume": "agentops-ciso04-pg-31649-1784991183777"
+  },
+  "checks": {
+    "standardOciRunnerBuild": {
+      "result": "passed",
+      "detail": {
+        "image": "agentops-runner:ciso04-31649-1784991183777",
+        "target": "runner"
+      }
+    },
+    "postgresRunnerIntegration": {
+      "result": "passed",
+      "detail": {
+        "suite": "test/control-store.integration.test.ts",
+        "network": "agentops-ciso04-31649-1784991183777",
+        "publishedPorts": 0
+      }
+    },
+    "leastPrivilegeDatabaseRole": {
+      "result": "passed",
+      "detail": {
+        "jobsUpdate": true,
+        "registrationExecutionUpdate": false,
+        "registrationVersionUpdate": false,
+        "webhookUpdate": false,
+        "controlRequestRead": false
+      }
+    },
+    "eventLoopIndependentHeartbeat": {
+      "result": "passed",
+      "detail": {
+        "blockedMainThreadMs": 3000,
+        "leaseActive": true,
+        "heartbeatAdvanced": true,
+        "remainingLeaseMs": 1482.532
+      }
+    },
+    "runnerBoundaryIsolation": {
+      "result": "passed",
+      "detail": {
+        "runnerUid": 65532,
+        "runnerPublishedPorts": [],
+        "postgresPublishedPorts": [],
+        "runnerVolume": "agentops-ciso04-runner-31649-1784991183777",
+        "postgresVolume": "agentops-ciso04-pg-31649-1784991183777",
+        "privateNetwork": "agentops-ciso04-31649-1784991183777",
+        "rootFilesystemReadOnly": true,
+        "capabilitiesDropped": [
+          "ALL"
+        ],
+        "mounts": [
+          {
+            "destination": "/tmp",
+            "kind": "tmpfs"
+          },
+          {
+            "destination": "/home/agentops",
+            "kind": "tmpfs"
+          },
+          {
+            "destination": "/workspace",
+            "kind": "named-volume",
+            "volumeName": "agentops-ciso04-runner-31649-1784991183777"
+          }
+        ],
+        "startupAudit": {
+          "outbound": [
+            {
+              "host": "192.168.128.2",
+              "port": 5432
+            },
+            {
+              "host": "github.com",
+              "port": 443
+            },
+            {
+              "host": "api.github.com",
+              "port": 443
+            },
+            {
+              "host": "api.openai.com",
+              "port": 443
+            }
+          ],
+          "provider": "codex",
+          "mountSources": [
+            "agentops-ciso04-runner-31649-1784991183777"
+          ],
+          "workspaceRoot": "/workspace",
+          "attemptTimeoutMs": 14400000,
+          "commandTimeoutMs": 120000,
+          "listeningTcpPorts": [],
+          "publishedPortCount": 0,
+          "kernelMountValidated": true,
+          "processEnvironmentKeys": [
+            "AGENTOPS_RUNNER_COMMAND_TIMEOUT_MS",
+            "AGENTOPS_RUNNER_PROCESS_SANDBOX",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GIT_ASKPASS",
+            "GIT_TERMINAL_PROMPT",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "NO_COLOR",
+            "OPENAI_API_KEY",
+            "PATH",
+            "TMPDIR"
+          ],
+          "visibleContainerSocketPaths": [],
+          "sshAgentPresentInProcessEnvironment": false,
+          "containerSocketPresentInProcessEnvironment": false,
+          "controlCredentialPresentInProcessEnvironment": false,
+          "databaseCredentialPresentInProcessEnvironment": false
+        }
+      }
+    },
+    "registrationProcessSandbox": {
+      "result": "passed",
+      "detail": {
+        "implementation": "bubblewrap-v1",
+        "activeRegistrationWritable": true,
+        "siblingRegistrationVisible": false,
+        "gitMetadataWritable": false,
+        "isolatedProcessNamespace": true
+      }
+    },
+    "unknownSchemaRejected": {
+      "result": "passed",
+      "detail": {
+        "jobId": "53a904f6-a495-4ba6-9a8b-7e8cb6f65b21",
+        "outcome": "failed:unknown_job_contract"
+      }
+    },
+    "artifactIntegrityRejected": {
+      "result": "passed",
+      "detail": {
+        "jobId": "65605da4-de66-4fb0-9670-e0721f7f66fe",
+        "outcome": "failed:artifact_integrity"
+      }
+    },
+    "durableBoundaryAudit": {
+      "result": "passed",
+      "detail": {
+        "claimAllowed": 7,
+        "criticalAllowed": 4,
+        "criticalDenied": 5
+      }
+    }
+  },
+  "completedAt": "2026-07-25T14:54:11.871Z"
+}

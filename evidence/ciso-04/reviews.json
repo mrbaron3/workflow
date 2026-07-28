@@ -1,0 +1,90 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#14",
+  "roundsRequired": 2,
+  "initialImplementationHead": "58bbdb6fab3f062d9e5bbaef842aa95418f8c612",
+  "rounds": [
+    {
+      "round": 1,
+      "frozenHead": "58bbdb6fab3f062d9e5bbaef842aa95418f8c612",
+      "reviewers": [
+        {
+          "kind": "codex",
+          "taskId": "task_843893b77206",
+          "dispatchId": "ctx_99e48208146f",
+          "workerDoneMessageId": "msg_4c9d646a41ae",
+          "mode": "independent-read-only"
+        },
+        {
+          "kind": "claude",
+          "taskId": "task_ef4517f7ea61",
+          "dispatchId": "ctx_603887db0926",
+          "workerDoneMessageId": "msg_09593245927b",
+          "mode": "independent-read-only"
+        }
+      ],
+      "ownerDisposition": {
+        "confirmedAndRepaired": [
+          "provider and repository grader credential inheritance",
+          "Go control-plane executable job projection",
+          "Issue/PR/repository execution-mode and entity scoping",
+          "event-loop-independent heartbeat and bounded expiry retries",
+          "authenticated HTTPS clone/fetch/push",
+          "sibling Registration process visibility",
+          "kernel-observed startup isolation and actual Apple inspection",
+          "fresh single-use release permits including split-source close",
+          "unsupported Gemini backend acceptance",
+          "artifact URI dot segments and UUID shape",
+          "TypeScript/JSON Schema required-field parity",
+          "least-privilege runner database role",
+          "safe existing-AgentOps adapter-path evidence"
+        ],
+        "failClosedRetry": [
+          "A short-lived permit that expires during a slow GitHub round trip is retryable; it never authorizes the side effect."
+        ],
+        "residualRisk": [
+          "The Apple proof uses an internal deny-all external network; production must implement the exact validated outbound set with network policy or an egress proxy."
+        ]
+      }
+    },
+    {
+      "round": 2,
+      "frozenHead": "987c700a0590886c39bb346e4fe736106a198471",
+      "reviewers": [
+        {
+          "kind": "codex",
+          "taskId": "task_608c64800be6",
+          "dispatchId": "ctx_d411f63fe12f",
+          "workerDoneMessageId": "msg_99900f41803d",
+          "mode": "independent-read-only"
+        },
+        {
+          "kind": "claude",
+          "taskId": "task_e121039ec24a",
+          "dispatchId": "ctx_c445378914b4",
+          "workerDoneMessageId": "msg_647453be9f93",
+          "mode": "independent-read-only"
+        }
+      ],
+      "ownerDisposition": {
+        "confirmedAndRepaired": [
+          "provider-controlled git metadata and credential inheritance: GitHub/local-git/provider environments are disjoint, privileged git disables hooks and global/system config, the target repository URL is pinned, and provider-visible git metadata is read-only",
+          "PR creation and Issue claim now receive a fresh DB-backed single-use permit immediately before the distinct external mutation",
+          "git/gh/checkout commands have bounded timeouts and the production heartbeat worker stops renewal at an overall attempt deadline",
+          "isolated runner claim/reclaim is scoped to the durable agentops.runner job type; expiry retry uses exponential backoff",
+          "kernel mount validation now attests a private block-backed workspace volume, rejects unexpected writable mounts, and inspects known management socket paths",
+          "job/result/failure JSON Schema and Zod validators share nonblank-string and UTC timestamp semantics with negative fixture coverage",
+          "expired lease reclaim backoff asymmetry"
+        ],
+        "confirmedNonBlocking": [
+          "Go projection currently defaults baseRef=refs/heads/main and mergeMethod=squash; empty requiredChecks means every visible check rather than bypass, while repository-specific execution policy is not present in the current Registration contract."
+        ],
+        "residualRisk": [
+          "AC-CISO-007 production network-policy/egress-proxy enforcement belongs to #16; #14 validates the exact declared destination set and proves a deny-all safe Apple path.",
+          "The provider and GitHub credential path remains deliberately unexercised with real write credentials; adversarial hook/config and credential-separation tests cover the local boundary.",
+          "The bounded arm-to-consume window remains the documented external-side-effect seam; expired or absent permits fail closed."
+        ]
+      }
+    }
+  ]
+}

@@ -122,6 +122,67 @@ describe('multi-repository GitHub webhook forwarders', () => {
     await relay.close();
   });
 
+  it.each([400, 500])(
+    'ISSUE-0019 rejects an upstream HTTP %i response as a forwarding failure',
+    async (status) => {
+      const relay = new GithubWebhookSigningRelay(
+        'http://127.0.0.1:8377/hook',
+        'relay-only-secret',
+        async () => new Response(null, { status }),
+      );
+
+      await expect(relay.forwardTrustedEvent({
+        body: Buffer.from('{"action":"opened"}'),
+        event: 'pull_request',
+        delivery: `delivery-${status}`,
+      })).rejects.toThrow(`upstream webhook responded with HTTP ${status}`);
+      await relay.close();
+    },
+  );
+
+  it('ISSUE-0019 reports non-2xx relay responses through the secure forward failure log', async () => {
+    const process = new FakeProcess();
+    let failureMessage = '';
+    let releaseFailureLog!: () => void;
+    const failureLogged = new Promise<void>((resolve) => {
+      releaseFailureLog = resolve;
+    });
+    const relay = new GithubWebhookSigningRelay(
+      'http://127.0.0.1:8377/hook',
+      'relay-only-secret',
+      async () => new Response(null, { status: 503 }),
+    );
+    const spawn = productionGithubWebhookForwarderSpawner(
+      (message) => {
+        if (message.includes('secure forward failed')) {
+          failureMessage = message;
+          releaseFailureLog();
+        }
+      },
+      (() => process),
+    );
+    const registration = {
+      id: 'WHREPO-0001',
+      repository: 'acme/theme',
+      enabled: true,
+      events: ['pull_request'],
+      consumers: ['agentops'],
+      workspaceRoot: null,
+      readyLabel: null,
+      baseBranch: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } satisfies WebhookRepositoryRegistration;
+
+    spawn(registration, (event) => relay.forwardTrustedEvent(event).then(() => undefined));
+    process.stdout.emit('data', '{"action":"opened","pull_request":{"id":9}}\n');
+    await failureLogged;
+
+    expect(failureMessage).toContain('[acme/theme] secure forward failed');
+    expect(failureMessage).toContain('HTTP 503');
+    await relay.close();
+  });
+
   it('ISSUE-0024/PR-INTENT accepts events through the private child pipe and triggers the signed consumer', async () => {
     const process = new FakeProcess();
     let consumerBody = '';

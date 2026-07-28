@@ -173,7 +173,7 @@ export class GithubWebhookSigningRelay {
     const signature = `sha256=${createHmac('sha256', this.webhookSecret)
       .update(event.body)
       .digest('hex')}`;
-    return this.request(this.upstreamHookUrl, {
+    const response = await this.request(this.upstreamHookUrl, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -184,6 +184,13 @@ export class GithubWebhookSigningRelay {
       body: event.body,
       redirect: 'error',
     });
+    if (!response.ok) {
+      const status = response.statusText
+        ? `${response.status} ${response.statusText}`
+        : String(response.status);
+      throw new Error(`upstream webhook responded with HTTP ${status}`);
+    }
+    return response;
   }
 
   close(): Promise<void> {

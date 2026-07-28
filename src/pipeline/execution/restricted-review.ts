@@ -207,7 +207,9 @@ export function prepareRestrictedReviewExecution(
     if (!credential) {
       throw new Error(`unsupported restricted reviewer provider: ${provider}`);
     }
-    const source = path.join(operatorHome, ...credential.source);
+    const source = provider === 'codex' && parentEnv.CODEX_HOME
+      ? path.join(parentEnv.CODEX_HOME, 'auth.json')
+      : path.join(operatorHome, ...credential.source);
     if (!fs.existsSync(source)) {
       throw new Error(`restricted ${provider} reviewer credential is unavailable`);
     }
@@ -234,6 +236,15 @@ export function prepareRestrictedReviewExecution(
         TMPDIR: tmp,
         PATH: safePath,
         LANG: parentEnv.LANG ?? 'C',
+        ...(parentEnv.HTTP_PROXY
+          ? { HTTP_PROXY: parentEnv.HTTP_PROXY }
+          : {}),
+        ...(parentEnv.HTTPS_PROXY
+          ? { HTTPS_PROXY: parentEnv.HTTPS_PROXY }
+          : {}),
+        ...(parentEnv.NO_PROXY
+          ? { NO_PROXY: parentEnv.NO_PROXY }
+          : {}),
       },
       cleanup,
     };

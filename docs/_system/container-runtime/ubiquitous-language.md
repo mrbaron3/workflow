@@ -1,0 +1,26 @@
+# ユビキタス言語 — container-runtime コンテキスト
+
+> container-runtime は、標準 OCI アプリケーションイメージと、Apple Container 等の**コンテナ**ランタイム操作を、
+> OS 非依存の core から adapter 境界で隔離する。非決定な**AI**呼出しを扱う `agent-runtime` とは別境界であり、
+> 共有するのは "runtime" の語だけ。採点意味論・queue・liveness は所有しない。追加のみ
+> （`LANG-container-runtime-NNN` は安定）。
+
+| ID | 用語 | 意味 |
+| --- | --- | --- |
+| LANG-container-runtime-001 | Container Runtime | OCI コンテナを build/run し network/volume を管理する engine（Apple Container・docker・podman 等）。agent-runtime の Provider とは別軸。 |
+| LANG-container-runtime-002 | Container Runtime Adapter | runtime-neutral な `ContainerRuntime` port を特定 CLI の argv／出力へ翻訳する実装。Apple Container 固有挙動はこの adapter だけに閉じる。 |
+| LANG-container-runtime-003 | Standard OCI Image | Apple Container 専用形式でない標準 OCI のアプリイメージ。docker/podman/Apple Container で同一に build/run できる。 |
+| LANG-container-runtime-004 | Runtime Preflight | 起動前に runtime capability（CLI・version・arch・service・network・volume・image）を fail-closed で検査した構造化 verdict。捏造 pass を出さない。 |
+| LANG-container-runtime-005 | Runtime Role | control／runner／postgres の隔離役割。publish 不変条件の key。 |
+| LANG-container-runtime-006 | Publish Surface | Mac へ publish される host port の集合。control の loopback port だけが許容される。 |
+| LANG-container-runtime-007 | Publish Invariant | 「control の 127.0.0.1 port だけが Mac へ publish され、runner／postgres は内部 network からのみ到達可能」という不変条件。静的（desired）と grounded（running）で二重に接地する。 |
+| LANG-container-runtime-008 | Container-Neutral Path | コンテナ絶対かつ設定可能で、Mac home（`/Users`）に依存しない path。grader／workspace／systemDir をこれで解決する。 |
+| LANG-container-runtime-009 | Host-Path Dependency | build/runtime surface に hardcode された Mac 絶対 path。scanner が fail-closed で検出する回帰対象。 |
+| LANG-container-runtime-010 | Isolated Runner | PostgreSQL leaseを消費し、private workspace内から既存AgentOps gateを実行するnonroot runtime role。 |
+| LANG-container-runtime-011 | Registration Workspace | Registration IDをrootとするrunner-only volume上のmirror/worktree/state/artifact集合。 |
+| LANG-container-runtime-012 | Startup Isolation Proof | mount/publish/outbound/HOME/credential/socket境界が副作用前に成立した構造化監査。 |
+| LANG-container-runtime-013 | Lifecycle Owner | Apple Container topologyを操作する短命な`agentopsctl` process。 |
+| LANG-container-runtime-014 | Actual Topology | runtime inspectで観測した3 container、network、publish、mount、security属性の現在値。 |
+| LANG-container-runtime-015 | Scoped Compensation | partial startで当該試行が変更したcontainerだけをrollbackし、volumeと既存workを保存する処理。 |
+| LANG-container-runtime-016 | Runner Credential Volume | provider login fileだけをprivate stdinでseedしrunnerへread-only mountするnamed volume。 |
+| LANG-container-runtime-017 | Typed Monitor Broker | controlの固定Issue/PR read要求をrunner credential境界内で実行するdurable broker。任意HTTP proxyではない。 |

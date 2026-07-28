@@ -1,0 +1,44 @@
+# Control Store Architecture
+
+- **ARCH-control-store-001 PostgreSQL SoT** — CISO control-planeのdurable stateは`agentops_control`だけへ書く。
+  evaluation domainのJSON storeとはentity境界を共有しない（ADR-0013）。
+- **ARCH-control-store-002 Version Gate** — consumer/runnerは接続後、既知の連番version/name/checksumが完全一致するまで
+  起動しない。migrationとverifyは同じadvisory lockで直列化し、migrationは単一transactionでのみ進める。
+- **ARCH-control-store-003 Transactional Repositories** — Registration、cursor、delivery/consumer、job、lease/attempt、
+  audit、artifact metadata、build defectを同じDB transaction境界で操作する。
+- **ARCH-control-store-004 Durable Queue** — registration-scoped idempotency/source unique制約とrepository partial unique
+  indexをDB権威とし、runtime rejectionを補助に置く。
+- **ARCH-control-store-005 Lease Competition** — workerは`FOR UPDATE SKIP LOCKED`で1 jobだけをclaimし、heartbeat/expiry/
+  reclaimをattempt historyと原子的に更新する。webhook routingもtoken＋expiry＋heartbeatでlive ownerとcrashを区別する。
+- **ARCH-control-store-006 Wake + Reconcile** — job/registration/webhookのLISTEN/NOTIFYはhint、周期queryと
+  pending webhook claimは真実回収経路である。
+- **ARCH-control-store-007 Published Contract** — SQL migrationとv1 JSON Schema/fixtureがTypeScript/Go間のPublished
+  Languageである。
+- **ARCH-control-store-008 Registration control projection** — Go controlはactual state、API idempotency、
+  delivery retryをschema version 2へtransactionalに保存し、status readをrepeatable-read snapshotから構成する。
+- **ARCH-control-store-009 Runner Published Contract** — `agentops.runner`だけがstrictなversion 1 payload/result/failureを
+  実行でき、未知version・余分field・command/credential/host pathは実行前に拒否する。
+- **ARCH-control-store-010 Critical Boundary Fence** — claim/provider/push/merge/releaseの各直前にactive lease ownership、
+  DB clock expiry、job status、Registration version/enabled/execution_enabledをrow lock下で再検証し、allow/deny理由を
+  同じtransactionへ監査する。
+- **ARCH-control-store-011 Retry and Restart Recovery** — heartbeat loss後はside effect permitを失効し、retryable failureは
+  attempt履歴を閉じて指数backoff再queueする。stale Registrationはretryせず、restart workerはDB queueを再発見する。
+- **ARCH-control-store-012 Lifecycle SoT** — singleton mode/generation/drain deadline/timeout/last errorと
+  idempotent transition履歴をPostgreSQLだけへ保存し、actual container状態をmodeとして推測保存しない。
+- **ARCH-control-store-013 Drain Fence** — lifecycle rowのexclusive transition lockとenqueue/leaseのshared lock、
+  job INSERT triggerを組み合わせ、DRAINING commit後のrouting/enqueue/leaseを原子的に拒否する。
+- **ARCH-control-store-014 Recovery Reconciliation** — CLI restartはpersisted mode、active lease、running attempt、
+  actual containerを照合し、欠損ACTIVEをDRAININGへ寄せてから安全な復旧経路だけを通す。
+- **ARCH-control-store-015 Explicit Owner Migration** — 通常consumerはschema verify-onlyを保ち、短命なowner-only
+  admin containerだけがadvisory lock下でversion 6までのadditive migrationとleast-privilege role bootstrapを行う。
+  commit前failureは旧versionを保持し、commit後はdurable rowを消すdown migrationでなくsafe modeへのcompensationと
+  current imageによるforward recoveryを行う。
+- **ARCH-control-store-016 Typed Private Monitor Broker** — credential-free controlはRegistration/version、固定repository、
+  issue/PR kind、strict cursorだけをdurable requestへ保存し、credential-bearing runnerがleaseしてsanitized identityだけを
+  応答する。stale/disabled/out-of-allowlist requestはprovider call前に拒否し、expiry後の回収とresponse digestを監査する。
+  provider operationはtotal deadline/page/item/raw-byte上限を持ち、claim/failure persistence障害はexecution serviceから
+  隔離する。
+
+根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
+[ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)

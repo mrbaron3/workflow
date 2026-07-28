@@ -1,0 +1,8 @@
+# Keep the OCI build context minimal, reproducible, and free of host state.
+# node_modules is reinstalled from the lockfile inside the image (never copied from the Mac).
+node_modules/
+dist/
+.harness/
+.git/
+*.log
+.DS_Store

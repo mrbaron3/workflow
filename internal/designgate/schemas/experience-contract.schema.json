@@ -1,0 +1,410 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:designflow:schema:v1:experience-contract",
+  "title": "Experience Contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "revisionId",
+    "pagePurposes",
+    "tasks",
+    "flows",
+    "effortBudgets",
+    "regions",
+    "elements",
+    "attentionHierarchies",
+    "accessibilityTarget",
+    "ambiguities"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "requestId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "revisionId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "pagePurposes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/pagePurpose"
+      }
+    },
+    "tasks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/task"
+      }
+    },
+    "flows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/flow"
+      }
+    },
+    "effortBudgets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/effortBudget"
+      }
+    },
+    "regions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/region"
+      }
+    },
+    "elements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/element"
+      }
+    },
+    "attentionHierarchies": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/attentionHierarchy"
+      }
+    },
+    "accessibilityTarget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["standard", "level", "requirements"],
+      "properties": {
+        "standard": {
+          "const": "WCAG 2.2"
+        },
+        "level": {
+          "enum": ["A", "AA", "AAA"]
+        },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+          }
+        }
+      }
+    },
+    "ambiguities": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+      }
+    }
+  },
+  "$defs": {
+    "pagePurpose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "primaryPurpose",
+        "successOutcome",
+        "secondaryPurposes",
+        "outOfScope",
+        "sourceRequirementIds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "name": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "primaryPurpose": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "successOutcome": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "secondaryPurposes": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+          }
+        },
+        "outOfScope": {
+          "type": "array",
+          "items": {
+            "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+          }
+        },
+        "sourceRequirementIds": {
+          "$ref": "#/$defs/idList"
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "pagePurposeId", "goal", "criticality", "sourceRequirementIds"],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "pagePurposeId": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "goal": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "criticality": {
+          "enum": ["primary", "secondary", "safety"]
+        },
+        "frequency": {
+          "enum": ["continuous", "frequent", "occasional", "rare"]
+        },
+        "sourceRequirementIds": {
+          "$ref": "#/$defs/idList"
+        }
+      }
+    },
+    "flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "taskId", "name", "steps"],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "taskId": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "name": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "actorAction",
+              "systemResponse",
+              "resultingState",
+              "capabilityRequirementIds"
+            ],
+            "properties": {
+              "id": {
+                "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+              },
+              "actorAction": {
+                "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+              },
+              "systemResponse": {
+                "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+              },
+              "resultingState": {
+                "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+              },
+              "capabilityRequirementIds": {
+                "$ref": "#/$defs/idListAllowEmpty"
+              }
+            }
+          }
+        }
+      }
+    },
+    "effortBudget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "taskId",
+        "maxPrimaryActions",
+        "maxDecisions",
+        "maxContextSwitches",
+        "repeatedInputAllowed",
+        "rationale"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "taskId": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "maxPrimaryActions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxDecisions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxContextSwitches": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repeatedInputAllowed": {
+          "type": "boolean"
+        },
+        "rationale": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "region": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "pagePurposeId",
+        "purpose",
+        "order",
+        "groupingRationale",
+        "prominence",
+        "responsiveBehavior",
+        "supportsTaskIds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "pagePurposeId": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "purpose": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "order": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "groupingRationale": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "prominence": {
+          "enum": ["primary", "secondary", "supporting", "progressive"]
+        },
+        "responsiveBehavior": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "supportsTaskIds": {
+          "$ref": "#/$defs/idList"
+        }
+      }
+    },
+    "element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "regionId",
+        "kind",
+        "label",
+        "supportsPurposeIds",
+        "supportsTaskIds",
+        "informationPriority",
+        "visibleWhen",
+        "placementRationale",
+        "interactionRationale",
+        "removalImpact",
+        "sourceRequirementIds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "regionId": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "kind": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "label": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "supportsPurposeIds": {
+          "$ref": "#/$defs/idList"
+        },
+        "supportsTaskIds": {
+          "$ref": "#/$defs/idList"
+        },
+        "informationPriority": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "visibleWhen": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "placementRationale": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "interactionRationale": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "removalImpact": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "sourceRequirementIds": {
+          "$ref": "#/$defs/idList"
+        }
+      }
+    },
+    "attentionHierarchy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pagePurposeId", "levels"],
+      "properties": {
+        "pagePurposeId": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "levels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["level", "reason", "regionIds", "elementIds"],
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "reason": {
+                "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+              },
+              "regionIds": {
+                "$ref": "#/$defs/idListAllowEmpty"
+              },
+              "elementIds": {
+                "$ref": "#/$defs/idListAllowEmpty"
+              }
+            }
+          }
+        }
+      }
+    },
+    "idList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+      }
+    },
+    "idListAllowEmpty": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+      }
+    }
+  }
+}

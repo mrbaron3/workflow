@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "1.0",
+  "issue": "mrbaron3/workflow#13",
+  "runtime": "Apple Container",
+  "runtimeVersion": "container CLI version 1.1.0 (build: release, commit: unspeci)",
+  "images": {
+    "runnerImage": "agentops-runner:ciso03-59636-1784983525031",
+    "controlImage": "agentops-control:ciso03-59636-1784983525031",
+    "controlTestImage": "agentops-control-test:ciso03-59636-1784983525031"
+  },
+  "checks": {
+    "standardOciControlBuild": "passed",
+    "pinnedForwarderExtensionReady": "passed",
+    "githubStubInternalOnly": "passed",
+    "goRacePostgresIntegration": "passed",
+    "designGateAtControlStartup": "passed",
+    "postgresInternalOnly": "passed",
+    "controlLoopbackOnly": "passed",
+    "registrationCreateEnableDisableWithoutRestart": "passed",
+    "desiredActualProjection": "passed",
+    "databaseDisconnectFailClosed": "passed",
+    "databaseReconnectReconstruction": "passed",
+    "controlRestartReconstruction": "passed"
+  },
+  "topology": {
+    "controlPublications": [
+      {
+        "containerPort": 8080,
+        "count": 1,
+        "hostAddress": "127.0.0.1",
+        "hostPort": 57445,
+        "proto": "tcp"
+      }
+    ],
+    "postgresPublications": [],
+    "githubStubPublications": [],
+    "runnerWasLongRunning": false,
+    "runnerPublications": []
+  },
+  "registration": {
+    "id": "3609619a-543d-4adf-bd69-c8d48d8ee54e",
+    "createdVersion": 1,
+    "enabledVersion": 2,
+    "disabledVersion": 3,
+    "restoredVersion": 4
+  },
+  "completedAt": "2026-07-25T12:46:40.154Z"
+}

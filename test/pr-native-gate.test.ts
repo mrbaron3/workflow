@@ -260,6 +260,22 @@ describe('ISSUE-0024/PR-INTENT durable lifecycle invariants', () => {
     }).reviewDecision).toBeNull();
   });
 
+  it('treats GitHub CLI empty check conclusion as not concluded', () => {
+    expect(GhPrViewResponse.parse({
+      id: 'PR_node',
+      state: 'OPEN',
+      isDraft: false,
+      headRefOid: SHA_A,
+      mergeable: 'MERGEABLE',
+      reviewDecision: '',
+      statusCheckRollup: [{
+        name: 'required-check',
+        status: 'IN_PROGRESS',
+        conclusion: '',
+      }],
+    }).statusCheckRollup?.[0]?.conclusion).toBeNull();
+  });
+
   it('PR-INTENT requires an explicit draft fact in every current-revision snapshot', () => {
     expect(() => GithubPrRevisionState.parse({
       state: 'open',

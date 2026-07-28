@@ -19,6 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Verdict, emptyDB } from '../domain/schema.js';
 import { Store } from '../store/store.js';
+import { resolveHarnessRoot } from '../runtime/paths.js';
 import { signRequirementDir } from '../authoring/sign-dir.js';
 import { requirementsDocPath } from '../authoring/spec-doc.js';
 import { recheckSpec } from '../authoring/recheck.js';
@@ -115,7 +116,9 @@ function parseArgs(argv: string[]): Args {
   return { cmd, flags, pos };
 }
 
-const ROOT = process.cwd();
+// The harness root honors the container-neutral AGENTOPS_APP_ROOT when set (in-container), else cwd —
+// so Store / workspace / systemDir carry no macOS /Users dependency (AC-CISO-011, DATA-container-runtime-004).
+const ROOT = resolveHarnessRoot();
 
 function requireInit(): Store {
   if (!Store.isInitialized(ROOT)) {
@@ -363,14 +366,18 @@ function cmdAssign(pos: string[]): void {
   log(`\nNext: the execution loop polls it (e.g. ${c.b('npx tsx scripts/real-panel-run.ts')}).`);
 }
 
-function cmdPollIntake(): void {
+async function cmdPollIntake(): Promise<void> {
   const store = requireInit();
   const config = loadConfig(ROOT);
   if (!config.intake) {
     log(c.dim('GitHub Issue intake is disabled — configure config.intake first.'));
     return;
   }
-  const results = pollAndClaimGithubIssues(store, config, realGithubIssueRunner(resolveTargetRoot(config, ROOT)));
+  const results = await pollAndClaimGithubIssues(
+    store,
+    config,
+    realGithubIssueRunner(resolveTargetRoot(config, ROOT)),
+  );
   const created = results.filter((result) => result.created).length;
   log(c.green(`✓ intake poll`) + ` ${results.length} ready issue(s), ${created} newly claimed`);
   for (const result of results) {
@@ -407,79 +414,11 @@ async function cmdGithubTurn(watch: boolean, flags: Args['flags']): Promise<void
 }
 
 async function cmdWebhookDaemon(flags: Args['flags']): Promise<void> {
-  const options = parseWebhookDaemonOptions(flags, process.env);
-  delete process.env.AGENTOPS_WEBHOOK_CONTROL_TOKEN;
-  delete process.env.AGENTOPS_GITHUB_WEBHOOK_SECRET;
-
-  const webhookStore = new WebhookControlStore(ROOT);
-  webhookStore.save();
-  const orcaSyncScript = options.orcaSyncScript
-    ? path.resolve(ROOT, options.orcaSyncScript)
-    : undefined;
-  const consumerAbort = new AbortController();
-  const consumers = createWebhookConsumerAdapters(webhookStore, {
-    harnessRoot: ROOT,
-    launcher: path.join(INSTALL_ROOT, 'bin', 'agentops.mjs'),
-    signal: consumerAbort.signal,
-    ...(orcaSyncScript ? { orcaSyncScript } : {}),
-    log,
-  });
-  let forwarders: GithubWebhookForwarderSupervisor | null = null;
-  const control = createWebhookControlServer({
-    store: webhookStore,
-    host: options.host,
-    port: options.port,
-    consumers,
-    controlToken: options.controlToken,
-    webhookSecret: options.webhookSecret,
-    runtimeState: () => ({ forwarders: forwarders?.status() ?? [] }),
-    log,
-  });
-  const address = await control.listen();
-  const signingRelay = new GithubWebhookSigningRelay(
-    `${address.url}/hook`,
-    options.webhookSecret,
+  parseWebhookDaemonOptions(flags, process.env);
+  throw new Error(
+    'legacy webhook-daemon is disabled: control-plane durability moved to PostgreSQL '
+    + '(ADR-0013); start the PostgreSQL-driven control process delivered by CISO-03',
   );
-  forwarders = new GithubWebhookForwarderSupervisor(webhookStore, {
-    forwardEvent: (event) => signingRelay.forwardTrustedEvent(event).then(() => undefined),
-    log,
-  });
-  if (options.forward) forwarders.start();
-  const reconciliation = new WebhookReconciliationScheduler(
-    webhookStore,
-    consumers.agentops,
-    { intervalMs: options.reconciliationIntervalMs, log },
-  );
-  if (options.reconcile) reconciliation.start();
-
-  log(c.green('✓ webhook control listening') + ` ${c.b(address.url)}`);
-  log(`  hook: ${c.dim(`${address.url}/hook`)}`);
-  log(`  registry: ${c.dim(path.relative(ROOT, webhookStore.file))}`);
-  log(c.dim(
-    !options.forward
-      ? '  GitHub forwarders disabled (--no-forward)'
-      : '  enabled repositories are reconciled into one gh webhook forward process each',
-  ));
-  log(c.dim(
-    !options.reconcile
-      ? '  polling reconciliation disabled (--no-reconcile)'
-      : `  polling reconciliation every ${options.reconciliationIntervalMs} ms`,
-  ));
-  const launchUrl = control.createLaunchUrl(address.url);
-  if (options.open) {
-    openFile(launchUrl);
-    log(c.dim('  opening authenticated GUI in browser…'));
-  } else {
-    log(`  browser login (single-use, 60s): ${c.dim(launchUrl)}`);
-  }
-
-  await waitForWebhookDaemonShutdown({
-    reconciliation,
-    forwarders,
-    consumers: consumerAbort,
-    signingRelay,
-    control,
-  });
 }
 
 function cmdPlanTree(): void {

@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "1.0",
+  "round": 1,
+  "frozenHead": "845fd0183a6f6b9eb2752adfb4f565d484e5d7d8",
+  "baseCommit": "ba79d1f0e02fb71e23774db15dcde81190b735de",
+  "recordedAt": "2026-07-26T03:49:23Z",
+  "codex": {
+    "taskId": "task_24dd93047f86",
+    "dispatchId": "ctx_1a52013a51d2",
+    "workerDoneMessageId": "msg_480aa1aed0e1",
+    "readOnly": true,
+    "filesModified": [],
+    "confirmedFindings": [
+      "stale applied/rejected idempotency replay can diverge persisted and actual mode",
+      "missing-runner ACTIVE recovery can remain DRAINING forever after a running attempt loses its owner",
+      "drain replaces control and rotates the runner's pinned proxy address",
+      "healthy ACTIVE fast path does not reconcile full ownership/image/network/mount/hardening spec"
+    ]
+  },
+  "claude": {
+    "taskId": "task_783369a0801d",
+    "dispatchId": "ctx_8186a6368b13",
+    "workerDoneMessageId": "msg_680519780323",
+    "readOnly": true,
+    "filesModified": [],
+    "confirmedFindings": [
+      "drain replaces control and rotates the runner's pinned proxy address"
+    ],
+    "independentReportPath": "/private/tmp/claude-501/-Users-yu-Company-Development-workflow/ciso-06-agentopsctl-lifecycle/b97ea3a6-7c3c-41bb-94aa-36e56af046fd/scratchpad/ciso06-review-round1-claude.md"
+  },
+  "repairs": [
+    {
+      "finding": "stale replay",
+      "resolution": "replay now requires the current transition identity, rejected outcomes remain errors, and the CLI parses/asserts the durable target mode before physical actions"
+    },
+    {
+      "finding": "crashed attempt recovery",
+      "resolution": "DRAINING recovery atomically expires ownerless leases, closes attempts, queues or terminates jobs under Registration/max-attempt policy, and appends lifecycle recovery audit"
+    },
+    {
+      "finding": "proxy rotation during drain",
+      "resolution": "drain keeps the existing control process/address and relies on DB routing/enqueue/lease fences while SIGTERM completes"
+    },
+    {
+      "finding": "incomplete actual reconciliation",
+      "resolution": "running control/runner/PostgreSQL must match ownership/role/image/network/publish/socket/mount/read-only/capability/nonroot invariants or start fails closed"
+    }
+  ],
+  "repairValidation": [
+    "go test ./...",
+    "AGENTOPS_TEST_DATABASE_URL=<temporary-loopback-postgres> go test -race ./...",
+    "AGENTOPS_TEST_DATABASE_URL=<temporary-loopback-postgres> npm run test:postgres",
+    "npm run typecheck",
+    "Apple Container stable-address drain, stale replay, and expired crashed-attempt recovery"
+  ],
+  "allConfirmedFindingsRepaired": true
+}

@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mrbaron3/workflow/contracts/control-store/v1/runner-job.schema.json",
+  "title": "AgentOps isolated runner job payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "repository", "event", "target", "execution", "artifacts"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "name"],
+      "properties": {
+        "owner": { "type": "string", "pattern": "^[a-z0-9_.-]+$" },
+        "name": { "type": "string", "pattern": "^[a-z0-9_.-]+$" }
+      }
+    },
+    "event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "number", "action"],
+          "properties": {
+            "kind": { "const": "issue" },
+            "number": { "type": "integer", "minimum": 1 },
+            "action": { "enum": ["opened", "labeled", "reopened", "synchronize", "recovery"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "number", "action"],
+          "properties": {
+            "kind": { "const": "pull_request" },
+            "number": { "type": "integer", "minimum": 1 },
+            "action": {
+              "enum": ["opened", "synchronize", "review_requested", "check_completed", "recovery"]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "trigger", "identity"],
+          "properties": {
+            "kind": { "const": "repository" },
+            "trigger": { "enum": ["push", "check_run", "check_suite"] },
+            "identity": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+            },
+            "ref": { "type": "string", "maxLength": 255 },
+            "after": { "type": "string", "pattern": "^[0-9a-f]{40,64}$" }
+          }
+        }
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baseRef"],
+      "properties": {
+        "baseRef": { "$ref": "#/$defs/gitRef" },
+        "headRef": { "$ref": "#/$defs/gitRef" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "requiredChecks", "mergeMethod"],
+      "properties": {
+        "mode": { "enum": ["development_turn", "pr_reconciliation"] },
+        "requiredChecks": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+          }
+        },
+        "mergeMethod": { "enum": ["squash", "merge", "rebase"] }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/artifact" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "type": "object",
+        "properties": {
+          "event": {
+            "type": "object",
+            "properties": { "kind": { "const": "issue" } },
+            "required": ["kind"]
+          }
+        },
+        "required": ["event"]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "execution": {
+            "type": "object",
+            "properties": { "mode": { "const": "development_turn" } },
+            "required": ["mode"]
+          }
+        }
+      },
+      "else": {
+        "type": "object",
+        "properties": {
+          "execution": {
+            "type": "object",
+            "properties": { "mode": { "const": "pr_reconciliation" } },
+            "required": ["mode"]
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "gitRef": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^(?!-)(?!.*\\.\\.)(?!.*@\\{)(?!.*[~^:?*\\\\\\s])(?!.*\\/$)(?!.*\\.lock$).+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256", "sizeBytes", "createdAt"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "pattern": "^volume://registrations/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/(?!\\.\\.?(?:/|$))(?!.*\\/\\.\\.?(?:/|$))[A-Za-z0-9._/-]+$"
+        },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "Z$"
+        }
+      }
+    }
+  }
+}

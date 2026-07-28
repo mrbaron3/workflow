@@ -19,6 +19,10 @@ import type { AcceptanceCriterion, IssueContract, VerificationMethod } from '../
 import { configuredGraderCommand, type TargetRepoConfig } from '../../config.js';
 import { scopedAcceptEnv } from './accept.js';
 import { prepareIsolatedExecutionResources } from './isolation.js';
+import {
+  runnerSandboxArgs,
+  runnerSandboxRoot,
+} from './runner-sandbox.js';
 
 let reportSeq = 0;
 export const GRADER_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -31,6 +35,8 @@ export interface CmdResult {
 
 export interface GraderExecutionOptions {
   isolated?: boolean;
+  /** Explicit credential-free base environment for containerized runner graders. */
+  environment?: NodeJS.ProcessEnv;
 }
 
 export function runGraderCommand(
@@ -50,9 +56,56 @@ export function runGraderCommand(
     env[key!] = rest.join('=');
   }
   const [cmd, ...args] = tokens;
+  const registrationRoot = runnerSandboxRoot(options.environment ?? {});
+  const dependencyRoot = registrationRoot
+    ? options.environment?.AGENTOPS_RUNNER_DEPENDENCY_ROOT
+    : undefined;
+  let dependencyMountCreated = false;
+  const dependencyMountTarget = path.join(cwd, 'node_modules');
+  if (dependencyRoot) {
+    if (
+      dependencyRoot !== '/app/node_modules'
+      || !fs.statSync(dependencyRoot).isDirectory()
+    ) {
+      throw new Error('isolated runner dependency root is absent or invalid');
+    }
+    if (fs.existsSync(dependencyMountTarget)) {
+      if (
+        fs.lstatSync(dependencyMountTarget).isSymbolicLink()
+        || !fs.statSync(dependencyMountTarget).isDirectory()
+      ) {
+        throw new Error('runner grader node_modules mount target is unsafe');
+      }
+    } else {
+      fs.mkdirSync(dependencyMountTarget);
+      dependencyMountCreated = true;
+    }
+  }
   const execution = options.isolated
     ? prepareIsolatedExecutionResources(cmd!, args, cwd)
-    : { command: cmd!, args, env: process.env, cleanup: () => {} };
+    : registrationRoot
+      ? {
+          command: 'bwrap',
+          args: runnerSandboxArgs(
+            registrationRoot,
+            cwd,
+            cmd!,
+            args,
+            dependencyRoot,
+          ),
+          env: options.environment!,
+          cleanup: () => {
+            if (dependencyMountCreated) {
+              fs.rmSync(dependencyMountTarget, { recursive: true, force: true });
+            }
+          },
+        }
+    : {
+        command: cmd!,
+        args,
+        env: options.environment ?? process.env,
+        cleanup: () => {},
+      };
   const childEnv = options.isolated
     ? {
       ...execution.env,
@@ -99,8 +152,9 @@ export function runVitest(
   extraEnv?: Record<string, string>,
   options?: GraderExecutionOptions,
 ): VitestReport {
+  const containerRegistrationRoot = runnerSandboxRoot(options?.environment ?? {});
   const out = path.join(
-    options?.isolated ? cwd : os.tmpdir(),
+    options?.isolated || containerRegistrationRoot ? cwd : os.tmpdir(),
     `.agentops-vitest-${process.pid}-${reportSeq++}.json`,
   );
   const configLoader = options?.isolated && !command.includes('--configLoader')
@@ -166,6 +220,8 @@ export interface GroundOpts {
   issueId?: string;
   /** Repository-discovered heads are attacker-controlled until review completes. */
   untrusted?: boolean;
+  /** Runner-supplied environment that intentionally omits every credential. */
+  graderEnvironment?: NodeJS.ProcessEnv;
 }
 
 export interface SatisfiedResult {
@@ -271,7 +327,12 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
   }
 
   const typecheckCommand = configuredGraderCommand(opts.target, 'typecheck');
-  const execution = { isolated: opts.untrusted === true };
+  const execution = {
+    isolated: opts.untrusted === true,
+    ...(opts.graderEnvironment
+      ? { environment: opts.graderEnvironment }
+      : {}),
+  };
   const tc = typecheckCommand ? runGraderCommand(typecheckCommand, opts.worktree, {}, execution) : null;
 
   // Issue-scoped activation (AC-SCOPED-001): a driven issue's grading activates only ITS

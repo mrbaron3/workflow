@@ -56,7 +56,7 @@ class FakeRunner implements GithubIssueRunner {
 }
 
 describe('GitHub Issue intake', () => {
-  it('AC-GHINTAKE-001 filters explicit open+ready issues and processes them in number order', () => {
+  it('AC-GHINTAKE-001 filters explicit open+ready issues and processes them in number order', async () => {
     const store = new Store(root());
     const runner = new FakeRunner();
     runner.issues = [
@@ -66,18 +66,18 @@ describe('GitHub Issue intake', () => {
       snapshot(4, { labels: ['triage'] }),
     ];
 
-    const result = pollAndClaimGithubIssues(store, config(), runner);
+    const result = await pollAndClaimGithubIssues(store, config(), runner);
     expect(result.map((r) => r.issueNumber)).toEqual([2, 9]);
     expect(runner.claims).toEqual([2, 9]);
     expect(store.db.intakeRecords.map((r) => r.snapshot.number)).toEqual([2, 9]);
   });
 
-  it('AC-GHINTAKE-002 persists repository identity, immutable source fields, and claimed state', () => {
+  it('AC-GHINTAKE-002 persists repository identity, immutable source fields, and claimed state', async () => {
     const dir = root();
     const store = new Store(dir);
     const runner = new FakeRunner();
     runner.issues = [snapshot(42)];
-    pollAndClaimGithubIssues(store, config(), runner);
+    await pollAndClaimGithubIssues(store, config(), runner);
 
     const reloaded = new Store(dir);
     const record = reloaded.db.intakeRecords[0]!;
@@ -89,34 +89,36 @@ describe('GitHub Issue intake', () => {
     expect(record.claimedAt).not.toBeNull();
   });
 
-  it('AC-GHINTAKE-003 duplicate poll and store reload do not duplicate records, counters, or claims', () => {
+  it('AC-GHINTAKE-003 duplicate poll and store reload do not duplicate records, counters, or claims', async () => {
     const dir = root();
     const runner = new FakeRunner();
     runner.issues = [snapshot(42)];
     const store = new Store(dir);
-    pollAndClaimGithubIssues(store, config(), runner);
+    await pollAndClaimGithubIssues(store, config(), runner);
     const counter = store.db.counters.INTAKE;
-    pollAndClaimGithubIssues(store, config(), runner);
-    pollAndClaimGithubIssues(new Store(dir), config(), runner);
+    await pollAndClaimGithubIssues(store, config(), runner);
+    await pollAndClaimGithubIssues(new Store(dir), config(), runner);
 
     expect(new Store(dir).db.intakeRecords).toHaveLength(1);
     expect(new Store(dir).db.counters.INTAKE).toBe(counter);
     expect(runner.claims).toEqual([42]);
   });
 
-  it('AC-GHINTAKE-004 saves claim-pending before an external failure and retries the same record', () => {
+  it('AC-GHINTAKE-004 saves claim-pending before an external failure and retries the same record', async () => {
     const dir = root();
     const runner = new FakeRunner();
     runner.issues = [snapshot(7)];
     runner.failClaims = 1;
-    expect(() => pollAndClaimGithubIssues(new Store(dir), config(), runner)).toThrow(/label failure/);
+    await expect(
+      pollAndClaimGithubIssues(new Store(dir), config(), runner),
+    ).rejects.toThrow(/label failure/);
 
     const pending = new Store(dir);
     expect(pending.db.intakeRecords).toHaveLength(1);
     expect(pending.db.intakeRecords[0]!.status).toBe('claim-pending');
     const original = pending.db.intakeRecords[0]!.snapshot;
 
-    pollAndClaimGithubIssues(pending, config(), runner);
+    await pollAndClaimGithubIssues(pending, config(), runner);
     const claimed = new Store(dir).db.intakeRecords[0]!;
     expect(claimed.id).toBe(pending.db.intakeRecords[0]!.id);
     expect(claimed.snapshot).toEqual(original);
@@ -124,23 +126,41 @@ describe('GitHub Issue intake', () => {
     expect(runner.claims).toEqual([7, 7]);
   });
 
-  it('AC-GHINTAKE-005 keys the same issue number by repository and blocks repository mixing in one store', () => {
+  it('fails closed immediately before the external issue-label mutation', async () => {
+    const store = new Store(root());
+    const runner = new FakeRunner();
+    runner.issues = [snapshot(8)];
+    await expect(pollAndClaimGithubIssues(
+      store,
+      config(),
+      runner,
+      async () => {
+        throw new Error('registration version changed');
+      },
+    )).rejects.toThrow(/registration version changed/);
+    expect(runner.claims).toEqual([]);
+    expect(store.db.intakeRecords[0]?.status).toBe('claim-pending');
+  });
+
+  it('AC-GHINTAKE-005 keys the same issue number by repository and blocks repository mixing in one store', async () => {
     expect(githubIntakeKey('acme/a', 42)).not.toBe(githubIntakeKey('acme/b', 42));
     const store = new Store(root());
     const runner = new FakeRunner();
     runner.issues = [snapshot(42)];
-    pollAndClaimGithubIssues(store, config('acme/theme'), runner);
-    expect(() => pollAndClaimGithubIssues(store, config('acme/other'), runner)).toThrow(IntakeRepositoryMismatchError);
+    await pollAndClaimGithubIssues(store, config('acme/theme'), runner);
+    await expect(
+      pollAndClaimGithubIssues(store, config('acme/other'), runner),
+    ).rejects.toThrow(IntakeRepositoryMismatchError);
     expect(store.db.intakeRecords).toHaveLength(1);
   });
 
-  it('AC-GHINTAKE-006 never overwrites the first snapshot when a claimed issue reappears edited', () => {
+  it('AC-GHINTAKE-006 never overwrites the first snapshot when a claimed issue reappears edited', async () => {
     const store = new Store(root());
     const runner = new FakeRunner();
     runner.issues = [snapshot(42)];
-    pollAndClaimGithubIssues(store, config(), runner);
+    await pollAndClaimGithubIssues(store, config(), runner);
     runner.issues = [snapshot(42, { title: 'Edited title', body: 'Edited body', labels: ['ready', 'changed'] })];
-    pollAndClaimGithubIssues(store, config(), runner);
+    await pollAndClaimGithubIssues(store, config(), runner);
 
     expect(store.db.intakeRecords[0]!.snapshot.title).toBe('Issue 42');
     expect(store.db.intakeRecords[0]!.snapshot.body).toBe('Original body 42');

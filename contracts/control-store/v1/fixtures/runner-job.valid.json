@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "repository": {
+    "owner": "mrbaron3",
+    "name": "workflow"
+  },
+  "event": {
+    "kind": "issue",
+    "number": 14,
+    "action": "labeled"
+  },
+  "target": {
+    "baseRef": "refs/heads/main"
+  },
+  "execution": {
+    "mode": "development_turn",
+    "requiredChecks": ["test", "postgres"],
+    "mergeMethod": "squash"
+  },
+  "artifacts": []
+}

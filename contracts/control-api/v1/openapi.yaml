@@ -1,0 +1,908 @@
+openapi: 3.1.0
+info:
+  title: AgentOps Registration Control API
+  version: 1.1.0
+  description: >-
+    mrbaron3/workflow#15 のloopback dashboardとPostgreSQL Registration駆動Control API。
+    human-approved workflow-ciso05-dashboard-r02 /
+    sha256:4f7357e099985d2dce5c1941b8ee25231e3208808727362b9f87d725084b70fa
+    の7 capabilitiesをrevision-02 capability reconciliationへtraceする。
+servers:
+  - url: http://127.0.0.1:8080
+security:
+  - operatorBearer: []
+  - browserSession: []
+paths:
+  /dashboard/bootstrap:
+    get:
+      security: []
+      operationId: bootstrapBrowserSession
+      x-designflow-capability: cap-establish-browser-control-session
+      description: exact loopback Host/peerで一回限りtokenを消費し、HttpOnly sessionを設定してclean URLへ303。
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 32
+            maxLength: 512
+      responses:
+        "303":
+          description: clean dashboard URLへredirect
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: exact Hostまたはloopback peer不一致
+  /v1/browser-session:
+    get:
+      security:
+        - browserSession: []
+      operationId: getBrowserSession
+      x-designflow-capability: cap-establish-browser-control-session
+      responses:
+        "200":
+          description: expiryとmemory-only CSRF proof
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserSession"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    delete:
+      security:
+        - browserSession: []
+      operationId: deleteBrowserSession
+      x-designflow-capability: cap-establish-browser-control-session
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "200":
+          description: sessionとCSRF proofを失効
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Origin、fetch metadataまたはCSRF不一致
+  /healthz:
+    get:
+      security: []
+      operationId: health
+      responses:
+        "200":
+          description: PostgreSQLへ接続でき、現在のcontrol processが応答可能
+        "503":
+          $ref: "#/components/responses/StoreUnavailable"
+  /v1/registrations:
+    get:
+      operationId: listRegistrationStatus
+      x-designflow-capability: cap-list-registration-status
+      x-freshness: >-
+        componentごとにobservedAt、lastGoodAt、freshnessを返し、DB不達時はcacheを成功表示せず503。
+      x-idempotency: read-only
+      x-audit: 読取障害をstructured operational logへ記録し、個別read audit rowは作らない。
+      parameters:
+        - name: repository
+          in: query
+          description: 任意のcanonical owner/name filter
+          schema:
+            type: string
+            pattern: "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+        - name: pageToken
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: anomaly-firstのdesired/actual status projection
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "503":
+          $ref: "#/components/responses/StoreUnavailable"
+    post:
+      operationId: createRegistration
+      x-designflow-capability: cap-create-registration
+      x-idempotency: Idempotency-Keyと正規化request hashをPostgreSQLへ同一transactionで保存。
+      x-cancellation: 即時commandのため受付後cancel不可。
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationInput"
+      responses:
+        "201":
+          description: Registrationを作成
+          headers:
+            ETag:
+              $ref: "#/components/headers/RegistrationVersion"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationCommandResponse"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/registrations/{registrationId}:
+    patch:
+      operationId: updateRegistration
+      x-designflow-capability: cap-update-registration
+      x-idempotency: >-
+        success、not-found、version-conflict、no-changeを同じtransactionでrequest hash、
+        structured outcome、recordedAt、auditへ保存する。同一key+requestは同じ結果を返し、
+        keyを異なるfenceまたはpatchへ再利用すると409。
+      x-freshness: If-Matchを現在versionへ照合し、stale commandを409で拒否。
+      x-audit: actor、old/new version、結果をruntime_auditへtransactionalに保存。
+      parameters:
+        - $ref: "#/components/parameters/RegistrationId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegistrationPatch"
+      responses:
+        "200":
+          description: 更新済みRegistration
+          headers:
+            ETag:
+              $ref: "#/components/headers/RegistrationVersion"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationCommandResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/registrations/{registrationId}/disable:
+    post:
+      operationId: disableRegistration
+      x-designflow-capability: cap-disable-registration
+      x-idempotency: >-
+        success、not-found、version-conflict、already-disabledを同じtransactionで保存し、
+        rejected identityも再利用不能にする。
+      x-cancellation: 即時commandのため受付後cancel不可。
+      x-failure-semantics: version不一致、未知ID、DB不達を成功表示しない。
+      parameters:
+        - $ref: "#/components/parameters/RegistrationId"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        "200":
+          description: 無効化済みRegistration。未lease jobは同transactionでrejected。
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegistrationCommandResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/deliveries/{deliveryId}:
+    get:
+      operationId: getDeliveryStatus
+      x-designflow-capability: cap-inspect-delivery-status
+      x-freshness: deliveryとretry attemptをPostgreSQL repeatable-read snapshotから返す。
+      x-idempotency: read-only
+      parameters:
+        - $ref: "#/components/parameters/DeliveryId"
+      responses:
+        "200":
+          description: deliveryとretry attemptの現在のdurable state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryStatus"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/StoreUnavailable"
+  /v1/deliveries/{deliveryId}/retry:
+    post:
+      operationId: retryDelivery
+      x-designflow-capability: cap-retry-delivery
+      x-freshness: >-
+        observedAttempts、delivery state、Registration enabled/executionEnabled/versionをrow lock下で再検証。
+      x-idempotency: >-
+        delivery間でglobalな同じIdempotency-Keyと同一requestは同じattemptId。
+        deliveryを含む異requestへの再利用は409。
+      x-retry: 通信失敗時は同じIdempotency-Keyで再送可能。
+      x-cancellation: responseのcancellable=falseで取消不能を明示。
+      x-audit: actor、delivery、attempt、observedAttempts、timeをtransactionalに保存。
+      parameters:
+        - $ref: "#/components/parameters/DeliveryId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - observedAttempts
+                - expectedRegistrationId
+                - expectedRegistrationVersion
+              properties:
+                observedAttempts:
+                  type: integer
+                  minimum: 0
+                expectedRegistrationId:
+                  type: string
+                  format: uuid
+                expectedRegistrationVersion:
+                  type: integer
+                  minimum: 1
+      responses:
+        "202":
+          description: retry attemptを重複なく受理
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetryCommandResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/webhooks/github:
+    post:
+      security: []
+      operationId: receiveGitHubWebhook
+      x-persist-before-ack: signature/identity検証後にPostgreSQL commitが成功した場合だけ202。
+      x-deduplication: X-GitHub-Deliveryはglobal unique。同key異payloadは409。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "202":
+          description: durable delivery receipt
+        "401":
+          description: X-Hub-Signature-256が不正
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/StoreUnavailable"
+components:
+  securitySchemes:
+    operatorBearer:
+      type: http
+      scheme: bearer
+      description: 32..512 byte server-side operator credential; never exposed to browser code.
+    browserSession:
+      type: apiKey
+      in: cookie
+      name: agentops_session
+  parameters:
+    RegistrationId:
+      name: registrationId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    DeliveryId:
+      name: deliveryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+      description: quoted positive Registration version
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 32
+        maxLength: 128
+  headers:
+    RegistrationVersion:
+      schema:
+        type: string
+      description: quoted current Registration version
+  responses:
+    Unauthorized:
+      description: operator bearer authorizationが不正
+    StoreUnavailable:
+      description: >-
+        PostgreSQL不達または未知schema。fail-closedで現在状態を返さず、status queryでは
+        lastSuccessfulAtとbounded retry hintだけを返す。
+    Conflict:
+      description: >-
+        stale version、disabled Registration、idempotency conflict、single-flight競合。
+        delivery retry競合ではreason、current state、routeAttemptsを返す。
+    NotFound:
+      description: 指定resourceが存在しない
+  schemas:
+    RegistrationInput:
+      type: object
+      additionalProperties: false
+      required:
+        - repository
+      properties:
+        repository:
+          type: string
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$"
+        enabled:
+          type: boolean
+          default: true
+        issueMonitorEnabled:
+          type: boolean
+          default: true
+        prMonitorEnabled:
+          type: boolean
+          default: true
+        executionEnabled:
+          type: boolean
+          default: true
+    RegistrationPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        enabled:
+          type: boolean
+        issueMonitorEnabled:
+          type: boolean
+        prMonitorEnabled:
+          type: boolean
+        executionEnabled:
+          type: boolean
+    RegistrationPage:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - nextPageToken
+        - observedAt
+        - lastSuccessfulAt
+        - mode
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RegistrationProjection"
+        nextPageToken:
+          type: string
+        observedAt:
+          type: string
+          format: date-time
+        lastSuccessfulAt:
+          type: string
+          format: date-time
+        mode:
+          $ref: "#/components/schemas/OperatingMode"
+    RegistrationProjection:
+      type: object
+      additionalProperties: false
+      required:
+        - registration
+        - mode
+        - components
+        - lastPoll
+        - lastDelivery
+        - queueDepth
+        - activeJobId
+        - activeJobState
+        - activeJobRegistrationVersion
+        - lastJobFailure
+        - recentDeliveryFailures
+      properties:
+        registration:
+          $ref: "#/components/schemas/Registration"
+        mode:
+          $ref: "#/components/schemas/OperatingMode"
+        components:
+          type: object
+          additionalProperties: false
+          required:
+            - issue_monitor
+            - pr_monitor
+            - forwarder
+            - execution
+            - queue
+          properties:
+            issue_monitor:
+              $ref: "#/components/schemas/ComponentProjection"
+            pr_monitor:
+              $ref: "#/components/schemas/ComponentProjection"
+            forwarder:
+              $ref: "#/components/schemas/ComponentProjection"
+            execution:
+              $ref: "#/components/schemas/ComponentProjection"
+            queue:
+              $ref: "#/components/schemas/ComponentProjection"
+        lastPoll:
+          type: object
+          properties:
+            issue:
+              type:
+                - string
+                - "null"
+              format: date-time
+            pull_request:
+              type:
+                - string
+                - "null"
+              format: date-time
+        lastDelivery:
+          type:
+            - string
+            - "null"
+          format: date-time
+        queueDepth:
+          type: integer
+          minimum: 0
+        activeJobId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        activeJobState:
+          type:
+            - string
+            - "null"
+          enum:
+            - leased
+            - queued
+            - null
+        activeJobRegistrationVersion:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+        lastJobFailure:
+          oneOf:
+            - $ref: "#/components/schemas/JobFailure"
+            - type: "null"
+        recentDeliveryFailures:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/DeliveryFailure"
+    OperatingMode:
+      type: string
+      enum:
+        - MONITOR_ONLY
+        - ACTIVE
+    Registration:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - repository
+        - enabled
+        - issueMonitorEnabled
+        - prMonitorEnabled
+        - executionEnabled
+        - configuration
+        - version
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        repository:
+          type: string
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$"
+        enabled:
+          type: boolean
+        issueMonitorEnabled:
+          type: boolean
+        prMonitorEnabled:
+          type: boolean
+        executionEnabled:
+          type: boolean
+        configuration:
+          type: object
+          additionalProperties: false
+        version:
+          type: integer
+          minimum: 1
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ComponentProjection:
+      type: object
+      additionalProperties: false
+      required:
+        - desired
+        - actual
+        - observedAt
+        - freshness
+        - staleReason
+        - lastGoodAt
+        - lastError
+        - recoveryState
+      properties:
+        desired:
+          type: boolean
+        actual:
+          enum:
+            - unknown
+            - starting
+            - running
+            - stopped
+            - failed
+            - idle
+            - waiting
+            - stale
+            - disconnected
+            - queued
+            - leased
+            - paused_by_mode
+            - blocked_by_mode
+        observedAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        freshness:
+          enum:
+            - fresh
+            - stale
+            - unknown
+        staleReason:
+          type:
+            - string
+            - "null"
+        lastGoodAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        lastError:
+          type:
+            - string
+            - "null"
+        recoveryState:
+          enum:
+            - none
+            - scheduled
+            - in_progress
+            - blocked
+            - recovered
+            - unknown
+    BrowserSession:
+      type: object
+      additionalProperties: false
+      required:
+        - authenticated
+        - csrfToken
+        - expiresAt
+        - origin
+      properties:
+        authenticated:
+          const: true
+        csrfToken:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        origin:
+          type: string
+          format: uri
+    CommandFence:
+      type: object
+      additionalProperties: false
+      required:
+        - registrationId
+        - registrationVersion
+      properties:
+        registrationId:
+          type: string
+          format: uuid
+        registrationVersion:
+          type: integer
+          minimum: 1
+        routeAttempts:
+          type: integer
+          minimum: 0
+    CommandOutcome:
+      type: object
+      additionalProperties: false
+      required:
+        - commandId
+        - commandIdentityDigest
+        - resourceIdentity
+        - outcome
+        - reason
+        - observedFence
+        - currentFence
+        - resultVersionOrAttemptIdentity
+        - recoverability
+        - recordedAt
+        - cancellable
+      properties:
+        commandId:
+          type: string
+        commandIdentityDigest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        resourceIdentity:
+          type: string
+        outcome:
+          enum:
+            - applied
+            - duplicate
+            - version_conflict
+            - rejected
+            - indeterminate
+        reason:
+          type:
+            - string
+            - "null"
+        observedFence:
+          oneOf:
+            - $ref: "#/components/schemas/CommandFence"
+            - type: "null"
+        currentFence:
+          oneOf:
+            - $ref: "#/components/schemas/CommandFence"
+            - type: "null"
+        resultVersionOrAttemptIdentity:
+          type:
+            - string
+            - "null"
+        recoverability:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+        cancellable:
+          const: false
+    RegistrationCommandResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+        - registration
+      properties:
+        outcome:
+          $ref: "#/components/schemas/CommandOutcome"
+        registration:
+          $ref: "#/components/schemas/Registration"
+    RetryCommandResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - outcome
+        - retry
+      properties:
+        outcome:
+          $ref: "#/components/schemas/CommandOutcome"
+        retry:
+          $ref: "#/components/schemas/RetryResult"
+    JobFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - registrationVersion
+        - jobType
+        - status
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        registrationVersion:
+          type: integer
+          minimum: 1
+        jobType:
+          type: string
+        status:
+          enum:
+            - failed
+            - cancelled
+            - rejected
+        lastError:
+          type:
+            - string
+            - "null"
+        updatedAt:
+          type: string
+          format: date-time
+    DeliveryFailure:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - deliveryKey
+        - event
+        - status
+        - routeAttempts
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        deliveryKey:
+          type: string
+        event:
+          type: string
+        action:
+          type:
+            - string
+            - "null"
+        status:
+          enum:
+            - failed
+            - ignored
+        ignoredReason:
+          type:
+            - string
+            - "null"
+        lastError:
+          type:
+            - string
+            - "null"
+        routeAttempts:
+          type: integer
+          minimum: 0
+        registrationVersion:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+        updatedAt:
+          type: string
+          format: date-time
+    RetryResult:
+      type: object
+      additionalProperties: false
+      required:
+        - attemptId
+        - deliveryId
+        - state
+        - cancellable
+        - recordedAt
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        deliveryId:
+          type: string
+          format: uuid
+        state:
+          const: pending
+        cancellable:
+          const: false
+        recordedAt:
+          type: string
+          format: date-time
+    DeliveryStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - deliveryKey
+        - repository
+        - event
+        - status
+        - routeAttempts
+        - receivedAt
+        - updatedAt
+        - retryAttempts
+      properties:
+        id:
+          type: string
+          format: uuid
+        deliveryKey:
+          type: string
+        repository:
+          type: string
+        event:
+          type: string
+        action:
+          type:
+            - string
+            - "null"
+        status:
+          enum:
+            - pending
+            - processing
+            - processed
+            - ignored
+            - failed
+        ignoredReason:
+          type:
+            - string
+            - "null"
+        lastError:
+          type:
+            - string
+            - "null"
+        routeAttempts:
+          type: integer
+          minimum: 0
+        registrationId:
+          type:
+            - string
+            - "null"
+          format: uuid
+        registrationVersion:
+          type:
+            - integer
+            - "null"
+          minimum: 1
+        receivedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        retryAttempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryRetryAttempt"
+    DeliveryRetryAttempt:
+      type: object
+      additionalProperties: false
+      required:
+        - attemptId
+        - status
+        - observedRouteAttempts
+        - createdAt
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        status:
+          enum:
+            - accepted
+            - rejected
+        reason:
+          type:
+            - string
+            - "null"
+        observedRouteAttempts:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
