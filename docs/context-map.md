@@ -68,7 +68,14 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
   consumerはcurrent snapshotを再取得する。pollは同じseamへreconciliation eventを供給する。
 - **planning → intake UI authoring → execution**（Customer-Supplier・ACL）: frontend/fullstack Candidateだけを専用
   ui-designer sessionへ渡し、AC-traceableなUI Design Artifactを検証する。不在・曖昧・不正はqueueへ投影せず、
-  accepted artifactはIssueのPublished Languageとしてgeneratorと各reviewerへ渡す。
+  accepted artifactはIssueのPublished Languageとしてgeneratorと各reviewerへ渡す。この経路は
+  ADR-0012移行中のlegacy providerであり、標準経路は次項へ移す。
+- **Designflow Provider → intake/planning**（Open Host Service・Published Language・ACL）:
+  intakeはversioned Design Requestだけを外部providerへ渡し、Design Bundle、preview、Capability Requirements、
+  digest-bound Human Design Decisionを受ける。providerの内部model/store/runtimeは共有しない。planningは
+  approve済みcapabilityを最終Issue Contract/API設計へreconcileし、intakeの決定論gateがschema/digest/trace/
+  decision/coverageを検証してからexecutionへ投影する（ADR-0012）。CISO-03/05の`internal/designgate`と
+  固定Dashboard bundleはこの境界のgrounded bootstrapであり、汎用intake portそのものではない。
 - **evaluation → planning**（改善フィードバック・Customer-Supplier）: Harness Analyst が `type:harness`/`type:eval` の改善 issue を計画の木へ戻し、Curator が失敗を回帰として育てる。北極星の「改善」軸の閉路。
 - **全稼働コンテキスト → container-runtime**（Customer-Supplier・OS非依存port）: 稼働コンテキストは role／topology／container-neutral path 契約を供給し、container-runtime が標準 OCI イメージと Apple Container 等の runtime 操作へ翻訳する。core は Provider CLI 形や macOS 詳細を知らず、Apple Container 固有は adapter 配下のみ（AC-CISO-011）。CISO epic #10 の #12 以降はこの port 越しに runtime を使う。**agent-runtime（AI呼出し）とは別境界**で、共有語は "runtime" のみ。
 - **registration-control/runner → control-store**（Customer-Supplier・Published Language）: TypeScript runnerとGo controlは

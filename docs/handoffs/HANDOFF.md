@@ -1,5 +1,12 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
+> **2026-07-28 更新**: Experience設計の独立provider化は
+> [designflow-integration.md](designflow-integration.md) がworkflow側の実行計画・再開点である。
+> 外部製品は`mrbaron3/designflow`であり、両repositoryは固定contract releaseを境界に独立したtask DAGを持つ。
+> ADR-0012、A8、intake system viewへ境界を反映済み。CISO-03/05が固定contract pin、
+> Dashboard固有gate、request-changes→digest-bound approve→capability reconciliationのgrounded
+> baselineを`main`へ着地させたため、次は#26でこれを汎用workflow consumerへ抽出する。
+>
 > 別セッションで cold-start するための**自己完結**の引き継ぎ。作成: 2026-07-07（⑮セッションで更新・最終更新は **D4 released（PR #3・direct engineering 経路）＋M4 grounded 初回巡（channel-compass EPIC-01 released）＋新ギャップ D5/D6 発見** 後）。**次セッションの開始点は §4 冒頭「★ 次セッションの開始点」**。
 > **これを読めば継続に必要な文脈が揃う**。より深い execution 層の grounded 記録が要るときだけ
 > [execution-layer.md](execution-layer.md)（任意アーカイブ）を見る。全成果は `origin/main` に push 済み・作業ツリー clean。
