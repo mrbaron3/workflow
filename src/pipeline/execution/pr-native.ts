@@ -45,6 +45,15 @@ export const GithubPrRevisionState = z.object({
   blockingReviewThreads: z.array(RevisionReviewThread).optional(),
 });
 export type GithubPrRevisionState = z.infer<typeof GithubPrRevisionState>;
+
+/** External facts were unavailable or stale; callers may defer capture to reconciliation. */
+export class RevisionGateCaptureUnavailableError extends Error {
+  constructor(message: string, readonly captureCause?: unknown) {
+    super(message);
+    this.name = 'RevisionGateCaptureUnavailableError';
+  }
+}
+
 export interface GithubOpenPullRequest {
   number: number;
   url: string;
@@ -205,6 +214,49 @@ function persistRevisionGateSnapshot(
     return candidate;
   }
   return store.addRevisionGateSnapshot(candidate);
+}
+
+/**
+ * Persist the observable GitHub gate facts for a reviewed immutable revision
+ * without requesting a merge. Keeping this capture adjacent to review
+ * completion ensures the final reviewed revision retains checks and blocking
+ * thread IDs even if the process stops before the broader reconciliation pass.
+ */
+export function captureCurrentRevisionGateSnapshot(
+  store: Store,
+  config: HarnessConfig,
+  pr: PR,
+  revision: PrRevision,
+  runner: PrNativeGithubRunner,
+  cwd: string,
+  requiredPerspectives: string[],
+): EvaluatedRevisionGateSnapshot {
+  const externalRef = pr.externalRef;
+  if (!externalRef) throw new Error(`${pr.id} is not projected to GitHub`);
+  let github: GithubPrRevisionState;
+  try {
+    github = GithubPrRevisionState.parse(
+      runner.viewRevision(cwd, externalRef.number),
+    );
+  } catch (error) {
+    throw new RevisionGateCaptureUnavailableError(
+      `cannot capture gate snapshot for ${revision.id}: GitHub facts unavailable`,
+      error,
+    );
+  }
+  if (github.headSha !== revision.headSha) {
+    throw new RevisionGateCaptureUnavailableError(
+      `cannot capture gate snapshot for ${revision.id}: `
+      + `head changed from ${revision.headSha} to ${github.headSha}`,
+    );
+  }
+  return persistRevisionGateSnapshot(store, evaluateRevisionGate(store, {
+    pr,
+    revision,
+    requiredPerspectives,
+    github,
+    requiredChecks: config.gate?.requiredChecks,
+  }));
 }
 
 export interface AutoMergeResult {

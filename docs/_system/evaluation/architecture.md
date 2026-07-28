@@ -30,6 +30,7 @@
 
 - **ARCH-evaluation-010** — パイプラインは AgentRunner インタフェースにのみ依存し、具体 backend（mock/cli）に依存しない（差し替え可能性を保つ）。
 - **ARCH-evaluation-011** — hard gate は score の前に評価される: blocker が1つでも落ちれば `request_changes`（スコアで相殺できない）。
+- **ARCH-evaluation-012 surrogate/oracle calibration** — PR Revision Gateで全 required Perspectiveがapproveした一方、独立required checkまたはblocking reviewが棄却したrevisionを代理検証器の見逃しとして導出する。同一revisionは一票とし、次revisionのreviewerへは過去mismatch件数だけを渡す。check名・thread本文は渡さず、reviewerは検証被覆を独立に強化する（ADR-0018、`src/pipeline/verification-signal.ts`）。
 
 ## 拡張 seam（どこを変えれば伸ばせるか — 旧 ARCHITECTURE より移設）
 

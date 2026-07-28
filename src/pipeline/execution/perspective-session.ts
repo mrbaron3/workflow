@@ -193,6 +193,7 @@ export function perspectivePrompt(
   priorFindings: readonly PriorFinding[] = [],
   uiDesign: UiDesignArtifact | null = null,
   reviewTarget: ImmutableReviewTarget | null = null,
+  surrogateOracleMismatchCount = 0,
 ): string {
   const lens = PERSPECTIVE_LENS[perspective] ?? 'correctness and quality for this lens';
   const rubric = PERSPECTIVE_RUBRIC[perspective] ?? [];
@@ -236,6 +237,18 @@ export function perspectivePrompt(
           `a different criterionId, and a fresh problem may hit the same one.`,
         ]
       : []),
+    ...(surrogateOracleMismatchCount > 0
+      ? [
+          ``,
+          `## Opaque external-verification feedback`,
+          `On ${surrogateOracleMismatchCount} earlier PR revision(s), every internal review perspective`,
+          `approved, but independent external verification rejected the revision. You are intentionally`,
+          `not given its failure details. Treat this only as evidence that the surrogate review coverage was incomplete.`,
+          `Strengthen the ${perspective} verification independently: challenge prior assumptions, add diverse`,
+          `edge and adversarial cases, and prefer executable or otherwise falsifiable checks.`,
+          `Do not speculate about hidden checks or optimize to a guessed answer.`,
+        ]
+      : []),
     ``,
     `## Output`,
     `Write your verdict to ${evalRelDir}/findings.json as JSON:`,
@@ -262,6 +275,7 @@ export function promptForLens(
   priorFindings?: Record<string, readonly PriorFinding[]>,
   uiDesign: UiDesignArtifact | null = null,
   reviewTarget: ImmutableReviewTarget | null = null,
+  surrogateOracleMismatchCount = 0,
 ): string {
   return perspectivePrompt(
     perspective,
@@ -270,6 +284,7 @@ export function promptForLens(
     priorFindings?.[perspective] ?? [],
     uiDesign,
     reviewTarget,
+    surrogateOracleMismatchCount,
   );
 }
 
@@ -295,6 +310,32 @@ export interface PerspectiveSessionsInput {
   priorFindings?: Record<string, readonly PriorFinding[]>;
   /** Accepted UI design contract, when the issue required the dedicated authoring gate. */
   uiDesign?: UiDesignArtifact | null;
+  /**
+   * Number of earlier PR revisions where every surrogate perspective approved
+   * but an independent external oracle rejected. Only the count crosses into
+   * the reviewer session; the oracle's answer remains isolated.
+   */
+  surrogateOracleMismatchCount?: number;
+}
+
+/** Pin the production session-input → reviewer-prompt calibration seam. */
+export function perspectiveSessionPrompt(
+  input: PerspectiveSessionsInput,
+  perspective: string,
+  evalRelDir: string,
+): string {
+  return promptForLens(
+    perspective,
+    input.contract,
+    evalRelDir,
+    input.priorFindings,
+    input.uiDesign,
+    {
+      headSha: input.buildRef,
+      ...(input.baseRef ? { baseRef: input.baseRef } : {}),
+    },
+    input.surrogateOracleMismatchCount,
+  );
 }
 
 export interface PerspectiveSessionsResult {
@@ -417,6 +458,45 @@ export function reviewJobPaths(
 }
 
 /**
+ * Phase 1 of the production fan-out: materialize each isolated review target and
+ * write the exact prompt that the provider session will consume.
+ */
+export function preparePerspectiveSessionJobs(
+  input: PerspectiveSessionsInput,
+  reviewRoot: string,
+  evidenceRoot: string,
+  restrictedMaterial: string | null,
+): ReviewJob[] {
+  return input.perspectives
+    .filter((perspective) => !perspective.deterministic)
+    .map((perspective) => {
+      const job = reviewJobPaths(
+        reviewRoot,
+        evidenceRoot,
+        input.issueKey,
+        perspective.key,
+      );
+      if (!input.untrusted) {
+        createDetachedWorktree(input.repo, input.buildRef, job.reviewWt);
+      }
+      const evidenceDir = path.dirname(job.sentinel);
+      fs.rmSync(evidenceDir, { recursive: true, force: true });
+      fs.mkdirSync(evidenceDir, { recursive: true });
+      if (input.untrusted) {
+        fs.mkdirSync(job.reviewWt, { recursive: true });
+        job.restricted = true;
+        job.untrustedMaterial = restrictedMaterial ?? undefined;
+      }
+      fs.writeFileSync(
+        job.prompt,
+        perspectiveSessionPrompt(input, perspective.key, evidenceDir),
+        'utf8',
+      );
+      return job;
+    });
+}
+
+/**
  * Phase-3 collection, tmux-free and deterministic (AC-LIVE-003): pull each review's findings.json
  * into the central evalRoot, deciding by SENTINEL EXISTENCE AT COLLECTION TIME, not just the
  * recorded liveness status. A review judged stuck/timeout may still have finished its findings by
@@ -491,31 +571,12 @@ export async function runPerspectiveSessions(
     : null;
 
   // phase 1 (sequential): one isolated detached checkout of the build per review + its prompt
-  const jobs: ReviewJob[] = lenses.map((p) => {
-    const job = reviewJobPaths(reviewRoot, evidenceRoot, input.issueKey, p.key);
-    if (!input.untrusted) createDetachedWorktree(input.repo, input.buildRef, job.reviewWt);
-    const evidenceDir = path.dirname(job.sentinel);
-    fs.rmSync(evidenceDir, { recursive: true, force: true }); // never accept stale evidence on resume
-    fs.mkdirSync(evidenceDir, { recursive: true });
-    if (input.untrusted) {
-      fs.mkdirSync(job.reviewWt, { recursive: true });
-      job.restricted = true;
-      job.untrustedMaterial = restrictedMaterial ?? undefined;
-    }
-    const prompt = promptForLens(
-      p.key,
-      input.contract,
-      evidenceDir,
-      input.priorFindings,
-      input.uiDesign,
-      {
-        headSha: input.buildRef,
-        ...(input.baseRef ? { baseRef: input.baseRef } : {}),
-      },
-    );
-    fs.writeFileSync(job.prompt, prompt, 'utf8');
-    return job;
-  });
+  const jobs = preparePerspectiveSessionJobs(
+    input,
+    reviewRoot,
+    evidenceRoot,
+    restrictedMaterial,
+  );
 
   // phase 2 (concurrent): the read-only review sessions — the only slow, non-deterministic part
   const routes = Object.fromEntries(jobs.map((job) => [job.key, resolveAgentRoute(config, 'reviewer', job.key)]));

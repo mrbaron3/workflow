@@ -40,10 +40,13 @@ import {
   removeWorktree,
 } from './worktree.js';
 import {
+  captureCurrentRevisionGateSnapshot,
   observePrRevision,
+  RevisionGateCaptureUnavailableError,
   type GithubOpenPullRequest,
   type PrNativeGithubRunner,
 } from './pr-native.js';
+import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
 
 export interface RepositoryPullRequestDiscovery {
   pullRequest: GithubOpenPullRequest;
@@ -74,6 +77,8 @@ export interface RepositoryPullRequestReviewOptions {
    * child environment, because sandbox-exec is intentionally Darwin-only.
    */
   graderIsolation?: 'host-sandbox' | 'runner-container';
+  /** Test/embedding seam for the Perspective fan-out. */
+  perspectiveSessions?: typeof runPerspectiveSessions;
   /** Fresh lease/Registration authorization immediately before review agents. */
   beforeProviderExecution?: () => Promise<void>;
 }
@@ -377,7 +382,7 @@ export async function reviewRepositoryPullRequest(
 
     if (!hasBlockingGateFailure(deterministicGrade.hardGates)) {
       await options.beforeProviderExecution?.();
-      const panelSessions = await runPerspectiveSessions(
+      const panelSessions = await (options.perspectiveSessions ?? runPerspectiveSessions)(
         config,
         {
           worktree,
@@ -389,6 +394,10 @@ export async function reviewRepositoryPullRequest(
           baseRef: fetchedRevision.baseSha,
           uiDesign: issue.uiDesign,
           untrusted: true,
+          surrogateOracleMismatchCount: surrogateOracleMismatchRevisions(
+            store.db.revisionGateSnapshots,
+            pr.id,
+          ).length,
         },
         log,
       );
@@ -427,6 +436,23 @@ export async function reviewRepositoryPullRequest(
       { perspectives, grader: sessionBackedGrader(evalRoot) },
     );
 
+    try {
+      captureCurrentRevisionGateSnapshot(
+        store,
+        config,
+        reviewingPR,
+        reviewingRevision,
+        runner,
+        repo,
+        perspectives.map((perspective) => perspective.key),
+      );
+    } catch (error) {
+      if (!(error instanceof RevisionGateCaptureUnavailableError)) throw error;
+      log(
+        `  ⚠ ${pr.id}: reviewed-revision gate snapshot skipped: `
+        + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     if (!panel.escalated) applyPanelVerdict(store, issue.id, panel.verdict);
     const revisionStatus = panel.verdict === 'approve'
       ? 'reviewing'

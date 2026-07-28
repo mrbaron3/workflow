@@ -20,6 +20,7 @@ import {
   PR,
   PrHeadSha,
   Finding,
+  evaluateRevisionGateEvidence,
   requireMutablePR,
   transitionPR,
   updatePR,
@@ -294,6 +295,7 @@ describe('driveIssueLive orchestration ordering', () => {
     const issue = addIssue(store, 'ISSUE-1');
     const events: string[] = [];
     const reviewHeads: string[] = [];
+    const reviewMismatchCounts: number[] = [];
     const worktree = path.join(store.root, 'generated-worktree');
     fs.mkdirSync(worktree, { recursive: true });
     let attemptCount = 0;
@@ -367,6 +369,39 @@ describe('driveIssueLive orchestration ordering', () => {
           reviewCount += 1;
           events.push(`review:${reviewCount}`);
           reviewHeads.push(input.buildRef);
+          reviewMismatchCounts.push(input.surrogateOracleMismatchCount ?? 0);
+          if (reviewCount === 1) {
+            const currentPr = store.getPR('PR-0001')!;
+            const currentRevision = store.revisionForHead(
+              currentPr.id,
+              currentPr.headSha!,
+            )!;
+            store.addRevisionGateSnapshot(evaluateRevisionGateEvidence({
+              id: 'PRGATE-CALIBRATION-PIN',
+              pr: currentPr,
+              revision: currentRevision,
+              requiredPerspectives: ['codeQuality'],
+              reviewRuns: [{
+                prId: currentPr.id,
+                binding: {
+                  revisionId: currentRevision.id,
+                  headSha: currentRevision.headSha,
+                },
+                perspective: 'codeQuality',
+                verdict: 'approve',
+                findings: [],
+              }],
+              github: {
+                state: 'open',
+                headSha: currentRevision.headSha,
+                isDraft: false,
+                mergeability: 'mergeable',
+                checks: [{ name: 'external-test', status: 'failure' }],
+                unresolvedBlockingThreadIds: [],
+              },
+              createdAt: nowISO(),
+            }));
+          }
           const evalRoot = path.join(input.worktree, '.agentops', 'eval');
           const finding = findingsPath(evalRoot, 'codeQuality');
           fs.mkdirSync(path.dirname(finding), { recursive: true });
@@ -408,6 +443,7 @@ describe('driveIssueLive orchestration ordering', () => {
       'review:2',
     ]);
     expect(reviewHeads).toEqual(['a'.repeat(40), 'b'.repeat(40)]);
+    expect(reviewMismatchCounts).toEqual([0, 1]);
     expect(store.getPR('PR-0001')?.externalRef?.number).toBe(8);
   });
 });

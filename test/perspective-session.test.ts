@@ -19,6 +19,8 @@ import {
   fileBackedGrader,
   sessionBackedGrader,
   perspectivePrompt,
+  perspectiveSessionPrompt,
+  preparePerspectiveSessionJobs,
   restrictedPerspectivePrompt,
   findingsPath,
   MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
@@ -153,6 +155,54 @@ describe('perspectivePrompt', () => {
     expect(withDesign).toContain('## UI Design Contract');
     expect(withDesign).toContain('motion-progress');
     expect(withDesign).toContain('without inventing new UI scope');
+  });
+
+  it('escalates verification from an opaque mismatch count without leaking oracle details', () => {
+    const prompt = perspectiveSessionPrompt(
+      {
+        worktree: '/tmp/reviewer-worktree',
+        contract,
+        perspectives: [],
+        issueKey: 'issue-1',
+        repo: '/tmp/repository',
+        buildRef: 'a'.repeat(40),
+        baseRef: 'main',
+        surrogateOracleMismatchCount: 2,
+      },
+      'security',
+      '.agentops/eval/security',
+    );
+
+    expect(prompt).toContain('Opaque external-verification feedback');
+    expect(prompt).toContain('2 earlier PR revision(s)');
+    expect(prompt).toContain('surrogate review coverage was incomplete');
+    expect(prompt).toContain('Do not speculate about hidden checks');
+    expect(prompt).not.toContain('external-test');
+    expect(prompt).not.toContain('private oracle detail');
+  });
+
+  it('writes opaque calibration feedback into the production review job prompt', () => {
+    const root = tmpDir('calibration-job-prompt');
+    const jobs = preparePerspectiveSessionJobs(
+      {
+        worktree: path.join(root, 'generator'),
+        contract,
+        perspectives: [{ key: 'security', deterministic: false }],
+        issueKey: 'issue-1',
+        repo: path.join(root, 'repository'),
+        buildRef: 'a'.repeat(40),
+        baseRef: 'main',
+        untrusted: true,
+        surrogateOracleMismatchCount: 2,
+      },
+      path.join(root, 'review-worktrees'),
+      path.join(root, 'review-evidence'),
+      'frozen untrusted diff',
+    );
+
+    expect(jobs).toHaveLength(1);
+    expect(fs.readFileSync(jobs[0]!.prompt, 'utf8'))
+      .toContain('On 2 earlier PR revision(s)');
   });
 });
 

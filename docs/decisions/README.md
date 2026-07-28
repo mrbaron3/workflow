@@ -30,3 +30,4 @@
 | [ADR-0015](ADR-0015-postgresql-fenced-isolated-runner.md) | isolated runnerをPostgreSQL lease/Registration fence、private workspace、既存AgentOps gateの内側で実行する | 採択・吸収・構造実装済み（CISO-04） |
 | [ADR-0016](ADR-0016-agentopsctl-lifecycle-authority.md) | 短命な`agentopsctl`だけをApple Container隔離基盤のlifecycle ownerとし、DB権威のdrain fence、復旧、補償、exact loopback publicationを行う | 採択・吸収・実装済み（CISO-06） |
 | [ADR-0017](ADR-0017-private-repository-monitor-broker.md) | private repositoryのIssue/PR readをrunner credential境界内のtyped durable brokerへ閉じ、stale RegistrationとleaseをDBでfenceする | 採択・吸収・実装済み（CISO-07） |
+| [ADR-0018](ADR-0018-surrogate-verifier-oracle-calibration.md) | 内部Panel全承認と独立外部検証の棄却をrevision単位の不透明な信号にし、次reviewerの検証被覆を強化する | 採択・吸収・構造実装済み（次revisionでのgrounded効果観測待ち） |
