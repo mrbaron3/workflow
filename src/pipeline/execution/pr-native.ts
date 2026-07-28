@@ -45,6 +45,15 @@ export const GithubPrRevisionState = z.object({
   blockingReviewThreads: z.array(RevisionReviewThread).optional(),
 });
 export type GithubPrRevisionState = z.infer<typeof GithubPrRevisionState>;
+
+/** External facts were unavailable or stale; callers may defer capture to reconciliation. */
+export class RevisionGateCaptureUnavailableError extends Error {
+  constructor(message: string, readonly captureCause?: unknown) {
+    super(message);
+    this.name = 'RevisionGateCaptureUnavailableError';
+  }
+}
+
 export interface GithubOpenPullRequest {
   number: number;
   url: string;
@@ -224,11 +233,19 @@ export function captureCurrentRevisionGateSnapshot(
 ): EvaluatedRevisionGateSnapshot {
   const externalRef = pr.externalRef;
   if (!externalRef) throw new Error(`${pr.id} is not projected to GitHub`);
-  const github = GithubPrRevisionState.parse(
-    runner.viewRevision(cwd, externalRef.number),
-  );
+  let github: GithubPrRevisionState;
+  try {
+    github = GithubPrRevisionState.parse(
+      runner.viewRevision(cwd, externalRef.number),
+    );
+  } catch (error) {
+    throw new RevisionGateCaptureUnavailableError(
+      `cannot capture gate snapshot for ${revision.id}: GitHub facts unavailable`,
+      error,
+    );
+  }
   if (github.headSha !== revision.headSha) {
-    throw new Error(
+    throw new RevisionGateCaptureUnavailableError(
       `cannot capture gate snapshot for ${revision.id}: `
       + `head changed from ${revision.headSha} to ${github.headSha}`,
     );

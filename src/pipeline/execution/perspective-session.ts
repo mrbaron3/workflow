@@ -318,6 +318,26 @@ export interface PerspectiveSessionsInput {
   surrogateOracleMismatchCount?: number;
 }
 
+/** Pin the production session-input → reviewer-prompt calibration seam. */
+export function perspectiveSessionPrompt(
+  input: PerspectiveSessionsInput,
+  perspective: string,
+  evalRelDir: string,
+): string {
+  return promptForLens(
+    perspective,
+    input.contract,
+    evalRelDir,
+    input.priorFindings,
+    input.uiDesign,
+    {
+      headSha: input.buildRef,
+      ...(input.baseRef ? { baseRef: input.baseRef } : {}),
+    },
+    input.surrogateOracleMismatchCount,
+  );
+}
+
 export interface PerspectiveSessionsResult {
   evalRoot: string;
   /** perspectives whose findings.json was collected — completed sessions plus stuck/timeout ones
@@ -438,6 +458,45 @@ export function reviewJobPaths(
 }
 
 /**
+ * Phase 1 of the production fan-out: materialize each isolated review target and
+ * write the exact prompt that the provider session will consume.
+ */
+export function preparePerspectiveSessionJobs(
+  input: PerspectiveSessionsInput,
+  reviewRoot: string,
+  evidenceRoot: string,
+  restrictedMaterial: string | null,
+): ReviewJob[] {
+  return input.perspectives
+    .filter((perspective) => !perspective.deterministic)
+    .map((perspective) => {
+      const job = reviewJobPaths(
+        reviewRoot,
+        evidenceRoot,
+        input.issueKey,
+        perspective.key,
+      );
+      if (!input.untrusted) {
+        createDetachedWorktree(input.repo, input.buildRef, job.reviewWt);
+      }
+      const evidenceDir = path.dirname(job.sentinel);
+      fs.rmSync(evidenceDir, { recursive: true, force: true });
+      fs.mkdirSync(evidenceDir, { recursive: true });
+      if (input.untrusted) {
+        fs.mkdirSync(job.reviewWt, { recursive: true });
+        job.restricted = true;
+        job.untrustedMaterial = restrictedMaterial ?? undefined;
+      }
+      fs.writeFileSync(
+        job.prompt,
+        perspectiveSessionPrompt(input, perspective.key, evidenceDir),
+        'utf8',
+      );
+      return job;
+    });
+}
+
+/**
  * Phase-3 collection, tmux-free and deterministic (AC-LIVE-003): pull each review's findings.json
  * into the central evalRoot, deciding by SENTINEL EXISTENCE AT COLLECTION TIME, not just the
  * recorded liveness status. A review judged stuck/timeout may still have finished its findings by
@@ -512,32 +571,12 @@ export async function runPerspectiveSessions(
     : null;
 
   // phase 1 (sequential): one isolated detached checkout of the build per review + its prompt
-  const jobs: ReviewJob[] = lenses.map((p) => {
-    const job = reviewJobPaths(reviewRoot, evidenceRoot, input.issueKey, p.key);
-    if (!input.untrusted) createDetachedWorktree(input.repo, input.buildRef, job.reviewWt);
-    const evidenceDir = path.dirname(job.sentinel);
-    fs.rmSync(evidenceDir, { recursive: true, force: true }); // never accept stale evidence on resume
-    fs.mkdirSync(evidenceDir, { recursive: true });
-    if (input.untrusted) {
-      fs.mkdirSync(job.reviewWt, { recursive: true });
-      job.restricted = true;
-      job.untrustedMaterial = restrictedMaterial ?? undefined;
-    }
-    const prompt = promptForLens(
-      p.key,
-      input.contract,
-      evidenceDir,
-      input.priorFindings,
-      input.uiDesign,
-      {
-        headSha: input.buildRef,
-        ...(input.baseRef ? { baseRef: input.baseRef } : {}),
-      },
-      input.surrogateOracleMismatchCount,
-    );
-    fs.writeFileSync(job.prompt, prompt, 'utf8');
-    return job;
-  });
+  const jobs = preparePerspectiveSessionJobs(
+    input,
+    reviewRoot,
+    evidenceRoot,
+    restrictedMaterial,
+  );
 
   // phase 2 (concurrent): the read-only review sessions — the only slow, non-deterministic part
   const routes = Object.fromEntries(jobs.map((job) => [job.key, resolveAgentRoute(config, 'reviewer', job.key)]));

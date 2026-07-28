@@ -355,6 +355,45 @@ describe('repository-wide pull request discovery', () => {
       env.runner,
       env.root,
     )[0]!;
+    const priorRevision = PrRevision.parse({
+      id: 'PRREV-PRIOR-MISMATCH',
+      prId: discovery.pr.id,
+      headSha: SHA_A,
+      ordinal: 1,
+      status: 'reviewing',
+      createdAt: nowISO(),
+    });
+    const priorPr = PR.parse({
+      ...discovery.pr,
+      currentRevisionId: priorRevision.id,
+      headSha: priorRevision.headSha,
+    });
+    env.store.addRevisionGateSnapshot(evaluateRevisionGateEvidence({
+      id: 'PRGATE-PRIOR-MISMATCH',
+      pr: priorPr,
+      revision: priorRevision,
+      requiredPerspectives: ['functionality'],
+      reviewRuns: [{
+        prId: priorPr.id,
+        binding: {
+          revisionId: priorRevision.id,
+          headSha: priorRevision.headSha,
+        },
+        perspective: 'functionality',
+        verdict: 'approve',
+        findings: [],
+      }],
+      github: {
+        state: 'open',
+        headSha: priorRevision.headSha,
+        isDraft: false,
+        mergeability: 'mergeable',
+        checks: [{ name: 'external-test', status: 'failure' }],
+        unresolvedBlockingThreadIds: [],
+      },
+      createdAt: nowISO(),
+    }));
+    const mismatchCounts: number[] = [];
     const runner: PrNativeGithubRunner = {
       ...env.runner,
       viewRevision: () => ({
@@ -386,12 +425,28 @@ describe('repository-wide pull request discovery', () => {
       env.root,
       () => {},
       [{ key: 'functionality', deterministic: true }],
+      {
+        perspectiveSessions: async (_config, input) => {
+          mismatchCounts.push(input.surrogateOracleMismatchCount ?? 0);
+          return {
+            evalRoot: path.join(input.worktree, '.agentops', 'eval'),
+            completed: [],
+            touchedCode: [],
+            environmentChanges: {},
+            invocations: [],
+          };
+        },
+      },
     );
 
     expect(result?.verdict).toBe('approve');
+    expect(mismatchCounts).toEqual([1]);
     const reloaded = new Store(env.root);
-    expect(reloaded.db.revisionGateSnapshots).toHaveLength(1);
-    expect(reloaded.db.revisionGateSnapshots[0]).toMatchObject({
+    const captured = reloaded.db.revisionGateSnapshots.filter(
+      (snapshot) => snapshot.revisionId === discovery.revision.id,
+    );
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toMatchObject({
       prId: discovery.pr.id,
       revisionId: discovery.revision.id,
       headSha,
@@ -400,6 +455,115 @@ describe('repository-wide pull request discovery', () => {
       unresolvedBlockingThreadIds: ['PRRT-P1'],
       decision: 'changes-requested',
     });
+  });
+
+  it('keeps a completed review durable when the PR head advances before snapshot capture', async () => {
+    const env = setup();
+    const repositoryRoot = path.join(env.root, 'repo');
+    fs.mkdirSync(repositoryRoot);
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repositoryRoot });
+    fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'fixture\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repositoryRoot });
+    execFileSync(
+      'git',
+      ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-m', 'fixture'],
+      { cwd: repositoryRoot },
+    );
+    const reviewedHead = execFileSync(
+      'git',
+      ['rev-parse', 'HEAD'],
+      { cwd: repositoryRoot, encoding: 'utf8' },
+    ).trim();
+    env.pulls[0]!.headSha = reviewedHead;
+    env.pulls[0]!.isDraft = false;
+    env.config.target = { repo: 'repo', baseRef: 'HEAD', graders: {} };
+    const discovery = discoverRepositoryPullRequests(
+      env.store,
+      env.config,
+      env.runner,
+      env.root,
+    )[0]!;
+    const logs: string[] = [];
+    const result = await reviewRepositoryPullRequest(
+      env.store,
+      env.config,
+      discovery,
+      {
+        ...env.runner,
+        viewRevision: () => ({
+          state: 'open',
+          headSha: SHA_B,
+          isDraft: false,
+          mergeability: 'mergeable',
+          checks: [],
+          unresolvedBlockingThreadIds: [],
+        }),
+        fetchPullRequestHead: (_cwd, _prNumber, expectedHeadSha) => ({
+          headSha: expectedHeadSha,
+          baseSha: expectedHeadSha,
+        }),
+        pullRequestChangedFiles: () => [],
+      },
+      env.root,
+      (message) => logs.push(message),
+      [{ key: 'functionality', deterministic: true }],
+    );
+
+    expect(result?.verdict).toBe('approve');
+    const reloaded = new Store(env.root);
+    expect(reloaded.db.evalRuns).toHaveLength(1);
+    expect(reloaded.revisionForHead(discovery.pr.id, reviewedHead)?.status)
+      .toBe('reviewing');
+    expect(reloaded.db.revisionGateSnapshots).toHaveLength(0);
+    expect(logs.join('\n')).toContain('reviewed-revision gate snapshot skipped');
+  });
+
+  it('does not downgrade unexpected gate-snapshot invariant failures', async () => {
+    const env = setup();
+    const repositoryRoot = path.join(env.root, 'repo');
+    fs.mkdirSync(repositoryRoot);
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repositoryRoot });
+    fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'fixture\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repositoryRoot });
+    execFileSync(
+      'git',
+      ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-m', 'fixture'],
+      { cwd: repositoryRoot },
+    );
+    const reviewedHead = execFileSync(
+      'git',
+      ['rev-parse', 'HEAD'],
+      { cwd: repositoryRoot, encoding: 'utf8' },
+    ).trim();
+    env.pulls[0]!.headSha = reviewedHead;
+    env.pulls[0]!.isDraft = false;
+    env.config.target = { repo: 'repo', baseRef: 'HEAD', graders: {} };
+    const discovery = discoverRepositoryPullRequests(
+      env.store,
+      env.config,
+      env.runner,
+      env.root,
+    )[0]!;
+    env.store.addRevisionGateSnapshot = () => {
+      throw new Error('gate snapshot invariant broken');
+    };
+
+    await expect(reviewRepositoryPullRequest(
+      env.store,
+      env.config,
+      discovery,
+      {
+        ...env.runner,
+        fetchPullRequestHead: (_cwd, _prNumber, expectedHeadSha) => ({
+          headSha: expectedHeadSha,
+          baseSha: expectedHeadSha,
+        }),
+        pullRequestChangedFiles: () => [],
+      },
+      env.root,
+      () => {},
+      [{ key: 'functionality', deterministic: true }],
+    )).rejects.toThrow('gate snapshot invariant broken');
   });
 
   it('AC-PRLOOP-005 imports an existing open PR exactly once and creates a current-head review work unit', () => {

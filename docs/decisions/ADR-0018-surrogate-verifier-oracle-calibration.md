@@ -40,8 +40,9 @@ mismatch に数えない。
 ### 不一致は revision ごとに一票、不透明なまま返す
 
 - 正本は既存の `RevisionGateSnapshot` とし、同じ revision を reconciliation が複数回観測しても一票とする。
-- reviewer 完了時にも現在の GitHub gate facts を保存し、turn 後半の reconciliation 前に停止しても
-  最終 reviewed revision の checks と blocking thread IDs を失わない。
+- reviewer 完了時にも、head が変わらず GitHub gate facts を取得できた場合は現在の facts を保存し、
+  turn 後半の reconciliation 前に停止したときの checks／blocking thread IDs の喪失窓を縮める。
+  head 変更や取得失敗時は review 本体を失敗させず、後続 turn の reconciliation を正本とする。
 - 次 revision の各 reviewer session へ渡すのは、同じ PR で過去に起きた mismatch の**件数だけ**とする。
   check 名、thread 本文、失敗箇所は渡さない。
 - reviewer は件数を「自分たちの検証被覆が不足した」証拠として、仮定の反証、edge/adversarial case、
