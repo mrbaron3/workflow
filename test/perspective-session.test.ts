@@ -154,6 +154,25 @@ describe('perspectivePrompt', () => {
     expect(withDesign).toContain('motion-progress');
     expect(withDesign).toContain('without inventing new UI scope');
   });
+
+  it('escalates verification from an opaque mismatch count without leaking oracle details', () => {
+    const prompt = perspectivePrompt(
+      'security',
+      contract,
+      '.agentops/eval/security',
+      [],
+      null,
+      null,
+      2,
+    );
+
+    expect(prompt).toContain('Opaque external-verification feedback');
+    expect(prompt).toContain('2 earlier PR revision(s)');
+    expect(prompt).toContain('surrogate review coverage was incomplete');
+    expect(prompt).toContain('Do not speculate about hidden checks');
+    expect(prompt).not.toContain('external-test');
+    expect(prompt).not.toContain('private oracle detail');
+  });
 });
 
 describe('restricted repository-PR reviewers', () => {

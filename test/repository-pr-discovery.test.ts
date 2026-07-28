@@ -324,6 +324,84 @@ describe('repository-wide pull request discovery', () => {
     },
   );
 
+  it('persists final reviewed-revision checks and blocking thread IDs before reconciliation', async () => {
+    const env = setup();
+    const repositoryRoot = path.join(env.root, 'repo');
+    fs.mkdirSync(repositoryRoot);
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repositoryRoot });
+    fs.writeFileSync(path.join(repositoryRoot, 'README.md'), 'fixture\n');
+    execFileSync('git', ['add', 'README.md'], { cwd: repositoryRoot });
+    execFileSync(
+      'git',
+      ['-c', 'user.name=test', '-c', 'user.email=test@example.com', 'commit', '-m', 'fixture'],
+      { cwd: repositoryRoot },
+    );
+    const headSha = execFileSync(
+      'git',
+      ['rev-parse', 'HEAD'],
+      { cwd: repositoryRoot, encoding: 'utf8' },
+    ).trim();
+    env.pulls[0]!.headSha = headSha;
+    env.pulls[0]!.isDraft = false;
+    env.config.target = { repo: 'repo', baseRef: 'HEAD', graders: {} };
+    env.config.gate = {
+      backend: 'github',
+      baseBranch: 'main',
+      requiredChecks: ['external-test'],
+    };
+    const discovery = discoverRepositoryPullRequests(
+      env.store,
+      env.config,
+      env.runner,
+      env.root,
+    )[0]!;
+    const runner: PrNativeGithubRunner = {
+      ...env.runner,
+      viewRevision: () => ({
+        state: 'open',
+        headSha,
+        isDraft: false,
+        mergeability: 'mergeable',
+        checks: [{ name: 'external-test', status: 'failure' }],
+        unresolvedBlockingThreadIds: ['PRRT-P1'],
+        blockingReviewThreads: [{
+          id: 'PRRT-P1',
+          body: 'external reviewer detail',
+          path: 'src/example.ts',
+          line: 8,
+        }],
+      }),
+      fetchPullRequestHead: (_cwd, _prNumber, expectedHeadSha) => ({
+        headSha: expectedHeadSha,
+        baseSha: expectedHeadSha,
+      }),
+      pullRequestChangedFiles: () => [],
+    };
+
+    const result = await reviewRepositoryPullRequest(
+      env.store,
+      env.config,
+      discovery,
+      runner,
+      env.root,
+      () => {},
+      [{ key: 'functionality', deterministic: true }],
+    );
+
+    expect(result?.verdict).toBe('approve');
+    const reloaded = new Store(env.root);
+    expect(reloaded.db.revisionGateSnapshots).toHaveLength(1);
+    expect(reloaded.db.revisionGateSnapshots[0]).toMatchObject({
+      prId: discovery.pr.id,
+      revisionId: discovery.revision.id,
+      headSha,
+      perspectiveVerdicts: { functionality: 'approve' },
+      checks: [{ name: 'external-test', status: 'failure' }],
+      unresolvedBlockingThreadIds: ['PRRT-P1'],
+      decision: 'changes-requested',
+    });
+  });
+
   it('AC-PRLOOP-005 imports an existing open PR exactly once and creates a current-head review work unit', () => {
     const env = setup();
 

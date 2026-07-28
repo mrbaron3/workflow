@@ -207,6 +207,41 @@ function persistRevisionGateSnapshot(
   return store.addRevisionGateSnapshot(candidate);
 }
 
+/**
+ * Persist the observable GitHub gate facts for a reviewed immutable revision
+ * without requesting a merge. Keeping this capture adjacent to review
+ * completion ensures the final reviewed revision retains checks and blocking
+ * thread IDs even if the process stops before the broader reconciliation pass.
+ */
+export function captureCurrentRevisionGateSnapshot(
+  store: Store,
+  config: HarnessConfig,
+  pr: PR,
+  revision: PrRevision,
+  runner: PrNativeGithubRunner,
+  cwd: string,
+  requiredPerspectives: string[],
+): EvaluatedRevisionGateSnapshot {
+  const externalRef = pr.externalRef;
+  if (!externalRef) throw new Error(`${pr.id} is not projected to GitHub`);
+  const github = GithubPrRevisionState.parse(
+    runner.viewRevision(cwd, externalRef.number),
+  );
+  if (github.headSha !== revision.headSha) {
+    throw new Error(
+      `cannot capture gate snapshot for ${revision.id}: `
+      + `head changed from ${revision.headSha} to ${github.headSha}`,
+    );
+  }
+  return persistRevisionGateSnapshot(store, evaluateRevisionGate(store, {
+    pr,
+    revision,
+    requiredPerspectives,
+    github,
+    requiredChecks: config.gate?.requiredChecks,
+  }));
+}
+
 export interface AutoMergeResult {
   prId: string;
   revisionId: string | null;

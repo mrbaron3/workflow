@@ -22,3 +22,4 @@
 | LANG-evaluation-014 | Eval Task Registry | 実際の失敗から育てた、再実行可能な eval タスク（回帰）のデータセット。 |
 | LANG-evaluation-015 | Curator / Harness Analyst | 失敗を回帰へ昇格する（Curator）／指標から `type:harness`・`type:eval` の改善 issue を計画の木へ戻す（Analyst）。 |
 | LANG-evaluation-016 | build-approved | eval 合格（issue 側）。人間の WHAT 署名（`contract-approved`・authoring 側）とは別。 |
+| LANG-evaluation-017 | Surrogate Verifier / Oracle Mismatch Signal | Perspective Panel は密な診断を返す代理検証器。全 required Perspective が approve したのに独立 required check／blocking review が棄却した revision を mismatch とし、失敗詳細を伏せた件数だけを次 reviewer の検証強化へ返す（ADR-0018）。外部信号を絶対的 ground truth とは呼ばない。 |

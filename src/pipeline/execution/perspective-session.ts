@@ -193,6 +193,7 @@ export function perspectivePrompt(
   priorFindings: readonly PriorFinding[] = [],
   uiDesign: UiDesignArtifact | null = null,
   reviewTarget: ImmutableReviewTarget | null = null,
+  surrogateOracleMismatchCount = 0,
 ): string {
   const lens = PERSPECTIVE_LENS[perspective] ?? 'correctness and quality for this lens';
   const rubric = PERSPECTIVE_RUBRIC[perspective] ?? [];
@@ -236,6 +237,18 @@ export function perspectivePrompt(
           `a different criterionId, and a fresh problem may hit the same one.`,
         ]
       : []),
+    ...(surrogateOracleMismatchCount > 0
+      ? [
+          ``,
+          `## Opaque external-verification feedback`,
+          `On ${surrogateOracleMismatchCount} earlier PR revision(s), every internal review perspective`,
+          `approved, but independent external verification rejected the revision. You are intentionally`,
+          `not given its failure details. Treat this only as evidence that the surrogate review coverage was incomplete.`,
+          `Strengthen the ${perspective} verification independently: challenge prior assumptions, add diverse`,
+          `edge and adversarial cases, and prefer executable or otherwise falsifiable checks.`,
+          `Do not speculate about hidden checks or optimize to a guessed answer.`,
+        ]
+      : []),
     ``,
     `## Output`,
     `Write your verdict to ${evalRelDir}/findings.json as JSON:`,
@@ -262,6 +275,7 @@ export function promptForLens(
   priorFindings?: Record<string, readonly PriorFinding[]>,
   uiDesign: UiDesignArtifact | null = null,
   reviewTarget: ImmutableReviewTarget | null = null,
+  surrogateOracleMismatchCount = 0,
 ): string {
   return perspectivePrompt(
     perspective,
@@ -270,6 +284,7 @@ export function promptForLens(
     priorFindings?.[perspective] ?? [],
     uiDesign,
     reviewTarget,
+    surrogateOracleMismatchCount,
   );
 }
 
@@ -295,6 +310,12 @@ export interface PerspectiveSessionsInput {
   priorFindings?: Record<string, readonly PriorFinding[]>;
   /** Accepted UI design contract, when the issue required the dedicated authoring gate. */
   uiDesign?: UiDesignArtifact | null;
+  /**
+   * Number of earlier PR revisions where every surrogate perspective approved
+   * but an independent external oracle rejected. Only the count crosses into
+   * the reviewer session; the oracle's answer remains isolated.
+   */
+  surrogateOracleMismatchCount?: number;
 }
 
 export interface PerspectiveSessionsResult {
@@ -512,6 +533,7 @@ export async function runPerspectiveSessions(
         headSha: input.buildRef,
         ...(input.baseRef ? { baseRef: input.baseRef } : {}),
       },
+      input.surrogateOracleMismatchCount,
     );
     fs.writeFileSync(job.prompt, prompt, 'utf8');
     return job;

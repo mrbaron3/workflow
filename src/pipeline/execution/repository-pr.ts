@@ -40,10 +40,12 @@ import {
   removeWorktree,
 } from './worktree.js';
 import {
+  captureCurrentRevisionGateSnapshot,
   observePrRevision,
   type GithubOpenPullRequest,
   type PrNativeGithubRunner,
 } from './pr-native.js';
+import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
 
 export interface RepositoryPullRequestDiscovery {
   pullRequest: GithubOpenPullRequest;
@@ -389,6 +391,10 @@ export async function reviewRepositoryPullRequest(
           baseRef: fetchedRevision.baseSha,
           uiDesign: issue.uiDesign,
           untrusted: true,
+          surrogateOracleMismatchCount: surrogateOracleMismatchRevisions(
+            store.db.revisionGateSnapshots,
+            pr.id,
+          ).length,
         },
         log,
       );
@@ -427,6 +433,15 @@ export async function reviewRepositoryPullRequest(
       { perspectives, grader: sessionBackedGrader(evalRoot) },
     );
 
+    captureCurrentRevisionGateSnapshot(
+      store,
+      config,
+      reviewingPR,
+      reviewingRevision,
+      runner,
+      repo,
+      perspectives.map((perspective) => perspective.key),
+    );
     if (!panel.escalated) applyPanelVerdict(store, issue.id, panel.verdict);
     const revisionStatus = panel.verdict === 'approve'
       ? 'reviewing'
