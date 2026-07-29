@@ -21,11 +21,12 @@
   （`runtime`・`ok`・`preflight`・`steps`）。監査・PR 添付用の一時 artifact であり SoT ではない。
 - **DATA-container-runtime-006 runner isolation input** — worker ID、private mount、empty publish集合、
   DB/GitHub/選択providerだけのoutbound集合。起動時だけ解決し、credential値は永続化しない。
-- **DATA-container-runtime-007 agentopsctl actual status** — Apple Container capability、3 roleのstate/network/
+- **DATA-container-runtime-007 agentopsctl actual status** — Apple Container capability、4 roleのstate/network/
   publish/socket/mount/read-only/capabilityとloopback probeを起動ごとに観測する揮発snapshot。persisted lifecycleとは
   同一視せず並べて表示する。
-- **DATA-container-runtime-008 credential volume and broker configuration** — runner-only named credential volume、
-  private`auth.json` destination、固定monitor repositoryを起動時specへ含める。source host path、credential値、
+- **DATA-container-runtime-008 credential volume and broker configuration** — provider login用named credential volume、
+  private`auth.json` destination、1〜64件のmonitor repository allowlistを起動時specへ含める。MONITOR_ONLYでは
+  credential volumeをどのworkerにもmountせず、ACTIVEだけtriage／runnerへread-only mountする。source host path、credential値、
   fingerprintはstatus/evidenceへ永続化しない。
 - **DATA-container-runtime-009 sealed PostgreSQL spec** — image descriptor、internal network、named volume、tmpfs と
   credential **key** を含むredacted canonical desired specのdigestをmanaged labelに保存する。TOKEN／PASSWORD／

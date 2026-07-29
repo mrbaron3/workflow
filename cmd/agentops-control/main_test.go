@@ -65,6 +65,30 @@ func TestLoopbackPublishProxyRequiresLoopbackBackendAndExactHost(t *testing.T) {
 	}
 }
 
+func TestRepositoryAllowlistUsesCanonicalContractWithoutRepositoryPin(
+	t *testing.T,
+) {
+	actual, err := repositoryAllowlist(
+		"acme/widgets,sample/design-system,team-with-dashes/repo_name",
+	)
+	if err != nil ||
+		strings.Join(actual, ",") !=
+			"acme/widgets,sample/design-system,team-with-dashes/repo_name" {
+		t.Fatalf("arbitrary canonical allowlist = %v, %v", actual, err)
+	}
+	for _, raw := range []string{
+		"Acme/widgets",
+		"acme/widgets,acme/widgets",
+		"owner.with-dot/repo",
+		"missing-slash",
+		"acme/widgets,",
+	} {
+		if _, err := repositoryAllowlist(raw); err == nil {
+			t.Fatalf("invalid allowlist accepted: %q", raw)
+		}
+	}
+}
+
 func TestPRIntentAdministrativeRotationBoundary(t *testing.T) {
 	original := rotatePostgresAdmin
 	t.Cleanup(func() { rotatePostgresAdmin = original })

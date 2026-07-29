@@ -8,7 +8,9 @@ import {
 } from 'pg';
 import { assertControlSchema, migrateControlSchema } from './migrations.js';
 import {
+  CanonicalRepository,
   EnqueueJobInput,
+  GitHubLabelNameContract,
   IdempotencyConflictError,
   LeaseRejectedError,
   MonitorBrokerCursor,
@@ -21,6 +23,7 @@ import {
   RunnerJobFailureV1Contract,
   RunnerJobResultV1Contract,
   StaleRegistrationError,
+  TriageJobResultV1Contract,
   type BuildDefect,
   type EnqueueResult,
   type ExecutionGuardVerdict,
@@ -32,6 +35,7 @@ import {
   type RepositoryRegistration,
   type RunnerJobFailureV1,
   type RunnerJobResultV1,
+  type TriageJobResultV1,
   type WebhookClaim,
 } from './types.js';
 
@@ -325,7 +329,7 @@ export class PostgresControlStore {
 
   async claimMonitorBrokerRequest(input: {
     workerId: string;
-    allowedRepository: string;
+    allowedRepositories: readonly string[];
     leaseMs: number;
   }): Promise<MonitorBrokerRequest | null> {
     if (
@@ -335,12 +339,24 @@ export class PostgresControlStore {
     ) {
       throw new Error('monitor broker lease must be 5000..60000ms');
     }
-    const allowedRepository = input.allowedRepository.trim().toLowerCase();
+    const allowedRepositories = input.allowedRepositories.map((repository) =>
+      repository.trim().toLowerCase());
+    if (
+      allowedRepositories.length < 1
+      || allowedRepositories.length > 64
+      || new Set(allowedRepositories).size !== allowedRepositories.length
+      || input.allowedRepositories.some((repository, index) =>
+        repository !== allowedRepositories[index])
+      || allowedRepositories.some((repository) =>
+        !CanonicalRepository.safeParse(repository).success)
+    ) {
+      throw new Error('monitor broker repository allowlist is invalid');
+    }
     return transaction(this.pool, async (client) => {
       const leaseToken = randomUUID();
       const result = await client.query<MonitorBrokerRequestRow>(
         `SELECT * FROM agentops_control.claim_monitor_broker_request($1, $2, $3, $4)`,
-        [input.workerId, allowedRepository, leaseToken, input.leaseMs],
+        [input.workerId, allowedRepositories, leaseToken, input.leaseMs],
       );
       const row = result.rows[0];
       if (!row) return null;
@@ -348,7 +364,7 @@ export class PostgresControlStore {
       await client.query(
         `INSERT INTO agentops_control.runtime_audit(
            actor_type, actor_id, event_type, registration_id, details
-         ) VALUES ('runner', $1, 'monitor.broker.claimed', $2, $3)`,
+         ) VALUES ('triage', $1, 'monitor.broker.claimed', $2, $3)`,
         [
           input.workerId,
           row.registration_id,
@@ -398,7 +414,7 @@ export class PostgresControlStore {
       await client.query(
         `INSERT INTO agentops_control.runtime_audit(
            actor_type, actor_id, event_type, registration_id, details
-         ) VALUES ('runner', $1, 'monitor.broker.completed', $2, $3)`,
+         ) VALUES ('triage', $1, 'monitor.broker.completed', $2, $3)`,
         [
           input.workerId,
           input.request.registrationId,
@@ -440,7 +456,7 @@ export class PostgresControlStore {
       await client.query(
         `INSERT INTO agentops_control.runtime_audit(
            actor_type, actor_id, event_type, registration_id, details
-         ) VALUES ('runner', $1, 'monitor.broker.failed', $2, $3)`,
+         ) VALUES ('triage', $1, 'monitor.broker.failed', $2, $3)`,
         [
           input.workerId,
           input.request.registrationId,
@@ -1293,6 +1309,114 @@ export class PostgresControlStore {
         ],
       );
     });
+  }
+
+  async finishTriageLease(input: {
+    token: string;
+    workerId: string;
+    result: TriageJobResultV1;
+  }): Promise<void> {
+    const result = TriageJobResultV1Contract.parse(input.result);
+    await transaction(this.pool, async (client) => {
+      const lease = await client.query<{
+        id: string;
+        job_id: string;
+        attempt_id: string;
+        attempt_number: number;
+      }>(
+        `SELECT l.id, l.job_id, l.attempt_id, a.attempt_number
+           FROM agentops_control.job_leases l
+           JOIN agentops_control.job_attempts a ON a.id = l.attempt_id
+           JOIN agentops_control.jobs j ON j.id = l.job_id
+          WHERE l.lease_token = $1
+            AND l.worker_id = $2
+            AND l.status = 'active'
+            AND l.expires_at > clock_timestamp()
+            AND j.status = 'leased'
+            AND j.job_type = 'agentops.triage'
+          FOR UPDATE OF l, a, j`,
+        [input.token, input.workerId],
+      );
+      const row = lease.rows[0];
+      if (
+        !row
+        || row.job_id !== result.jobId
+        || row.attempt_number !== result.attemptNumber
+      ) {
+        throw new LeaseRejectedError(
+          'triage lease is absent, inactive, expired, or mismatched',
+        );
+      }
+      await client.query(
+        `UPDATE agentops_control.job_leases
+            SET status = 'completed', released_at = clock_timestamp()
+          WHERE id = $1`,
+        [row.id],
+      );
+      await client.query(
+        `UPDATE agentops_control.job_attempts
+            SET status = 'succeeded', finished_at = clock_timestamp(),
+                error = NULL, failure = NULL
+          WHERE id = $1`,
+        [row.attempt_id],
+      );
+      await client.query(
+        `UPDATE agentops_control.jobs
+            SET status = 'succeeded', finished_at = clock_timestamp(),
+                updated_at = clock_timestamp(), last_error = NULL,
+                result = $2, failure = NULL
+          WHERE id = $1`,
+        [row.job_id, result],
+      );
+      await client.query(
+        `INSERT INTO agentops_control.runtime_audit(
+           actor_type, actor_id, event_type, job_id, details
+         ) VALUES ('triage', $1, 'triage.completed', $2, $3)`,
+        [
+          input.workerId,
+          row.job_id,
+          {
+            outcome: result.outcome,
+            repository: result.repository,
+            issueNumber: result.issueNumber,
+            sourceDigest: result.sourceDigest,
+          },
+        ],
+      );
+    });
+  }
+
+  async promoteTriageLease(input: {
+    token: string;
+    workerId: string;
+    result: TriageJobResultV1;
+    readyLabel: string;
+    claimedLabel: string;
+  }): Promise<string> {
+    const result = TriageJobResultV1Contract.parse(input.result);
+    if (
+      result.outcome !== 'promoted'
+      || result.decision !== null
+      || result.commentUrl !== null
+      || result.appliedLabels.length !== 0
+      || result.promotedJobId !== null
+    ) {
+      throw new Error('triage promotion result must describe an uncommitted promotion');
+    }
+    const readyLabel = GitHubLabelNameContract.parse(input.readyLabel);
+    const claimedLabel = GitHubLabelNameContract.parse(input.claimedLabel);
+    if (readyLabel === claimedLabel) {
+      throw new Error('ready and claimed labels must be distinct');
+    }
+    const promoted = await this.pool.query<{ job_id: string | null }>(
+      `SELECT agentops_control.promote_triage_job($1, $2, $3, $4, $5) AS job_id`,
+      [input.token, input.workerId, result, readyLabel, claimedLabel],
+    );
+    const jobId = promoted.rows[0]?.job_id;
+    if (!jobId) {
+      throw new LeaseRejectedError('triage promotion lease is stale or lost');
+    }
+    return jobId;
   }
 
   /**

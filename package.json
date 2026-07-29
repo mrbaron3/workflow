@@ -24,6 +24,7 @@
     "smoke:dashboard:apple": "tsx scripts/ciso03-control-smoke.ts",
     "smoke:runner:apple": "tsx scripts/ciso04-runner-smoke.ts",
     "runner": "tsx src/runner/cli.ts",
+    "triage": "tsx src/triage/cli.ts",
     "control-store:migrate": "tsx scripts/control-store-migrate.ts",
     "evidence:ciso07": "tsx scripts/validate-ciso07-release-evidence.ts",
     "bundle-skills": "tsx scripts/bundle-skills.ts",

@@ -49,6 +49,8 @@ function payload(): RunnerJobPayloadV1 {
       mode: 'development_turn',
       requiredChecks: [],
       mergeMethod: 'squash',
+      readyLabel: 'ready',
+      claimedLabel: 'agent-claimed',
     },
     artifacts: [],
   };

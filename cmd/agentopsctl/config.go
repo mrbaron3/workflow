@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mrbaron3/workflow/internal/control"
 	"github.com/mrbaron3/workflow/internal/lifecycle"
 )
 
@@ -19,25 +21,35 @@ type config struct {
 	CredentialVolume     string
 	PostgresContainer    string
 	ControlContainer     string
+	TriageContainer      string
 	RunnerContainer      string
 	PostgresImage        string
 	ControlImage         string
+	TriageImage          string
 	RunnerImage          string
 	ProjectRoot          string
 	ControlHostPort      int
 	PostgresPassword     string
 	NextPostgresPassword string
 	ControlDBPassword    string
+	TriageDBPassword     string
 	RunnerDBPassword     string
 	ControlToken         string
 	DashboardToken       string
 	WebhookSecret        string
 	ControlGitHubToken   string
+	TriageGitHubToken    string
 	RunnerGitHubToken    string
 	Provider             string
 	ProviderToken        string
 	CodexAuthPath        string
-	MonitorRepository    string
+	MonitorRepositories  []string
+	TriageReadyLabel     string
+	TriageClaimedLabel   string
+	TriageCandidateLabel string
+	TriageBlockedLabel   string
+	TriageNeedsInfoLabel string
+	TriageContextPaths   string
 }
 
 func loadConfig() (config, error) {
@@ -85,9 +97,11 @@ func loadConfig() (config, error) {
 		CredentialVolume:  prefix + "-runner-credentials",
 		PostgresContainer: prefix + "-postgres",
 		ControlContainer:  prefix + "-control",
+		TriageContainer:   prefix + "-triage",
 		RunnerContainer:   prefix + "-runner",
 		PostgresImage:     environmentValue("AGENTOPSCTL_POSTGRES_IMAGE", "agentops-postgres:dev"),
 		ControlImage:      environmentValue("AGENTOPSCTL_CONTROL_IMAGE", "agentops-control:dev"),
+		TriageImage:       environmentValue("AGENTOPSCTL_TRIAGE_IMAGE", "agentops-triage:dev"),
 		RunnerImage:       environmentValue("AGENTOPSCTL_RUNNER_IMAGE", "agentops-runner:dev"),
 		ProjectRoot:       root,
 		ControlHostPort:   port,
@@ -96,19 +110,38 @@ func loadConfig() (config, error) {
 			os.Getenv("AGENTOPS_NEXT_POSTGRES_PASSWORD"),
 		),
 		ControlDBPassword:  strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_DB_PASSWORD")),
+		TriageDBPassword:   strings.TrimSpace(os.Getenv("AGENTOPS_TRIAGE_DB_PASSWORD")),
 		RunnerDBPassword:   strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_DB_PASSWORD")),
 		ControlToken:       strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_TOKEN")),
 		DashboardToken:     strings.TrimSpace(os.Getenv("AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN")),
 		WebhookSecret:      strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_WEBHOOK_SECRET")),
 		ControlGitHubToken: strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_GITHUB_TOKEN")),
+		TriageGitHubToken:  strings.TrimSpace(os.Getenv("AGENTOPS_TRIAGE_GITHUB_TOKEN")),
 		RunnerGitHubToken:  strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_GITHUB_TOKEN")),
 		Provider:           provider,
 		ProviderToken:      providerToken,
 		CodexAuthPath:      codexAuthPath,
-		MonitorRepository: strings.ToLower(environmentValue(
-			"AGENTOPS_MONITOR_REPOSITORY",
-			"mrbaron3/workflow",
-		)),
+		MonitorRepositories: splitRepositories(
+			os.Getenv("AGENTOPS_MONITOR_REPOSITORIES"),
+		),
+		TriageReadyLabel: strings.TrimSpace(
+			environmentValue("AGENTOPS_TRIAGE_READY_LABEL", "ready"),
+		),
+		TriageClaimedLabel: strings.TrimSpace(
+			environmentValue("AGENTOPS_TRIAGE_CLAIMED_LABEL", "agent-claimed"),
+		),
+		TriageCandidateLabel: strings.TrimSpace(
+			environmentValue("AGENTOPS_TRIAGE_CANDIDATE_LABEL", "ready-candidate"),
+		),
+		TriageBlockedLabel: strings.TrimSpace(
+			environmentValue("AGENTOPS_TRIAGE_BLOCKED_LABEL", "blocked"),
+		),
+		TriageNeedsInfoLabel: strings.TrimSpace(
+			environmentValue("AGENTOPS_TRIAGE_NEEDS_INFO_LABEL", "needs-info"),
+		),
+		TriageContextPaths: strings.TrimSpace(
+			os.Getenv("AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON"),
+		),
 	}, nil
 }
 
@@ -125,6 +158,7 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 	secrets := map[string]string{
 		"AGENTOPS_POSTGRES_PASSWORD":         value.PostgresPassword,
 		"AGENTOPS_CONTROL_DB_PASSWORD":       value.ControlDBPassword,
+		"AGENTOPS_TRIAGE_DB_PASSWORD":        value.TriageDBPassword,
 		"AGENTOPS_RUNNER_DB_PASSWORD":        value.RunnerDBPassword,
 		"AGENTOPS_CONTROL_TOKEN":             value.ControlToken,
 		"AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN": value.DashboardToken,
@@ -135,20 +169,39 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 			return fmt.Errorf("%s must be at least 32 bytes", name)
 		}
 	}
-	if value.PostgresPassword == value.ControlDBPassword ||
-		value.PostgresPassword == value.RunnerDBPassword ||
-		value.ControlDBPassword == value.RunnerDBPassword {
-		return fmt.Errorf("PostgreSQL admin, control, and runner credentials must be distinct")
+	databaseCredentials := []string{
+		value.PostgresPassword,
+		value.ControlDBPassword,
+		value.TriageDBPassword,
+		value.RunnerDBPassword,
 	}
-	if value.MonitorRepository != "mrbaron3/workflow" {
+	if !allDistinct(databaseCredentials) {
 		return fmt.Errorf(
-			"AGENTOPS_MONITOR_REPOSITORY is bounded to mrbaron3/workflow for CISO-07",
+			"PostgreSQL admin, control, triage, and runner credentials must be distinct",
 		)
 	}
-	if len(value.RunnerGitHubToken) < 20 {
+	if err := validateRepositoryAllowlist(value.MonitorRepositories); err != nil {
+		return err
+	}
+	if err := validateTriageLabels(value.triagePolicyLabels()); err != nil {
+		return err
+	}
+	if err := validateTriageContextPaths(value.TriageContextPaths); err != nil {
+		return err
+	}
+	if len(value.TriageGitHubToken) < 20 {
 		return fmt.Errorf(
-			"AGENTOPS_RUNNER_GITHUB_TOKEN is required for the private monitor broker",
+			"AGENTOPS_TRIAGE_GITHUB_TOKEN is required for Issue monitoring and triage",
 		)
+	}
+	if mode == lifecycle.ModeActive && len(value.RunnerGitHubToken) < 20 {
+		return fmt.Errorf(
+			"AGENTOPS_RUNNER_GITHUB_TOKEN is required for development execution",
+		)
+	}
+	if value.RunnerGitHubToken != "" &&
+		value.TriageGitHubToken == value.RunnerGitHubToken {
+		return fmt.Errorf("triage and development GitHub credentials must be distinct")
 	}
 	if mode == lifecycle.ModeActive {
 		if value.Provider == "codex" && len(value.ProviderToken) < 20 {
@@ -194,6 +247,7 @@ func (value config) validatePostgresRotation() error {
 	}
 	if value.NextPostgresPassword == value.PostgresPassword ||
 		value.NextPostgresPassword == value.ControlDBPassword ||
+		value.NextPostgresPassword == value.TriageDBPassword ||
 		value.NextPostgresPassword == value.RunnerDBPassword {
 		return fmt.Errorf(
 			"next PostgreSQL administrator credential must be distinct from current database credentials",
@@ -241,6 +295,37 @@ func (value config) runnerDatabaseURL(host string) string {
 	return databaseURL("agentops_runner", value.RunnerDBPassword, host)
 }
 
+func (value config) triageDatabaseURL(host string) string {
+	return databaseURL("agentops_triage", value.TriageDBPassword, host)
+}
+
+func (value config) monitorRepositoriesCSV() string {
+	return strings.Join(value.MonitorRepositories, ",")
+}
+
+func (value config) triagePolicyLabels() []string {
+	defaults := []string{
+		"ready",
+		"agent-claimed",
+		"ready-candidate",
+		"blocked",
+		"needs-info",
+	}
+	configured := []string{
+		value.TriageReadyLabel,
+		value.TriageClaimedLabel,
+		value.TriageCandidateLabel,
+		value.TriageBlockedLabel,
+		value.TriageNeedsInfoLabel,
+	}
+	for index := range configured {
+		if configured[index] == "" {
+			configured[index] = defaults[index]
+		}
+	}
+	return configured
+}
+
 func databaseURL(user, password, host string) string {
 	return (&url.URL{
 		Scheme: "postgresql",
@@ -271,4 +356,107 @@ func resourceName(value string) bool {
 		return false
 	}
 	return true
+}
+
+func splitRepositories(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	values := strings.Split(raw, ",")
+	for index := range values {
+		values[index] = strings.TrimSpace(values[index])
+	}
+	return values
+}
+
+func validateRepositoryAllowlist(repositories []string) error {
+	if len(repositories) < 1 || len(repositories) > 64 {
+		return fmt.Errorf("AGENTOPS_MONITOR_REPOSITORIES must contain 1..64 repositories")
+	}
+	seen := make(map[string]struct{}, len(repositories))
+	for _, repository := range repositories {
+		if repository != strings.ToLower(repository) ||
+			!control.ValidRepositoryIdentity(repository) {
+			return fmt.Errorf(
+				"AGENTOPS_MONITOR_REPOSITORIES must contain canonical owner/name values",
+			)
+		}
+		if _, duplicate := seen[repository]; duplicate {
+			return fmt.Errorf("AGENTOPS_MONITOR_REPOSITORIES must not contain duplicates")
+		}
+		seen[repository] = struct{}{}
+	}
+	return nil
+}
+
+func allDistinct(values []string) bool {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if _, duplicate := seen[value]; duplicate {
+			return false
+		}
+		seen[value] = struct{}{}
+	}
+	return true
+}
+
+func validateTriageLabels(labels []string) error {
+	if len(labels) != 5 || !allDistinct(labels) {
+		return fmt.Errorf("triage labels must be five distinct bounded plain-text values")
+	}
+	for _, label := range labels {
+		if len(label) < 1 || len(label) > 50 {
+			return fmt.Errorf("triage labels must be five distinct bounded plain-text values")
+		}
+		for index, character := range label {
+			if (character >= 'a' && character <= 'z') ||
+				(character >= 'A' && character <= 'Z') ||
+				(character >= '0' && character <= '9') ||
+				(index > 0 && strings.ContainsRune("._:/ -", character)) {
+				continue
+			}
+			return fmt.Errorf("triage labels must be five distinct bounded plain-text values")
+		}
+	}
+	return nil
+}
+
+func validateTriageContextPaths(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	var paths []string
+	if err := json.Unmarshal([]byte(raw), &paths); err != nil ||
+		len(paths) < 1 || len(paths) > 16 {
+		return fmt.Errorf(
+			"AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON must contain 1..16 repository-relative paths",
+		)
+	}
+	for _, candidate := range paths {
+		if candidate == "" || len(candidate) > 200 ||
+			strings.HasPrefix(candidate, "/") {
+			return fmt.Errorf(
+				"AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON must contain 1..16 repository-relative paths",
+			)
+		}
+		for _, segment := range strings.Split(candidate, "/") {
+			if segment == "" || segment == "." || segment == ".." {
+				return fmt.Errorf(
+					"AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON must contain 1..16 repository-relative paths",
+				)
+			}
+			for _, character := range segment {
+				if (character >= 'a' && character <= 'z') ||
+					(character >= 'A' && character <= 'Z') ||
+					(character >= '0' && character <= '9') ||
+					strings.ContainsRune("._-", character) {
+					continue
+				}
+				return fmt.Errorf(
+					"AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON must contain 1..16 repository-relative paths",
+				)
+			}
+		}
+	}
+	return nil
 }

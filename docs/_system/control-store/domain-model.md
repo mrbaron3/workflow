@@ -13,10 +13,16 @@
 - **DOM-control-store-011 Lifecycle Transition** — actorとidempotency identityを持ち、明示graphだけを進む監査entity。
 - **DOM-control-store-012 Drain Fence** — DRAINING commitと新規routing/enqueue/leaseを直列化するDB権威の境界。
 - **DOM-control-store-013 Monitor Broker Request** — 1 Registration revisionの1 typed cursor readを表すdurable entity。
-  runner lease、stale Registration fence、bounded response、digest auditを一体で所有する。
+  triage lease、stale Registration fence、bounded response、digest auditを一体で所有する。
+- **DOM-control-store-014 Triage Job Contract** — repository／Issue number／observedUpdatedAtだけを持つ
+  identity-only envelope。command、ref、clone URL、label、provider credentialを持たない。
+- **DOM-control-store-015 Triage Promotion Capability** — exact human ready labelをGitHubで再確認したtriage leaseを
+  完了し、設定済みready／claimed labelを持つdevelopment jobを同一transactionで作る限定DB capability。
 
 不変条件: active jobはrepositoryごとに高々1件、active leaseはjobごとに高々1件、stale/disabled Registrationのjobは
 claimしない。artifactはRegistration rootからreal pathで逸脱できず、lease loss後にside effect permitを消費できない。
+monitor capabilityはtriage roleだけ、development lease／guard capabilityはrunner roleだけが持つ。共有する
+jobs／attempts／leases tableでもRLSがjob typeを強制し、両roleは互いのjob rowを読書きできない。
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
 [ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)

@@ -1,4 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import type { HarnessConfig } from '../config.js';
+import type { TargetGraderConfig } from '../config.js';
 import { DEFAULT_CONFIG } from '../config.js';
 import { Store } from '../store/store.js';
 import {
@@ -68,6 +71,99 @@ export interface ExistingAgentOpsAdapterDependencies {
 
 function baseBranch(ref: string): string {
   return ref.replace(/^refs\/heads\//, '');
+}
+
+interface NodePackageManifest {
+  scripts?: Record<string, unknown>;
+  dependencies?: Record<string, unknown>;
+  devDependencies?: Record<string, unknown>;
+}
+
+/**
+ * Select a bounded grader profile from repository-owned, immutable-at-claim
+ * metadata. Repository identity is intentionally irrelevant. We support the
+ * existing TypeScript/Vitest profile and a dependency-backed Node contract
+ * checker expressed as one direct `node relative/script` command. Shell
+ * operators, package-manager installs, and arbitrary job-supplied commands are
+ * never accepted.
+ */
+export function inferRepositoryGraders(
+  worktreePath: string,
+): TargetGraderConfig {
+  const manifestPath = path.join(worktreePath, 'package.json');
+  let manifest: NodePackageManifest;
+  try {
+    const stat = fs.statSync(manifestPath);
+    if (!stat.isFile() || stat.size > 1024 * 1024) {
+      throw new Error('package manifest is not a bounded regular file');
+    }
+    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as NodePackageManifest;
+  } catch {
+    throw new RunnerExecutionError(
+      'workspace_failure',
+      'registered repository has no supported bounded grader profile',
+      false,
+    );
+  }
+  const dependencies = {
+    ...(manifest.dependencies ?? {}),
+    ...(manifest.devDependencies ?? {}),
+  };
+  if ('typescript' in dependencies && 'vitest' in dependencies) {
+    return {
+      typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
+      unit_tests: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
+      commands: {
+        build: 'node /app/node_modules/typescript/bin/tsc',
+        typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
+        unit_test: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
+      },
+    };
+  }
+  const testScript = manifest.scripts?.test;
+  const match = typeof testScript === 'string'
+    ? /^node ([A-Za-z0-9._/-]+\.(?:mjs|cjs|js))$/.exec(testScript.trim())
+    : null;
+  if (match) {
+    const relativeScript = match[1]!;
+    if (
+      relativeScript.split('/').some((segment) =>
+        segment === '' || segment === '.' || segment === '..')
+    ) {
+      throw new RunnerExecutionError(
+        'workspace_failure',
+        'repository contract checker path is unsafe',
+        false,
+      );
+    }
+    const scriptPath = path.resolve(worktreePath, relativeScript);
+    if (
+      !scriptPath.startsWith(`${path.resolve(worktreePath)}${path.sep}`)
+      || !fs.existsSync(scriptPath)
+      || !fs.statSync(scriptPath).isFile()
+    ) {
+      throw new RunnerExecutionError(
+        'workspace_failure',
+        'repository contract checker is absent',
+        false,
+      );
+    }
+    const command = `node ${relativeScript}`;
+    return {
+      typecheck: command,
+      commands: {
+        build: command,
+        typecheck: command,
+        api_test: command,
+        db_state_check: command,
+      },
+    };
+  }
+  throw new RunnerExecutionError(
+    'workspace_failure',
+    'registered repository has no supported bounded grader profile',
+    false,
+  );
 }
 
 function scopedIssueRunner(
@@ -184,6 +280,7 @@ function runnerConfig(input: AgentOpsAdapterInput): HarnessConfig {
   const repository = `${input.payload.repository.owner}/${input.payload.repository.name}`;
   const branch = baseBranch(input.payload.target.baseRef);
   const route = { provider: input.provider };
+  const systemDir = path.join(input.workspace.worktreePath, 'docs', '_system');
   return {
     ...DEFAULT_CONFIG,
     generator: input.provider,
@@ -193,17 +290,9 @@ function runnerConfig(input: AgentOpsAdapterInput): HarnessConfig {
     target: {
       repo: input.workspace.worktreePath,
       baseRef: input.payload.target.baseRef,
-      systemDir: `${input.workspace.worktreePath}/docs/_system`,
+      ...(fs.existsSync(systemDir) ? { systemDir } : {}),
       protectedPaths: ['.git', '.github/workflows'],
-      graders: {
-        typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
-        unit_tests: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
-        commands: {
-          build: 'node /app/node_modules/typescript/bin/tsc',
-          typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
-          unit_test: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
-        },
-      },
+      graders: inferRepositoryGraders(input.workspace.worktreePath),
     },
     gate: {
       backend: 'github',
@@ -214,8 +303,8 @@ function runnerConfig(input: AgentOpsAdapterInput): HarnessConfig {
     intake: {
       backend: 'github',
       repository,
-      readyLabel: 'ready',
-      claimedLabel: 'agent-claimed',
+      readyLabel: input.payload.execution.readyLabel,
+      claimedLabel: input.payload.execution.claimedLabel,
     },
     routes: {
       generator: route,

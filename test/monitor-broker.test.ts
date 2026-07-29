@@ -13,7 +13,7 @@ const request: MonitorBrokerRequest = {
   id: '11111111-1111-4111-8111-111111111111',
   registrationId: '22222222-2222-4222-8222-222222222222',
   registrationVersion: 1,
-  repository: 'mrbaron3/workflow',
+  repository: 'acme/widgets',
   monitorKind: 'issue',
   cursor: { updatedAfter: '' },
   leaseToken: '33333333-3333-4333-8333-333333333333',
@@ -47,8 +47,8 @@ describe('typed private-repository monitor broker', () => {
       options?: { env?: NodeJS.ProcessEnv } | null,
     ) => {
       expect(file).toBe('gh');
-      expect(args).not.toContain('runner-github-token-opaque');
-      expect(options?.env?.GH_TOKEN).toBe('runner-github-token-opaque');
+      expect(args).not.toContain('triage-github-token-opaque');
+      expect(options?.env?.GH_TOKEN).toBe('triage-github-token-opaque');
       return {
         stdout: JSON.stringify(
           execFileImpl.mock.calls.length === 1
@@ -59,9 +59,9 @@ describe('typed private-repository monitor broker', () => {
     });
     const broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       execFileImpl,
     });
     await broker.runOnce();
@@ -111,9 +111,9 @@ describe('typed private-repository monitor broker', () => {
       const scenarioStore = storeFor();
       const broker = new PrivateMonitorBroker({
         store: scenarioStore,
-        workerId: 'runner-1',
-        repository: 'mrbaron3/workflow',
-        githubToken: 'runner-github-token-opaque',
+        workerId: 'triage-1',
+        repositories: ['acme/widgets'],
+        githubToken: 'triage-github-token-opaque',
         ...scenario.options,
       });
       await broker.runOnce();
@@ -149,9 +149,9 @@ describe('typed private-repository monitor broker', () => {
     });
     broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       fetchImpl,
       intervalMs: 1,
     });
@@ -169,7 +169,7 @@ describe('typed private-repository monitor broker', () => {
       expect(init?.method).toBe('GET');
       expect(init?.redirect).toBe('error');
       expect(init?.headers).toMatchObject({
-        authorization: 'Bearer runner-github-token-opaque',
+        authorization: 'Bearer triage-github-token-opaque',
       });
       return new Response(JSON.stringify([
         {
@@ -187,9 +187,9 @@ describe('typed private-repository monitor broker', () => {
     });
     const broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       fetchImpl,
     });
     expect(await broker.runOnce()).toBe(true);
@@ -198,7 +198,7 @@ describe('typed private-repository monitor broker', () => {
       expect.objectContaining({
         response: {
           items: [{
-            repository: 'mrbaron3/workflow',
+            repository: 'acme/widgets',
             kind: 'issue',
             number: 17,
             updatedAt: '2026-07-26T01:02:03.000Z',
@@ -212,7 +212,7 @@ describe('typed private-repository monitor broker', () => {
       store.completeMonitorBrokerRequest.mock.calls[0]?.[0],
     );
     expect(serialized).not.toContain('must not cross');
-    expect(serialized).not.toContain('runner-github-token');
+    expect(serialized).not.toContain('triage-github-token');
   });
 
   it('fails closed when GitHub pagination escapes the typed operation', async () => {
@@ -225,9 +225,9 @@ describe('typed private-repository monitor broker', () => {
     }));
     const broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       fetchImpl,
     });
     expect(await broker.runOnce()).toBe(true);
@@ -240,22 +240,34 @@ describe('typed private-repository monitor broker', () => {
     );
   });
 
-  it('rejects any repository other than the bounded dogfood target', () => {
+  it('supports multiple repositories and rejects a request outside that allowlist', async () => {
+    const store = storeFor();
+    const broker = new PrivateMonitorBroker({
+      store,
+      workerId: 'triage-1',
+      repositories: ['other/repository', 'design-lab/component-catalog'],
+      githubToken: 'triage-github-token-opaque',
+      fetchImpl: vi.fn(),
+    });
+    await expect(broker.runOnce()).resolves.toBe(true);
+    expect(store.failMonitorBrokerRequest).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'repository_denied' }),
+    );
     expect(() => new PrivateMonitorBroker({
       store: storeFor(),
-      workerId: 'runner-1',
-      repository: 'other/repository',
-      githubToken: 'runner-github-token-opaque',
-    })).toThrow(/exact repository allowlist/);
+      workerId: 'triage-1',
+      repositories: ['Upper/Repo'],
+      githubToken: 'triage-github-token-opaque',
+    })).toThrow(/canonical repository allowlist/);
   });
 
   it('fails closed on provider response byte limits without persisting a body', async () => {
     const store = storeFor();
     const broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       maxResponseBytes: 1,
       fetchImpl: vi.fn(async () => new Response('[]', { status: 200 })),
     });
@@ -284,9 +296,9 @@ describe('typed private-repository monitor broker', () => {
     });
     const broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       fetchImpl,
       maxPages: 1,
     });
@@ -308,9 +320,9 @@ describe('typed private-repository monitor broker', () => {
     const log = vi.fn();
     const broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       fetchImpl: vi.fn(),
       log,
     });
@@ -327,9 +339,9 @@ describe('typed private-repository monitor broker', () => {
     );
     const broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       fetchImpl: vi.fn(async () => new Response('[]', { status: 200 })),
     });
     await expect(broker.runOnce()).resolves.toBe(true);
@@ -344,9 +356,9 @@ describe('typed private-repository monitor broker', () => {
     const log = vi.fn();
     const broker = new PrivateMonitorBroker({
       store,
-      workerId: 'runner-1',
-      repository: 'mrbaron3/workflow',
-      githubToken: 'runner-github-token-opaque',
+      workerId: 'triage-1',
+      repositories: ['acme/widgets'],
+      githubToken: 'triage-github-token-opaque',
       fetchImpl: vi.fn(async () => new Response('invalid json', { status: 200 })),
       log,
     });

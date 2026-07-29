@@ -20,8 +20,13 @@
 - **LANG-control-store-018 Drain Fence** — DRAINING後の新規routing/enqueue/leaseをDBで拒否する競合境界。
 - **LANG-control-store-019 Recovery Reconciliation** — persisted mode/lease/attemptとactual topologyをrestart時に照合する操作。
 - **LANG-control-store-020 Monitor Broker Request** — 固定repository/kind/cursorだけを持つprivate monitorのdurable read要求。
-- **LANG-control-store-021 Monitor Broker Lease** — runnerが1 requestを期限付きで処理する所有権。expiry後は回収される。
+- **LANG-control-store-021 Monitor Broker Lease** — triage processが1 requestを期限付きで処理する所有権。expiry後は回収される。
 - **LANG-control-store-022 Sanitized Monitor Response** — repository/kind/number/updatedAtとnext cursorだけのbounded応答。
+- **LANG-control-store-023 Triage Job** — Issue identityと観測時刻だけを運ぶ非実行job。
+- **LANG-control-store-024 Triage Decision** — North Star整合、readiness、priority、依存／重複／不足情報だけを持つ
+  strict provider出力。ready approvalや任意label／commandを含まない。
+- **LANG-control-store-025 Ready Promotion** — human-owned exact ready labelとlive triage leaseを再検証し、
+  development jobへ進めるatomic capability。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、

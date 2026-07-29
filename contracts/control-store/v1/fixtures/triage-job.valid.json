@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "repository": {
+    "owner": "sample",
+    "name": "design-system"
+  },
+  "issue": {
+    "number": 4,
+    "observedUpdatedAt": "2026-07-29T00:00:00.000Z"
+  }
+}

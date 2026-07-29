@@ -3,6 +3,7 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { PostgresControlStore } from '../control-store/store.js';
 import {
+  CanonicalRepository,
   MonitorBrokerResponse,
   type MonitorBrokerRequest,
   type MonitorBrokerResponse as MonitorBrokerResponseType,
@@ -43,7 +44,7 @@ interface BrokerStore {
 export interface PrivateMonitorBrokerOptions {
   store: BrokerStore;
   workerId: string;
-  repository: string;
+  repositories: readonly string[];
   githubToken: string;
   fetchImpl?: typeof fetch;
   execFileImpl?: ExecFileImpl;
@@ -223,6 +224,7 @@ export class PrivateMonitorBroker {
   private readonly requestTimeoutMs: number;
   private readonly maxResponseBytes: number;
   private readonly maxPages: number;
+  private readonly repositories: ReadonlySet<string>;
 
   constructor(private readonly options: PrivateMonitorBrokerOptions) {
     this.fetchImpl = options.fetchImpl ?? fetch;
@@ -232,14 +234,23 @@ export class PrivateMonitorBroker {
     this.maxResponseBytes =
       options.maxResponseBytes ?? MONITOR_BROKER_MAX_RESPONSE_BYTES;
     this.maxPages = options.maxPages ?? MONITOR_BROKER_MAX_PAGES;
+    const repositories = options.repositories.map((repository) =>
+      repository.trim().toLowerCase());
     if (
-      options.repository !== 'mrbaron3/workflow'
+      repositories.length < 1
+      || repositories.length > 64
+      || new Set(repositories).size !== repositories.length
+      || options.repositories.some((repository, index) =>
+        repository !== repositories[index])
+      || repositories.some((repository) =>
+        !CanonicalRepository.safeParse(repository).success)
       || options.githubToken.trim().length < 20
     ) {
       throw new Error(
-        'private monitor broker requires the exact repository allowlist and runner credential',
+        'private monitor broker requires a canonical repository allowlist and broker credential',
       );
     }
+    this.repositories = new Set(repositories);
   }
 
   requestStop(): void {
@@ -250,7 +261,7 @@ export class PrivateMonitorBroker {
   private async read(
     request: MonitorBrokerRequest,
   ): Promise<MonitorBrokerResponseType> {
-    if (request.repository !== this.options.repository) {
+    if (!this.repositories.has(request.repository)) {
       throw new MonitorBrokerFailure(
         'repository_denied',
         'broker request is outside the repository allowlist',
@@ -441,7 +452,7 @@ export class PrivateMonitorBroker {
     try {
       request = await this.options.store.claimMonitorBrokerRequest({
         workerId: this.options.workerId,
-        allowedRepository: this.options.repository,
+        allowedRepositories: [...this.repositories],
         leaseMs: MONITOR_BROKER_LEASE_MS,
       });
     } catch {

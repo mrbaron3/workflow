@@ -68,6 +68,14 @@ describe('isolated runner published contracts', () => {
       },
       {
         ...payload,
+        execution: { ...execution, readyLabel: undefined },
+      },
+      {
+        ...payload,
+        execution: { ...execution, claimedLabel: undefined },
+      },
+      {
+        ...payload,
         execution: { ...execution, mode: 'pr_reconciliation' },
       },
       {
@@ -144,6 +152,13 @@ describe('isolated runner published contracts', () => {
       {
         ...payload,
         target: { baseRef: 'main; curl attacker.invalid' },
+      },
+      {
+        ...payload,
+        execution: {
+          ...(payload.execution as Record<string, unknown>),
+          readyLabel: 'ready\nmalicious',
+        },
       },
       {
         ...payload,

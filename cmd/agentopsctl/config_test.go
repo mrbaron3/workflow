@@ -93,6 +93,64 @@ func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 	}
 }
 
+func TestValidateTriageActualHasNoWorkspaceOrDevelopmentImage(t *testing.T) {
+	cfg := config{
+		Network:         "agentops-internal",
+		TriageContainer: "agentops-triage",
+		TriageImage:     "agentops-triage:dev",
+	}
+	actual := &lifecycle.ContainerActual{ID: cfg.TriageContainer}
+	actual.Status.State = "running"
+	actual.Configuration.Labels = map[string]string{
+		"com.mrbaron3.workflow.agentopsctl": "v1",
+		"com.mrbaron3.workflow.role":        "triage",
+	}
+	actual.Configuration.Image.Reference = "docker.io/library/agentops-triage:dev"
+	actual.Configuration.Networks = append(
+		actual.Configuration.Networks,
+		struct {
+			Network string `json:"network"`
+		}{Network: cfg.Network},
+	)
+	actual.Configuration.ReadOnly = true
+	actual.Configuration.CapDrop = []string{"ALL"}
+	actual.Configuration.InitProcess.User.ID.UID = 65532
+	for _, destination := range []string{"/tmp", "/home/agentops"} {
+		actual.Configuration.Mounts = append(actual.Configuration.Mounts, struct {
+			Destination string         `json:"destination"`
+			Source      string         `json:"source"`
+			Type        map[string]any `json:"type"`
+		}{
+			Destination: destination,
+			Type:        map[string]any{"tmpfs": map[string]any{}},
+		})
+	}
+	if err := validateTriageActual(
+		actual,
+		cfg,
+		lifecycle.ModeMonitorOnly,
+	); err != nil {
+		t.Fatalf("valid triage topology rejected: %v", err)
+	}
+	actual.Configuration.Mounts = append(actual.Configuration.Mounts, struct {
+		Destination string         `json:"destination"`
+		Source      string         `json:"source"`
+		Type        map[string]any `json:"type"`
+	}{
+		Destination: "/workspace",
+		Type: map[string]any{
+			"volume": map[string]any{"name": "development-workspace"},
+		},
+	})
+	if err := validateTriageActual(
+		actual,
+		cfg,
+		lifecycle.ModeMonitorOnly,
+	); err == nil {
+		t.Fatal("triage with a development workspace was accepted")
+	}
+}
+
 func TestMonitorOnlyRequiresNoProviderCredentialOrCredentialMount(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "deploy"), 0o700); err != nil {
@@ -109,13 +167,17 @@ func TestMonitorOnlyRequiresNoProviderCredentialOrCredentialMount(t *testing.T) 
 		Prefix: "agentops", ProjectRoot: root,
 		PostgresPassword:  strings.Repeat("a", 32),
 		ControlDBPassword: strings.Repeat("b", 32),
-		RunnerDBPassword:  strings.Repeat("c", 32),
-		ControlToken:      strings.Repeat("d", 32),
-		DashboardToken:    strings.Repeat("e", 32),
-		WebhookSecret:     strings.Repeat("f", 32),
-		RunnerGitHubToken: strings.Repeat("g", 32),
+		TriageDBPassword:  strings.Repeat("c", 32),
+		RunnerDBPassword:  strings.Repeat("d", 32),
+		ControlToken:      strings.Repeat("e", 32),
+		DashboardToken:    strings.Repeat("f", 32),
+		WebhookSecret:     strings.Repeat("g", 32),
+		TriageGitHubToken: strings.Repeat("h", 32),
 		Provider:          "codex",
-		MonitorRepository: "mrbaron3/workflow",
+		MonitorRepositories: []string{
+			"acme/widgets",
+			"design-lab/component-catalog",
+		},
 	}
 	if err := value.validateStart(lifecycle.ModeMonitorOnly); err != nil {
 		t.Fatalf("provider-free MONITOR_ONLY was rejected: %v", err)
@@ -142,14 +204,16 @@ func TestStartRejectsEveryControlGitHubCredential(t *testing.T) {
 		Prefix: "agentops", ProjectRoot: root,
 		PostgresPassword:   strings.Repeat("a", 32),
 		ControlDBPassword:  strings.Repeat("b", 32),
-		RunnerDBPassword:   strings.Repeat("c", 32),
-		ControlToken:       strings.Repeat("d", 32),
-		DashboardToken:     strings.Repeat("e", 32),
-		WebhookSecret:      strings.Repeat("f", 32),
-		ControlGitHubToken: strings.Repeat("g", 32),
-		RunnerGitHubToken:  strings.Repeat("g", 32),
-		Provider:           "codex", ProviderToken: strings.Repeat("h", 32),
-		MonitorRepository: "mrbaron3/workflow",
+		TriageDBPassword:   strings.Repeat("c", 32),
+		RunnerDBPassword:   strings.Repeat("d", 32),
+		ControlToken:       strings.Repeat("e", 32),
+		DashboardToken:     strings.Repeat("f", 32),
+		WebhookSecret:      strings.Repeat("g", 32),
+		ControlGitHubToken: strings.Repeat("h", 32),
+		TriageGitHubToken:  strings.Repeat("i", 32),
+		RunnerGitHubToken:  strings.Repeat("j", 32),
+		Provider:           "codex", ProviderToken: strings.Repeat("k", 32),
+		MonitorRepositories: []string{"example/project"},
 	}
 	if err := value.validateStart(lifecycle.ModeActive); err == nil ||
 		!strings.Contains(err.Error(), "forbidden") {
@@ -175,16 +239,18 @@ func TestActiveAllowsCredentialFreeControlWithPrivateBrokerAndCodexLogin(t *test
 	}
 	value := config{
 		Prefix: "agentops", ProjectRoot: root,
-		PostgresPassword:  strings.Repeat("a", 32),
-		ControlDBPassword: strings.Repeat("b", 32),
-		RunnerDBPassword:  strings.Repeat("c", 32),
-		ControlToken:      strings.Repeat("d", 32),
-		DashboardToken:    strings.Repeat("e", 32),
-		WebhookSecret:     strings.Repeat("f", 32),
-		RunnerGitHubToken: strings.Repeat("g", 32),
-		Provider:          "codex",
-		CodexAuthPath:     auth,
-		MonitorRepository: "mrbaron3/workflow",
+		PostgresPassword:    strings.Repeat("a", 32),
+		ControlDBPassword:   strings.Repeat("b", 32),
+		TriageDBPassword:    strings.Repeat("c", 32),
+		RunnerDBPassword:    strings.Repeat("d", 32),
+		ControlToken:        strings.Repeat("e", 32),
+		DashboardToken:      strings.Repeat("f", 32),
+		WebhookSecret:       strings.Repeat("g", 32),
+		TriageGitHubToken:   strings.Repeat("h", 32),
+		RunnerGitHubToken:   strings.Repeat("i", 32),
+		Provider:            "codex",
+		CodexAuthPath:       auth,
+		MonitorRepositories: []string{"sample/design-system"},
 	}
 	if err := value.validateStart(lifecycle.ModeActive); err != nil {
 		t.Fatalf("credential-free-control/private-runner boundary was rejected: %v", err)
@@ -222,7 +288,8 @@ func TestPostgresRotationRequiresDistinctCurrentAndNextCredentials(t *testing.T)
 		PostgresPassword:     strings.Repeat("a", 32),
 		NextPostgresPassword: strings.Repeat("b", 32),
 		ControlDBPassword:    strings.Repeat("c", 32),
-		RunnerDBPassword:     strings.Repeat("d", 32),
+		TriageDBPassword:     strings.Repeat("d", 32),
+		RunnerDBPassword:     strings.Repeat("e", 32),
 	}
 	if err := value.validatePostgresRotation(); err != nil {
 		t.Fatalf("valid PostgreSQL credential rotation rejected: %v", err)
@@ -230,5 +297,59 @@ func TestPostgresRotationRequiresDistinctCurrentAndNextCredentials(t *testing.T)
 	value.NextPostgresPassword = value.ControlDBPassword
 	if err := value.validatePostgresRotation(); err == nil {
 		t.Fatal("database role credential reuse was accepted for admin rotation")
+	}
+}
+
+func TestRepositoryAllowlistValidatesContractInsteadOfDogfoodIdentity(
+	t *testing.T,
+) {
+	for _, repositories := range [][]string{
+		{"acme/widgets"},
+		{"sample/design-system", "team-with-dashes/repo_name"},
+	} {
+		if err := validateRepositoryAllowlist(repositories); err != nil {
+			t.Fatalf("valid arbitrary repositories %v rejected: %v", repositories, err)
+		}
+	}
+	for _, repositories := range [][]string{
+		nil,
+		{"Acme/widgets"},
+		{"acme/widgets", "acme/widgets"},
+		{"missing-slash"},
+	} {
+		if err := validateRepositoryAllowlist(repositories); err == nil {
+			t.Fatalf("invalid repository allowlist accepted: %v", repositories)
+		}
+	}
+}
+
+func TestTriagePolicyConfigurationIsBoundedAndRepositoryRelative(t *testing.T) {
+	if err := validateTriageLabels([]string{
+		"human-approved",
+		"automation-owned",
+		"candidate",
+		"dependency-blocked",
+		"product-input",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTriageContextPaths(
+		`["README.md","docs/ROADMAP.md","architecture/NORTH_STAR.md"]`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateTriageLabels([]string{
+		"same", "same", "candidate", "blocked", "needs-info",
+	}); err == nil {
+		t.Fatal("duplicate triage labels were accepted")
+	}
+	for _, raw := range []string{
+		`["../secret"]`,
+		`["/absolute/path"]`,
+		`{"path":"README.md"}`,
+	} {
+		if err := validateTriageContextPaths(raw); err == nil {
+			t.Fatalf("unsafe context paths accepted: %s", raw)
+		}
 	}
 }

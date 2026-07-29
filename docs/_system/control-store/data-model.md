@@ -27,6 +27,11 @@
 - **DATA-control-store-017** `monitor_broker_requests` — Registration/version、固定repository、issue/PR kind、
   strict cursor/digest、pending/leased/succeeded/failed state、worker/lease expiry、sanitized responseまたはbounded error。
   active cursorのpartial unique indexとclaim order indexを持ち、credential/provider本文は保存しない。
+- **DATA-control-store-018** triage job `payload` / `decision` / `result` — payloadはrepository／Issue identityだけ、
+  decisionはbounded classificationだけ、resultはsource digest／managed mutation／promotion identityだけを持つ
+  strict version 1 JSON contract。`promote_triage_job`はready／claimed labelをdevelopment payloadへ写し、
+  triage完了とrunner enqueueをatomicにする。jobs／attempts／leases／artifact linksのRLSは
+  `agentops_triage=agentops.triage`、`agentops_runner=agentops.runner`をDBで再強制する。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、

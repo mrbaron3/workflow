@@ -122,6 +122,14 @@ func safeRepositoryIdentity(repository string) bool {
 	return present && name != "." && name != ".."
 }
 
+// ValidRepositoryIdentity exposes the same canonical GitHub owner/name
+// contract to process-boundary configuration without duplicating a looser
+// regular expression in each binary.
+func ValidRepositoryIdentity(repository string) bool {
+	return repository == strings.ToLower(strings.TrimSpace(repository)) &&
+		safeRepositoryIdentity(repository)
+}
+
 func (patch RegistrationPatch) Validate() error {
 	if patch.Enabled == nil && patch.IssueMonitorEnabled == nil &&
 		patch.PRMonitorEnabled == nil && patch.ExecutionEnabled == nil &&
@@ -321,6 +329,45 @@ func (item WorkItem) CanonicalPayload() map[string]any {
 	return payload
 }
 
+// TriagePayload projects an Issue observation into the only payload accepted
+// by the capability-limited triage runner. It intentionally carries no Issue
+// body, labels, repository path, command, credential, or mutation request; the
+// triage runner re-reads current GitHub state through typed operations.
+func (item WorkItem) TriagePayload() (map[string]any, error) {
+	canonicalRepository := strings.ToLower(strings.TrimSpace(item.Repository))
+	repository := strings.Split(canonicalRepository, "/")
+	if len(repository) != 2 || canonicalRepository != item.Repository ||
+		!safeRepositoryIdentity(canonicalRepository) {
+		return nil, fmt.Errorf("triage work repository must be canonical owner/name")
+	}
+	if item.Kind != "issue" || item.Number < 1 || item.UpdatedAt.IsZero() {
+		return nil, fmt.Errorf("triage work requires a positive Issue observation")
+	}
+	return map[string]any{
+		"schemaVersion": 1,
+		"repository": map[string]any{
+			"owner": repository[0],
+			"name":  repository[1],
+		},
+		"issue": map[string]any{
+			"number":            item.Number,
+			"observedUpdatedAt": item.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		},
+	}, nil
+}
+
+// QueuedJob selects the capability boundary from the observed entity kind.
+// Every Issue is triaged first. Only the triage runner's explicit ready-label
+// promotion can create an agentops.runner development_turn for that Issue.
+func (item WorkItem) QueuedJob(sourceKind string) (string, map[string]any, error) {
+	if item.Kind == "issue" {
+		payload, err := item.TriagePayload()
+		return "agentops.triage", payload, err
+	}
+	payload, err := item.RunnerPayload(sourceKind)
+	return "agentops.runner", payload, err
+}
+
 // RunnerPayload projects control-plane observations into the only executable
 // job contract. It never forwards the webhook body, a command, clone URL,
 // credential, host path, or arbitrary environment to the runner.
@@ -378,7 +425,11 @@ func (item WorkItem) RunnerPayload(sourceKind string) (map[string]any, error) {
 			"baseRef": "refs/heads/main",
 		},
 		"execution": map[string]any{
-			"mode": mode, "requiredChecks": []string{}, "mergeMethod": "squash",
+			"mode":           mode,
+			"requiredChecks": []string{},
+			"mergeMethod":    "squash",
+			"readyLabel":     "ready",
+			"claimedLabel":   "agent-claimed",
 		},
 		"artifacts": []any{},
 	}, nil

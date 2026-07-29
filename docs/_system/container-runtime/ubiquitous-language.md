@@ -11,16 +11,17 @@
 | LANG-container-runtime-002 | Container Runtime Adapter | runtime-neutral な `ContainerRuntime` port を特定 CLI の argv／出力へ翻訳する実装。Apple Container 固有挙動はこの adapter だけに閉じる。 |
 | LANG-container-runtime-003 | Standard OCI Image | Apple Container 専用形式でない標準 OCI のアプリイメージ。docker/podman/Apple Container で同一に build/run できる。 |
 | LANG-container-runtime-004 | Runtime Preflight | 起動前に runtime capability（CLI・version・arch・service・network・volume・image）を fail-closed で検査した構造化 verdict。捏造 pass を出さない。 |
-| LANG-container-runtime-005 | Runtime Role | control／runner／postgres の隔離役割。publish 不変条件の key。 |
+| LANG-container-runtime-005 | Runtime Role | control／triage／runner／postgres の隔離役割。publish 不変条件の key。 |
 | LANG-container-runtime-006 | Publish Surface | Mac へ publish される host port の集合。control の loopback port だけが許容される。 |
-| LANG-container-runtime-007 | Publish Invariant | 「control の 127.0.0.1 port だけが Mac へ publish され、runner／postgres は内部 network からのみ到達可能」という不変条件。静的（desired）と grounded（running）で二重に接地する。 |
+| LANG-container-runtime-007 | Publish Invariant | 「control の 127.0.0.1 port だけが Mac へ publish され、triage／runner／postgres は内部 network からのみ到達可能」という不変条件。静的（desired）と grounded（running）で二重に接地する。 |
 | LANG-container-runtime-008 | Container-Neutral Path | コンテナ絶対かつ設定可能で、Mac home（`/Users`）に依存しない path。grader／workspace／systemDir をこれで解決する。 |
 | LANG-container-runtime-009 | Host-Path Dependency | build/runtime surface に hardcode された Mac 絶対 path。scanner が fail-closed で検出する回帰対象。 |
 | LANG-container-runtime-010 | Isolated Runner | PostgreSQL leaseを消費し、private workspace内から既存AgentOps gateを実行するnonroot runtime role。 |
 | LANG-container-runtime-011 | Registration Workspace | Registration IDをrootとするrunner-only volume上のmirror/worktree/state/artifact集合。 |
 | LANG-container-runtime-012 | Startup Isolation Proof | mount/publish/outbound/HOME/credential/socket境界が副作用前に成立した構造化監査。 |
 | LANG-container-runtime-013 | Lifecycle Owner | Apple Container topologyを操作する短命な`agentopsctl` process。 |
-| LANG-container-runtime-014 | Actual Topology | runtime inspectで観測した3 container、network、publish、mount、security属性の現在値。 |
+| LANG-container-runtime-014 | Actual Topology | runtime inspectで観測したMONITOR_ONLY 3 containerまたはACTIVE 4 container、network、publish、mount、security属性の現在値。 |
 | LANG-container-runtime-015 | Scoped Compensation | partial startで当該試行が変更したcontainerだけをrollbackし、volumeと既存workを保存する処理。 |
-| LANG-container-runtime-016 | Runner Credential Volume | provider login fileだけをprivate stdinでseedしrunnerへread-only mountするnamed volume。 |
-| LANG-container-runtime-017 | Typed Monitor Broker | controlの固定Issue/PR read要求をrunner credential境界内で実行するdurable broker。任意HTTP proxyではない。 |
+| LANG-container-runtime-016 | Provider Credential Volume | provider login fileだけをprivate stdinでseedし、ACTIVE workerへread-only mountするnamed volume。 |
+| LANG-container-runtime-017 | Typed Monitor Broker | controlの固定Issue/PR read要求をtriage credential境界内で実行するdurable broker。任意HTTP proxyではない。 |
+| LANG-container-runtime-018 | Isolated Triage | workspace／git／SSHなしでtyped monitor、strict Issue classification、human-ready promotionだけを行うnonroot runtime role。 |

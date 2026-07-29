@@ -43,6 +43,7 @@ func runAdministrativeCommand(args []string) error {
 			ctx,
 			databaseURL,
 			os.Getenv("AGENTOPS_CONTROL_DB_PASSWORD"),
+			os.Getenv("AGENTOPS_TRIAGE_DB_PASSWORD"),
 			os.Getenv("AGENTOPS_RUNNER_DB_PASSWORD"),
 		); err != nil {
 			return err

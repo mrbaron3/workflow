@@ -250,34 +250,40 @@ func TestProbeRunnerProviderFailsClosedWithoutLeakingOutput(t *testing.T) {
 	}
 }
 
-func TestCompensationTopologyRestoresPrivateBrokerRunner(t *testing.T) {
-	stops, restoreControl, restoreRunner := compensationTopology(
+func TestCompensationTopologyRestoresTriageWithoutDevelopmentRunner(t *testing.T) {
+	stops, restoreControl, restoreTriage, restoreRunner := compensationTopology(
 		lifecycle.ModeMonitorOnly,
 		true,
 		true,
+		true,
 		"agentops-control",
+		"agentops-triage",
 		"agentops-runner",
 	)
-	if strings.Join(stops, ",") != "agentops-runner" ||
+	if strings.Join(stops, ",") != "agentops-runner,agentops-triage" ||
 		!restoreControl ||
-		!restoreRunner {
+		!restoreTriage ||
+		restoreRunner {
 		t.Fatalf(
-			"MONITOR_ONLY compensation stops=%v control=%t runner=%t",
+			"MONITOR_ONLY compensation stops=%v control=%t triage=%t runner=%t",
 			stops,
 			restoreControl,
+			restoreTriage,
 			restoreRunner,
 		)
 	}
 
-	_, _, restoreDrainingRunner := compensationTopology(
+	_, _, restoreDrainingTriage, restoreDrainingRunner := compensationTopology(
 		lifecycle.ModeDraining,
 		true,
 		true,
+		true,
 		"agentops-control",
+		"agentops-triage",
 		"agentops-runner",
 	)
-	if restoreDrainingRunner {
-		t.Fatal("DRAINING compensation recreated the execution/broker runner")
+	if restoreDrainingTriage || restoreDrainingRunner {
+		t.Fatal("DRAINING compensation recreated a worker")
 	}
 }
 
@@ -303,75 +309,95 @@ func TestPRIntentPinsCredentialAndProviderReadinessBoundaries(t *testing.T) {
 }
 
 func TestCISO07IntegratedModeTopology(t *testing.T) {
-	t.Run("PR-INTENT mode-specific runner and broker boundaries", func(t *testing.T) {
+	t.Run("mode-specific triage and development boundaries", func(t *testing.T) {
 		cfg := testManagerConfig()
+		cfg.TriageGitHubToken = "triage-github-token-value-00000001"
 		cfg.RunnerGitHubToken = "runner-github-token-value-00000001"
+		cfg.TriageDBPassword = "triage-database-password-value-0001"
 		cfg.RunnerDBPassword = "runner-database-password-value-0001"
 		cfg.ControlDBPassword = "control-database-password-value-001"
+		cfg.TriageReadyLabel = "human-approved"
+		cfg.TriageClaimedLabel = "automation-owned"
 		subject := newManager(cfg, nil)
 
 		monitorControl := subject.controlSpec(lifecycle.ModeMonitorOnly, "192.0.2.10")
-		monitorRunner := subject.runnerSpec(
+		monitorTriage := subject.triageSpec(
 			lifecycle.ModeMonitorOnly,
 			"192.0.2.10",
 			"192.0.2.11",
 		)
-		if monitorControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY"] !=
-			cfg.MonitorRepository ||
+		if monitorControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"] !=
+			cfg.monitorRepositoriesCSV() ||
 			monitorControl.Environment["AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN"] !=
 				"0.0.0.0:8082" {
 			t.Fatalf("MONITOR_ONLY control broker boundary = %#v", monitorControl.Environment)
 		}
-		if monitorRunner.Environment["AGENTOPS_RUNNER_GITHUB_TOKEN"] !=
-			cfg.RunnerGitHubToken ||
-			monitorRunner.Environment["AGENTOPS_MONITOR_REPOSITORY"] !=
-				cfg.MonitorRepository ||
-			monitorRunner.Environment["HTTPS_PROXY"] !=
+		if monitorTriage.Environment["AGENTOPS_TRIAGE_GITHUB_TOKEN"] !=
+			cfg.TriageGitHubToken ||
+			monitorTriage.Environment["AGENTOPS_MONITOR_REPOSITORIES"] !=
+				cfg.monitorRepositoriesCSV() ||
+			monitorTriage.Environment["AGENTOPS_TRIAGE_READY_LABEL"] !=
+				"human-approved" ||
+			monitorTriage.Environment["AGENTOPS_TRIAGE_CLAIMED_LABEL"] !=
+				"automation-owned" ||
+			monitorTriage.Environment["HTTPS_PROXY"] !=
 				"http://192.0.2.11:8082" {
-			t.Fatal("MONITOR_ONLY runner did not receive its runner-only broker boundary")
+			t.Fatal("MONITOR_ONLY triage did not receive its broker-only boundary")
 		}
 		for _, key := range []string{"CODEX_HOME", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"} {
-			if _, present := monitorRunner.Environment[key]; present {
-				t.Fatalf("MONITOR_ONLY runner received provider credential %s", key)
+			if _, present := monitorTriage.Environment[key]; present {
+				t.Fatalf("MONITOR_ONLY triage received provider credential %s", key)
 			}
 		}
-		if len(monitorRunner.Mounts) != 1 ||
-			monitorRunner.Mounts[0].Volume != cfg.RunnerVolume {
-			t.Fatalf("MONITOR_ONLY mounts = %#v", monitorRunner.Mounts)
+		if len(monitorTriage.Mounts) != 0 {
+			t.Fatalf("MONITOR_ONLY triage mounts = %#v", monitorTriage.Mounts)
 		}
 		var monitorOutbound []map[string]any
 		if err := json.Unmarshal(
-			[]byte(monitorRunner.Environment["AGENTOPS_RUNNER_OUTBOUND_JSON"]),
+			[]byte(monitorTriage.Environment["AGENTOPS_TRIAGE_OUTBOUND_JSON"]),
 			&monitorOutbound,
 		); err != nil {
 			t.Fatal(err)
 		}
-		if len(monitorOutbound) != 3 ||
+		if len(monitorOutbound) != 2 ||
 			monitorOutbound[0]["host"] != "192.0.2.10" ||
-			monitorOutbound[1]["host"] != "github.com" ||
-			monitorOutbound[2]["host"] != "api.github.com" {
+			monitorOutbound[1]["host"] != "api.github.com" {
 			t.Fatalf("MONITOR_ONLY outbound = %#v", monitorOutbound)
 		}
 
 		activeControl := subject.controlSpec(lifecycle.ModeActive, "192.0.2.10")
+		activeTriage := subject.triageSpec(
+			lifecycle.ModeActive,
+			"192.0.2.10",
+			"192.0.2.11",
+		)
 		activeRunner := subject.runnerSpec(
 			lifecycle.ModeActive,
 			"192.0.2.10",
 			"192.0.2.11",
 		)
-		if activeControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY"] !=
-			cfg.MonitorRepository ||
+		if activeControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"] !=
+			cfg.monitorRepositoriesCSV() ||
 			activeControl.Environment["AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN"] !=
 				"0.0.0.0:8082" {
 			t.Fatalf("ACTIVE control broker boundary = %#v", activeControl.Environment)
 		}
+		if activeTriage.Environment["AGENTOPS_TRIAGE_GITHUB_TOKEN"] !=
+			cfg.TriageGitHubToken ||
+			activeTriage.Environment["AGENTOPS_RUNNER_GITHUB_TOKEN"] != "" ||
+			activeTriage.Environment["CODEX_HOME"] !=
+				"/run/agentops-credentials/codex" ||
+			len(activeTriage.Mounts) != 1 ||
+			activeTriage.Mounts[0].Target != "/run/agentops-credentials" {
+			t.Fatal("ACTIVE triage escaped its Issue-only capability boundary")
+		}
 		if activeRunner.Environment["AGENTOPS_RUNNER_GITHUB_TOKEN"] !=
 			cfg.RunnerGitHubToken ||
-			activeRunner.Environment["AGENTOPS_MONITOR_REPOSITORY"] !=
-				cfg.MonitorRepository ||
+			activeRunner.Environment["AGENTOPS_TRIAGE_GITHUB_TOKEN"] != "" ||
+			activeRunner.Environment["AGENTOPS_MONITOR_REPOSITORIES"] != "" ||
 			activeRunner.Environment["CODEX_HOME"] !=
 				"/run/agentops-credentials/codex" {
-			t.Fatal("ACTIVE runner did not receive its exact private broker/provider boundary")
+			t.Fatal("ACTIVE runner did not receive its development-only boundary")
 		}
 		if len(activeRunner.Mounts) != 2 ||
 			activeRunner.Mounts[1].Volume != cfg.CredentialVolume ||
@@ -463,12 +489,17 @@ func testManagerConfig() config {
 		CredentialVolume:  "agentops-runner-credentials",
 		PostgresContainer: "agentops-postgres",
 		ControlContainer:  "agentops-control",
+		TriageContainer:   "agentops-triage",
 		RunnerContainer:   "agentops-runner",
 		PostgresImage:     "agentops-postgres:dev",
 		ControlImage:      "control:test",
+		TriageImage:       "triage:test",
 		RunnerImage:       "runner:test",
 		ControlHostPort:   8080,
 		Provider:          "codex",
-		MonitorRepository: "mrbaron3/workflow",
+		MonitorRepositories: []string{
+			"acme/widgets",
+			"sample/design-system",
+		},
 	}
 }
