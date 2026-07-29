@@ -30,6 +30,8 @@ var resourceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$
 var credentialEnvironmentKeyPattern = regexp.MustCompile(
 	`(?:^|_)(?:TOKEN|PASSWORD|SECRET|DATABASE_URL|API_KEY|CAPABILITY)$`,
 )
+var privateCopyHelperPattern = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
+var privateCopyOperationPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 type CommandResult struct {
 	Status int      `json:"status"`
@@ -696,9 +698,9 @@ func (runtime *AppleRuntime) CopyPrivateFileWithHelper(
 	if !filepath.IsAbs(source) || !info.Mode().IsRegular() {
 		return fmt.Errorf("credential source must be an absolute regular file")
 	}
-	if !regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`).MatchString(helper) ||
+	if !privateCopyHelperPattern.MatchString(helper) ||
 		strings.Contains(helper, "..") ||
-		!regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`).MatchString(operation) {
+		!privateCopyOperationPattern.MatchString(operation) {
 		return fmt.Errorf("private copy helper invocation is invalid")
 	}
 	sourceFile, err := os.Open(source)

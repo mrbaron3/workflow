@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+const (
+	// BrokerTokenTimeout outlasts the broker's slowest legitimate mint (see
+	// defaultRequestTimeout) so a client never abandons a request the broker is
+	// still serving. Callers sizing their own context should exceed it.
+	BrokerTokenTimeout  = 25 * time.Second
+	brokerHealthTimeout = 5 * time.Second
+)
+
 type BrokerClient struct {
 	BaseURL    string
 	Capability string
@@ -51,7 +59,7 @@ func (client BrokerClient) Token(ctx context.Context) (TokenResponse, error) {
 	request.Header.Set("Accept", "application/json")
 	httpClient := client.HTTPClient
 	if httpClient == nil {
-		httpClient = brokerHTTPClient(10 * time.Second)
+		httpClient = brokerHTTPClient(BrokerTokenTimeout)
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
@@ -98,7 +106,7 @@ func (client BrokerClient) Health(ctx context.Context) error {
 	}
 	httpClient := client.HTTPClient
 	if httpClient == nil {
-		httpClient = brokerHTTPClient(5 * time.Second)
+		httpClient = brokerHTTPClient(brokerHealthTimeout)
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {

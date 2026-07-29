@@ -274,6 +274,11 @@ export AGENTOPS_GITHUB_APP_INSTALLATION_ID='<numeric installation id>'
 export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
 export AGENTOPS_GITHUB_APP_OWNER='mrbaron3'
 export AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE='<absolute mode-0600 .pem path>'
+# Holding a capability is the right to mint that role's installation token, so each is
+# its own secret: never derived from, or equal to, any other credential above.
+# 43..128 URL-safe characters, e.g. `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
+export AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY='<43+ URL-safe characters>'
+export AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY='<different 43+ URL-safe characters>'
 
 # Observation is on; AI classification and development execution remain off.
 go run ./cmd/agentopsctl \

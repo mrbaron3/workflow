@@ -22,7 +22,6 @@ function safeEnvironment(): NodeJS.ProcessEnv {
     AGENTOPS_GITHUB_BROKER_URL: 'http://github-broker:8083',
     AGENTOPS_GITHUB_BROKER_CAPABILITY: 't'.repeat(43),
     AGENTOPS_GITHUB_BROKER_ROLE: 'triage',
-    AGENTOPS_GITHUB_APP_ACTOR_LOGIN: 'agentops-test[bot]',
     AGENTOPS_MONITOR_REPOSITORIES: 'acme/widgets,sample/design-system',
     OPENAI_API_KEY: 'provider-secret-value',
     AGENTOPS_TRIAGE_MOUNTS_JSON: '[]',

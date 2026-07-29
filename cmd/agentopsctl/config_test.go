@@ -381,4 +381,61 @@ func configureTestGitHubApp(
 	value.GitHubAppSlug = "agentops-test"
 	value.GitHubAppOwner = owner
 	value.GitHubAppKeyPath = path
+	value.TriageBrokerCapability = strings.Repeat("t", 43)
+	value.RunnerBrokerCapability = strings.Repeat("r", 43)
+}
+
+// A capability is the right to mint GitHub installation tokens for one role, so
+// it may not be reachable from another credential's blast radius.
+func TestBrokerCapabilitiesAreIndependentRevocableSecrets(t *testing.T) {
+	base := func(t *testing.T) config {
+		t.Helper()
+		value := config{
+			PostgresPassword:  strings.Repeat("a", 32),
+			ControlDBPassword: strings.Repeat("b", 32),
+			TriageDBPassword:  strings.Repeat("c", 32),
+			RunnerDBPassword:  strings.Repeat("d", 32),
+			ControlToken:      strings.Repeat("e", 32),
+			DashboardToken:    strings.Repeat("f", 32),
+			WebhookSecret:     strings.Repeat("g", 32),
+		}
+		configureTestGitHubApp(t, &value, "sample")
+		return value
+	}
+	if err := base(t).validateBrokerCapabilities(
+		lifecycle.ModeActive,
+	); err != nil {
+		t.Fatalf("independent capabilities were rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*config){
+		"missing triage capability": func(value *config) {
+			value.TriageBrokerCapability = ""
+		},
+		"short triage capability": func(value *config) {
+			value.TriageBrokerCapability = strings.Repeat("t", 42)
+		},
+		"non-URL-safe triage capability": func(value *config) {
+			value.TriageBrokerCapability = strings.Repeat("t", 42) + "="
+		},
+		"missing runner capability": func(value *config) {
+			value.RunnerBrokerCapability = ""
+		},
+		"shared capability": func(value *config) {
+			value.RunnerBrokerCapability = value.TriageBrokerCapability
+		},
+		"capability reused from a database credential": func(value *config) {
+			value.RunnerDBPassword = value.RunnerBrokerCapability
+		},
+		"capability reused from the control token": func(value *config) {
+			value.ControlToken = value.TriageBrokerCapability
+		},
+	} {
+		value := base(t)
+		mutate(&value)
+		if err := value.validateBrokerCapabilities(
+			lifecycle.ModeActive,
+		); err == nil {
+			t.Errorf("%s was accepted", name)
+		}
+	}
 }

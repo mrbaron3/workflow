@@ -11,8 +11,9 @@ import (
 	"path"
 	"strings"
 
-	"github.com/dlclark/regexp2"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"github.com/mrbaron3/workflow/internal/jsonschemaregexp"
 )
 
 // The schemas are semantic copies from ProviderCommit with trailing blank
@@ -36,7 +37,7 @@ var pinnedSchemaSHA256 = map[string]string{
 
 func validatePinnedSchema(schemaRef string, body []byte) error {
 	compiler := jsonschema.NewCompiler()
-	compiler.UseRegexpEngine(compileECMAScriptRegexp)
+	compiler.UseRegexpEngine(jsonschemaregexp.Compile)
 	compiler.AssertFormat()
 	entries, err := fs.Glob(pinnedSchemaFiles, "schemas/*.schema.json")
 	if err != nil {
@@ -79,25 +80,6 @@ func validatePinnedSchema(schemaRef string, body []byte) error {
 		return fmt.Errorf("%s validation failed: %w", schemaRef, err)
 	}
 	return nil
-}
-
-type ecmaScriptRegexp regexp2.Regexp
-
-func (regexp *ecmaScriptRegexp) MatchString(value string) bool {
-	matched, err := (*regexp2.Regexp)(regexp).MatchString(value)
-	return err == nil && matched
-}
-
-func (regexp *ecmaScriptRegexp) String() string {
-	return (*regexp2.Regexp)(regexp).String()
-}
-
-func compileECMAScriptRegexp(expression string) (jsonschema.Regexp, error) {
-	compiled, err := regexp2.Compile(expression, regexp2.ECMAScript)
-	if err != nil {
-		return nil, err
-	}
-	return (*ecmaScriptRegexp)(compiled), nil
 }
 
 func validateDesignTokens(body []byte) error {

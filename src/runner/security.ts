@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { z } from 'zod';
 import {
-  githubBrokerEnvironment,
+  githubBrokerVariables,
   loadGitHubBrokerCredential,
   type GitHubBrokerCredential,
 } from '../github/credential.js';
@@ -703,7 +703,7 @@ export function minimalExecutionEnvironment(
             String(timeouts.commandTimeoutMs),
         }
       : {}),
-    ...githubBrokerEnvironment(credentials.githubBroker, source),
+    ...githubBrokerVariables(credentials.githubBroker),
     GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',
     GIT_TERMINAL_PROMPT: '0',
     ...providerCredential,

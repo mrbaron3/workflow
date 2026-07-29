@@ -4,11 +4,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mrbaron3/workflow/internal/control"
 )
 
 const SchemaVersion = 1
+
+// appActorLoginPattern mirrors actorLogin in
+// contracts/github-credential/v1/token-response.schema.json.
+var appActorLoginPattern = regexp.MustCompile(
+	`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\[bot\]$`,
+)
 
 type Role string
 
@@ -75,10 +84,26 @@ func ValidateTokenResponse(
 	if len(response.Repositories) == 0 || len(response.Repositories) > 64 {
 		return fmt.Errorf("credential response repository set is invalid")
 	}
+	seen := make(map[string]struct{}, len(response.Repositories))
+	for _, repository := range response.Repositories {
+		if !control.ValidRepositoryIdentity(repository) {
+			return fmt.Errorf("credential response repository is not canonical")
+		}
+		if _, duplicate := seen[repository]; duplicate {
+			return fmt.Errorf("credential response repository is duplicated")
+		}
+		seen[repository] = struct{}{}
+	}
 	if len(response.Permissions) == 0 || len(response.Permissions) > 16 {
 		return fmt.Errorf("credential response permission set is invalid")
 	}
-	if response.ActorLogin == "" || len(response.ActorLogin) > 128 {
+	for name, level := range response.Permissions {
+		if !safePermissionName(name) || (level != "read" && level != "write") {
+			return fmt.Errorf("credential response permission is invalid")
+		}
+	}
+	if len(response.ActorLogin) < 6 || len(response.ActorLogin) > 106 ||
+		!appActorLoginPattern.MatchString(response.ActorLogin) {
 		return fmt.Errorf("credential response actor is invalid")
 	}
 	return nil

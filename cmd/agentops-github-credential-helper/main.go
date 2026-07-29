@@ -4,14 +4,23 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/mrbaron3/workflow/internal/githubapp"
+)
+
+// Git asks for one field at a time with a fixed prompt. Matching the whole
+// prompt — rather than searching it for a keyword — is what lets the helper
+// read the destination back out and refuse to answer for anyone but GitHub.
+var askpassPromptPattern = regexp.MustCompile(
+	`^(username|password) for '([^']+)':?$`,
 )
 
 const (
@@ -38,9 +47,11 @@ func run() error {
 		return runAskpass()
 	}
 	if len(os.Args) != 2 {
-		return fmt.Errorf("expected health, seed, or seed-wait")
+		return fmt.Errorf("expected actor, health, seed, or seed-wait")
 	}
 	switch os.Args[1] {
+	case "actor":
+		return printActorLogin()
 	case "health":
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -65,15 +76,40 @@ func client() githubapp.BrokerClient {
 }
 
 func credential() (githubapp.TokenResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The broker may spend two sequential GitHub calls before it answers, so
+	// this context has to outlast the client's own transport timeout.
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		githubapp.BrokerTokenTimeout+5*time.Second,
+	)
 	defer cancel()
 	return client().Token(ctx)
 }
 
+func forbidStaticGitHubToken() error {
+	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return fmt.Errorf("static GitHub token environment is forbidden")
+		}
+	}
+	return nil
+}
+
+// printActorLogin resolves the App identity the broker already verified against
+// GitHub, so consumers read the actor from the credential itself instead of
+// keeping a second configured copy that can drift. The token stays here.
+func printActorLogin() error {
+	response, err := credential()
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(os.Stdout, response.ActorLogin)
+	return err
+}
+
 func runGitHubCLI() error {
-	if strings.TrimSpace(os.Getenv("GH_TOKEN")) != "" ||
-		strings.TrimSpace(os.Getenv("GITHUB_TOKEN")) != "" {
-		return fmt.Errorf("static GitHub token environment is forbidden")
+	if err := forbidStaticGitHubToken(); err != nil {
+		return err
 	}
 	if info, err := os.Stat(realGitHubCLI); err != nil ||
 		!info.Mode().IsRegular() {
@@ -94,13 +130,33 @@ func runGitHubCLI() error {
 	return syscall.Exec(realGitHubCLI, arguments, environment)
 }
 
-func runAskpass() error {
-	if strings.TrimSpace(os.Getenv("GH_TOKEN")) != "" ||
-		strings.TrimSpace(os.Getenv("GITHUB_TOKEN")) != "" {
-		return fmt.Errorf("static GitHub token environment is forbidden")
+// askpassField reports which credential field Git is asking for, and refuses
+// any prompt it does not recognise or that names a host other than GitHub.
+// GIT_ASKPASS answers every remote a repository happens to reference, so an
+// unrecognised prompt must fail rather than fall through to the token.
+func askpassField(arguments []string) (string, error) {
+	prompt := strings.ToLower(strings.TrimSpace(strings.Join(arguments, " ")))
+	match := askpassPromptPattern.FindStringSubmatch(prompt)
+	if match == nil {
+		return "", fmt.Errorf("credential prompt is unsupported")
 	}
-	prompt := strings.ToLower(strings.Join(os.Args[1:], " "))
-	if strings.Contains(prompt, "username") {
+	target, err := url.Parse(match[2])
+	if err != nil || target.Scheme != "https" ||
+		target.Hostname() != "github.com" {
+		return "", fmt.Errorf("credential prompt is outside github.com")
+	}
+	return match[1], nil
+}
+
+func runAskpass() error {
+	if err := forbidStaticGitHubToken(); err != nil {
+		return err
+	}
+	field, err := askpassField(os.Args[1:])
+	if err != nil {
+		return err
+	}
+	if field == "username" {
 		_, err := fmt.Fprintln(os.Stdout, "x-access-token")
 		return err
 	}

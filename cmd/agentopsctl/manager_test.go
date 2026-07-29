@@ -416,6 +416,18 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 				activeBroker.Environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] {
 			t.Fatal("ACTIVE broker did not isolate role capabilities")
 		}
+		// The broker verifies capabilities; it never presents one. Its readiness
+		// probe reaches an unauthenticated /healthz, so holding a client-side
+		// capability would only widen where that secret can be read.
+		for _, key := range []string{
+			"AGENTOPS_GITHUB_BROKER_CAPABILITY",
+			"AGENTOPS_GITHUB_BROKER_ROLE",
+			"AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE",
+		} {
+			if _, present := activeBroker.Environment[key]; present {
+				t.Fatalf("broker container carries client configuration %s", key)
+			}
+		}
 		if activeTriage.Environment["AGENTOPS_GITHUB_BROKER_CAPABILITY"] !=
 			cfg.githubBrokerCapability("triage") ||
 			activeTriage.Environment["AGENTOPS_RUNNER_GITHUB_TOKEN"] != "" ||
@@ -516,30 +528,32 @@ func TestPRIntentPostgresRotationFailsClosedAndRedactsRuntimeFailure(t *testing.
 
 func testManagerConfig() config {
 	return config{
-		Prefix:                "agentops",
-		Network:               "agentops-internal",
-		PostgresVolume:        "agentops-postgres-data",
-		RunnerVolume:          "agentops-runner-workspace",
-		CredentialVolume:      "agentops-runner-credentials",
-		GitHubAppKeyVolume:    "agentops-github-app-key",
-		PostgresContainer:     "agentops-postgres",
-		ControlContainer:      "agentops-control",
-		GitHubBrokerContainer: "agentops-github-broker",
-		TriageContainer:       "agentops-triage",
-		RunnerContainer:       "agentops-runner",
-		PostgresImage:         "agentops-postgres:dev",
-		ControlImage:          "control:test",
-		GitHubBrokerImage:     "github-broker:test",
-		TriageImage:           "triage:test",
-		RunnerImage:           "runner:test",
-		ControlHostPort:       8080,
-		Provider:              "codex",
-		TriageDBPassword:      "triage-database-password-value-0001",
-		RunnerDBPassword:      "runner-database-password-value-0001",
-		GitHubAppID:           42,
-		GitHubInstallationID:  99,
-		GitHubAppSlug:         "agentops-test",
-		GitHubAppOwner:        "acme",
+		Prefix:                 "agentops",
+		Network:                "agentops-internal",
+		PostgresVolume:         "agentops-postgres-data",
+		RunnerVolume:           "agentops-runner-workspace",
+		CredentialVolume:       "agentops-runner-credentials",
+		GitHubAppKeyVolume:     "agentops-github-app-key",
+		PostgresContainer:      "agentops-postgres",
+		ControlContainer:       "agentops-control",
+		GitHubBrokerContainer:  "agentops-github-broker",
+		TriageContainer:        "agentops-triage",
+		RunnerContainer:        "agentops-runner",
+		PostgresImage:          "agentops-postgres:dev",
+		ControlImage:           "control:test",
+		GitHubBrokerImage:      "github-broker:test",
+		TriageImage:            "triage:test",
+		RunnerImage:            "runner:test",
+		ControlHostPort:        8080,
+		Provider:               "codex",
+		TriageDBPassword:       "triage-database-password-value-0001",
+		RunnerDBPassword:       "runner-database-password-value-0001",
+		GitHubAppID:            42,
+		GitHubInstallationID:   99,
+		GitHubAppSlug:          "agentops-test",
+		GitHubAppOwner:         "acme",
+		TriageBrokerCapability: strings.Repeat("t", 43),
+		RunnerBrokerCapability: strings.Repeat("r", 43),
 		MonitorRepositories: []string{
 			"acme/widgets",
 			"acme/design-system",

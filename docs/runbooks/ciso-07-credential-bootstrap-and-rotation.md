@@ -16,6 +16,12 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    `AGENTOPS_POSTGRES_PASSWORD`, `AGENTOPS_CONTROL_DB_PASSWORD`,
    `AGENTOPS_TRIAGE_DB_PASSWORD`, `AGENTOPS_RUNNER_DB_PASSWORD`, `AGENTOPS_CONTROL_TOKEN`,
    `AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN`, and `AGENTOPS_GITHUB_WEBHOOK_SECRET`.
+   Create two more distinct random values of 43–128 URL-safe characters for
+   `AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY` and `AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY`
+   (`openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`). Holding a capability is the right to
+   mint that role's GitHub installation token, so it must never be derived from — or set equal
+   to — any database password or operator token; `agentopsctl` rejects a reused value. The runner
+   capability is required in `ACTIVE`.
 2. Create one GitHub App owned by the same account as every monitored repository. Disable
    webhooks and grant only this repository permission union: Actions read, Checks read,
    Contents write, Issues write, Pull requests write, Commit statuses read, and Workflows write.
@@ -70,9 +76,10 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    no longer authenticate, so using it for `stop` intentionally fails closed. Do not reseed
    any credential volume while a runner is attached. Replace any other intended
    operator-side values while `OFF`; the next bootstrap transaction rotates the distinct
-   control, triage, and runner database roles. That replacement also rotates the HMAC-derived
-   triage/runner broker capabilities; the next start replaces broker and workers as one desired
-   topology. For Codex login rotation, atomically replace
+   control, triage, and runner database roles. Broker capabilities are independent secrets, so
+   rotating a database password does not rotate them and rotating a capability does not touch the
+   database: export the new `AGENTOPS_GITHUB_BROKER_*_CAPABILITY` value while `OFF` and the next
+   start replaces broker and workers as one desired topology. For Codex login rotation, atomically replace
    only the private `auth.json`; never copy a whole home, `.codex` directory, SSH agent,
    development root, or container socket.
 3. Start in `MONITOR_ONLY`. Migration/bootstrap is transactional: any invalid credential,

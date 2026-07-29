@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   githubBrokerEnvironment,
+  githubBrokerVariables,
   loadGitHubBrokerCredential,
+  resolveGitHubActorLogin,
+  type ActorLoginCommand,
 } from '../src/github/credential.js';
 
 function environment(): NodeJS.ProcessEnv {
@@ -56,5 +59,52 @@ describe('GitHub App broker client boundary', () => {
       { ...environment(), ...patch },
       'triage',
     )).toThrow();
+  });
+
+  it('carries the broker variables without redefining a caller environment', () => {
+    expect(githubBrokerVariables(
+      loadGitHubBrokerCredential(environment(), 'triage'),
+    )).toEqual({
+      AGENTOPS_GITHUB_BROKER_URL: 'http://github-broker:8083/',
+      AGENTOPS_GITHUB_BROKER_CAPABILITY: 't'.repeat(43),
+      AGENTOPS_GITHUB_BROKER_ROLE: 'triage',
+    });
+  });
+});
+
+describe('GitHub App actor identity', () => {
+  const credential = (): ReturnType<typeof loadGitHubBrokerCredential> =>
+    loadGitHubBrokerCredential(environment(), 'triage');
+
+  it('reads the actor the broker already verified, never a token', async () => {
+    const run = vi.fn<ActorLoginCommand>(
+      async () => ({ stdout: 'agentops-test[bot]\n' }),
+    );
+    await expect(resolveGitHubActorLogin(credential(), run))
+      .resolves.toBe('agentops-test[bot]');
+    const [file, args, options] = run.mock.calls[0]!;
+    expect(file).toBe('/usr/local/bin/agentops-github-credential-helper');
+    expect(args).toEqual(['actor']);
+    expect(options.env).toMatchObject({
+      AGENTOPS_GITHUB_BROKER_ROLE: 'triage',
+    });
+  });
+
+  it.each([
+    ['a human login', 'operator'],
+    ['an empty answer', ''],
+    ['an uppercase App slug', 'AgentOps-Test[bot]'],
+    ['an unbracketed slug', 'agentops-test'],
+  ])('fails closed on %s', async (_name, stdout) => {
+    await expect(resolveGitHubActorLogin(
+      credential(),
+      async () => ({ stdout }),
+    )).rejects.toThrow();
+  });
+
+  it('fails closed when the broker is unreachable', async () => {
+    await expect(resolveGitHubActorLogin(credential(), async () => {
+      throw new Error('connect ECONNREFUSED');
+    })).rejects.toThrow();
   });
 });

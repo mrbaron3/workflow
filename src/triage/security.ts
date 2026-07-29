@@ -74,7 +74,6 @@ export type TriageStartupInput = z.infer<typeof TriageStartupInput>;
 
 export interface TriageCredentials {
   githubBroker: GitHubBrokerCredential;
-  githubActorLogin: string;
   providerAuthentication: RunnerProviderAuthentication;
 }
 
@@ -383,11 +382,6 @@ export function loadTriageStartup(
     config,
     credentials: {
       githubBroker,
-      githubActorLogin: z.string()
-        .min(6)
-        .max(106)
-        .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\[bot\]$/)
-        .parse(env.AGENTOPS_GITHUB_APP_ACTOR_LOGIN),
       providerAuthentication,
     },
     runtimeBoundary: runtimeBoundary ?? null,

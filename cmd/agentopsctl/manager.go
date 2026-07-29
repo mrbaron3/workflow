@@ -1289,14 +1289,13 @@ func (manager *manager) githubBrokerSpec(
 		),
 		"AGENTOPS_GITHUB_APP_SLUG":                 manager.config.GitHubAppSlug,
 		"AGENTOPS_GITHUB_APP_OWNER":                manager.config.GitHubAppOwner,
-		"AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE":     "/run/agentops-github-app/private-key.pem",
 		"AGENTOPS_MONITOR_REPOSITORIES":            manager.config.monitorRepositoriesCSV(),
 		"AGENTOPS_OPERATING_MODE":                  string(mode),
 		"AGENTOPS_GITHUB_BROKER_LISTEN":            "0.0.0.0:8083",
 		"AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY": manager.config.githubBrokerCapability("triage"),
-		"AGENTOPS_GITHUB_BROKER_URL":               "http://127.0.0.1:8083",
-		"AGENTOPS_GITHUB_BROKER_CAPABILITY":        manager.config.githubBrokerCapability("triage"),
-		"AGENTOPS_GITHUB_BROKER_ROLE":              "triage",
+		// The readiness probe calls /healthz, which is unauthenticated, so the
+		// broker's own container never receives a role capability to hold.
+		"AGENTOPS_GITHUB_BROKER_URL": "http://127.0.0.1:8083",
 	}
 	if mode == lifecycle.ModeActive {
 		environment["AGENTOPS_RUNNER_REPOSITORIES"] =
@@ -1446,7 +1445,6 @@ func (manager *manager) triageSpec(
 		"AGENTOPS_GITHUB_BROKER_URL":           "http://" + githubBrokerHost + ":8083",
 		"AGENTOPS_GITHUB_BROKER_CAPABILITY":    manager.config.githubBrokerCapability("triage"),
 		"AGENTOPS_GITHUB_BROKER_ROLE":          "triage",
-		"AGENTOPS_GITHUB_APP_ACTOR_LOGIN":      manager.config.GitHubAppSlug + "[bot]",
 		"AGENTOPS_TRIAGE_READY_LABEL":          labels[0],
 		"AGENTOPS_TRIAGE_CLAIMED_LABEL":        labels[1],
 		"AGENTOPS_TRIAGE_CANDIDATE_LABEL":      labels[2],

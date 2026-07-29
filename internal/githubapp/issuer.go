@@ -18,7 +18,13 @@ import (
 )
 
 const (
-	defaultRequestTimeout = 30 * time.Second
+	// One mint issues mintGitHubCalls sequential GitHub requests, so a broker
+	// response can take up to mintGitHubCalls*defaultRequestTimeout. That budget
+	// must stay inside brokerWriteTimeout or the broker would abandon a response
+	// it is still legitimately producing; TestTimeoutBudgetFitsWriteDeadline
+	// keeps the two in step.
+	defaultRequestTimeout = 8 * time.Second
+	mintGitHubCalls       = 2
 	maxGitHubBodyBytes    = 2 * 1024 * 1024
 	refreshBeforeExpiry   = 10 * time.Minute
 	maxCacheAge           = 15 * time.Minute
@@ -45,6 +51,15 @@ type cachedToken struct {
 	refreshAt time.Time
 }
 
+// roleState serializes minting for one role. A single issuer-wide lock would
+// hold every other role behind one slow installation call — including roles
+// that would have been served from cache — so each role owns its own mutex.
+type roleState struct {
+	mu     sync.Mutex
+	cached cachedToken
+	valid  bool
+}
+
 type Issuer struct {
 	appID          int64
 	installationID int64
@@ -56,8 +71,9 @@ type Issuer struct {
 	client         *http.Client
 	now            func() time.Time
 
-	mu    sync.Mutex
-	cache map[Role]cachedToken
+	// policies and states are fixed by NewIssuer and never mutated afterwards,
+	// so both are safe to read concurrently without a lock.
+	states map[Role]*roleState
 }
 
 func NewIssuer(
@@ -69,7 +85,7 @@ func NewIssuer(
 		config.PrivateKey == nil {
 		return nil, fmt.Errorf("GitHub App issuer identity is incomplete")
 	}
-	if !safeSlug(config.AppSlug) || !safeOwner(config.Owner) {
+	if !ValidAppSlug(config.AppSlug) || !safeOwner(config.Owner) {
 		return nil, fmt.Errorf("GitHub App slug or owner is invalid")
 	}
 	rawBase := strings.TrimSpace(config.APIBaseURL)
@@ -110,6 +126,10 @@ func NewIssuer(
 	if now == nil {
 		now = time.Now
 	}
+	states := make(map[Role]*roleState, len(policies))
+	for role := range policies {
+		states[role] = &roleState{}
+	}
 	return &Issuer{
 		appID:          config.AppID,
 		installationID: config.InstallationID,
@@ -120,7 +140,7 @@ func NewIssuer(
 		policies:       policies,
 		client:         client,
 		now:            now,
-		cache:          make(map[Role]cachedToken),
+		states:         states,
 	}, nil
 }
 
@@ -149,15 +169,16 @@ func (issuer *Issuer) Token(
 	ctx context.Context,
 	role Role,
 ) (TokenResponse, error) {
-	issuer.mu.Lock()
-	defer issuer.mu.Unlock()
 	policy, present := issuer.policies[role]
 	if !present {
 		return TokenResponse{}, fmt.Errorf("GitHub App role is not configured")
 	}
+	state := issuer.states[role]
+	state.mu.Lock()
+	defer state.mu.Unlock()
 	now := issuer.now().UTC()
-	if cached, ok := issuer.cache[role]; ok && now.Before(cached.refreshAt) {
-		return cloneTokenResponse(cached.response), nil
+	if state.valid && now.Before(state.cached.refreshAt) {
+		return cloneTokenResponse(state.cached.response), nil
 	}
 	response, err := issuer.mint(ctx, policy, now)
 	if err != nil {
@@ -168,10 +189,11 @@ func (issuer *Issuer) Token(
 	if refreshAt.After(maximum) {
 		refreshAt = maximum
 	}
-	issuer.cache[role] = cachedToken{
+	state.cached = cachedToken{
 		response:  cloneTokenResponse(response),
 		refreshAt: refreshAt,
 	}
+	state.valid = true
 	return cloneTokenResponse(response), nil
 }
 
@@ -464,15 +486,19 @@ func safePermissionName(value string) bool {
 	return true
 }
 
-func safeSlug(value string) bool {
+// ValidAppSlug reports whether value is a canonical GitHub App slug. The issuer
+// and the lifecycle manager both gate on it so a slug that starts the broker
+// cannot be one the manager would have rejected, or the reverse.
+func ValidAppSlug(value string) bool {
 	if value == "" || len(value) > 100 ||
-		value != strings.ToLower(value) {
+		value != strings.ToLower(value) ||
+		strings.HasPrefix(value, "-") || strings.HasSuffix(value, "-") {
 		return false
 	}
-	for index, character := range value {
+	for _, character := range value {
 		if (character >= 'a' && character <= 'z') ||
 			(character >= '0' && character <= '9') ||
-			(index > 0 && character == '-') {
+			character == '-' {
 			continue
 		}
 		return false

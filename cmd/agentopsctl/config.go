@@ -1,15 +1,13 @@
 package main
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -19,51 +17,53 @@ import (
 )
 
 type config struct {
-	Prefix                string
-	Network               string
-	PostgresVolume        string
-	RunnerVolume          string
-	CredentialVolume      string
-	GitHubAppKeyVolume    string
-	PostgresContainer     string
-	ControlContainer      string
-	GitHubBrokerContainer string
-	TriageContainer       string
-	RunnerContainer       string
-	PostgresImage         string
-	ControlImage          string
-	GitHubBrokerImage     string
-	TriageImage           string
-	RunnerImage           string
-	ProjectRoot           string
-	ControlHostPort       int
-	PostgresPassword      string
-	NextPostgresPassword  string
-	ControlDBPassword     string
-	TriageDBPassword      string
-	RunnerDBPassword      string
-	ControlToken          string
-	DashboardToken        string
-	WebhookSecret         string
-	ControlGitHubToken    string
-	TriageGitHubToken     string
-	RunnerGitHubToken     string
-	GitHubAppID           int64
-	GitHubInstallationID  int64
-	GitHubAppSlug         string
-	GitHubAppOwner        string
-	GitHubAppKeyPath      string
-	Provider              string
-	ProviderToken         string
-	CodexAuthPath         string
-	MonitorRepositories   []string
-	RunnerRepositories    []string
-	TriageReadyLabel      string
-	TriageClaimedLabel    string
-	TriageCandidateLabel  string
-	TriageBlockedLabel    string
-	TriageNeedsInfoLabel  string
-	TriageContextPaths    string
+	Prefix                 string
+	Network                string
+	PostgresVolume         string
+	RunnerVolume           string
+	CredentialVolume       string
+	GitHubAppKeyVolume     string
+	PostgresContainer      string
+	ControlContainer       string
+	GitHubBrokerContainer  string
+	TriageContainer        string
+	RunnerContainer        string
+	PostgresImage          string
+	ControlImage           string
+	GitHubBrokerImage      string
+	TriageImage            string
+	RunnerImage            string
+	ProjectRoot            string
+	ControlHostPort        int
+	PostgresPassword       string
+	NextPostgresPassword   string
+	ControlDBPassword      string
+	TriageDBPassword       string
+	RunnerDBPassword       string
+	ControlToken           string
+	DashboardToken         string
+	WebhookSecret          string
+	ControlGitHubToken     string
+	TriageGitHubToken      string
+	RunnerGitHubToken      string
+	GitHubAppID            int64
+	GitHubInstallationID   int64
+	GitHubAppSlug          string
+	GitHubAppOwner         string
+	GitHubAppKeyPath       string
+	TriageBrokerCapability string
+	RunnerBrokerCapability string
+	Provider               string
+	ProviderToken          string
+	CodexAuthPath          string
+	MonitorRepositories    []string
+	RunnerRepositories     []string
+	TriageReadyLabel       string
+	TriageClaimedLabel     string
+	TriageCandidateLabel   string
+	TriageBlockedLabel     string
+	TriageNeedsInfoLabel   string
+	TriageContextPaths     string
 }
 
 func loadConfig() (config, error) {
@@ -171,6 +171,12 @@ func loadConfig() (config, error) {
 		GitHubAppKeyPath: strings.TrimSpace(
 			os.Getenv("AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE"),
 		),
+		TriageBrokerCapability: strings.TrimSpace(
+			os.Getenv("AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY"),
+		),
+		RunnerBrokerCapability: strings.TrimSpace(
+			os.Getenv("AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"),
+		),
 		Provider:      provider,
 		ProviderToken: providerToken,
 		CodexAuthPath: codexAuthPath,
@@ -267,17 +273,67 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 	return nil
 }
 
+// brokerCapabilityPattern is the shape both the Go broker and the TypeScript
+// workers accept, so a capability that starts agentopsctl can never be one a
+// worker rejects at runtime.
+var brokerCapabilityPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43,128}$`)
+
+func (value config) validateBrokerCapabilities(mode lifecycle.Mode) error {
+	if !brokerCapabilityPattern.MatchString(value.TriageBrokerCapability) {
+		return fmt.Errorf(
+			"AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY must be 43..128 URL-safe characters",
+		)
+	}
+	if mode == lifecycle.ModeActive &&
+		!brokerCapabilityPattern.MatchString(value.RunnerBrokerCapability) {
+		return fmt.Errorf(
+			"AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY must be 43..128 URL-safe characters in ACTIVE mode",
+		)
+	}
+	if value.TriageBrokerCapability == value.RunnerBrokerCapability {
+		return fmt.Errorf(
+			"triage and development GitHub broker capabilities must be distinct",
+		)
+	}
+	// Holding a capability is the right to mint GitHub installation tokens for
+	// that role. Sharing a value with any other credential would put that right
+	// inside a trust domain the broker exists to keep it out of.
+	for _, existing := range []string{
+		value.PostgresPassword,
+		value.ControlDBPassword,
+		value.TriageDBPassword,
+		value.RunnerDBPassword,
+		value.ControlToken,
+		value.DashboardToken,
+		value.WebhookSecret,
+	} {
+		if existing == "" {
+			continue
+		}
+		if existing == value.TriageBrokerCapability ||
+			existing == value.RunnerBrokerCapability {
+			return fmt.Errorf(
+				"GitHub broker capabilities must not repeat another credential",
+			)
+		}
+	}
+	return nil
+}
+
 func (value config) validateGitHubApp(mode lifecycle.Mode) error {
 	if value.GitHubAppID <= 0 || value.GitHubInstallationID <= 0 {
 		return fmt.Errorf(
 			"AGENTOPS_GITHUB_APP_ID and AGENTOPS_GITHUB_APP_INSTALLATION_ID are required",
 		)
 	}
-	if !safeGitHubAppSlug(value.GitHubAppSlug) ||
+	if !githubapp.ValidAppSlug(value.GitHubAppSlug) ||
 		!control.ValidRepositoryIdentity(value.GitHubAppOwner+"/repository") {
 		return fmt.Errorf(
 			"AGENTOPS_GITHUB_APP_SLUG and AGENTOPS_GITHUB_APP_OWNER must be canonical",
 		)
+	}
+	if err := value.validateBrokerCapabilities(mode); err != nil {
+		return err
 	}
 	for _, repository := range value.MonitorRepositories {
 		if !strings.HasPrefix(repository, value.GitHubAppOwner+"/") {
@@ -349,31 +405,15 @@ func validateGitHubAppKeySource(source string) error {
 	return nil
 }
 
-func safeGitHubAppSlug(value string) bool {
-	if value == "" || len(value) > 100 || value != strings.ToLower(value) {
-		return false
-	}
-	for index, character := range value {
-		if (character >= 'a' && character <= 'z') ||
-			(character >= '0' && character <= '9') ||
-			(index > 0 && index < len(value)-1 && character == '-') {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
+// githubBrokerCapability returns the role's own broker capability. It is a
+// first-class secret rather than something derived from another credential:
+// whoever holds it can mint GitHub installation tokens for that role, so it
+// must be revocable — and its holders auditable — independently of PostgreSQL.
 func (value config) githubBrokerCapability(role string) string {
-	password := value.TriageDBPassword
 	if role == "runner" {
-		password = value.RunnerDBPassword
+		return value.RunnerBrokerCapability
 	}
-	mac := hmac.New(sha256.New, []byte(password))
-	_, _ = mac.Write(
-		[]byte("agentops/github-credential-broker/v1/" + role),
-	)
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return value.TriageBrokerCapability
 }
 
 func (value config) usesCodexAuthFile() bool {

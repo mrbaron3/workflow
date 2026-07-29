@@ -1,5 +1,15 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { z } from 'zod';
 import { RunnerExecutionError } from '../runner/errors.js';
+
+const execFileAsync = promisify(execFile);
+
+const CREDENTIAL_HELPER = '/usr/local/bin/agentops-github-credential-helper';
+
+/** Mirrors actorLogin in contracts/github-credential/v1/token-response.schema.json. */
+const ActorLogin = z.string().min(6).max(106)
+  .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\[bot\]$/);
 
 export const GITHUB_BROKER_ENV_KEYS = [
   'AGENTOPS_GITHUB_BROKER_URL',
@@ -78,6 +88,22 @@ export function loadGitHubBrokerCredential(
   };
 }
 
+/**
+ * Just the three broker variables, for callers that already own the rest of the
+ * child environment. Composing this into an existing environment keeps that
+ * caller's PATH/HOME authoritative instead of silently redefining them.
+ */
+export function githubBrokerVariables(
+  credential: GitHubBrokerCredential,
+): NodeJS.ProcessEnv {
+  return {
+    AGENTOPS_GITHUB_BROKER_URL: credential.url,
+    AGENTOPS_GITHUB_BROKER_CAPABILITY: credential.capability,
+    AGENTOPS_GITHUB_BROKER_ROLE: credential.role,
+  };
+}
+
+/** The whole minimal environment for a `gh`/helper subprocess. */
 export function githubBrokerEnvironment(
   credential: GitHubBrokerCredential,
   source: NodeJS.ProcessEnv = process.env,
@@ -85,11 +111,56 @@ export function githubBrokerEnvironment(
   return {
     PATH: source.PATH ?? '/usr/local/bin:/usr/bin:/bin',
     HOME: '/home/agentops',
-    AGENTOPS_GITHUB_BROKER_URL: credential.url,
-    AGENTOPS_GITHUB_BROKER_CAPABILITY: credential.capability,
-    AGENTOPS_GITHUB_BROKER_ROLE: credential.role,
+    ...githubBrokerVariables(credential),
     ...(source.HTTP_PROXY ? { HTTP_PROXY: source.HTTP_PROXY } : {}),
     ...(source.HTTPS_PROXY ? { HTTPS_PROXY: source.HTTPS_PROXY } : {}),
     ...(source.NO_PROXY ? { NO_PROXY: source.NO_PROXY } : {}),
   };
+}
+
+export type ActorLoginCommand = (
+  file: string,
+  args: readonly string[],
+  options: { env: NodeJS.ProcessEnv; timeout: number },
+) => Promise<{ stdout: string }>;
+
+const defaultActorLoginCommand: ActorLoginCommand = async (
+  file,
+  args,
+  options,
+) => {
+  const result = await execFileAsync(file, [...args], {
+    encoding: 'utf8',
+    timeout: options.timeout,
+    maxBuffer: 8 * 1024,
+    killSignal: 'SIGKILL',
+    env: options.env,
+  });
+  return { stdout: result.stdout };
+};
+
+/**
+ * The broker verified this identity against the live GitHub App before it
+ * minted anything, so the actor is read back out of the credential rather than
+ * configured a second time where it could drift from the App itself. The helper
+ * prints only the login — the installation token never enters this process.
+ */
+export async function resolveGitHubActorLogin(
+  credential: GitHubBrokerCredential,
+  run: ActorLoginCommand = defaultActorLoginCommand,
+): Promise<string> {
+  let stdout: string;
+  try {
+    ({ stdout } = await run(CREDENTIAL_HELPER, ['actor'], {
+      env: githubBrokerEnvironment(credential),
+      timeout: 30_000,
+    }));
+  } catch {
+    failure('GitHub App actor identity was unavailable from the broker');
+  }
+  const parsed = ActorLogin.safeParse(stdout!.trim());
+  if (!parsed.success) {
+    failure('GitHub App actor identity from the broker is invalid');
+  }
+  return parsed.data;
 }

@@ -13,7 +13,12 @@ import (
 	"time"
 )
 
-const maxBrokerRequestBytes = 4096
+const (
+	maxBrokerRequestBytes = 4096
+	// brokerWriteTimeout must outlast the slowest legitimate mint; see
+	// defaultRequestTimeout.
+	brokerWriteTimeout = 35 * time.Second
+)
 
 type TokenIssuer interface {
 	Token(context.Context, Role) (TokenResponse, error)
@@ -136,7 +141,7 @@ func HTTPServer(address string, handler http.Handler) *http.Server {
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      35 * time.Second,
+		WriteTimeout:      brokerWriteTimeout,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    16 * 1024,
 	}
