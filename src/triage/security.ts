@@ -1,6 +1,10 @@
 import path from 'node:path';
 import { z } from 'zod';
 import { CanonicalRepository } from '../control-store/types.js';
+import {
+  loadGitHubBrokerCredential,
+  type GitHubBrokerCredential,
+} from '../github/credential.js';
 import { assertContainerNeutralPath } from '../runtime/paths.js';
 import {
   validateCodexAuthFile,
@@ -69,7 +73,8 @@ export const TriageStartupInput = z.object({
 export type TriageStartupInput = z.infer<typeof TriageStartupInput>;
 
 export interface TriageCredentials {
-  githubToken: string;
+  githubBroker: GitHubBrokerCredential;
+  githubActorLogin: string;
   providerAuthentication: RunnerProviderAuthentication;
 }
 
@@ -306,8 +311,11 @@ export function loadTriageStartup(
     `${destination.host}:${destination.port}`));
   const databaseDestination =
     `${database.hostname.toLowerCase()}:${Number(database.port || 5432)}`;
+  const githubBroker = loadGitHubBrokerCredential(env, 'triage');
+  const githubBrokerUrl = new URL(githubBroker.url);
   const requiredDestinations = new Set([
     databaseDestination,
+    `${githubBrokerUrl.hostname.toLowerCase()}:${githubBrokerUrl.port}`,
     'api.github.com:443',
   ]);
   if (providerAuth === 'api-key') {
@@ -374,7 +382,12 @@ export function loadTriageStartup(
   return {
     config,
     credentials: {
-      githubToken: required(env, 'AGENTOPS_TRIAGE_GITHUB_TOKEN'),
+      githubBroker,
+      githubActorLogin: z.string()
+        .min(6)
+        .max(106)
+        .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\[bot\]$/)
+        .parse(env.AGENTOPS_GITHUB_APP_ACTOR_LOGIN),
       providerAuthentication,
     },
     runtimeBoundary: runtimeBoundary ?? null,

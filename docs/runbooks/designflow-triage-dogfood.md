@@ -21,13 +21,16 @@ GitHub Issue
 control（GitHub credentialなし）
     │ typed monitor request / identity-only triage job
     ▼
-triage container（triage token、workspace/git/SSHなし）
+GitHub App broker（秘密鍵を持つ唯一のcontainer、host publishなし）
+    │ repository/permission限定・短期token
+    ▼
+triage container（triage capability、workspace/git/SSHなし）
     │ managed label + marker comment
     │
     └─ exact human ready label
              │ atomic DB promotion
              ▼
-development runner（別token、private workspace、ACTIVEだけ）
+development runner（別capability、private workspace、ACTIVEだけ）
 ```
 
 ## Bootstrap
@@ -36,8 +39,12 @@ development runner（別token、private workspace、ACTIVEだけ）
 
    ```sh
    export AGENTOPS_MONITOR_REPOSITORIES='mrbaron3/workflow,mrbaron3/designflow'
-   export AGENTOPS_TRIAGE_GITHUB_TOKEN='<metadata/content read + Issues read/write>'
-   export AGENTOPS_RUNNER_GITHUB_TOKEN='<distinct development token; ACTIVE only>'
+   export AGENTOPS_RUNNER_REPOSITORIES='mrbaron3/designflow'
+   export AGENTOPS_GITHUB_APP_ID='<numeric App id>'
+   export AGENTOPS_GITHUB_APP_INSTALLATION_ID='<numeric installation id>'
+   export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
+   export AGENTOPS_GITHUB_APP_OWNER='mrbaron3'
+   export AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE='<absolute mode-0600 .pem path>'
    export AGENTOPS_TRIAGE_READY_LABEL='ready'
    export AGENTOPS_TRIAGE_CLAIMED_LABEL='agent-claimed'
    export AGENTOPS_TRIAGE_CANDIDATE_LABEL='ready-candidate'
@@ -46,7 +53,9 @@ development runner（別token、private workspace、ACTIVEだけ）
    export AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON='["README.md","AGENTS.md","docs/NORTH_STAR.md","docs/ROADMAP.md","docs/HANDOFF.md"]'
    ```
 
-   `AGENTOPS_CONTROL_GITHUB_TOKEN`は設定しない。triage tokenとdevelopment tokenは同一値にできない。
+   `GH_TOKEN`、`GITHUB_TOKEN`、`AGENTOPS_{CONTROL,TRIAGE,RUNNER}_GITHUB_TOKEN`は設定しない。
+   AppはWorkflowとDesignflowだけへinstallし、permission union／role別token subsetは
+   [ADR-0019](../decisions/ADR-0019-github-app-credential-broker.md)に固定する。
    4つのDB password、control token、Dashboard bootstrap token、webhook secretも
    [credential runbook](ciso-07-credential-bootstrap-and-rotation.md)どおり別値にする。
 
@@ -120,6 +129,7 @@ Registration-owned configurationとして渡す変更を追跡する。
 - 任意の2 repositoryを同時allowlist／Registrationへ置き、brokerが混同せず観測する。
 - Issue本文中の命令を実行せず、strict triage decisionとmanaged label/commentだけを作る。
 - AIは`ready`を付けられず、人間のexact label後だけdevelopment jobがatomicに作られる。
-- triage containerにworkspace、git／SSH、development token、control token、host port/socketがない。
+- triage containerにworkspace、git／SSH、runner capability、control token、host port/socketがない。
+- App秘密鍵はbrokerだけにread-only mountされ、triage／runner／controlから読めない。
 - Designflowのdirect Node contract checkerをrepository名分岐なしで実行する。
 - 最後にlive GitHub上でclaim→PR→current-head review→required check→expected-head merge→Issue closeを1件通す。

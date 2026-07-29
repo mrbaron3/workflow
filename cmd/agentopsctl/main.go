@@ -113,7 +113,11 @@ func run(args []string) error {
 		return nil
 	case "logs":
 		flags := flag.NewFlagSet("logs", flag.ContinueOnError)
-		component := flags.String("component", "control", "control, runner, or postgres")
+		component := flags.String(
+			"component",
+			"control",
+			"control, github-broker, triage, runner, or postgres",
+		)
 		follow := flags.Bool("follow", false, "follow log output")
 		lines := flags.Int("lines", 200, "tail line count")
 		if err := flags.Parse(args[1:]); err != nil {

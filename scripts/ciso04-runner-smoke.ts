@@ -348,6 +348,7 @@ async function main(): Promise<void> {
 
   const outbound = JSON.stringify([
     { host: postgresIp, port: 5432 },
+    { host: postgresIp, port: 8083 },
     { host: 'github.com', port: 443 },
     { host: 'api.github.com', port: 443 },
     { host: 'api.openai.com', port: 443 },
@@ -377,7 +378,11 @@ async function main(): Promise<void> {
     '--env',
     `AGENTOPS_RUNNER_DATABASE_URL=${runnerUrl}`,
     '--env',
-    'AGENTOPS_RUNNER_GITHUB_TOKEN=grounded-no-side-effect-token',
+    `AGENTOPS_GITHUB_BROKER_URL=http://${postgresIp}:8083`,
+    '--env',
+    `AGENTOPS_GITHUB_BROKER_CAPABILITY=${'r'.repeat(43)}`,
+    '--env',
+    'AGENTOPS_GITHUB_BROKER_ROLE=runner',
     '--env',
     'OPENAI_API_KEY=grounded-no-side-effect-token',
     '--env',

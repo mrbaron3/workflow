@@ -9,6 +9,14 @@ import {
   PrivateMonitorBroker,
 } from '../src/runner/monitor-broker.js';
 
+const testAuthorization = 'triage-github-token-opaque';
+const githubBroker = {
+  url: 'http://github-broker:8083/',
+  capability: 'a'.repeat(43),
+  role: 'triage' as const,
+};
+const fetchAuthorization = async () => testAuthorization;
+
 const request: MonitorBrokerRequest = {
   id: '11111111-1111-4111-8111-111111111111',
   registrationId: '22222222-2222-4222-8222-222222222222',
@@ -47,8 +55,10 @@ describe('typed private-repository monitor broker', () => {
       options?: { env?: NodeJS.ProcessEnv } | null,
     ) => {
       expect(file).toBe('gh');
-      expect(args).not.toContain('triage-github-token-opaque');
-      expect(options?.env?.GH_TOKEN).toBe('triage-github-token-opaque');
+      expect(args).not.toContain(testAuthorization);
+      expect(options?.env?.GH_TOKEN).toBeUndefined();
+      expect(options?.env?.AGENTOPS_GITHUB_BROKER_CAPABILITY)
+        .toBe(githubBroker.capability);
       return {
         stdout: JSON.stringify(
           execFileImpl.mock.calls.length === 1
@@ -61,7 +71,7 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       execFileImpl,
     });
     await broker.runOnce();
@@ -113,7 +123,7 @@ describe('typed private-repository monitor broker', () => {
         store: scenarioStore,
         workerId: 'triage-1',
         repositories: ['acme/widgets'],
-        githubToken: 'triage-github-token-opaque',
+        githubBroker,
         ...scenario.options,
       });
       await broker.runOnce();
@@ -151,8 +161,9 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       fetchImpl,
+      fetchAuthorization,
       intervalMs: 1,
     });
     await broker.run();
@@ -189,8 +200,9 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       fetchImpl,
+      fetchAuthorization,
     });
     expect(await broker.runOnce()).toBe(true);
     expect(store.failMonitorBrokerRequest).not.toHaveBeenCalled();
@@ -227,8 +239,9 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       fetchImpl,
+      fetchAuthorization,
     });
     expect(await broker.runOnce()).toBe(true);
     expect(store.completeMonitorBrokerRequest).not.toHaveBeenCalled();
@@ -246,8 +259,9 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['other/repository', 'design-lab/component-catalog'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       fetchImpl: vi.fn(),
+      fetchAuthorization,
     });
     await expect(broker.runOnce()).resolves.toBe(true);
     expect(store.failMonitorBrokerRequest).toHaveBeenCalledWith(
@@ -257,7 +271,7 @@ describe('typed private-repository monitor broker', () => {
       store: storeFor(),
       workerId: 'triage-1',
       repositories: ['Upper/Repo'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
     })).toThrow(/canonical repository allowlist/);
   });
 
@@ -267,9 +281,10 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       maxResponseBytes: 1,
       fetchImpl: vi.fn(async () => new Response('[]', { status: 200 })),
+      fetchAuthorization,
     });
     await broker.runOnce();
     expect(store.failMonitorBrokerRequest).toHaveBeenCalledWith(
@@ -298,8 +313,9 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       fetchImpl,
+      fetchAuthorization,
       maxPages: 1,
     });
     expect(await broker.runOnce()).toBe(true);
@@ -322,8 +338,9 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       fetchImpl: vi.fn(),
+      fetchAuthorization,
       log,
     });
     await expect(broker.runOnce()).resolves.toBe(false);
@@ -341,8 +358,9 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       fetchImpl: vi.fn(async () => new Response('[]', { status: 200 })),
+      fetchAuthorization,
     });
     await expect(broker.runOnce()).resolves.toBe(true);
     expect(store.failMonitorBrokerRequest).not.toHaveBeenCalled();
@@ -358,8 +376,9 @@ describe('typed private-repository monitor broker', () => {
       store,
       workerId: 'triage-1',
       repositories: ['acme/widgets'],
-      githubToken: 'triage-github-token-opaque',
+      githubBroker,
       fetchImpl: vi.fn(async () => new Response('invalid json', { status: 200 })),
+      fetchAuthorization,
       log,
     });
     await expect(broker.runOnce()).resolves.toBe(true);

@@ -39,6 +39,9 @@ export function commandEnvironment(
       'GITHUB_TOKEN',
       'GIT_ASKPASS',
       'GIT_TERMINAL_PROMPT',
+      'AGENTOPS_GITHUB_BROKER_URL',
+      'AGENTOPS_GITHUB_BROKER_CAPABILITY',
+      'AGENTOPS_GITHUB_BROKER_ROLE',
     ]) {
       delete env[key];
     }

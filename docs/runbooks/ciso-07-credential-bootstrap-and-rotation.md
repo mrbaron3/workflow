@@ -2,9 +2,10 @@
 
 The integrated topology has separate PostgreSQL administrator, control, triage, and development
 runner database roles. Control writes only typed Issue/PR monitor requests to PostgreSQL and never
-receives a GitHub credential. Triage receives the monitor/Issue GitHub credential and returns
-bounded work identities through the durable broker; the development runner receives a different
-GitHub credential only in `ACTIVE`. Codex uses either
+receives a GitHub credential. A dedicated internal-only GitHub App broker is the only process that
+reads the App private key. Triage and the development runner receive distinct broker capabilities;
+their `gh`/Git helpers request repository/permission-scoped installation tokens in memory at each
+operation. Static PATs and a shared operator `gh auth` credential are rejected. Codex uses either
 `OPENAI_API_KEY` or a private `auth.json`; login-file mode copies that one regular file into
 the managed `agentops-*-runner-credentials` volume and mounts the volume read-only at
 `/run/agentops-credentials`. It never bind-mounts the Mac home directory.
@@ -15,13 +16,24 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    `AGENTOPS_POSTGRES_PASSWORD`, `AGENTOPS_CONTROL_DB_PASSWORD`,
    `AGENTOPS_TRIAGE_DB_PASSWORD`, `AGENTOPS_RUNNER_DB_PASSWORD`, `AGENTOPS_CONTROL_TOKEN`,
    `AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN`, and `AGENTOPS_GITHUB_WEBHOOK_SECRET`.
-2. Export a triage token as `AGENTOPS_TRIAGE_GITHUB_TOKEN`. It needs repository metadata/content
-   read plus Issues read/write for the configured repositories, but not Contents write,
-   Pull Requests write, workflow, administration, or package permissions. In `ACTIVE`, export a
-   different development token as `AGENTOPS_RUNNER_GITHUB_TOKEN` with the minimum permissions
-   needed by the existing claim/branch/PR/check/merge path. Leave
-   `AGENTOPS_CONTROL_GITHUB_TOKEN` unset. Values are inherited by Apple Container under
-   environment keys and are never included in CLI arguments or evidence.
+2. Create one GitHub App owned by the same account as every monitored repository. Disable
+   webhooks and grant only this repository permission union: Actions read, Checks read,
+   Contents write, Issues write, Pull requests write, Commit statuses read, and Workflows write.
+   Select only the repositories in `AGENTOPS_MONITOR_REPOSITORIES` when installing it. Record the
+   numeric App id, installation id, canonical slug, and owner as
+   `AGENTOPS_GITHUB_APP_ID`, `AGENTOPS_GITHUB_APP_INSTALLATION_ID`,
+   `AGENTOPS_GITHUB_APP_SLUG`, and `AGENTOPS_GITHUB_APP_OWNER`. Save the generated private key as
+   one absolute `.pem` file with mode `0600` or stricter and set
+   `AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE`. Set `AGENTOPS_RUNNER_REPOSITORIES` to the exact subset
+   that development execution may modify. Leave `GH_TOKEN`, `GITHUB_TOKEN`, and every
+   `AGENTOPS_*_GITHUB_TOKEN` unset.
+
+   `agentopsctl` validates the RSA PEM, streams it over stdin into the
+   `agentops-*-github-app-key` named volume, and mounts it read-only only in
+   `agentops-*-github-broker`. The broker verifies App/installation identity and mints exact role
+   scopes before reporting ready. `MONITOR_ONLY` triage receives Contents/Issues/Pull requests
+   read. `ACTIVE` triage receives Contents read, Issues write, Pull requests read. `ACTIVE` runner
+   receives the configured runner repository subset plus the development permission set.
 3. For Codex login-file mode, leave `OPENAI_API_KEY` unset and set
    `AGENTOPS_RUNNER_CODEX_AUTH_FILE` to the absolute private `auth.json`, mode `0600` or
    stricter. `agentopsctl` rejects symlinks, non-regular files, alternative filenames, and
@@ -29,11 +41,12 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    on stdin, writes only `/credentials/codex/auth.json` in the named credential volume,
    changes ownership to uid/gid `65532`, verifies mode `0400`, and is removed. No host path
    or credential bytes enter runtime argv/logs; the source path is redacted from errors.
-4. Set `AGENTOPS_MONITOR_REPOSITORIES` to a comma-separated 1–64 item canonical allowlist.
+4. Set `AGENTOPS_MONITOR_REPOSITORIES` to a comma-separated 1–64 item canonical allowlist whose
+   repositories all belong to `AGENTOPS_GITHUB_APP_OWNER`.
    Run `agentopsctl start --mode MONITOR_ONLY --build`, create a Registration for every intended
    repository through the Dashboard/API, and verify readiness and repository state.
    The allowlist and Registration are separate mandatory fences. `MONITOR_ONLY` starts
-   PostgreSQL, control, and triage broker only; it receives no provider token/Codex credential
+   PostgreSQL, control, GitHub App broker, and triage only; triage receives no provider token/Codex credential
    volume and cannot classify or promote an Issue. Then explicitly run
    `agentopsctl start --mode ACTIVE`. ACTIVE adds provider egress/auth to triage, performs a
    bounded nonlogging provider-authentication probe, and starts the separately credentialed
@@ -57,7 +70,9 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    no longer authenticate, so using it for `stop` intentionally fails closed. Do not reseed
    any credential volume while a runner is attached. Replace any other intended
    operator-side values while `OFF`; the next bootstrap transaction rotates the distinct
-   control, triage, and runner database roles. For Codex login rotation, atomically replace
+   control, triage, and runner database roles. That replacement also rotates the HMAC-derived
+   triage/runner broker capabilities; the next start replaces broker and workers as one desired
+   topology. For Codex login rotation, atomically replace
    only the private `auth.json`; never copy a whole home, `.codex` directory, SSH agent,
    development root, or container socket.
 3. Start in `MONITOR_ONLY`. Migration/bootstrap is transactional: any invalid credential,
@@ -69,10 +84,16 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    evidence digest is derived from credential bytes. Mutable-tag, spec, or authentication
    drift requires this volume-preserving drain/stop/restart path and is never silently
    accepted.
-4. Verify each rotated role can authenticate and its old credential fails. Verify exact
+4. GitHub installation tokens rotate automatically and are never operator-managed. To rotate the
+   App private key, while `OFF` generate a second key in GitHub, atomically replace the private
+   `AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE`, start `MONITOR_ONLY`, and verify broker readiness and a
+   poll before deleting the prior key in GitHub. To change repositories or permissions, update
+   the GitHub App installation first, update the exact local allowlists, and restart; the broker
+   fails closed if the issued token returns a different repository or permission set.
+5. Verify each rotated role can authenticate and its old credential fails. Verify exact
    container mounts/publications and then explicitly return to `ACTIVE`.
 
-Credential values, token prefixes, auth-file digests, and token fingerprints are forbidden
+Credential values, PEM/JWT/token prefixes, auth-file digests, and token fingerprints are forbidden
 from committed logs and evidence. Evidence records only credential class, owner boundary,
 file mode, and pass/fail results.
 

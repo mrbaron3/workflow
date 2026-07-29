@@ -1,6 +1,11 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { z } from 'zod';
+import {
+  githubBrokerEnvironment,
+  loadGitHubBrokerCredential,
+  type GitHubBrokerCredential,
+} from '../github/credential.js';
 import { assertContainerNeutralPath } from '../runtime/paths.js';
 import { RunnerExecutionError } from './errors.js';
 
@@ -71,7 +76,7 @@ export type RunnerProviderAuthentication =
   | { kind: 'codex-login'; provider: 'codex'; codexHome: string };
 
 export interface RunnerCredentials {
-  githubToken: string;
+  githubBroker: GitHubBrokerCredential;
   providerAuthentication: RunnerProviderAuthentication;
 }
 
@@ -586,8 +591,11 @@ export function loadRunnerStartup(
       false,
     );
   }
+  const githubBroker = loadGitHubBrokerCredential(env, 'runner');
+  const githubBrokerUrl = new URL(githubBroker.url);
   const required = new Set([
     `${databaseHost}:${databasePort}`,
+    `${githubBrokerUrl.hostname.toLowerCase()}:${githubBrokerUrl.port}`,
     'github.com:443',
     'api.github.com:443',
   ]);
@@ -656,7 +664,7 @@ export function loadRunnerStartup(
     config,
     runtimeBoundary: runtimeBoundary ?? null,
     credentials: {
-      githubToken: requiredSecret(env, 'AGENTOPS_RUNNER_GITHUB_TOKEN'),
+      githubBroker,
       providerAuthentication,
     },
   };
@@ -695,8 +703,7 @@ export function minimalExecutionEnvironment(
             String(timeouts.commandTimeoutMs),
         }
       : {}),
-    GH_TOKEN: credentials.githubToken,
-    GITHUB_TOKEN: credentials.githubToken,
+    ...githubBrokerEnvironment(credentials.githubBroker, source),
     GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',
     GIT_TERMINAL_PROMPT: '0',
     ...providerCredential,

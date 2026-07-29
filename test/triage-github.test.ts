@@ -5,7 +5,12 @@ import {
 } from '../src/triage/github.js';
 import { DEFAULT_TRIAGE_POLICY } from '../src/triage/policy.js';
 
-const token = 'triage-github-token-opaque';
+const githubBroker = {
+  url: 'http://github-broker:8083/',
+  capability: 't'.repeat(43),
+  role: 'triage' as const,
+};
+const actorLogin = 'agentops-test[bot]';
 
 function endpoint(args: readonly string[]): string {
   return args.find((argument) => argument.startsWith('/repos/')) ?? '';
@@ -36,7 +41,11 @@ describe('typed GitHub triage boundary', () => {
       }
       throw new Error(`unexpected typed endpoint ${target}`);
     });
-    const client = new TypedGhTriageClient(token, run);
+    const client = new TypedGhTriageClient(
+      githubBroker,
+      actorLogin,
+      run,
+    );
     await expect(client.repositoryContext(
       'acme/widgets',
       7,
@@ -46,13 +55,17 @@ describe('typed GitHub triage boundary', () => {
       openIssues: [],
     });
 
-    const unavailable = new TypedGhTriageClient(token, async (args) => {
+    const unavailable = new TypedGhTriageClient(
+      githubBroker,
+      actorLogin,
+      async (args) => {
       const target = endpoint(args);
       if (target === '/repos/acme/widgets') {
         return { stdout: JSON.stringify({ default_branch: 'main' }) };
       }
       throw new Error('network connection reset');
-    });
+      },
+    );
     await expect(unavailable.repositoryContext(
       'acme/widgets',
       7,
@@ -83,7 +96,11 @@ describe('typed GitHub triage boundary', () => {
       }
       throw new Error(`unexpected typed endpoint ${endpoint(args)}`);
     });
-    const client = new TypedGhTriageClient(token, run);
+    const client = new TypedGhTriageClient(
+      githubBroker,
+      actorLogin,
+      run,
+    );
     await client.ensureManagedLabels('acme/widgets', DEFAULT_TRIAGE_POLICY);
     const creations = calls.filter((args) =>
       args.includes('--method')
@@ -116,7 +133,11 @@ describe('typed GitHub triage boundary', () => {
       if (args.includes('DELETE')) return { stdout: '{}' };
       throw new Error(`unexpected typed endpoint ${endpoint(args)}`);
     });
-    const client = new TypedGhTriageClient(token, run);
+    const client = new TypedGhTriageClient(
+      githubBroker,
+      actorLogin,
+      run,
+    );
     await expect(client.applyManagedLabel(
       'acme/widgets',
       7,
@@ -129,7 +150,10 @@ describe('typed GitHub triage boundary', () => {
       `/labels/${DEFAULT_TRIAGE_POLICY.blockedLabel}`,
     );
 
-    const failing = new TypedGhTriageClient(token, async (args) => {
+    const failing = new TypedGhTriageClient(
+      githubBroker,
+      actorLogin,
+      async (args) => {
       if (args.includes('POST')) {
         return {
           stdout: JSON.stringify([
@@ -139,7 +163,8 @@ describe('typed GitHub triage boundary', () => {
         };
       }
       throw new Error('gh: service unavailable (HTTP 503)');
-    });
+      },
+    );
     await expect(failing.applyManagedLabel(
       'acme/widgets',
       7,

@@ -3,6 +3,10 @@ import { promisify } from 'node:util';
 import { z } from 'zod';
 import type { PostgresControlStore } from '../control-store/store.js';
 import {
+  githubBrokerEnvironment,
+  type GitHubBrokerCredential,
+} from '../github/credential.js';
+import {
   CanonicalRepository,
   MonitorBrokerResponse,
   type MonitorBrokerRequest,
@@ -45,8 +49,9 @@ export interface PrivateMonitorBrokerOptions {
   store: BrokerStore;
   workerId: string;
   repositories: readonly string[];
-  githubToken: string;
+  githubBroker: GitHubBrokerCredential;
   fetchImpl?: typeof fetch;
+  fetchAuthorization?: () => Promise<string>;
   execFileImpl?: ExecFileImpl;
   intervalMs?: number;
   requestTimeoutMs?: number;
@@ -244,10 +249,15 @@ export class PrivateMonitorBroker {
         repository !== repositories[index])
       || repositories.some((repository) =>
         !CanonicalRepository.safeParse(repository).success)
-      || options.githubToken.trim().length < 20
+      || options.githubBroker.role !== 'triage'
+      || !/^[A-Za-z0-9_-]{43,128}$/.test(
+        options.githubBroker.capability,
+      )
+      || (options.fetchImpl !== undefined)
+        !== (options.fetchAuthorization !== undefined)
     ) {
       throw new Error(
-        'private monitor broker requires a canonical repository allowlist and broker credential',
+        'private monitor broker requires a canonical repository allowlist and role credential',
       );
     }
     this.repositories = new Set(repositories);
@@ -319,21 +329,7 @@ export class PrivateMonitorBroker {
               timeout: remainingMs,
               maxBuffer: remainingBytes,
               killSignal: 'SIGKILL',
-              env: {
-                PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
-                HOME: '/home/agentops',
-                GH_TOKEN: this.options.githubToken,
-                GITHUB_TOKEN: this.options.githubToken,
-                ...(process.env.HTTP_PROXY
-                  ? { HTTP_PROXY: process.env.HTTP_PROXY }
-                  : {}),
-                ...(process.env.HTTPS_PROXY
-                  ? { HTTPS_PROXY: process.env.HTTPS_PROXY }
-                  : {}),
-                ...(process.env.NO_PROXY
-                  ? { NO_PROXY: process.env.NO_PROXY }
-                  : {}),
-              },
+              env: githubBrokerEnvironment(this.options.githubBroker),
             },
           );
           stdout = result.stdout;
@@ -401,11 +397,18 @@ export class PrivateMonitorBroker {
         );
       }
       assertTypedPageURL(pageURL, request);
+      const authorization = await this.options.fetchAuthorization!();
+      if (authorization.trim().length < 20) {
+        throw new MonitorBrokerFailure(
+          'credential_unavailable',
+          'test transport credential was unavailable',
+        );
+      }
       const response = await this.fetchImpl(pageURL, {
         method: 'GET',
         headers: {
           accept: 'application/vnd.github+json',
-          authorization: `Bearer ${this.options.githubToken}`,
+          authorization: `Bearer ${authorization}`,
           'x-github-api-version': '2022-11-28',
           'user-agent': 'agentops-private-monitor-broker/1',
         },

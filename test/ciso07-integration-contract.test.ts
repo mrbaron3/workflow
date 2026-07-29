@@ -7,18 +7,19 @@ const root = process.cwd();
 const read = (relative: string) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 describe('CISO-07 integrated release source contracts', () => {
-  it('builds all four release roles from immutable standard-OCI bases', () => {
+  it('builds all five release roles from immutable standard-OCI bases', () => {
     const containerfile = read('deploy/Containerfile');
     const externalFromLines = containerfile
       .split('\n')
       .filter((line) => line.startsWith('FROM ') && line.includes(':'));
-    expect(externalFromLines).toHaveLength(6);
+    expect(externalFromLines).toHaveLength(7);
     for (const line of externalFromLines) {
       expect(line).toMatch(/@sha256:[0-9a-f]{64}\s+AS\s+[a-z0-9-]+$/);
     }
     expect(containerfile).toContain(' AS control');
     expect(containerfile).toContain(' AS runner');
     expect(containerfile).toContain(' AS triage-runner');
+    expect(containerfile).toContain(' AS github-broker');
     expect(containerfile).toContain(' AS postgres');
     expect(containerfile).toContain('git=1:2.39.5-0+deb12u3');
     expect(containerfile).toContain(
@@ -63,7 +64,13 @@ describe('CISO-07 integrated release source contracts', () => {
       }));
 
     const manager = read('cmd/agentopsctl/manager.go');
-    for (const target of ['postgres', 'control', 'triage-runner', 'runner']) {
+    for (const target of [
+      'postgres',
+      'control',
+      'github-broker',
+      'triage-runner',
+      'runner',
+    ]) {
       expect(manager).toMatch(new RegExp(`BuildImage\\([\\s\\S]*?"${target}"`));
     }
   });

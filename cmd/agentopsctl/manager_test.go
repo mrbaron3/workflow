@@ -139,6 +139,7 @@ func TestRedactContainerStatusRemovesCredentialEnvironmentValues(t *testing.T) {
 	actual.Configuration.InitProcess.Environment = []string{
 		"AGENTOPS_DATABASE_URL=postgresql://role:database-secret@db/agentops",
 		"AGENTOPS_RUNNER_GITHUB_TOKEN=github-secret",
+		"AGENTOPS_GITHUB_BROKER_CAPABILITY=broker-capability-secret",
 		"AGENTOPS_OPERATING_MODE=ACTIVE",
 	}
 	redacted := redactContainerStatus(actual)
@@ -147,13 +148,21 @@ func TestRedactContainerStatusRemovesCredentialEnvironmentValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	rendered := string(encoded)
-	for _, secret := range []string{"database-secret", "github-secret"} {
+	for _, secret := range []string{
+		"database-secret",
+		"github-secret",
+		"broker-capability-secret",
+	} {
 		if strings.Contains(rendered, secret) {
 			t.Fatalf("status JSON leaked %q: %s", secret, rendered)
 		}
 	}
 	if !strings.Contains(rendered, "AGENTOPS_DATABASE_URL=***") ||
 		!strings.Contains(rendered, "AGENTOPS_RUNNER_GITHUB_TOKEN=***") ||
+		!strings.Contains(
+			rendered,
+			"AGENTOPS_GITHUB_BROKER_CAPABILITY=***",
+		) ||
 		!strings.Contains(rendered, "AGENTOPS_OPERATING_MODE=ACTIVE") {
 		t.Fatalf("unexpected redacted status JSON: %s", rendered)
 	}
@@ -251,17 +260,22 @@ func TestProbeRunnerProviderFailsClosedWithoutLeakingOutput(t *testing.T) {
 }
 
 func TestCompensationTopologyRestoresTriageWithoutDevelopmentRunner(t *testing.T) {
-	stops, restoreControl, restoreTriage, restoreRunner := compensationTopology(
-		lifecycle.ModeMonitorOnly,
-		true,
-		true,
-		true,
-		"agentops-control",
-		"agentops-triage",
-		"agentops-runner",
-	)
-	if strings.Join(stops, ",") != "agentops-runner,agentops-triage" ||
+	stops, restoreControl, restoreBroker, restoreTriage, restoreRunner :=
+		compensationTopology(
+			lifecycle.ModeMonitorOnly,
+			true,
+			true,
+			true,
+			true,
+			"agentops-control",
+			"agentops-github-broker",
+			"agentops-triage",
+			"agentops-runner",
+		)
+	if strings.Join(stops, ",") !=
+		"agentops-runner,agentops-triage,agentops-github-broker" ||
 		!restoreControl ||
+		!restoreBroker ||
 		!restoreTriage ||
 		restoreRunner {
 		t.Fatalf(
@@ -273,16 +287,21 @@ func TestCompensationTopologyRestoresTriageWithoutDevelopmentRunner(t *testing.T
 		)
 	}
 
-	_, _, restoreDrainingTriage, restoreDrainingRunner := compensationTopology(
+	_, _, restoreDrainingBroker, restoreDrainingTriage,
+		restoreDrainingRunner := compensationTopology(
 		lifecycle.ModeDraining,
 		true,
 		true,
 		true,
+		true,
 		"agentops-control",
+		"agentops-github-broker",
 		"agentops-triage",
 		"agentops-runner",
 	)
-	if restoreDrainingTriage || restoreDrainingRunner {
+	if !restoreDrainingBroker ||
+		restoreDrainingTriage ||
+		restoreDrainingRunner {
 		t.Fatal("DRAINING compensation recreated a worker")
 	}
 }
@@ -311,8 +330,6 @@ func TestPRIntentPinsCredentialAndProviderReadinessBoundaries(t *testing.T) {
 func TestCISO07IntegratedModeTopology(t *testing.T) {
 	t.Run("mode-specific triage and development boundaries", func(t *testing.T) {
 		cfg := testManagerConfig()
-		cfg.TriageGitHubToken = "triage-github-token-value-00000001"
-		cfg.RunnerGitHubToken = "runner-github-token-value-00000001"
 		cfg.TriageDBPassword = "triage-database-password-value-0001"
 		cfg.RunnerDBPassword = "runner-database-password-value-0001"
 		cfg.ControlDBPassword = "control-database-password-value-001"
@@ -325,6 +342,7 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 			lifecycle.ModeMonitorOnly,
 			"192.0.2.10",
 			"192.0.2.11",
+			"192.0.2.12",
 		)
 		if monitorControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"] !=
 			cfg.monitorRepositoriesCSV() ||
@@ -332,8 +350,12 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 				"0.0.0.0:8082" {
 			t.Fatalf("MONITOR_ONLY control broker boundary = %#v", monitorControl.Environment)
 		}
-		if monitorTriage.Environment["AGENTOPS_TRIAGE_GITHUB_TOKEN"] !=
-			cfg.TriageGitHubToken ||
+		if monitorTriage.Environment["AGENTOPS_GITHUB_BROKER_CAPABILITY"] !=
+			cfg.githubBrokerCapability("triage") ||
+			monitorTriage.Environment["AGENTOPS_GITHUB_BROKER_ROLE"] !=
+				"triage" ||
+			monitorTriage.Environment["AGENTOPS_GITHUB_BROKER_URL"] !=
+				"http://192.0.2.12:8083" ||
 			monitorTriage.Environment["AGENTOPS_MONITOR_REPOSITORIES"] !=
 				cfg.monitorRepositoriesCSV() ||
 			monitorTriage.Environment["AGENTOPS_TRIAGE_READY_LABEL"] !=
@@ -359,22 +381,26 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		if len(monitorOutbound) != 2 ||
+		if len(monitorOutbound) != 3 ||
 			monitorOutbound[0]["host"] != "192.0.2.10" ||
-			monitorOutbound[1]["host"] != "api.github.com" {
+			monitorOutbound[1]["host"] != "192.0.2.12" ||
+			monitorOutbound[2]["host"] != "api.github.com" {
 			t.Fatalf("MONITOR_ONLY outbound = %#v", monitorOutbound)
 		}
 
 		activeControl := subject.controlSpec(lifecycle.ModeActive, "192.0.2.10")
+		activeBroker := subject.githubBrokerSpec(lifecycle.ModeActive)
 		activeTriage := subject.triageSpec(
 			lifecycle.ModeActive,
 			"192.0.2.10",
 			"192.0.2.11",
+			"192.0.2.12",
 		)
 		activeRunner := subject.runnerSpec(
 			lifecycle.ModeActive,
 			"192.0.2.10",
 			"192.0.2.11",
+			"192.0.2.12",
 		)
 		if activeControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"] !=
 			cfg.monitorRepositoriesCSV() ||
@@ -382,8 +408,16 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 				"0.0.0.0:8082" {
 			t.Fatalf("ACTIVE control broker boundary = %#v", activeControl.Environment)
 		}
-		if activeTriage.Environment["AGENTOPS_TRIAGE_GITHUB_TOKEN"] !=
-			cfg.TriageGitHubToken ||
+		if activeBroker.Environment["AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY"] !=
+			cfg.githubBrokerCapability("triage") ||
+			activeBroker.Environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] !=
+				cfg.githubBrokerCapability("runner") ||
+			activeBroker.Environment["AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY"] ==
+				activeBroker.Environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] {
+			t.Fatal("ACTIVE broker did not isolate role capabilities")
+		}
+		if activeTriage.Environment["AGENTOPS_GITHUB_BROKER_CAPABILITY"] !=
+			cfg.githubBrokerCapability("triage") ||
 			activeTriage.Environment["AGENTOPS_RUNNER_GITHUB_TOKEN"] != "" ||
 			activeTriage.Environment["CODEX_HOME"] !=
 				"/run/agentops-credentials/codex" ||
@@ -391,8 +425,8 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 			activeTriage.Mounts[0].Target != "/run/agentops-credentials" {
 			t.Fatal("ACTIVE triage escaped its Issue-only capability boundary")
 		}
-		if activeRunner.Environment["AGENTOPS_RUNNER_GITHUB_TOKEN"] !=
-			cfg.RunnerGitHubToken ||
+		if activeRunner.Environment["AGENTOPS_GITHUB_BROKER_CAPABILITY"] !=
+			cfg.githubBrokerCapability("runner") ||
 			activeRunner.Environment["AGENTOPS_TRIAGE_GITHUB_TOKEN"] != "" ||
 			activeRunner.Environment["AGENTOPS_MONITOR_REPOSITORIES"] != "" ||
 			activeRunner.Environment["CODEX_HOME"] !=
@@ -482,24 +516,34 @@ func TestPRIntentPostgresRotationFailsClosedAndRedactsRuntimeFailure(t *testing.
 
 func testManagerConfig() config {
 	return config{
-		Prefix:            "agentops",
-		Network:           "agentops-internal",
-		PostgresVolume:    "agentops-postgres-data",
-		RunnerVolume:      "agentops-runner-workspace",
-		CredentialVolume:  "agentops-runner-credentials",
-		PostgresContainer: "agentops-postgres",
-		ControlContainer:  "agentops-control",
-		TriageContainer:   "agentops-triage",
-		RunnerContainer:   "agentops-runner",
-		PostgresImage:     "agentops-postgres:dev",
-		ControlImage:      "control:test",
-		TriageImage:       "triage:test",
-		RunnerImage:       "runner:test",
-		ControlHostPort:   8080,
-		Provider:          "codex",
+		Prefix:                "agentops",
+		Network:               "agentops-internal",
+		PostgresVolume:        "agentops-postgres-data",
+		RunnerVolume:          "agentops-runner-workspace",
+		CredentialVolume:      "agentops-runner-credentials",
+		GitHubAppKeyVolume:    "agentops-github-app-key",
+		PostgresContainer:     "agentops-postgres",
+		ControlContainer:      "agentops-control",
+		GitHubBrokerContainer: "agentops-github-broker",
+		TriageContainer:       "agentops-triage",
+		RunnerContainer:       "agentops-runner",
+		PostgresImage:         "agentops-postgres:dev",
+		ControlImage:          "control:test",
+		GitHubBrokerImage:     "github-broker:test",
+		TriageImage:           "triage:test",
+		RunnerImage:           "runner:test",
+		ControlHostPort:       8080,
+		Provider:              "codex",
+		TriageDBPassword:      "triage-database-password-value-0001",
+		RunnerDBPassword:      "runner-database-password-value-0001",
+		GitHubAppID:           42,
+		GitHubInstallationID:  99,
+		GitHubAppSlug:         "agentops-test",
+		GitHubAppOwner:        "acme",
 		MonitorRepositories: []string{
 			"acme/widgets",
-			"sample/design-system",
+			"acme/design-system",
 		},
+		RunnerRepositories: []string{"acme/design-system"},
 	}
 }

@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,13 +176,13 @@ func TestMonitorOnlyRequiresNoProviderCredentialOrCredentialMount(t *testing.T) 
 		ControlToken:      strings.Repeat("e", 32),
 		DashboardToken:    strings.Repeat("f", 32),
 		WebhookSecret:     strings.Repeat("g", 32),
-		TriageGitHubToken: strings.Repeat("h", 32),
 		Provider:          "codex",
 		MonitorRepositories: []string{
 			"acme/widgets",
-			"design-lab/component-catalog",
+			"acme/component-catalog",
 		},
 	}
+	configureTestGitHubApp(t, &value, "acme")
 	if err := value.validateStart(lifecycle.ModeMonitorOnly); err != nil {
 		t.Fatalf("provider-free MONITOR_ONLY was rejected: %v", err)
 	}
@@ -246,12 +250,12 @@ func TestActiveAllowsCredentialFreeControlWithPrivateBrokerAndCodexLogin(t *test
 		ControlToken:        strings.Repeat("e", 32),
 		DashboardToken:      strings.Repeat("f", 32),
 		WebhookSecret:       strings.Repeat("g", 32),
-		TriageGitHubToken:   strings.Repeat("h", 32),
-		RunnerGitHubToken:   strings.Repeat("i", 32),
 		Provider:            "codex",
 		CodexAuthPath:       auth,
 		MonitorRepositories: []string{"sample/design-system"},
+		RunnerRepositories:  []string{"sample/design-system"},
 	}
+	configureTestGitHubApp(t, &value, "sample")
 	if err := value.validateStart(lifecycle.ModeActive); err != nil {
 		t.Fatalf("credential-free-control/private-runner boundary was rejected: %v", err)
 	}
@@ -352,4 +356,29 @@ func TestTriagePolicyConfigurationIsBoundedAndRepositoryRelative(t *testing.T) {
 			t.Fatalf("unsafe context paths accepted: %s", raw)
 		}
 	}
+}
+
+func configureTestGitHubApp(
+	t *testing.T,
+	value *config,
+	owner string,
+) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "github-app.pem")
+	contents := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value.GitHubAppID = 42
+	value.GitHubInstallationID = 99
+	value.GitHubAppSlug = "agentops-test"
+	value.GitHubAppOwner = owner
+	value.GitHubAppKeyPath = path
 }
