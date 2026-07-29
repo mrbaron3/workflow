@@ -9,6 +9,7 @@
  * and measured.
  */
 
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { ISSUE_STATUSES } from './states.js';
 import { VERIFICATION_METHODS } from '../authoring/lint.js';
@@ -72,6 +73,15 @@ export const AcceptanceCriterion = z.object({
 });
 export type AcceptanceCriterion = z.infer<typeof AcceptanceCriterion>;
 
+/** Workflow-owned API contract delta; Designflow capabilities never choose this shape. */
+export const WorkflowApiOperation = z.object({
+  operationId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']),
+  path: z.string().regex(/^\/[^\s]*$/),
+  purpose: z.string().min(1),
+}).strict();
+export type WorkflowApiOperation = z.infer<typeof WorkflowApiOperation>;
+
 export const IssueContract = z.object({
   productGoal: z.string(),
   userStory: z.string(),
@@ -81,6 +91,8 @@ export const IssueContract = z.object({
   }),
   acceptanceCriteria: z.array(AcceptanceCriterion).min(1),
   redLines: z.array(z.string()).default([]),
+  /** Present only when the workflow planner reconciles approved backend capabilities. */
+  apiOperations: z.array(WorkflowApiOperation).optional(),
 });
 export type IssueContract = z.infer<typeof IssueContract>;
 
@@ -123,7 +135,93 @@ export const UiDesignOutput = z.object({
 });
 export type UiDesignOutput = z.infer<typeof UiDesignOutput>;
 
-export const Issue = z.object({
+/** Exactly one Experience Contract authority is selected for a UI candidate/revision. */
+export const DesignContractProvider = z.enum(['legacy-ui-design', 'designflow']);
+export type DesignContractProvider = z.infer<typeof DesignContractProvider>;
+
+export const DesignProviderSelection = z.object({
+  candidateKey: z.string().min(1),
+  provider: DesignContractProvider,
+}).strict();
+export type DesignProviderSelection = z.infer<typeof DesignProviderSelection>;
+
+const ContentDigest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+
+/**
+ * Durable, prompt-safe identity of the one authoritative design revision. The external
+ * Design Bundle itself remains provider-owned and is never copied into the workflow store.
+ */
+export const DesignAuthority = z.discriminatedUnion('provider', [
+  z.object({
+    provider: z.literal('legacy-ui-design'),
+    candidateKey: z.string().min(1),
+    revisionId: z.string().min(1),
+    artifactDigest: ContentDigest,
+    invocationKey: z.string().min(1),
+  }).strict(),
+  z.object({
+    provider: z.literal('designflow'),
+    providerRef: z.string().min(1),
+    candidateKey: z.string().min(1),
+    requestId: z.string().min(1),
+    revisionId: z.string().min(1),
+    bundleDigest: ContentDigest,
+    decisionId: z.string().min(1),
+  }).strict(),
+]);
+export type DesignAuthority = z.infer<typeof DesignAuthority>;
+
+const ReviewProjectionRecord = z.record(z.unknown());
+
+/**
+ * Workflow-owned, deterministic subset of WF-DF-005's review projection. Nested records retain
+ * the complete validated projection rather than a provider-authored prompt string.
+ */
+export const ApprovedDesignReviewProjection = z.object({
+  identity: z.object({
+    schemaVersion: z.string().min(1),
+    bundleId: z.string().min(1),
+    requestId: z.string().min(1),
+    revisionId: z.string().min(1),
+    previousRevisionId: z.string().min(1).nullable(),
+    createdAt: z.string().min(1),
+  }).strict(),
+  purposes: z.array(ReviewProjectionRecord).min(1),
+  tasks: z.array(ReviewProjectionRecord).min(1),
+  effortBudgets: z.array(ReviewProjectionRecord).min(1),
+  attentionHierarchy: z.array(ReviewProjectionRecord).min(1),
+  elements: z.array(ReviewProjectionRecord).min(1),
+  designSystemDelta: ReviewProjectionRecord,
+  capabilityDelta: z.array(ReviewProjectionRecord),
+  revisionDiff: z.string().min(1),
+  ambiguities: z.array(z.object({
+    source: z.enum(['experience', 'capability']),
+    text: z.string().min(1),
+  }).strict()),
+  digest: z.object({
+    sourceDigest: ContentDigest,
+    bundleDigest: ContentDigest,
+    artifacts: z.array(ReviewProjectionRecord).min(1),
+  }).strict(),
+}).strict();
+export type ApprovedDesignReviewProjection = z.infer<typeof ApprovedDesignReviewProjection>;
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`)
+    .join(',')}}`;
+}
+
+/** Stable content identity used to read-migrate an unambiguous legacy UI artifact. */
+export function digestLegacyUiDesignArtifact(artifact: UiDesignArtifact): string {
+  const parsed = UiDesignArtifact.parse(artifact);
+  return `sha256:${createHash('sha256').update(canonicalJson(parsed)).digest('hex')}`;
+}
+
+const IssueFields = z.object({
   id: z.string(), // ISSUE-0001
   type: IssueType,
   title: z.string(),
@@ -158,6 +256,15 @@ export const Issue = z.object({
   planningCandidateKey: z.string().nullable().default(null),
   uiDesign: UiDesignArtifact.nullable().default(null),
   uiDesignInvocationKey: z.string().nullable().default(null),
+  /** Approved external Designflow lineage for final UI/fullstack contracts. */
+  designRequestId: z.string().nullable().default(null),
+  designRevisionId: z.string().nullable().default(null),
+  designBundleDigest: z.string().nullable().default(null),
+  designCapabilityIds: z.array(z.string()).default([]),
+  /** Single-provider revision identity shared verbatim with generator and reviewers. */
+  designAuthority: DesignAuthority.nullable().default(null),
+  /** WF-DF-005 projection for the exact approved external revision; never provider prompt text. */
+  designReview: ApprovedDesignReviewProjection.nullable().default(null),
   /**
    * Decline audit (FEAT-005): why/when a human closed this issue. Set ONLY by the decline
    * organ (pipeline/lifecycle.ts closeIssue — a judgment point, never automated); null on
@@ -174,6 +281,144 @@ export const Issue = z.object({
   sourceRuleId: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
+});
+const IssueDecoder = z.preprocess((candidate) => {
+  if (candidate === null || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return candidate;
+  }
+  const record = candidate as Record<string, unknown>;
+  if (record.designAuthority !== null && record.designAuthority !== undefined) {
+    return candidate;
+  }
+  const parsedArtifact = UiDesignArtifact.safeParse(record.uiDesign);
+  const invocationKey = record.uiDesignInvocationKey;
+  const hasExternalDesign = record.designRequestId != null
+    || record.designRevisionId != null
+    || record.designBundleDigest != null
+    || (Array.isArray(record.designCapabilityIds) && record.designCapabilityIds.length > 0)
+    || record.designReview != null;
+  if (
+    parsedArtifact.success
+    && typeof invocationKey === 'string'
+    && invocationKey.length > 0
+    && !hasExternalDesign
+  ) {
+    const artifactDigest = digestLegacyUiDesignArtifact(parsedArtifact.data);
+    return {
+      ...record,
+      designAuthority: {
+        provider: 'legacy-ui-design',
+        candidateKey: parsedArtifact.data.candidateKey,
+        revisionId: `legacy-${artifactDigest.slice('sha256:'.length)}`,
+        artifactDigest,
+        invocationKey,
+      },
+    };
+  }
+  return candidate;
+}, IssueFields);
+
+export const Issue = IssueDecoder.superRefine((issue, context) => {
+  const hasExternalDesign = issue.designRequestId !== null
+    || issue.designRevisionId !== null
+    || issue.designBundleDigest !== null
+    || issue.designCapabilityIds.length > 0;
+  if (
+    (issue.uiDesign !== null || issue.uiDesignInvocationKey !== null)
+    && hasExternalDesign
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'legacy UI design and external Designflow lineage cannot be dual-written',
+      path: ['designAuthority'],
+    });
+  }
+
+  const authority = issue.designAuthority;
+  if (authority === null) {
+    if (
+      issue.uiDesign !== null
+      || issue.uiDesignInvocationKey !== null
+      || hasExternalDesign
+      || issue.designReview !== null
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'partial design state has no authoritative provider revision',
+        path: ['designAuthority'],
+      });
+    }
+    return;
+  }
+  if (
+    issue.planningCandidateKey !== null
+    && issue.planningCandidateKey !== authority.candidateKey
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'design authority candidateKey must match planningCandidateKey',
+      path: ['designAuthority', 'candidateKey'],
+    });
+  }
+  if (authority.provider === 'legacy-ui-design') {
+    if (
+      issue.uiDesign === null
+      || issue.uiDesign.candidateKey !== authority.candidateKey
+      || issue.uiDesignInvocationKey !== authority.invocationKey
+      || digestLegacyUiDesignArtifact(issue.uiDesign) !== authority.artifactDigest
+      || authority.revisionId !== `legacy-${authority.artifactDigest.slice('sha256:'.length)}`
+      || hasExternalDesign
+      || issue.designReview !== null
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'legacy design authority must exclusively reference its UI artifact and invocation',
+        path: ['designAuthority'],
+      });
+    }
+    return;
+  }
+  if (
+    issue.uiDesign !== null
+    || issue.uiDesignInvocationKey !== null
+    || issue.designRequestId !== authority.requestId
+    || issue.designRevisionId !== authority.revisionId
+    || issue.designBundleDigest !== authority.bundleDigest
+    || issue.designReview === null
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Designflow authority must exclusively match the approved external revision',
+      path: ['designAuthority'],
+    });
+    return;
+  }
+  if (
+    issue.designReview.identity.requestId !== authority.requestId
+    || issue.designReview.identity.revisionId !== authority.revisionId
+    || issue.designReview.digest.bundleDigest !== authority.bundleDigest
+    || issue.designReview.ambiguities.length > 0
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Designflow review projection must match the ambiguity-free approved revision',
+      path: ['designReview'],
+    });
+  }
+  const projectedCapabilityIds = new Set(
+    issue.designReview.capabilityDelta
+      .map((capability) => capability.id)
+      .filter((capabilityId): capabilityId is string =>
+        typeof capabilityId === 'string'),
+  );
+  if (issue.designCapabilityIds.some((capabilityId) =>
+    !projectedCapabilityIds.has(capabilityId))) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Issue capability lineage must be present in the approved design projection',
+      path: ['designCapabilityIds'],
+    });
+  }
 });
 export type Issue = z.infer<typeof Issue>;
 
@@ -238,6 +483,7 @@ export const IntakeStatus = z.enum([
   'claim-pending',
   'claimed',
   'planning',
+  'design-pending',
   'ready',
   'needs-human-review',
 ]);
@@ -285,17 +531,223 @@ export const EnrichmentCandidate = z.object({
 });
 export type EnrichmentCandidate = z.infer<typeof EnrichmentCandidate>;
 
-export const PlanningEnrichmentOutput = z.object({
-  candidates: z.array(EnrichmentCandidate).min(1),
+export const CapabilityIssueEdge = z.object({
+  candidateKey: z.string().min(1),
+  criterionId: z.string().min(1),
+}).strict();
+export type CapabilityIssueEdge = z.infer<typeof CapabilityIssueEdge>;
+
+/**
+ * Planner-owned fulfillment of one provider-authored Capability Requirement.
+ * Identity is repeated per binding so a mixed-revision edge fails closed.
+ */
+export const CapabilityCoverageBinding = z.object({
+  capabilityId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  revisionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  bundleDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  issueEdges: z.array(CapabilityIssueEdge).default([]),
+  systemElementIds: z.array(
+    z.string().regex(/^(?:LANG|DOM|ARCH|DATA)-[a-z0-9]+(?:-[a-z0-9]+)*-\d{3}$/),
+  ).default([]),
+  apiOperationIds: z.array(
+    z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  ).default([]),
+}).strict();
+export type CapabilityCoverageBinding = z.infer<typeof CapabilityCoverageBinding>;
+
+export const ReconciledPlanningCandidate = z.object({
+  candidate: EnrichmentCandidate,
+  dependsOnCandidateKeys: z.array(z.string().min(1)).default([]),
+}).strict();
+export type ReconciledPlanningCandidate = z.infer<typeof ReconciledPlanningCandidate>;
+
+/** Final workflow planning output produced only after an approved Design Bundle. */
+export const CapabilityReconciliation = z.object({
+  schemaVersion: z.literal('1.0'),
+  requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  revisionId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  bundleDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  candidates: z.array(ReconciledPlanningCandidate).min(1),
+  bindings: z.array(CapabilityCoverageBinding).default([]),
   ambiguities: z.array(z.string().min(1)).default([]),
+}).strict();
+export type CapabilityReconciliation = z.infer<typeof CapabilityReconciliation>;
+export type CapabilityReconciliationInput = z.input<typeof CapabilityReconciliation>;
+
+/** Durable edge after candidate keys have been projected to store Issue ids. */
+export const CapabilityCoverageProjection = z.object({
+  capabilityId: z.string().min(1),
+  requestId: z.string().min(1),
+  revisionId: z.string().min(1),
+  bundleDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  issueId: z.string().min(1),
+  criterionId: z.string().min(1),
+  systemElementIds: z.array(z.string().min(1)).min(1),
+  apiOperationIds: z.array(z.string().min(1)).min(1),
+}).strict();
+export type CapabilityCoverageProjection = z.infer<typeof CapabilityCoverageProjection>;
+
+export const DesignflowExternalRef = z.object({
+  provider: z.string().min(1),
+  externalId: z.string().min(1),
+  uri: z.string().min(1).optional(),
+  revision: z.string().min(1).optional(),
+  digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+}).strict();
+export type DesignflowExternalRef = z.infer<typeof DesignflowExternalRef>;
+
+export const DesignRequest = z.object({
+  schemaVersion: z.literal('1.0'),
+  requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+  sourceRef: DesignflowExternalRef,
+  productIntent: z.object({
+    primaryOutcome: z.string().min(1),
+    users: z.array(z.string().min(1)).min(1),
+    usageContext: z.string().min(1),
+  }).strict(),
+  requirements: z.array(z.object({
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+    statement: z.string().min(1),
+    priority: Severity,
+    sourceRefs: z.array(DesignflowExternalRef).min(1),
+  }).strict()).min(1),
+  constraints: z.array(z.object({
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+    category: z.enum([
+      'product',
+      'brand',
+      'accessibility',
+      'security',
+      'legal',
+      'technical',
+      'operational',
+      'other',
+    ]),
+    statement: z.string().min(1),
+  }).strict()).default([]),
+  targetSurfaces: z.array(z.enum(['web', 'mobile', 'desktop', 'terminal', 'other'])).min(1),
+  contextRefs: z.array(DesignflowExternalRef).default([]),
+  existingDesignSystemRef: DesignflowExternalRef.nullable().default(null),
+  requestedAt: z.string().min(1),
+}).strict();
+export type DesignRequest = z.infer<typeof DesignRequest>;
+
+const DesignDraftTraceSource = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('source'),
+    text: z.string().min(1),
+  }).strict(),
+  z.object({
+    kind: z.literal('system'),
+    elementId: z.string().regex(
+      /^(?:LANG|DOM|ARCH|DATA)-[a-z0-9]+(?:-[a-z0-9]+)*-\d{3}$/,
+    ),
+  }).strict(),
+]);
+
+/**
+ * UI/fullstack planning stops at WHAT-level requirements. It intentionally has no IssueContract;
+ * the final contract is supplied only after an approved Design Bundle has been consumed.
+ */
+export const DesignDraftCandidate = z.object({
+  candidateKey: z.string().min(1),
+  title: z.string().min(1),
+  type: IssueType,
+  area: z.enum(['frontend', 'fullstack']),
+  productIntent: z.object({
+    primaryOutcome: z.string().min(1),
+    users: z.array(z.string().min(1)).min(1),
+    usageContext: z.string().min(1),
+  }).strict(),
+  requirements: z.array(z.object({
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+    statement: z.string().min(1),
+    priority: Severity,
+  }).strict()).min(1),
+  constraints: z.array(z.object({
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/),
+    category: z.enum([
+      'product',
+      'brand',
+      'accessibility',
+      'security',
+      'legal',
+      'technical',
+      'operational',
+      'other',
+    ]),
+    statement: z.string().min(1),
+  }).strict()).default([]),
+  targetSurfaces: z.array(z.enum(['web', 'mobile', 'desktop', 'terminal', 'other'])).min(1),
+  existingDesignSystemRef: DesignflowExternalRef.nullable().default(null),
+  traces: z.array(z.object({
+    requirementId: z.string().min(1),
+    sources: z.array(DesignDraftTraceSource).min(1),
+  }).strict()),
+}).strict();
+export type DesignDraftCandidate = z.infer<typeof DesignDraftCandidate>;
+
+export const PlanningEnrichmentOutput = z.object({
+  candidates: z.array(EnrichmentCandidate).default([]),
+  designDrafts: z.array(DesignDraftCandidate).default([]),
+  ambiguities: z.array(z.string().min(1)).default([]),
+}).strict().superRefine((output, context) => {
+  if (output.candidates.length + output.designDrafts.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'at least one backend candidate or Designflow draft is required',
+      path: ['candidates'],
+    });
+  }
 });
 export type PlanningEnrichmentOutput = z.infer<typeof PlanningEnrichmentOutput>;
+
+export const PendingPlanningCandidate = z.object({
+  candidate: EnrichmentCandidate,
+  systemIds: z.array(z.string()).default([]),
+}).strict();
+export type PendingPlanningCandidate = z.infer<typeof PendingPlanningCandidate>;
+
+export const DesignPlanningDraft = z.object({
+  candidate: DesignDraftCandidate,
+  designRequest: DesignRequest,
+  systemIds: z.array(z.string()).default([]),
+}).strict();
+export type DesignPlanningDraft = z.infer<typeof DesignPlanningDraft>;
+
+export const LegacyDesignRevision = z.object({
+  candidateKey: z.string().min(1),
+  revisionId: z.string().min(1),
+  artifactDigest: ContentDigest,
+  invocationKey: z.string().min(1),
+  artifact: UiDesignArtifact,
+}).strict();
+export type LegacyDesignRevision = z.infer<typeof LegacyDesignRevision>;
+
+/**
+ * Append-only observation of a Designflow human gate. A request-changes result is durable
+ * review history, not implementation authority; only a later exact approval may finalize Issues.
+ */
+export const DesignPlanningDecision = z.object({
+  candidateKey: z.string().min(1),
+  requestId: z.string().min(1).nullable(),
+  revisionId: z.string().min(1).nullable(),
+  previousRevisionId: z.string().min(1).nullable().default(null),
+  bundleDigest: ContentDigest.nullable(),
+  decisionId: z.string().min(1).nullable(),
+  supersedesDecisionId: z.string().min(1).nullable().default(null),
+  outcome: z.enum(['approve', 'request-changes', 'reject', 'invalid']),
+  reasonCodes: z.array(z.string().min(1)).default([]),
+  observedAt: z.string().min(1),
+}).strict();
+export type DesignPlanningDecision = z.infer<typeof DesignPlanningDecision>;
 
 export const PlanningEnrichmentRecord = z.object({
   id: z.string(), // ENRICH-0001
   intakeKey: z.string().min(1),
   invocationKey: z.string().nullable().default(null),
-  status: z.enum(['accepted', 'needs-human-review']),
+  status: z.enum(['accepted', 'awaiting-design', 'needs-human-review']),
   reasons: z.array(z.string()).default([]),
   traces: z.array(
     z.object({
@@ -305,6 +757,22 @@ export const PlanningEnrichmentRecord = z.object({
     }),
   ).default([]),
   issueIds: z.array(z.string()).default([]),
+  pendingCandidates: z.array(PendingPlanningCandidate).default([]),
+  designDrafts: z.array(DesignPlanningDraft).default([]),
+  approvedDesigns: z.array(z.object({
+    candidateKey: z.string().min(1),
+    provider: z.literal('designflow').default('designflow'),
+    providerRef: z.string().min(1).nullable().default(null),
+    requestId: z.string().min(1),
+    revisionId: z.string().min(1),
+    bundleDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+    decisionId: z.string().min(1).nullable().default(null),
+    reviewProjection: ApprovedDesignReviewProjection.nullable().default(null),
+  })).default([]),
+  capabilityCoverage: z.array(CapabilityCoverageProjection).default([]),
+  designProviderSelections: z.array(DesignProviderSelection).default([]),
+  legacyDesigns: z.array(LegacyDesignRevision).default([]),
+  designDecisionHistory: z.array(DesignPlanningDecision).default([]),
   uiDesignCandidateKeys: z.array(z.string()).default([]),
   uiDesignInvocationKeys: z.record(z.string()).default({}),
   createdAt: z.string(),

@@ -22,6 +22,10 @@ describe('planning session contract', () => {
     expect(prompt).toContain('Every acceptance criterion MUST have exactly one trace entry');
     expect(prompt).toContain('Never relabel UI');
     expect(prompt).toContain('dedicated UI-design readiness gate');
+    expect(prompt).toContain('designDrafts');
+    expect(prompt).toContain('Do not emit a');
+    expect(prompt).toContain('final Issue Contract');
+    expect(prompt).toContain('only after an approved Design Bundle');
   });
 
   it('AC-GHSLICE-002 keeps planner liveness finite while allowing long active analysis', () => {

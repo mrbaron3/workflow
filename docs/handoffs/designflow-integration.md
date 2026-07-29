@@ -1,8 +1,9 @@
 # Designflow consumer実装ハンドオフ
 
 - 更新日: 2026-07-28
-- 状態: CISO-03/05で固定contractとDashboard固有gateのbootstrap済み。
-  汎用workflow consumerは未着手
+- 状態: WF-DF-001..008の汎用workflow consumerを作業ツリー内で実装し、
+  CISO golden replayとprovider-neutralな標準intake headless E2Eを完了。
+  remote Designflow／live GitHub／実支援技術・端末のblack-box実証は未実施
 - 判断: [ADR-0012](../decisions/ADR-0012-external-designflow-provider.md)
 - 公開境界: [`mrbaron3/designflow`](https://github.com/mrbaron3/designflow)の
   `contract-v1.0.0-rc.1`
@@ -26,10 +27,33 @@ PR #34の計画後、CISO-03/05が次を`main`へ着地させた。
 - `evidence/ciso-05/design/`: Source Issue #15、Design Request、request-changes revision、
   digest-bound approve、7 capability reconciliation、preview、UX/a11y/Playwright evidence。
 
-このbaselineはcontractと判断の実行可能性を証明する。一方、gateはCISO Dashboard固有のapproved digest、
-reconciliation path、Issue/ACをtrust anchorとしており、`src/intake`／`src/planning`の標準経路には
-接続されていない。後続taskは既存fixtureとnegative testを共有し、CISO固有定数をコピーして
-第二のvalidatorを作らない。
+このbaselineはcontractと判断の実行可能性を証明した。一方、この時点のgateはCISO Dashboard固有の
+approved digest、reconciliation path、Issue/ACをtrust anchorとしており、`src/intake`の標準経路には
+接続されていなかった。2026-07-28の汎用実装は既存fixtureとnegative testを共有し、CISO固有定数を
+production経路へコピーせずにこの制約を解消した。
+
+## 2026-07-28 ローカル実装結果
+
+- pinned contract consumer、lock metadata、in-memory/file provider portを実装した。
+- frontend/fullstack planningをDesign Request draftで停止し、明示provider選択、digest-bound human gate、
+  review projection、capability reconciliationの完了後だけIssueを原子的に作る。
+- `request-changes`をappend-only履歴へ残し、明示resume後の承認は
+  `previousRevisionId`と`supersedesDecisionId`の両方が直前判断へ一致する場合だけ受理する。
+- Capability RequirementsをIssue／AC／system element／workflow所有APIへ完全traceし、
+  zero、dangling、duplicate、異revision、暗黙fallback、dual-writeをfail-closedにした。
+- generatorと全reviewerへ、同じapproved purpose／effort／attention／element rationale／
+  design-system／capability projectionを渡す。
+- CISO-05の7 capability／9 APIをhistorical golden adapterでreplayした。production builderへ
+  CISO固有path、Issue番号、digestの例外分岐はない。
+- 無関係な`acme/reporting#73`相当のfullstack Source Snapshotを標準intakeへ通し、
+  request-changes→明示resume→revision 2 approve→backend/UI Issue→expected-head merge→releaseを
+  fake provider／fake GitHub境界と実headless Chromeで完走した。
+- release lineageはsource、request、decision history、bundle、capability edge、全参照Issue、
+  merged current PR revision／head、approved gate、Playwright／UX／a11y evidence、releaseを照合する。
+
+検証結果はTypeScript 112 files／942 tests pass（29 skip）、Go 5 packages pass、TypeScript build pass、
+`git diff --check` passである。skipのうち27件は外部PostgreSQLを必要とするintegration testで、
+今回のDesignflow consumerのローカル受け入れ条件には含めない。
 
 ## 並行開発を成立させる境界
 
@@ -76,7 +100,7 @@ WF-DF-001、WF-DF-004、WF-DF-005は同時着手できる。いずれもDesignfl
 
 ## workflow task
 
-| Key | Issue | 現在の差分 | workflow内の依存 | 完了証拠 |
+| Key | Issue | 実装内容 | workflow内の依存 | 完了証拠 |
 |---|---|---|---|---|
 | WF-DF-001 | [#26](https://github.com/mrbaron3/workflow/issues/26) | CISO pinを再利用し、Dashboard固有Go gateから独立した汎用workflow consumer／lock metadataを作る | なし | 同じpinned fixtureでvalid/invalidを検証し、別validator実装を増やさない |
 | WF-DF-002 | [#27](https://github.com/mrbaron3/workflow/issues/27) | `DesignflowProvider` port＋in-memory/file fake | WF-DF-001 | external processなしのadapter test |
@@ -113,7 +137,7 @@ WF-DF-001、WF-DF-004、WF-DF-005は同時着手できる。いずれもDesignfl
 - 後からCLI/HTTP adapterを追加してもdomain gateとplanningを変更しない。
 - live Designflow availabilityをworkflow unit/acceptance testの前提にしない。
 
-## 標準intake grounded完了条件
+## 標準intakeのローカルgrounded完了条件
 
 1. CISO-05の#15 WHAT→Design Request→revision 2 approve→capability reconciliationを
    golden fixtureとして新consumerで同値にreplayする。
@@ -123,6 +147,19 @@ WF-DF-001、WF-DF-004、WF-DF-005は同時着手できる。いずれもDesignfl
 5. frontendをapproved Experience Contractへtraceし、Playwright、UX、a11y evidenceを
    同じrevision lineageへ記録してreleaseする。
 6. 全経路からCISO固有bundle digest、repository path、#13/#15固定判定を除く。
+
+上記6項目は、固定contract fixture、fake provider／GitHub境界、実headless Chromeを使う決定論E2Eとして
+完了した。これはremote serviceや実GitHubへの副作用を伴わないローカル証拠である。
+
+## 実環境で残る完了条件
+
+- remote Designflow providerから同じpublished contractをblack-boxで受ける。
+- live GitHubでready claim／label、PR作成、required checks、expected-head merge、
+  Source Issue close／release状態を確認する。
+- 実targetのfrontend/fullstack変更を同じapproved bundleから生成・releaseする。
+- VoiceOver／NVDA、OS high contrast／zoom、物理touch/deviceなど、headless Chromeでは代替できない
+  支援技術・device境界を必要な製品matrixで確認する。
+- platform release条件に含める場合はApple arm64 container smokeを別途実行する。
 
 ## 再開手順
 

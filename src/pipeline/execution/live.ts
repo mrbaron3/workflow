@@ -222,6 +222,8 @@ export async function runLiveSample(
         baseRef: target.baseRef,
         priorFindings,
         uiDesign: issue.uiDesign,
+        designAuthority: issue.designAuthority,
+        designReview: issue.designReview,
         surrogateOracleMismatchCount,
       },
       log,

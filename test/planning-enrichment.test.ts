@@ -39,6 +39,11 @@ function setup(): { store: Store; systemDir: string; config: HarnessConfig; inta
   const config: HarnessConfig = {
     ...DEFAULT_CONFIG,
     routes: { generator: { provider: 'codex', model: 'gpt-5.1-codex' }, planning: { provider: 'claude', model: 'opus' } },
+    intake: {
+      backend: 'github',
+      repository: 'acme/theme',
+      designProviders: { 'ui-export': 'legacy-ui-design' },
+    },
   };
   const invocation = recordAgentInvocation(store, {
     subjectId: intakeKey, attempt: 1, role: 'issue-planner', perspective: null,
@@ -125,6 +130,13 @@ describe('planning enrichment gate', () => {
     );
     expect(result.status).toBe('accepted');
     expect(env.store.db.issues).toHaveLength(1);
+    expect(env.store.db.issues[0]).toMatchObject({
+      designRequestId: null,
+      designRevisionId: null,
+      designBundleDigest: null,
+      designCapabilityIds: [],
+    });
+    expect(env.store.db.issues[0]!.contract?.apiOperations).toBeUndefined();
   });
 
   it('accepts a trace-complete UI artifact with dedicated provenance and projects it onto the Issue', () => {
@@ -145,7 +157,15 @@ describe('planning enrichment gate', () => {
     expect(env.store.db.issues[0]).toMatchObject({
       uiDesignInvocationKey: invocation.invocationKey,
       uiDesign: { candidateKey: 'ui-export', components: [{ id: 'export-action' }] },
+      designAuthority: {
+        provider: 'legacy-ui-design',
+        candidateKey: 'ui-export',
+        invocationKey: invocation.invocationKey,
+      },
     });
+    expect(record.designProviderSelections).toEqual([
+      { candidateKey: 'ui-export', provider: 'legacy-ui-design' },
+    ]);
   });
 
   it.each([

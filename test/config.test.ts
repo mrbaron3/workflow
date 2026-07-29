@@ -37,6 +37,23 @@ describe('loadConfig', () => {
     expect(cfg.models).toEqual({ generator: 'haiku' });
   });
 
+  it('preserves candidate-scoped design provider selections', () => {
+    const cfg = loadConfig(tmpRoot({
+      intake: {
+        backend: 'github',
+        repository: 'acme/product',
+        designProviders: {
+          'legacy-export': 'legacy-ui-design',
+          'revised-export': 'designflow',
+        },
+      },
+    }));
+    expect(cfg.intake?.designProviders).toEqual({
+      'legacy-export': 'legacy-ui-design',
+      'revised-export': 'designflow',
+    });
+  });
+
   it('deep-merges scoreWeights so a partial override keeps the other defaults', () => {
     const cfg = loadConfig(tmpRoot({ scoreWeights: { functionality: 0.9 } as HarnessConfig['scoreWeights'] }));
     expect(cfg.scoreWeights.functionality).toBe(0.9); // overridden

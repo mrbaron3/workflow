@@ -88,6 +88,7 @@ describe('generator prompt: TDD is mandated, not optional', () => {
         }],
         criterionTraces: [{ criterionId: 'AC-2', designElementIds: ['space-action', 'export-action'] }],
       },
+      uiDesignInvocationKey: 'legacy-ui-invocation',
     });
     const uiPrompt = buildGeneratorPrompt({ ...input, issue: uiIssue }, target);
     expect(uiPrompt).toContain('## UI Design Contract');
