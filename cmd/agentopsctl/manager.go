@@ -1297,7 +1297,11 @@ func (manager *manager) githubBrokerSpec(
 		// broker's own container never receives a role capability to hold.
 		"AGENTOPS_GITHUB_BROKER_URL": "http://127.0.0.1:8083",
 	}
-	if mode == lifecycle.ModeActive {
+	// DRAINING carries ACTIVE's development scope: compensation restores the
+	// broker while draining, and the runner it is draining still needs to close
+	// its attempt. Withholding the runner policy here would start a broker the
+	// draining runner cannot use.
+	if mode == lifecycle.ModeActive || mode == lifecycle.ModeDraining {
 		environment["AGENTOPS_RUNNER_REPOSITORIES"] =
 			manager.config.runnerRepositoriesCSV()
 		environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] =

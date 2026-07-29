@@ -43,6 +43,10 @@ triage／runnerへ渡すと両roleが任意scopeをmintできるため、専用b
    | `ACTIVE` runner | `AGENTOPS_RUNNER_REPOSITORIES` | Actions read、Checks read、Contents write、Issues write、Pull requests write、Commit statuses read、Workflows write |
 
    runner集合はmonitor集合のsubsetでなければならない。全repositoryは同じinstallation ownerに属する。
+   `DRAINING`は`ACTIVE`と同一のrole policyを持つ。DRAININGは`ACTIVE`からしか到達せず、drain中のrunnerは
+   与えられたattemptをpush／closeし切る必要があるため、brokerはDRAININGでも起動して同じscopeを供給する。
+   起動を拒むとcompensationがrestoreしたはずのbrokerを失い、drain中のrunnerがcredential sourceを失う。
+   DRAININGでscopeを広げることはしない。
 5. clientはGitHub tokenを保持しない。role capabilityだけを受け、`gh` wrapperまたはGit askpassが
    各operation直前にbrokerへtokenを要求する。capabilityは`AGENTOPS_GITHUB_BROKER_{TRIAGE,RUNNER}_CAPABILITY`
    が供給する**独立したsecret**（43..128のURL-safe文字）であり、他のcredentialから導出しない・他のcredentialと

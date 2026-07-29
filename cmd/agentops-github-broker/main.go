@@ -43,9 +43,9 @@ func run() error {
 	}
 	mode, err := lifecycle.ParseMode(required("AGENTOPS_OPERATING_MODE"))
 	if err != nil || (mode != lifecycle.ModeMonitorOnly &&
-		mode != lifecycle.ModeActive) {
+		!DevelopmentMode(mode)) {
 		return fmt.Errorf(
-			"AGENTOPS_OPERATING_MODE must be MONITOR_ONLY or ACTIVE",
+			"AGENTOPS_OPERATING_MODE must be MONITOR_ONLY, ACTIVE, or DRAINING",
 		)
 	}
 	owner := required("AGENTOPS_GITHUB_APP_OWNER")
@@ -57,41 +57,23 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	policies := []githubapp.Policy{{
-		Role:         githubapp.RoleTriage,
-		Repositories: monitorRepositories,
-		Permissions: map[string]string{
-			"contents":      "read",
-			"issues":        triageIssuePermission(mode),
-			"pull_requests": "read",
-		},
-	}}
+	var runnerRepositories []string
+	if DevelopmentMode(mode) {
+		runnerRepositories, err = repositories(
+			"AGENTOPS_RUNNER_REPOSITORIES",
+			owner,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	policies := brokerPolicies(mode, monitorRepositories, runnerRepositories)
 	capabilities := map[githubapp.Role]string{
 		githubapp.RoleTriage: required(
 			"AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY",
 		),
 	}
-	if mode == lifecycle.ModeActive {
-		runnerRepositories, repositoryErr := repositories(
-			"AGENTOPS_RUNNER_REPOSITORIES",
-			owner,
-		)
-		if repositoryErr != nil {
-			return repositoryErr
-		}
-		policies = append(policies, githubapp.Policy{
-			Role:         githubapp.RoleRunner,
-			Repositories: runnerRepositories,
-			Permissions: map[string]string{
-				"actions":       "read",
-				"checks":        "read",
-				"contents":      "write",
-				"issues":        "write",
-				"pull_requests": "write",
-				"statuses":      "read",
-				"workflows":     "write",
-			},
-		})
+	if DevelopmentMode(mode) {
 		capabilities[githubapp.RoleRunner] = required(
 			"AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY",
 		)
@@ -217,8 +199,50 @@ func repositories(name, owner string) ([]string, error) {
 	return values, nil
 }
 
+// DevelopmentMode reports whether the lifecycle state still carries development
+// work. DRAINING is reachable only from ACTIVE, and a draining runner has to
+// push and close the attempt it was told to finish, so it keeps exactly ACTIVE's
+// role policies. Refusing to start while draining would strand that runner
+// without a credential source; widening the policies is never the answer either.
+func DevelopmentMode(mode lifecycle.Mode) bool {
+	return mode == lifecycle.ModeActive || mode == lifecycle.ModeDraining
+}
+
+// brokerPolicies is the whole role/scope table. It is pure so the scopes each
+// mode grants can be asserted without standing up an issuer.
+func brokerPolicies(
+	mode lifecycle.Mode,
+	monitorRepositories, runnerRepositories []string,
+) []githubapp.Policy {
+	policies := []githubapp.Policy{{
+		Role:         githubapp.RoleTriage,
+		Repositories: monitorRepositories,
+		Permissions: map[string]string{
+			"contents":      "read",
+			"issues":        triageIssuePermission(mode),
+			"pull_requests": "read",
+		},
+	}}
+	if !DevelopmentMode(mode) {
+		return policies
+	}
+	return append(policies, githubapp.Policy{
+		Role:         githubapp.RoleRunner,
+		Repositories: runnerRepositories,
+		Permissions: map[string]string{
+			"actions":       "read",
+			"checks":        "read",
+			"contents":      "write",
+			"issues":        "write",
+			"pull_requests": "write",
+			"statuses":      "read",
+			"workflows":     "write",
+		},
+	})
+}
+
 func triageIssuePermission(mode lifecycle.Mode) string {
-	if mode == lifecycle.ModeActive {
+	if DevelopmentMode(mode) {
 		return "write"
 	}
 	return "read"

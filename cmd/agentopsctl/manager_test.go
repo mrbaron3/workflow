@@ -416,6 +416,20 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 				activeBroker.Environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] {
 			t.Fatal("ACTIVE broker did not isolate role capabilities")
 		}
+		// Compensation restores the broker with the DRAINING target, so that
+		// spec has to be one the broker will actually serve: same development
+		// scope as ACTIVE, so a draining runner can still close its attempt.
+		drainingBroker := subject.githubBrokerSpec(lifecycle.ModeDraining)
+		if drainingBroker.Environment["AGENTOPS_OPERATING_MODE"] != "DRAINING" ||
+			drainingBroker.Environment["AGENTOPS_RUNNER_REPOSITORIES"] !=
+				cfg.runnerRepositoriesCSV() ||
+			drainingBroker.Environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] !=
+				cfg.githubBrokerCapability("runner") {
+			t.Fatalf(
+				"DRAINING broker lost its development scope = %#v",
+				drainingBroker.Environment,
+			)
+		}
 		// The broker verifies capabilities; it never presents one. Its readiness
 		// probe reaches an unauthenticated /healthz, so holding a client-side
 		// capability would only widen where that secret can be read.
