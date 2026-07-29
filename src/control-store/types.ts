@@ -1,6 +1,29 @@
 import { z } from 'zod';
 
-export const CONTROL_SCHEMA_VERSION = 6;
+export const CONTROL_SCHEMA_VERSION = 7;
+
+const RepositoryOwner = z.string()
+  .min(1)
+  .max(39)
+  .regex(/^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$/);
+const RepositoryName = z.string()
+  .min(1)
+  .max(100)
+  .regex(/^[a-z0-9_.-]+$/)
+  .refine((value) => value !== '.' && value !== '..');
+export const CanonicalRepository = z.string().superRefine((value, context) => {
+  const [owner, name, ...rest] = value.split('/');
+  if (
+    rest.length !== 0
+    || !RepositoryOwner.safeParse(owner).success
+    || !RepositoryName.safeParse(name).success
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'repository must be canonical owner/name',
+    });
+  }
+});
 
 export const MonitorBrokerKind = z.enum(['issue', 'pull_request']);
 export type MonitorBrokerKind = z.infer<typeof MonitorBrokerKind>;
@@ -22,7 +45,7 @@ export interface MonitorBrokerRequest {
 
 export const MonitorBrokerResponse = z.object({
   items: z.array(z.object({
-    repository: z.string().regex(/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/),
+    repository: CanonicalRepository,
     kind: MonitorBrokerKind,
     number: z.number().int().positive().max(2_147_483_647),
     updatedAt: z.string().datetime({ offset: true }),
@@ -34,7 +57,7 @@ export type MonitorBrokerResponse = z.infer<typeof MonitorBrokerResponse>;
 
 export const RepositoryRegistrationInput = z.object({
   repository: z.string().trim().toLowerCase()
-    .regex(/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/),
+    .pipe(CanonicalRepository),
   enabled: z.boolean().default(true),
   issueMonitorEnabled: z.boolean().default(true),
   prMonitorEnabled: z.boolean().default(true),
@@ -76,10 +99,67 @@ export const ArtifactReferenceContract = z.object({
 export type ArtifactReference = z.infer<typeof ArtifactReferenceContract>;
 
 export const RunnerRepositoryIdentity = z.object({
-  owner: z.string().regex(/^[a-z0-9_.-]+$/),
-  name: z.string().regex(/^[a-z0-9_.-]+$/),
+  owner: RepositoryOwner,
+  name: RepositoryName,
 }).strict();
 export type RunnerRepositoryIdentity = z.infer<typeof RunnerRepositoryIdentity>;
+
+export const TriageJobPayloadV1Contract = z.object({
+  schemaVersion: z.literal(1),
+  repository: RunnerRepositoryIdentity,
+  issue: z.object({
+    number: z.number().int().positive().max(2_147_483_647),
+    observedUpdatedAt: z.string().datetime({ offset: true }),
+  }).strict(),
+}).strict();
+export type TriageJobPayloadV1 = z.infer<typeof TriageJobPayloadV1Contract>;
+
+export const TriageDecisionV1Contract = z.object({
+  schemaVersion: z.literal(1),
+  type: z.enum(['feature', 'bug', 'tech_debt', 'question', 'documentation']),
+  northStarAlignment: z.enum(['aligned', 'unclear', 'misaligned']),
+  readiness: z.enum(['ready_candidate', 'blocked', 'needs_info']),
+  priority: z.enum(['p0', 'p1', 'p2', 'p3']),
+  summary: z.string().trim().min(1).max(500),
+  rationale: z.array(z.string().trim().min(1).max(500)).min(1).max(8),
+  dependencies: z.array(z.object({
+    repository: z.string().trim().toLowerCase()
+      .pipe(CanonicalRepository),
+    issueNumber: z.number().int().positive().max(2_147_483_647),
+    relationship: z.enum(['blocks', 'blocked_by', 'relates_to']),
+  }).strict()).max(16),
+  duplicateCandidates: z.array(z.object({
+    repository: z.string().trim().toLowerCase()
+      .pipe(CanonicalRepository),
+    issueNumber: z.number().int().positive().max(2_147_483_647),
+    reason: z.string().trim().min(1).max(500),
+  }).strict()).max(16),
+  missingInformation: z.array(
+    z.string().trim().min(1).max(500),
+  ).max(16),
+}).strict();
+export type TriageDecisionV1 = z.infer<typeof TriageDecisionV1Contract>;
+
+export const TriageJobResultV1Contract = z.object({
+  schemaVersion: z.literal(1),
+  status: z.literal('succeeded'),
+  jobId: z.string().uuid(),
+  attemptNumber: z.number().int().positive(),
+  repository: CanonicalRepository,
+  issueNumber: z.number().int().positive().max(2_147_483_647),
+  outcome: z.enum(['triaged', 'unchanged', 'promoted', 'skipped']),
+  sourceDigest: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+  decision: TriageDecisionV1Contract.nullable(),
+  commentUrl: z.string().url().nullable(),
+  appliedLabels: z.array(
+    z.string().trim().min(1).max(50).regex(
+      /^[a-zA-Z0-9][a-zA-Z0-9._:/ -]*$/,
+    ),
+  ).max(3),
+  promotedJobId: z.string().uuid().nullable(),
+  completedAt: z.string().datetime(),
+}).strict();
+export type TriageJobResultV1 = z.infer<typeof TriageJobResultV1Contract>;
 
 export const RunnerEventContract = z.discriminatedUnion('kind', [
   z.object({
@@ -121,6 +201,11 @@ const GitRef = z.string()
       && !value.endsWith('.lock'),
     'unsafe git ref',
   );
+export const GitHubLabelNameContract = z.string()
+  .trim()
+  .min(1)
+  .max(50)
+  .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:/ -]*$/);
 
 /**
  * The only job payload executable by agentops-runner. It deliberately contains
@@ -141,6 +226,8 @@ export const RunnerJobPayloadV1Contract = z.object({
       z.string().min(1).regex(/^\S(?:[\s\S]*\S)?$/),
     ).max(64),
     mergeMethod: z.enum(['squash', 'merge', 'rebase']),
+    readyLabel: GitHubLabelNameContract,
+    claimedLabel: GitHubLabelNameContract,
   }).strict(),
   artifacts: z.array(ArtifactReferenceContract).max(64),
 }).strict().superRefine((payload, context) => {
@@ -162,7 +249,7 @@ export const RunnerJobResultV1Contract = z.object({
   status: z.literal('succeeded'),
   jobId: z.string().uuid(),
   attemptNumber: z.number().int().positive(),
-  repository: z.string().regex(/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/),
+  repository: CanonicalRepository,
   headSha: z.string().regex(/^[0-9a-f]{40,64}$/).nullable(),
   pullRequestNumber: z.number().int().positive().nullable(),
   artifacts: z.array(ArtifactReferenceContract),
@@ -215,8 +302,13 @@ export const EnqueueJobInput = z.object({
   payload: z.record(z.unknown()),
   availableAt: z.date().optional(),
 }).superRefine((input, context) => {
-  if (input.jobType !== 'agentops.runner') return;
-  const parsed = RunnerJobPayloadV1Contract.safeParse(input.payload);
+  const contract = input.jobType === 'agentops.runner'
+    ? RunnerJobPayloadV1Contract
+    : input.jobType === 'agentops.triage'
+      ? TriageJobPayloadV1Contract
+      : null;
+  if (!contract) return;
+  const parsed = contract.safeParse(input.payload);
   if (!parsed.success) {
     for (const issue of parsed.error.issues) {
       context.addIssue({

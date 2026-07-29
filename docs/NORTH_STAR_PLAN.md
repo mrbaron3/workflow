@@ -66,6 +66,13 @@
   ただしCISO-07はpre-main bootstrapを明示したbounded cutoverであり、D7/D8の通常watch turn、
   D9の複数repo常駐forwarder、A5/A6のstore計器付き標準経路、Designflowのremote/live black-box実証を
   完了扱いにはしない。
+- **（2026-07-29・multi-repository triage構造）監視と開発の常時権限を分離**:
+  schema v7で`agentops_triage` role、identity-only triage job、human-ready atomic promotionを追加。
+  `agentopsctl`はMONITOR_ONLYでPostgreSQL＋control＋workspaceなしtriageだけ、ACTIVEで別credentialの
+  development runnerを追加する。repositoryは1〜64件のallowlist＋Registrationで選び、Designflow名を
+  production code／grader testへ固定しない。Designflowのdirect Node contract checkerもbounded metadataから
+  選択可能になった。ローカルcontract/unitと実PostgreSQL integrationは通過したが、2+ remote repositoryの
+  常駐観測とDesignflow live PR/releaseはまだgrounded証拠ではない（追跡: #44）。
 
 残りを一言で: **(a) 測れていない軸を測る、(b) 横幅（規模・並行・多様性）、
 (c) 縦深（診断→改善の精度）、(d) 自分以外を開発する実証。**
@@ -118,7 +125,7 @@
 | D6 | **✅ 構造実装済み（FEAT-012）** — reviewer checkoutとevidence sidecarを分離。既知lockfile副作用は帰属してfindings保持、source/config変更は従来どおりdiscard | ②評価のfalse-escalation抑止 | EPIC-06 / FEAT-012 | 残り: 次の実live panelで3/4発生が消えるgrounded観測 |
 | D7 | **✅ 入口配線＋bounded self-dogfood済み／通常外部target縦断待ち** — store-first GitHub claim、planning detached session、全AC source/system trace gate、`github-turn`/`watch-github`→既存runLoopLive/PR gateを実装。CISO-07 #17はSource Snapshotとplanning provenanceを保存して実remote PR/releaseまで到達したが、pre-main bootstrapを含む自己更新cutoverだった | 究極目標「人間は WHAT のみ」の入口 | EPIC-08 | 残り: cutover特例なしの外部target ready Issue→異種provider panel→GitHub PR→releaseとHOW介入0計器 |
 | D8 | **✅ 構造実装＋CISO-07 current-head/repair/expected-head merge実証済み／通常継続turn待ち** — PRを初回Perspective前に作成し、EvalRun/Invocationを`(prId, headSha)`へ束縛。CISO-07でCodex/Claudeのread-only 2ラウンド、confirmed finding修正、Round 3なし、最終CI、expected-head mergeを証拠化した。ただしbounded cutoverのため次task自動継続までの通常経路は未観測 | 「承認済みなのに同じrevisionへP1」のfalse-passを禁止し、人間mergeを通常経路から外す | EPIC-11 / FEAT-022..024実装済み | 残り: 通常watch turnでP1→修正push→全観点再review→merge→released→次taskを連続実測 |
-| D9 | **✅ Go/PostgreSQL隔離controlへ移行・単一登録grounded済み／複数repo常駐待ち** — CISO-07でpersist-before-ack、webhook/poll dedup、Registration router、private Issue/PR broker、restart recovery、loopback GUIをApple Container上で実証。credentialをargvへ出す旧`gh webhook forward`は正直に失敗記録し、成功根拠にしていない | Issue/PR/review/checkを即時に同じ自律loopへ戻し、複数targetを運用可能にする | EPIC-12＋CISO #10でGo controlへstrangler移行 | 残り: 2+ repoの常駐delivery/forwarder/reconciliationと安全なlocal forwarder transportをgrounded実測 |
+| D9 | **✅ Go/PostgreSQL隔離control＋multi-repository triage構造実装／複数repo live常駐待ち** — CISO-07でpersist-before-ack、webhook/poll dedup、単一Registration、private broker、restart recovery、loopback GUIをApple Container上で実証。2026-07-29に1〜64 repo allowlist、triage専用image/DB role/GitHub token、identity-only Issue job、human-ready atomic promotion、ACTIVE-only development runnerへ分離した。credentialをargvへ出す旧`gh webhook forward`は正直に失敗記録し、成功根拠にしていない | Issue/PR/review/checkを即時に同じ自律loopへ戻し、複数targetを運用可能にする | EPIC-12＋CISO #10でGo controlへstrangler移行 | 残り: Workflow＋Designflowを含む2+ repoの常駐delivery/reconciliation、Designflow live PR/release、安全なlocal forwarder transportをgrounded実測 |
 
 ## 3. マイルストーン（依存順・「測る→広げる→深める→実証する」）
 

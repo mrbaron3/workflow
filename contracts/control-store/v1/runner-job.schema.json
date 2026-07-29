@@ -12,8 +12,8 @@
       "additionalProperties": false,
       "required": ["owner", "name"],
       "properties": {
-        "owner": { "type": "string", "pattern": "^[a-z0-9_.-]+$" },
-        "name": { "type": "string", "pattern": "^[a-z0-9_.-]+$" }
+        "owner": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$" },
+        "name": { "type": "string", "pattern": "^(?!\\.{1,2}$)[a-z0-9_.-]{1,100}$" }
       }
     },
     "event": {
@@ -71,7 +71,7 @@
     "execution": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mode", "requiredChecks", "mergeMethod"],
+      "required": ["mode", "requiredChecks", "mergeMethod", "readyLabel", "claimedLabel"],
       "properties": {
         "mode": { "enum": ["development_turn", "pr_reconciliation"] },
         "requiredChecks": {
@@ -83,7 +83,19 @@
             "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
           }
         },
-        "mergeMethod": { "enum": ["squash", "merge", "rebase"] }
+        "mergeMethod": { "enum": ["squash", "merge", "rebase"] },
+        "readyLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/ -]*$"
+        },
+        "claimedLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/ -]*$"
+        }
       }
     },
     "artifacts": {

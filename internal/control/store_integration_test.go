@@ -265,7 +265,7 @@ func TestMonitorBrokerRequestAndOriginAuditAreAtomic(t *testing.T) {
 		INSERT INTO agentops_control.repository_registrations(
 		  id, repository, enabled, issue_monitor_enabled,
 		  pr_monitor_enabled, execution_enabled
-		) VALUES ($1, 'mrbaron3/workflow', true, true, true, true)
+		) VALUES ($1, 'acme/widgets', true, true, true, true)
 	`, registrationID); err != nil {
 		t.Fatal(err)
 	}
@@ -290,13 +290,13 @@ func TestMonitorBrokerRequestAndOriginAuditAreAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := BrokeredGitHubSource{
-		Store:             &Store{pool: pool},
-		AllowedRepository: "mrbaron3/workflow",
-		Timeout:           time.Second,
+		Store:               &Store{pool: pool},
+		AllowedRepositories: []string{"acme/widgets"},
+		Timeout:             time.Second,
 	}
 	_, _, _, err = source.Poll(ctx, Registration{
 		ID:                  registrationID,
-		Repository:          "mrbaron3/workflow",
+		Repository:          "acme/widgets",
 		Enabled:             true,
 		IssueMonitorEnabled: true,
 		PRMonitorEnabled:    true,
@@ -842,21 +842,20 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		t.Fatalf("EnqueueWork() = %s, %v, %v", jobID, duplicate, err)
 	}
 	var jobType string
-	var runnerPayload map[string]any
+	var triagePayload map[string]any
 	if err := store.pool.QueryRow(ctx,
 		`SELECT job_type, payload FROM agentops_control.jobs WHERE id = $1`,
 		jobID,
-	).Scan(&jobType, &runnerPayload); err != nil {
+	).Scan(&jobType, &triagePayload); err != nil {
 		t.Fatal(err)
 	}
-	event, _ := runnerPayload["event"].(map[string]any)
-	execution, _ := runnerPayload["execution"].(map[string]any)
-	if jobType != "agentops.runner" ||
-		runnerPayload["schemaVersion"] != float64(1) ||
-		event["kind"] != "issue" ||
-		event["number"] != float64(13) ||
-		execution["mode"] != "development_turn" {
-		t.Fatalf("runner contract projection = %s %#v", jobType, runnerPayload)
+	repository, _ := triagePayload["repository"].(map[string]any)
+	issue, _ := triagePayload["issue"].(map[string]any)
+	if jobType != "agentops.triage" ||
+		triagePayload["schemaVersion"] != float64(1) ||
+		repository["owner"] != "owner" ||
+		issue["number"] != float64(13) {
+		t.Fatalf("triage contract projection = %s %#v", jobType, triagePayload)
 	}
 	pollJobID, duplicate, err := store.EnqueueWork(
 		ctx,
@@ -1484,6 +1483,7 @@ func resetAndMigrate(
 		"0004_agentops_lifecycle.sql",
 		"0005_private_monitor_broker.sql",
 		"0006_monitor_broker_capability_functions.sql",
+		"0007_multi_repository_triage.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

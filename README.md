@@ -250,25 +250,29 @@ turns in milliseconds. It does not affect the one-shot `github-turn` command. Va
 positive integers up to 2147483647 ms (Node's maximum timer delay); omitted or invalid
 values fall back to `DEFAULT_GITHUB_WATCH_INTERVAL_MS` (30000 ms).
 
-### Multi-repository webhook control
+### Multi-repository monitor, triage, and execution
 
 Webhook remains an immediate trigger and polling remains the truth-recovery path.
 `agentops-control` is the PostgreSQL Registration-driven production process: it exposes the
 operator Control API, supervises per-Registration Issue/PR monitors and signed HTTP webhook
 ingress, persists webhook deliveries before acknowledgement, and routes webhook/poll observations
-through the same idempotent queue. The standard OCI control process never executes `gh`.
+through the same idempotent queue. The standard OCI control process never receives a GitHub
+credential or executes `gh`.
 
 ```bash
-AGENTOPS_DATABASE_URL='postgresql://…' npm run control-store:migrate
-export AGENTOPS_DATABASE_URL='postgresql://…'
+export AGENTOPS_POSTGRES_PASSWORD='<32+ bytes>'
+export AGENTOPS_CONTROL_DB_PASSWORD='<different 32+ bytes>'
+export AGENTOPS_TRIAGE_DB_PASSWORD='<different 32+ bytes>'
+export AGENTOPS_RUNNER_DB_PASSWORD='<different 32+ bytes>'
 export AGENTOPS_CONTROL_TOKEN='<32+ byte random operator bearer token>'
-export AGENTOPS_OPERATING_MODE='MONITOR_ONLY' # ACTIVE is explicit
-export AGENTOPS_DASHBOARD_ORIGIN='http://127.0.0.1:8080'
-# Optional deterministic bootstrap; omitted generates and logs a random one-time value.
 export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<random single-use bootstrap token>'
-export AGENTOPS_GITHUB_WEBHOOK_SECRET='<GitHub webhook secret>'
-export GH_TOKEN='<GitHub token>'
-go run ./cmd/agentops-control
+export AGENTOPS_GITHUB_WEBHOOK_SECRET='<webhook secret>'
+export AGENTOPS_MONITOR_REPOSITORIES='mrbaron3/workflow,mrbaron3/designflow'
+export AGENTOPS_TRIAGE_GITHUB_TOKEN='<metadata/issues-only triage token>'
+
+# Observation is on; AI classification and development execution remain off.
+go run ./cmd/agentopsctl \
+  start --mode MONITOR_ONLY --build --request-id monitor-bootstrap-001
 ```
 
 The operator API defaults to `127.0.0.1:8080`; the container target keeps it on
@@ -288,13 +292,21 @@ deliveries. Configure `AGENTOPS_GITHUB_POLL_INTERVAL` and
 wake-up: periodic PostgreSQL reconciliation remains the recovery path after missed notifications,
 control restart, forwarder exit, or DB reconnect. Unknown, disabled, stale, or disconnected
 Registrations never create jobs.
-`MONITOR_ONLY` continues private Issue/PR observation through the runner-only typed GitHub broker
-and signed-webhook-ingress observation, but neither routing nor the isolated runner may
-enqueue/claim executable work. Its runner receives the scoped GitHub credential and GitHub-only
-broker egress, but no Codex/provider credential, provider egress, or execution authority; control
-never receives a GitHub credential or executes `gh`. `ACTIVE` adds the execution-provider
-credential/egress and explicit execution authority without moving the GitHub credential into
-control.
+The repository allowlist and PostgreSQL Registrations are independent fences: a repository must
+be present in both before it is observed. `MONITOR_ONLY` runs only the credential-limited triage
+container's typed Issue/PR broker; it does not invoke an AI provider, add labels/comments, or start
+the development runner. It updates monitor freshness but deliberately does not advance the
+processing cursor, so existing work observed before cutover is re-read once ACTIVE. `ACTIVE` lets
+that container classify Issue work and apply only its
+configured triage labels/comment. An exact human-owned `ready` label is then checked again before a
+database capability atomically creates a development job.
+
+The triage container and development runner are different images, processes, database roles, and
+GitHub credentials. Triage has no repository workspace, git/SSH tools, runtime socket, host path,
+or host port. The development runner is absent in `MONITOR_ONLY`; in `ACTIVE` it receives its own
+token, workspace, and provider credential. The control process receives neither GitHub token.
+See the [Designflow dogfood runbook](docs/runbooks/designflow-triage-dogfood.md) for registration,
+label policy, and the first external-target validation.
 
 The old TypeScript GUI/router types remain as a non-durable PR #9 compatibility oracle. The legacy
 `webhook-daemon` production command remains fail closed; no production entry point reads or writes

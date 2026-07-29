@@ -124,6 +124,41 @@ WORKDIR /app
 USER agentops
 ENTRYPOINT ["node", "dist/src/runner/cli.js"]
 
+# --- triage-runner: Issue-only broker + provider + comment/label capability ----------------------
+# This image deliberately has no git, ssh, tmux, bubblewrap, checkout volume, or
+# development GitHub credential. The root filesystem is made read-only by the
+# runtime; only /tmp and /home/agentops are tmpfs.
+FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS triage-runner
+USER root
+COPY --chown=root:root deploy/provider-cli/package.json deploy/provider-cli/package-lock.json /opt/provider-cli/
+COPY --from=runner-tools /out/gh /usr/local/bin/gh
+RUN rm -f /etc/apt/sources.list.d/debian.sources \
+    && printf '%s\n' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
+      > /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates=20230311+deb12u1 \
+    && npm ci --omit=dev --ignore-scripts --prefix /opt/provider-cli \
+    && node /opt/provider-cli/node_modules/@anthropic-ai/claude-code/install.cjs \
+    && ln -s /opt/provider-cli/node_modules/.bin/codex /usr/local/bin/codex \
+    && ln -s /opt/provider-cli/node_modules/.bin/claude /usr/local/bin/claude \
+    && useradd --uid 65532 --create-home --home-dir /home/agentops \
+         --shell /usr/sbin/nologin agentops \
+    && gh version \
+    && codex --version \
+    && claude --version \
+    && rm -rf /usr/local/lib/node_modules/npm \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=build --chown=agentops:agentops /app /app
+ENV HOME=/home/agentops \
+    AGENTOPS_APP_ROOT=/app
+WORKDIR /app
+USER agentops
+ENTRYPOINT ["node", "dist/src/triage/cli.js"]
+
 # --- control: credential-free Go control plane ---------------------------------------------------
 # The CISO-07 private-repository topology accepts signed webhook ingress and
 # runner-brokered polls in both modes; it intentionally omits the

@@ -15,12 +15,15 @@ docker    build -t agentops-app:dev -f deploy/Containerfile .   # 可搬性（�
 
 - 全 path はコンテナ絶対（`WORKDIR /app`）。macOS の `/Users/...` を一切参照しない
   （`src/runtime/paths.ts` の scanner が build/runtime surface を静的検査して保証する）。
-- `runtime` stage は非 root（`node` uid 1000）で動く。
+- `runtime` stage は非 root（`node` uid 1000）で動く。productionの`runner`と
+  `triage-runner`はuid 65532で動く。
 - `build` stage で `npm run typecheck` を通し、「build/typecheck grader がコンテナ内・コンテナ相対 path で走る」ことを
   ビルド時に接地する。
 - `control-build` はGo unit test後に静的`agentops-control`をbuildし、`control-test`はrace/integration用、
   `control`は非rootのproduction imageである。TypeScript `runtime`とは独立したstageなのでrunner release surfaceを
   変更しない。
+- `triage-runner`はIssue/PR観測とIssue triage専用で、git／SSH／workspace／container socketを含まない。
+  `runner`は開発実行専用で、triageとは別image・DB role・GitHub credentialとして起動する。
 
 ## runtime adapter 境界
 
@@ -78,7 +81,7 @@ container run --detach --name agentops-control \
   --env AGENTOPS_DASHBOARD_ORIGIN='http://127.0.0.1:8080' \
   --env AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<single-use-random-token>' \
   --env AGENTOPS_GITHUB_WEBHOOK_SECRET='<webhook-secret>' \
-  --env GH_TOKEN='<github-token>' \
+  --env AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES='owner/repo-a,owner/repo-b' \
   agentops-control:dev
 ```
 
@@ -88,7 +91,7 @@ host loopbackへpublishする。PostgreSQL/runnerはpublishしない。browser�
 CSRF proofだけを使う。host側portが8080以外なら`AGENTOPS_DASHBOARD_ORIGIN`もそのexact loopback originへ合わせる。
 root filesystemはread-only、capabilityはALL drop、writable領域は`/tmp`のtmpfsだけとし、host filesystemや
 container runtime socketはmount/publishしない。
-通常起動はDDLを変更せずschema version 3と
+通常起動はDDLを変更せずschema version 7と
 全migration checksumをverifyする。起動前にpinned Experience Design Bundleのapproval/revision/digest/capability
 coverageも検証し、不一致ならHTTP serverを開始しない。
 
@@ -102,7 +105,23 @@ npm run smoke:control:apple
 Issue #15 dashboard boundaryまで含む証跡は`npm run smoke:dashboard:apple`で
 `evidence/ciso-05/dashboard-apple-container-smoke.json`へ出力される。
 
-## Isolated AgentOps runner（CISO-04）
+## Capability-limited triage runner
+
+```sh
+container build --target triage-runner -t agentops-triage:dev -f deploy/Containerfile .
+```
+
+`triage-runner`はprivate Issue/PRのtyped monitor brokerを両modeで処理する。`MONITOR_ONLY`では
+AI providerを呼ばず、観測結果だけをcontrolへ返す。`ACTIVE`ではIssue本文、bounded comment、
+repositoryのNorth Star/roadmap文書、近傍Issue titleだけを読み、strict JSON判定から管理対象ラベルと
+marker付きcommentだけを書ける。人間がexact ready labelを付けた場合だけ、DBの
+`promote_triage_job` capabilityがtriage lease完了とdevelopment job作成を同一transactionで行う。
+
+このimageにはworkspace volume、git、SSH、開発用GitHub token、control token、runtime socket、
+host path/portがない。DB role `agentops_triage`はmonitor claim/complete/failとtriage promotionに限定され、
+`agentops_runner`からmonitor capabilityはrevokeされる。
+
+## Isolated AgentOps development runner（CISO-04）
 
 ```sh
 container build --target runner -t agentops-runner:dev -f deploy/Containerfile .
@@ -113,8 +132,9 @@ npm run smoke:runner:apple
 capability drop ALL、host publishなしで起動する。起動時にmount/publish/outboundとMac HOME／開発root／SSH agent／
 Apple Container socket／control credential不在を検証し、provider/GitHub子processにはDB credentialを渡さない。
 job/result/failureは`contracts/control-store/v1/runner-*.schema.json`のversion 1だけを受理し、unknown schemaは拒否する。
-runnerは`AGENTOPS_OPERATING_MODE`省略時に`MONITOR_ONLY`でleaseを取得せず、実行を許可する配置だけが
-`ACTIVE`を明示する。control/runnerで同じmodeを設定する。
+development runnerは`ACTIVE`にだけ存在する。repository名ではなく、checkoutしたimmutable-at-claim
+`package.json`からbounded grader profileを選ぶ。TypeScript/Vitest、またはshell演算子を含まない
+direct `node <relative-script>` contract checkerだけを受理し、job payloadから任意commandを受け取らない。
 
 Apple Container smokeはinternal network上のrunner/PostgreSQL、lease競合・expiry・restart recovery、全critical boundaryの
 Registration stale race、lease loss、artifact tamper、zero host port、private volumeを接地し、
@@ -129,18 +149,21 @@ permission 0600 env fileなどからexportする。
 ```sh
 export AGENTOPS_POSTGRES_PASSWORD='<32+ bytes: admin only>'
 export AGENTOPS_CONTROL_DB_PASSWORD='<32+ bytes: distinct control role>'
+export AGENTOPS_TRIAGE_DB_PASSWORD='<32+ bytes: distinct triage role>'
 export AGENTOPS_RUNNER_DB_PASSWORD='<32+ bytes: distinct runner role>'
 export AGENTOPS_CONTROL_TOKEN='<32+ bytes>'
 export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<32+ bytes>'
 export AGENTOPS_GITHUB_WEBHOOK_SECRET='<32+ bytes>'
-export AGENTOPS_CONTROL_GITHUB_TOKEN='<control read/monitor scope>'
+export AGENTOPS_MONITOR_REPOSITORIES='owner/repo-a,owner/repo-b'
+export AGENTOPS_TRIAGE_GITHUB_TOKEN='<metadata read + Issues read/write scope>'
 export AGENTOPS_RUNNER_GITHUB_TOKEN='<runner development scope>'
 export AGENTOPS_RUNNER_PROVIDER=codex
-export OPENAI_API_KEY='<runner provider credential>'
+export OPENAI_API_KEY='<ACTIVE triage/development provider credential>'
 
 go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build --request-id operator-start-001
 go run ./cmd/agentopsctl start --mode ACTIVE --request-id operator-active-001
 go run ./cmd/agentopsctl status --json
+go run ./cmd/agentopsctl logs --component triage --lines 200
 go run ./cmd/agentopsctl logs --component runner --lines 200
 go run ./cmd/agentopsctl open
 go run ./cmd/agentopsctl drain --timeout 10m --request-id operator-drain-001
@@ -152,8 +175,10 @@ replayされ、不正遷移は拒否・監査される。DRAININGはDB commit後
 現在attemptを閉じるまで待つ。timeoutはforce killせず非0終了し、statusへdeadline/timeout/last errorを残す。
 
 controlだけがexact `127.0.0.1:${AGENTOPSCTL_CONTROL_HOST_PORT:-8080}:8080/tcp`を1件publishする。
-runner/PostgreSQLはownership label付きhost-only networkとnamed volumeだけを使い、host port/socket/host path/runtime
-socketを持たない。通常stopはcontainerを削除してListen消失を検査するがnamed volumeは保存する。start途中失敗では、
+triage/runner/PostgreSQLはownership label付きhost-only networkを使い、host port/socket/host path/runtime
+socketを持たない。triageはworkspace volumeも持たず、runnerだけがprivate workspace volumeを持つ。
+`MONITOR_ONLY` topologyはPostgreSQL＋control＋triageで、`ACTIVE`だけdevelopment runnerを追加する。
+通常stopはcontainerを削除してListen消失を検査するがnamed volumeは保存する。start途中失敗では、
 そのstartが変更したcontainerだけを補償停止し、既存in-flight topologyとvolumeは保持する。詳細は
 [ADR-0016](../docs/decisions/ADR-0016-agentopsctl-lifecycle-authority.md)と
 [`evidence/ciso-06/`](../evidence/ciso-06/)を参照する。

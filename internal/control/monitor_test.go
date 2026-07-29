@@ -149,7 +149,7 @@ func TestMonitorRetriesOneTransientBrokerProviderFailureWithoutAdvancingCursor(t
 			calls:  &polls,
 			errors: []error{ErrMonitorBrokerTransientProvider},
 		},
-		Mode:           ModeMonitorOnly,
+		Mode:           ModeActive,
 		SupervisorID:   "test",
 		PollInterval:   time.Hour,
 		TransientRetry: time.Millisecond,
@@ -320,7 +320,7 @@ func TestExecutionDisabledMonitorPersistsObservationWithoutEnqueue(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if polls != 1 || store.enqueued != 0 || store.savedCursors != 1 ||
+	if polls != 1 || store.enqueued != 0 || store.savedCursors != 0 ||
 		store.actualStates != 1 {
 		t.Fatalf(
 			"polls=%d enqueued=%d cursors=%d actual=%d",
@@ -360,8 +360,62 @@ func TestMonitorOnlyPersistsObservationWithoutEnqueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if polls != 1 || store.enqueued != 0 || store.savedCursors != 1 ||
+	if polls != 1 || store.enqueued != 0 || store.savedCursors != 0 ||
 		store.actualStates != 1 {
+		t.Fatalf(
+			"polls=%d enqueued=%d cursors=%d actual=%d",
+			polls,
+			store.enqueued,
+			store.savedCursors,
+			store.actualStates,
+		)
+	}
+}
+
+func TestMonitorOnlyObservationIsReplayedAfterActiveCutover(t *testing.T) {
+	store := &fakeMonitorStore{}
+	polls := 0
+	runner := &ProductionRunner{
+		Store: store,
+		Source: fakeMonitorSource{
+			calls: &polls,
+			items: []WorkItem{{
+				Repository: "owner/repo",
+				Kind:       "issue",
+				Number:     7,
+				UpdatedAt:  time.Now(),
+			}},
+		},
+		Mode:         ModeMonitorOnly,
+		SupervisorID: "test",
+	}
+	registration := Registration{
+		ID:                  "registration-1",
+		Repository:          "owner/repo",
+		Enabled:             true,
+		IssueMonitorEnabled: true,
+		ExecutionEnabled:    true,
+		Version:             1,
+	}
+	if err := runner.pollOnce(
+		context.Background(),
+		registration,
+		"issue",
+		ComponentIssueMonitor,
+	); err != nil {
+		t.Fatal(err)
+	}
+	runner.Mode = ModeActive
+	if err := runner.pollOnce(
+		context.Background(),
+		registration,
+		"issue",
+		ComponentIssueMonitor,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if polls != 2 || store.enqueued != 1 || store.savedCursors != 1 ||
+		store.actualStates != 2 {
 		t.Fatalf(
 			"polls=%d enqueued=%d cursors=%d actual=%d",
 			polls,

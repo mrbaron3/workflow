@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	ControlSchemaVersion = 6
+	ControlSchemaVersion = 7
 	migrationLockKey     = int64(0x4349534f02)
 )
 
@@ -946,12 +946,11 @@ func (store *Store) EnqueueWork(
 	if !registration.Enabled || !registration.ExecutionEnabled {
 		return "", false, ErrStaleRegistration
 	}
-	payload, err := item.RunnerPayload(sourceKind)
+	jobType, payload, err := item.QueuedJob(sourceKind)
 	if err != nil {
 		return "", false, err
 	}
 	idempotencyKey := item.IdempotencyKey()
-	jobType := "agentops.runner"
 	transaction, err := store.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return "", false, unavailable(err)
@@ -1112,6 +1111,7 @@ func (store *Store) EnqueueWork(
 			"sourceKind":     sourceKind,
 			"sourceKey":      sourceKey,
 			"idempotencyKey": idempotencyKey,
+			"jobType":        jobType,
 		},
 	); err != nil {
 		return "", false, err

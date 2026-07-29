@@ -72,6 +72,17 @@ func (manager *manager) Start(
 			return err
 		}
 	}
+	if build || !manager.runtime.ImageExists(ctx, manager.config.TriageImage) {
+		if err := manager.runtime.BuildImage(
+			ctx,
+			manager.config.TriageImage,
+			"triage-runner",
+			filepath.Join(manager.config.ProjectRoot, "deploy", "Containerfile"),
+			manager.config.ProjectRoot,
+		); err != nil {
+			return err
+		}
+	}
 	if build || !manager.runtime.ImageExists(ctx, manager.config.RunnerImage) {
 		if err := manager.runtime.BuildImage(
 			ctx,
@@ -102,6 +113,7 @@ func (manager *manager) Start(
 	}
 	postgresStarted := false
 	controlChanged := false
+	triageChanged := false
 	runnerChanged := false
 	var initialMode *lifecycle.Mode
 	defer func() {
@@ -116,6 +128,7 @@ func (manager *manager) Start(
 				context.Background(),
 				postgresStarted,
 				controlChanged,
+				triageChanged,
 				runnerChanged,
 				initialMode,
 				requestID,
@@ -148,12 +161,18 @@ func (manager *manager) Start(
 		if err != nil {
 			return err
 		}
+		actualTriage, err := manager.runtime.Container(ctx, manager.config.TriageContainer)
+		if err != nil {
+			return err
+		}
 		if mode == lifecycle.ModeActive &&
 			!build &&
 			actualControl != nil && actualControl.Status.State == "running" &&
+			actualTriage != nil && actualTriage.Status.State == "running" &&
 			actualRunner != nil && actualRunner.Status.State == "running" {
 			if err := manager.verifyPublishedSurface(
 				ctx,
+				true,
 				true,
 				true,
 				lifecycle.ModeActive,
@@ -216,10 +235,23 @@ func (manager *manager) Start(
 			}
 		}
 	}
-	receipt, err := manager.replaceRunner(ctx, mode)
-	runnerChanged = runnerChanged || receipt.Mutated
+	receipt, err := manager.replaceTriage(ctx, mode)
+	triageChanged = triageChanged || receipt.Mutated
 	if err != nil {
 		return err
+	}
+	if mode == lifecycle.ModeActive {
+		receipt, err = manager.replaceRunner(ctx, mode)
+		runnerChanged = runnerChanged || receipt.Mutated
+		if err != nil {
+			return err
+		}
+	} else {
+		receipt, err = manager.removeRunner(ctx)
+		runnerChanged = runnerChanged || receipt.Mutated
+		if err != nil {
+			return err
+		}
 	}
 	if mode == lifecycle.ModeActive {
 		current, err := manager.databaseStatus(ctx)
@@ -241,6 +273,7 @@ func (manager *manager) Start(
 		ctx,
 		true,
 		true,
+		mode == lifecycle.ModeActive,
 		mode,
 	)
 }
@@ -290,13 +323,18 @@ func (manager *manager) Drain(
 	// Keep the existing control process and its current internal address alive.
 	// PostgreSQL fences routing/enqueue/lease after the DRAINING commit, while
 	// the stable CONNECT proxy lets the current attempt reach a natural stop.
-	runner, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
-	if err != nil {
-		return err
-	}
-	if runner != nil && runner.Status.State == "running" {
-		if err := manager.runtime.SignalTerm(ctx, manager.config.RunnerContainer); err != nil {
+	for _, name := range []string{
+		manager.config.TriageContainer,
+		manager.config.RunnerContainer,
+	} {
+		worker, err := manager.runtime.Container(ctx, name)
+		if err != nil {
 			return err
+		}
+		if worker != nil && worker.Status.State == "running" {
+			if err := manager.runtime.SignalTerm(ctx, name); err != nil {
+				return err
+			}
 		}
 	}
 	if err := manager.reconcileExpiredRunnerWork(ctx); err != nil {
@@ -304,14 +342,11 @@ func (manager *manager) Drain(
 	}
 	active, attempts, err := manager.inFlight(ctx)
 	if err == nil && active == 0 && attempts == 0 {
-		runner, runtimeErr := manager.runtime.Container(
-			ctx,
-			manager.config.RunnerContainer,
-		)
+		stopped, runtimeErr := manager.workersStopped(ctx)
 		if runtimeErr != nil {
 			return runtimeErr
 		}
-		if runner == nil || runner.Status.State != "running" {
+		if stopped {
 			return nil
 		}
 	}
@@ -325,14 +360,11 @@ func (manager *manager) Drain(
 		}
 		active, attempts, err := manager.inFlight(drainContext)
 		if err == nil && active == 0 && attempts == 0 {
-			runner, runtimeErr := manager.runtime.Container(
-				drainContext,
-				manager.config.RunnerContainer,
-			)
+			stopped, runtimeErr := manager.workersStopped(drainContext)
 			if runtimeErr != nil {
 				return runtimeErr
 			}
-			if runner == nil || runner.Status.State != "running" {
+			if stopped {
 				return nil
 			}
 		}
@@ -347,7 +379,7 @@ func (manager *manager) Drain(
 				message,
 				true,
 			)
-			return fmt.Errorf("%s; runner was not force-killed", message)
+			return fmt.Errorf("%s; workers were not force-killed", message)
 		case <-ticker.C:
 		}
 	}
@@ -402,6 +434,7 @@ func (manager *manager) Stop(
 	}
 	for _, name := range []string{
 		manager.config.RunnerContainer,
+		manager.config.TriageContainer,
 		manager.config.ControlContainer,
 	} {
 		if err := manager.gracefulStop(ctx, name, 30*time.Second); err != nil {
@@ -437,7 +470,13 @@ func (manager *manager) Stop(
 	if err := manager.runtime.Delete(ctx, manager.config.PostgresContainer); err != nil {
 		return err
 	}
-	return manager.verifyPublishedSurface(ctx, false, false, lifecycle.ModeOff)
+	return manager.verifyPublishedSurface(
+		ctx,
+		false,
+		false,
+		false,
+		lifecycle.ModeOff,
+	)
 }
 
 type combinedStatus struct {
@@ -458,6 +497,7 @@ func (manager *manager) Status(ctx context.Context) (combinedStatus, error) {
 	}
 	for role, name := range map[string]string{
 		"control":  manager.config.ControlContainer,
+		"triage":   manager.config.TriageContainer,
 		"runner":   manager.config.RunnerContainer,
 		"postgres": manager.config.PostgresContainer,
 	} {
@@ -526,7 +566,7 @@ func printStatus(status combinedStatus) {
 		mode = string(status.Persisted.State.Mode)
 	}
 	fmt.Printf("mode: %s\n", mode)
-	for _, role := range []string{"control", "runner", "postgres"} {
+	for _, role := range []string{"control", "triage", "runner", "postgres"} {
 		state := "absent"
 		if status.Containers[role] != nil {
 			state = status.Containers[role].Status.State
@@ -562,11 +602,12 @@ func (manager *manager) Logs(
 ) error {
 	name, present := map[string]string{
 		"control":  manager.config.ControlContainer,
+		"triage":   manager.config.TriageContainer,
 		"runner":   manager.config.RunnerContainer,
 		"postgres": manager.config.PostgresContainer,
 	}[strings.ToLower(strings.TrimSpace(component))]
 	if !present {
-		return fmt.Errorf("component must be control, runner, or postgres")
+		return fmt.Errorf("component must be control, triage, runner, or postgres")
 	}
 	actual, err := manager.runtime.Container(ctx, name)
 	if err != nil {
@@ -718,6 +759,7 @@ func (manager *manager) migrateAndBootstrap(ctx context.Context) error {
 		[]string{"bootstrap-roles"},
 		map[string]string{
 			"AGENTOPS_CONTROL_DB_PASSWORD": manager.config.ControlDBPassword,
+			"AGENTOPS_TRIAGE_DB_PASSWORD":  manager.config.TriageDBPassword,
 			"AGENTOPS_RUNNER_DB_PASSWORD":  manager.config.RunnerDBPassword,
 		},
 	); err != nil {
@@ -944,13 +986,13 @@ func (manager *manager) controlSpec(
 			"http://127.0.0.1:%d",
 			manager.config.ControlHostPort,
 		),
-		"AGENTOPS_CONTROL_LISTEN":                   "127.0.0.1:8081",
-		"AGENTOPS_CONTROL_PROXY_LISTEN":             "0.0.0.0:8080",
-		"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":       "0.0.0.0:8082",
-		"AGENTOPS_RUNNER_PROVIDER":                  manager.config.Provider,
-		"AGENTOPS_RUNNER_PROVIDER_AUTH":             manager.config.providerAuth(mode),
-		"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORY": manager.config.MonitorRepository,
-		"AGENTOPS_APP_ROOT":                         "/app",
+		"AGENTOPS_CONTROL_LISTEN":                     "127.0.0.1:8081",
+		"AGENTOPS_CONTROL_PROXY_LISTEN":               "0.0.0.0:8080",
+		"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":         "0.0.0.0:8082",
+		"AGENTOPS_RUNNER_PROVIDER":                    manager.config.Provider,
+		"AGENTOPS_RUNNER_PROVIDER_AUTH":               manager.config.providerAuth(mode),
+		"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES": manager.config.monitorRepositoriesCSV(),
+		"AGENTOPS_APP_ROOT":                           "/app",
 	}
 	return lifecycle.ContainerSpec{
 		Name:  manager.config.ControlContainer,
@@ -1074,6 +1116,152 @@ func (manager *manager) seedCodexCredentialVolume(
 	return nil
 }
 
+func (manager *manager) replaceTriage(
+	ctx context.Context,
+	mode lifecycle.Mode,
+) (mutationReceipt, error) {
+	databaseHost, err := manager.databaseHost(ctx)
+	if err != nil {
+		return mutationReceipt{}, err
+	}
+	controlHost, err := manager.networkHost(ctx, manager.config.ControlContainer)
+	if err != nil {
+		return mutationReceipt{}, err
+	}
+	spec := manager.triageSpec(mode, databaseHost, controlHost)
+	if err := manager.sealSpec(ctx, &spec); err != nil {
+		return mutationReceipt{}, err
+	}
+	receipt := mutationReceipt{Mutated: true}
+	if err := manager.gracefulStop(
+		ctx,
+		manager.config.TriageContainer,
+		20*time.Second,
+	); err != nil {
+		return receipt, err
+	}
+	if err := manager.runtime.Delete(ctx, manager.config.TriageContainer); err != nil {
+		return receipt, err
+	}
+	if err := manager.seedCodexCredentialVolume(ctx, mode); err != nil {
+		return receipt, err
+	}
+	if _, err := manager.runtime.RunContainer(ctx, spec); err != nil {
+		return receipt, err
+	}
+	if err := manager.waitWorkerStable(
+		ctx,
+		manager.config.TriageContainer,
+		"triage",
+	); err != nil {
+		return receipt, err
+	}
+	if mode == lifecycle.ModeActive {
+		if err := manager.probeProvider(
+			ctx,
+			manager.config.TriageContainer,
+			"triage",
+		); err != nil {
+			return receipt, err
+		}
+	}
+	return receipt, nil
+}
+
+func (manager *manager) triageSpec(
+	mode lifecycle.Mode,
+	databaseHost, controlHost string,
+) lifecycle.ContainerSpec {
+	outbound := []map[string]any{
+		{"host": databaseHost, "port": 5432},
+		{"host": "api.github.com", "port": 443},
+	}
+	providerAuth := manager.config.providerAuth(mode)
+	if mode == lifecycle.ModeActive {
+		if manager.config.Provider == "codex" && providerAuth == "codex-login" {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "chatgpt.com", "port": 443},
+				map[string]any{"host": "auth.openai.com", "port": 443},
+			)
+		} else if manager.config.Provider == "codex" {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "api.openai.com", "port": 443},
+			)
+		} else {
+			outbound = append(
+				outbound,
+				map[string]any{"host": "api.anthropic.com", "port": 443},
+			)
+		}
+	}
+	outboundJSON, _ := json.Marshal(outbound)
+	mounts := []map[string]any{}
+	runtimeMounts := []lifecycle.Mount{}
+	if manager.config.usesCodexAuthFileFor(mode) {
+		mounts = append(mounts, map[string]any{
+			"source":   manager.config.CredentialVolume,
+			"target":   "/run/agentops-credentials",
+			"readOnly": true,
+		})
+		runtimeMounts = append(runtimeMounts, lifecycle.Mount{
+			Volume:   manager.config.CredentialVolume,
+			Target:   "/run/agentops-credentials",
+			ReadOnly: true,
+		})
+	}
+	mountJSON, _ := json.Marshal(mounts)
+	labels := manager.config.triagePolicyLabels()
+	environment := map[string]string{
+		"AGENTOPS_TRIAGE_DATABASE_URL":         manager.config.triageDatabaseURL(databaseHost),
+		"AGENTOPS_TRIAGE_WORKER_ID":            manager.config.TriageContainer,
+		"AGENTOPS_TRIAGE_PROVIDER":             manager.config.Provider,
+		"AGENTOPS_TRIAGE_PROVIDER_AUTH":        providerAuth,
+		"AGENTOPS_OPERATING_MODE":              string(mode),
+		"AGENTOPS_MONITOR_REPOSITORIES":        manager.config.monitorRepositoriesCSV(),
+		"AGENTOPS_TRIAGE_MOUNTS_JSON":          string(mountJSON),
+		"AGENTOPS_TRIAGE_PUBLISHED_PORTS_JSON": "[]",
+		"AGENTOPS_TRIAGE_OUTBOUND_JSON":        string(outboundJSON),
+		"AGENTOPS_TRIAGE_GITHUB_TOKEN":         manager.config.TriageGitHubToken,
+		"AGENTOPS_TRIAGE_READY_LABEL":          labels[0],
+		"AGENTOPS_TRIAGE_CLAIMED_LABEL":        labels[1],
+		"AGENTOPS_TRIAGE_CANDIDATE_LABEL":      labels[2],
+		"AGENTOPS_TRIAGE_BLOCKED_LABEL":        labels[3],
+		"AGENTOPS_TRIAGE_NEEDS_INFO_LABEL":     labels[4],
+		"AGENTOPS_APP_ROOT":                    "/app",
+		"HTTPS_PROXY":                          "http://" + controlHost + ":8082",
+		"HTTP_PROXY":                           "http://" + controlHost + ":8082",
+		"NO_PROXY":                             databaseHost + ",127.0.0.1,localhost",
+	}
+	if manager.config.TriageContextPaths != "" {
+		environment["AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON"] =
+			manager.config.TriageContextPaths
+	}
+	if mode == lifecycle.ModeActive && manager.config.Provider == "codex" {
+		if manager.config.usesCodexAuthFileFor(mode) {
+			environment["CODEX_HOME"] = "/run/agentops-credentials/codex"
+		} else {
+			environment["OPENAI_API_KEY"] = manager.config.ProviderToken
+		}
+	} else if mode == lifecycle.ModeActive {
+		environment["ANTHROPIC_API_KEY"] = manager.config.ProviderToken
+	}
+	return lifecycle.ContainerSpec{
+		Name:        manager.config.TriageContainer,
+		Role:        "triage",
+		Image:       manager.config.TriageImage,
+		Networks:    []string{manager.config.Network},
+		Environment: environment,
+		Mounts:      runtimeMounts,
+		Tmpfs:       []string{"/tmp", "/home/agentops"},
+		ReadOnly:    true,
+		CapDropAll:  true,
+		Init:        true,
+		Detach:      true,
+	}
+}
+
 func (manager *manager) replaceRunner(
 	ctx context.Context,
 	mode lifecycle.Mode,
@@ -1111,39 +1299,12 @@ func (manager *manager) replaceRunner(
 	if err != nil {
 		return receipt, err
 	}
-	ready, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := manager.runtime.WaitState(
-		ready,
+	if err := manager.waitWorkerStable(
+		ctx,
 		manager.config.RunnerContainer,
-		"running",
-		500*time.Millisecond,
+		"runner",
 	); err != nil {
 		return receipt, err
-	}
-	select {
-	case <-ready.Done():
-		return receipt, ready.Err()
-	case <-time.After(2 * time.Second):
-	}
-	actual, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
-	if err != nil {
-		return receipt, err
-	}
-	if actual == nil || actual.Status.State != "running" {
-		logs := manager.runtime.RecentLogs(
-			ctx,
-			manager.config.RunnerContainer,
-			RunnerReadinessLogLines,
-		)
-		detail := strings.TrimSpace(logs.Stdout + logs.Stderr)
-		if detail == "" {
-			detail = "no runner log output"
-		}
-		return receipt, fmt.Errorf(
-			"runner exited during readiness stabilization: %s",
-			redactedError(errors.New(detail), manager.config),
-		)
 	}
 	if mode == lifecycle.ModeActive {
 		if err := manager.probeRunnerProvider(ctx); err != nil {
@@ -1153,7 +1314,85 @@ func (manager *manager) replaceRunner(
 	return receipt, nil
 }
 
+func (manager *manager) removeRunner(
+	ctx context.Context,
+) (mutationReceipt, error) {
+	actual, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
+	if err != nil {
+		return mutationReceipt{}, err
+	}
+	if actual == nil {
+		return mutationReceipt{}, nil
+	}
+	if actual.Configuration.Labels["com.mrbaron3.workflow.agentopsctl"] != "v1" {
+		return mutationReceipt{}, fmt.Errorf(
+			"runner container name is owned by another deployment",
+		)
+	}
+	receipt := mutationReceipt{Mutated: true}
+	if err := manager.gracefulStop(
+		ctx,
+		manager.config.RunnerContainer,
+		20*time.Second,
+	); err != nil {
+		return receipt, err
+	}
+	if err := manager.runtime.Delete(ctx, manager.config.RunnerContainer); err != nil {
+		return receipt, err
+	}
+	return receipt, nil
+}
+
+func (manager *manager) waitWorkerStable(
+	ctx context.Context,
+	container, role string,
+) error {
+	ready, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := manager.runtime.WaitState(
+		ready,
+		container,
+		"running",
+		500*time.Millisecond,
+	); err != nil {
+		return err
+	}
+	select {
+	case <-ready.Done():
+		return ready.Err()
+	case <-time.After(2 * time.Second):
+	}
+	actual, err := manager.runtime.Container(ctx, container)
+	if err != nil {
+		return err
+	}
+	if actual == nil || actual.Status.State != "running" {
+		logs := manager.runtime.RecentLogs(ctx, container, RunnerReadinessLogLines)
+		detail := strings.TrimSpace(logs.Stdout + logs.Stderr)
+		if detail == "" {
+			detail = "no worker log output"
+		}
+		return fmt.Errorf(
+			"%s exited during readiness stabilization: %s",
+			role,
+			redactedError(errors.New(detail), manager.config),
+		)
+	}
+	return nil
+}
+
 func (manager *manager) probeRunnerProvider(ctx context.Context) error {
+	return manager.probeProvider(
+		ctx,
+		manager.config.RunnerContainer,
+		"runner",
+	)
+}
+
+func (manager *manager) probeProvider(
+	ctx context.Context,
+	container, role string,
+) error {
 	probeContext, cancel := context.WithTimeout(ctx, ProviderProbeTimeout)
 	defer cancel()
 	var command []string
@@ -1171,11 +1410,11 @@ func (manager *manager) probeRunnerProvider(ctx context.Context) error {
 	}
 	result := manager.runtime.Exec(
 		probeContext,
-		manager.config.RunnerContainer,
+		container,
 		command...,
 	)
 	if probeContext.Err() != nil || result.Status != 0 {
-		return fmt.Errorf("runner provider authentication readiness failed")
+		return fmt.Errorf("%s provider authentication readiness failed", role)
 	}
 	return nil
 }
@@ -1242,7 +1481,6 @@ func (manager *manager) runnerSpec(
 		"AGENTOPS_RUNNER_PUBLISHED_PORTS_JSON": "[]",
 		"AGENTOPS_RUNNER_OUTBOUND_JSON":        string(outboundJSON),
 		"AGENTOPS_RUNNER_GITHUB_TOKEN":         manager.config.RunnerGitHubToken,
-		"AGENTOPS_MONITOR_REPOSITORY":          manager.config.MonitorRepository,
 		"HTTPS_PROXY":                          "http://" + controlHost + ":8082",
 		"HTTP_PROXY":                           "http://" + controlHost + ":8082",
 		"NO_PROXY":                             databaseHost + ",127.0.0.1,localhost",
@@ -1339,6 +1577,22 @@ func (manager *manager) gracefulStop(
 	return manager.runtime.WaitState(wait, name, "stopped", 500*time.Millisecond)
 }
 
+func (manager *manager) workersStopped(ctx context.Context) (bool, error) {
+	for _, name := range []string{
+		manager.config.TriageContainer,
+		manager.config.RunnerContainer,
+	} {
+		actual, err := manager.runtime.Container(ctx, name)
+		if err != nil {
+			return false, err
+		}
+		if actual != nil && actual.Status.State == "running" {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func (manager *manager) inFlight(ctx context.Context) (int64, int64, error) {
 	result := manager.runtime.Exec(
 		ctx,
@@ -1369,7 +1623,7 @@ func (manager *manager) inFlight(ctx context.Context) (int64, int64, error) {
 
 func (manager *manager) compensateStart(
 	ctx context.Context,
-	postgresStarted, controlChanged, runnerChanged bool,
+	postgresStarted, controlChanged, triageChanged, runnerChanged bool,
 	initialMode *lifecycle.Mode,
 	requestID string,
 ) error {
@@ -1409,11 +1663,13 @@ func (manager *manager) compensateStart(
 		)
 	}
 
-	names, restoreControl, restoreRunner := compensationTopology(
+	names, restoreControl, restoreTriage, restoreRunner := compensationTopology(
 		target,
 		controlChanged,
+		triageChanged,
 		runnerChanged,
 		manager.config.ControlContainer,
+		manager.config.TriageContainer,
 		manager.config.RunnerContainer,
 	)
 	for _, name := range names {
@@ -1427,10 +1683,12 @@ func (manager *manager) compensateStart(
 		_, _ = manager.replaceControl(ctx, target)
 	}
 	if restoreRunner {
-		// MONITOR_ONLY still requires the runner-owned private GitHub broker.
-		// An ACTIVE replacement failure must restore that runner rather than
-		// leaving the durable lifecycle healthy while both monitors are inert.
 		_, _ = manager.replaceRunner(ctx, target)
+	}
+	if restoreTriage {
+		// MONITOR_ONLY retains only the capability-limited Issue monitor and
+		// triager; the development runner remains absent.
+		_, _ = manager.replaceTriage(ctx, target)
 	}
 	if postgresStarted {
 		if target == lifecycle.ModeOff {
@@ -1443,21 +1701,25 @@ func (manager *manager) compensateStart(
 
 func compensationTopology(
 	target lifecycle.Mode,
-	controlChanged, runnerChanged bool,
-	controlContainer, runnerContainer string,
+	controlChanged, triageChanged, runnerChanged bool,
+	controlContainer, triageContainer, runnerContainer string,
 ) (
 	stopNames []string,
-	restoreControl, restoreRunner bool,
+	restoreControl, restoreTriage, restoreRunner bool,
 ) {
 	if runnerChanged {
 		stopNames = append(stopNames, runnerContainer)
+	}
+	if triageChanged {
+		stopNames = append(stopNames, triageContainer)
 	}
 	if controlChanged && target == lifecycle.ModeOff {
 		stopNames = append(stopNames, controlContainer)
 	}
 	return stopNames,
 		controlChanged && target != lifecycle.ModeOff,
-		runnerChanged && target == lifecycle.ModeMonitorOnly
+		triageChanged && target == lifecycle.ModeMonitorOnly,
+		runnerChanged && target == lifecycle.ModeActive
 }
 
 func (manager *manager) rollbackLifecycle(
@@ -1535,7 +1797,7 @@ func (manager *manager) rollbackLifecycle(
 
 func (manager *manager) verifyPublishedSurface(
 	ctx context.Context,
-	controlExpected, runnerExpected bool,
+	controlExpected, triageExpected, runnerExpected bool,
 	mode lifecycle.Mode,
 ) error {
 	reachable := tcpReachable(
@@ -1567,11 +1829,17 @@ func (manager *manager) verifyPublishedSurface(
 		return fmt.Errorf("control does not have exactly one loopback-only publication")
 	}
 	if controlExpected {
-		if err := manager.verifyManagedTopology(ctx, runnerExpected, mode); err != nil {
+		if err := manager.verifyManagedTopology(
+			ctx,
+			triageExpected,
+			runnerExpected,
+			mode,
+		); err != nil {
 			return err
 		}
 	}
 	for _, role := range []string{
+		manager.config.TriageContainer,
 		manager.config.RunnerContainer,
 		manager.config.PostgresContainer,
 	} {
@@ -1590,6 +1858,7 @@ func (manager *manager) verifyPublishedSurface(
 
 func (manager *manager) verifyManagedTopology(
 	ctx context.Context,
+	triageExpected bool,
 	runnerExpected bool,
 	mode lifecycle.Mode,
 ) error {
@@ -1602,6 +1871,10 @@ func (manager *manager) verifyManagedTopology(
 		return err
 	}
 	runner, err := manager.runtime.Container(ctx, manager.config.RunnerContainer)
+	if err != nil {
+		return err
+	}
+	triage, err := manager.runtime.Container(ctx, manager.config.TriageContainer)
 	if err != nil {
 		return err
 	}
@@ -1629,25 +1902,41 @@ func (manager *manager) verifyManagedTopology(
 	if err := validateSpecActual(postgres, postgresSpec); err != nil {
 		return err
 	}
-	if runnerExpected {
-		if err := validateRunnerActual(runner, manager.config, mode); err != nil {
+	controlHost, err := manager.networkHost(
+		ctx,
+		manager.config.ControlContainer,
+	)
+	if err != nil {
+		return err
+	}
+	if triageExpected {
+		if err := validateTriageActual(triage, manager.config, mode); err != nil {
 			return err
 		}
-		controlHost, err := manager.networkHost(
-			ctx,
-			manager.config.ControlContainer,
-		)
-		if err != nil {
+		triageSpec := manager.triageSpec(mode, databaseHost, controlHost)
+		if err := manager.sealSpec(ctx, &triageSpec); err != nil {
+			return err
+		}
+		if err := validateSpecActual(triage, triageSpec); err != nil {
+			return err
+		}
+	} else if triage != nil && triage.Status.State == "running" {
+		return fmt.Errorf("triage container is unexpectedly running")
+	}
+	if runnerExpected {
+		if err := validateRunnerActual(runner, manager.config, mode); err != nil {
 			return err
 		}
 		runnerSpec := manager.runnerSpec(mode, databaseHost, controlHost)
 		if err := manager.sealSpec(ctx, &runnerSpec); err != nil {
 			return err
 		}
-		return validateSpecActual(runner, runnerSpec)
+		if err := validateSpecActual(runner, runnerSpec); err != nil {
+			return err
+		}
+	} else if runner != nil && runner.Status.State == "running" {
+		return fmt.Errorf("runner container is unexpectedly running")
 	}
-	// OFF is verified with both controlExpected and runnerExpected false.
-	// MONITOR_ONLY intentionally keeps runner alive for the typed read broker.
 	return nil
 }
 
@@ -1709,6 +1998,7 @@ func (manager *manager) validateExistingTopology(
 ) error {
 	for _, name := range []string{
 		manager.config.ControlContainer,
+		manager.config.TriageContainer,
 		manager.config.RunnerContainer,
 		manager.config.PostgresContainer,
 	} {
@@ -1721,6 +2011,8 @@ func (manager *manager) validateExistingTopology(
 			switch name {
 			case manager.config.ControlContainer:
 				validateErr = validateControlActual(actual, manager.config)
+			case manager.config.TriageContainer:
+				validateErr = validateTriageActual(actual, manager.config, mode)
 			case manager.config.RunnerContainer:
 				validateErr = validateRunnerActual(actual, manager.config, mode)
 			case manager.config.PostgresContainer:
@@ -1753,6 +2045,38 @@ func validateControlActual(
 	}
 	if !exactMounts(actual, map[string]string{"/tmp": "tmpfs"}) {
 		return fmt.Errorf("control mounts do not match the hardened topology")
+	}
+	return nil
+}
+
+func validateTriageActual(
+	actual *lifecycle.ContainerActual,
+	config config,
+	mode lifecycle.Mode,
+) error {
+	if err := validateManagedActual(
+		actual,
+		config.TriageContainer,
+		"triage",
+		config.TriageImage,
+		[]string{config.Network},
+		true,
+	); err != nil {
+		return err
+	}
+	if len(actual.Configuration.PublishedPorts) != 0 ||
+		len(actual.Configuration.PublishedSock) != 0 {
+		return fmt.Errorf("triage exposes a host port or socket")
+	}
+	expectedMounts := map[string]string{
+		"/tmp":           "tmpfs",
+		"/home/agentops": "tmpfs",
+	}
+	if config.usesCodexAuthFileFor(mode) {
+		expectedMounts["/run/agentops-credentials"] = config.CredentialVolume
+	}
+	if !exactMounts(actual, expectedMounts) {
+		return fmt.Errorf("triage mounts do not match the hardened topology")
 	}
 	return nil
 }
@@ -1977,11 +2301,13 @@ func redactedError(err error, config config) string {
 		config.PostgresPassword,
 		config.NextPostgresPassword,
 		config.ControlDBPassword,
+		config.TriageDBPassword,
 		config.RunnerDBPassword,
 		config.ControlToken,
 		config.DashboardToken,
 		config.WebhookSecret,
 		config.ControlGitHubToken,
+		config.TriageGitHubToken,
 		config.RunnerGitHubToken,
 		config.ProviderToken,
 	} {
@@ -1998,6 +2324,7 @@ func hasManagedService(
 ) bool {
 	names := map[string]bool{
 		config.ControlContainer:  true,
+		config.TriageContainer:   true,
 		config.RunnerContainer:   true,
 		config.PostgresContainer: true,
 	}

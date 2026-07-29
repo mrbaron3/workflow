@@ -555,13 +555,20 @@ func (store *Store) Status(ctx context.Context) (Status, error) {
 
 func BootstrapRoles(
 	ctx context.Context,
-	databaseURL, controlPassword, runnerPassword string,
+	databaseURL, controlPassword, triagePassword, runnerPassword string,
 ) error {
-	if len(controlPassword) < 32 || len(runnerPassword) < 32 {
-		return fmt.Errorf("control and runner database passwords must be at least 32 bytes")
+	if len(controlPassword) < 32 || len(triagePassword) < 32 ||
+		len(runnerPassword) < 32 {
+		return fmt.Errorf(
+			"control, triage, and runner database passwords must be at least 32 bytes",
+		)
 	}
-	if controlPassword == runnerPassword {
-		return fmt.Errorf("control and runner database passwords must be distinct")
+	if controlPassword == triagePassword ||
+		controlPassword == runnerPassword ||
+		triagePassword == runnerPassword {
+		return fmt.Errorf(
+			"control, triage, and runner database passwords must be distinct",
+		)
 	}
 	store, err := Open(ctx, databaseURL)
 	if err != nil {
@@ -569,6 +576,7 @@ func BootstrapRoles(
 	}
 	defer store.Close()
 	controlLiteral := quoteLiteral(controlPassword)
+	triageLiteral := quoteLiteral(triagePassword)
 	runnerLiteral := quoteLiteral(runnerPassword)
 	statements := []string{
 		`DO $$ BEGIN
@@ -577,6 +585,12 @@ func BootstrapRoles(
 		   END IF;
 		 END $$`,
 		`ALTER ROLE agentops_control_app PASSWORD ` + controlLiteral,
+		`DO $$ BEGIN
+		   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agentops_triage') THEN
+		     CREATE ROLE agentops_triage LOGIN;
+		   END IF;
+		 END $$`,
+		`ALTER ROLE agentops_triage PASSWORD ` + triageLiteral,
 		`DO $$ BEGIN
 		   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agentops_runner') THEN
 		     CREATE ROLE agentops_runner LOGIN;
@@ -589,6 +603,37 @@ func BootstrapRoles(
 		   TO agentops_control_app`,
 		`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA agentops_control
 		   TO agentops_control_app`,
+		`GRANT CONNECT ON DATABASE agentops TO agentops_triage`,
+		`GRANT USAGE ON SCHEMA agentops_control TO agentops_triage`,
+		`GRANT SELECT ON agentops_control.schema_migrations,
+		   agentops_control.repository_registrations,
+		   agentops_control.lifecycle_state TO agentops_triage`,
+		`GRANT UPDATE(updated_at) ON agentops_control.lifecycle_state
+		   TO agentops_triage`,
+		`GRANT UPDATE(updated_at) ON agentops_control.repository_registrations
+		   TO agentops_triage`,
+		`GRANT SELECT, UPDATE ON agentops_control.jobs TO agentops_triage`,
+		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
+		   agentops_control.job_leases TO agentops_triage`,
+		`GRANT SELECT ON agentops_control.monitor_broker_requests
+		   TO agentops_triage`,
+		`REVOKE UPDATE ON agentops_control.monitor_broker_requests
+		   FROM agentops_triage`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.claim_monitor_broker_request(text, text[], uuid, integer)
+		   TO agentops_triage`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.complete_monitor_broker_request(uuid, uuid, text, jsonb)
+		   TO agentops_triage`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.fail_monitor_broker_request(uuid, uuid, text, text, text)
+		   TO agentops_triage`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.promote_triage_job(uuid, text, jsonb, text, text)
+		   TO agentops_triage`,
+		`GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_triage`,
+		`GRANT USAGE, SELECT ON SEQUENCE agentops_control.runtime_audit_id_seq
+		   TO agentops_triage`,
 		`GRANT CONNECT ON DATABASE agentops TO agentops_runner`,
 		`GRANT USAGE ON SCHEMA agentops_control TO agentops_runner`,
 		`GRANT SELECT ON agentops_control.schema_migrations,
@@ -602,19 +647,20 @@ func BootstrapRoles(
 		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
 		   agentops_control.job_leases, agentops_control.artifact_links
 		   TO agentops_runner`,
-		`GRANT SELECT ON agentops_control.monitor_broker_requests
-		   TO agentops_runner`,
-		`REVOKE UPDATE ON agentops_control.monitor_broker_requests
+		`REVOKE ALL ON agentops_control.monitor_broker_requests
 		   FROM agentops_runner`,
-		`GRANT EXECUTE ON FUNCTION
-		   agentops_control.claim_monitor_broker_request(text, text, uuid, integer)
-		   TO agentops_runner`,
-		`GRANT EXECUTE ON FUNCTION
+		`REVOKE EXECUTE ON FUNCTION
+		   agentops_control.claim_monitor_broker_request(text, text[], uuid, integer)
+		   FROM agentops_runner`,
+		`REVOKE EXECUTE ON FUNCTION
 		   agentops_control.complete_monitor_broker_request(uuid, uuid, text, jsonb)
-		   TO agentops_runner`,
-		`GRANT EXECUTE ON FUNCTION
+		   FROM agentops_runner`,
+		`REVOKE EXECUTE ON FUNCTION
 		   agentops_control.fail_monitor_broker_request(uuid, uuid, text, text, text)
-		   TO agentops_runner`,
+		   FROM agentops_runner`,
+		`REVOKE EXECUTE ON FUNCTION
+		   agentops_control.promote_triage_job(uuid, text, jsonb, text, text)
+		   FROM agentops_runner`,
 		`GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_runner`,
 		`GRANT USAGE, SELECT ON SEQUENCE agentops_control.runtime_audit_id_seq
 		   TO agentops_runner`,

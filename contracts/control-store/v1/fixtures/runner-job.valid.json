@@ -15,7 +15,9 @@
   "execution": {
     "mode": "development_turn",
     "requiredChecks": ["test", "postgres"],
-    "mergeMethod": "squash"
+    "mergeMethod": "squash",
+    "readyLabel": "ready",
+    "claimedLabel": "agent-claimed"
   },
   "artifacts": []
 }

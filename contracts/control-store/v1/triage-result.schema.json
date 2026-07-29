@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mrbaron3/workflow/contracts/control-store/v1/triage-result.schema.json",
+  "title": "AgentOps issue triage result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "status",
+    "jobId",
+    "attemptNumber",
+    "repository",
+    "issueNumber",
+    "outcome",
+    "sourceDigest",
+    "decision",
+    "commentUrl",
+    "appliedLabels",
+    "promotedJobId",
+    "completedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "const": "succeeded" },
+    "jobId": { "type": "string", "format": "uuid" },
+    "attemptNumber": { "type": "integer", "minimum": 1 },
+    "repository": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/(?!\\.{1,2}$)[a-z0-9_.-]{1,100}$"
+    },
+    "issueNumber": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "outcome": {
+      "enum": ["triaged", "unchanged", "promoted", "skipped"]
+    },
+    "sourceDigest": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decision": {
+      "oneOf": [
+        { "$ref": "triage-decision.schema.json" },
+        { "type": "null" }
+      ]
+    },
+    "commentUrl": {
+      "type": ["string", "null"],
+      "format": "uri"
+    },
+    "appliedLabels": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 50,
+        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:/ -]*$"
+      }
+    },
+    "promotedJobId": {
+      "type": ["string", "null"],
+      "format": "uuid"
+    },
+    "completedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    }
+  }
+}

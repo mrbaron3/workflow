@@ -30,14 +30,15 @@
 - **ARCH-control-store-014 Recovery Reconciliation** — CLI restartはpersisted mode、active lease、running attempt、
   actual containerを照合し、欠損ACTIVEをDRAININGへ寄せてから安全な復旧経路だけを通す。
 - **ARCH-control-store-015 Explicit Owner Migration** — 通常consumerはschema verify-onlyを保ち、短命なowner-only
-  admin containerだけがadvisory lock下でversion 6までのadditive migrationとleast-privilege role bootstrapを行う。
+  admin containerだけがadvisory lock下でversion 7までのadditive migrationとleast-privilege role bootstrapを行う。
   commit前failureは旧versionを保持し、commit後はdurable rowを消すdown migrationでなくsafe modeへのcompensationと
   current imageによるforward recoveryを行う。
 - **ARCH-control-store-016 Typed Private Monitor Broker** — credential-free controlはRegistration/version、固定repository、
-  issue/PR kind、strict cursorだけをdurable requestへ保存し、credential-bearing runnerがleaseしてsanitized identityだけを
+  issue/PR kind、strict cursorだけをdurable requestへ保存し、credential-bearing triage roleがleaseしてsanitized identityだけを
   応答する。stale/disabled/out-of-allowlist requestはprovider call前に拒否し、expiry後の回収とresponse digestを監査する。
   provider operationはtotal deadline/page/item/raw-byte上限を持ち、claim/failure persistence障害はexecution serviceから
-  隔離する。
+  隔離する。Issue identityはstrict triage jobへ入り、AIはready approvalを作れない。human exact ready label後だけ、
+  live triage leaseの完了とconfigured-label付きdevelopment job enqueueをSECURITY DEFINER capabilityでatomicに行う。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、

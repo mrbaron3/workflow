@@ -29,5 +29,5 @@
 | [ADR-0014](ADR-0014-registration-driven-go-control.md) | PostgreSQL RegistrationからGo controlのmonitor/forwarder/routerを動的収束させ、approved Experience contractをAPI gateにする | 採択・吸収・構造実装済み（CISO-03） |
 | [ADR-0015](ADR-0015-postgresql-fenced-isolated-runner.md) | isolated runnerをPostgreSQL lease/Registration fence、private workspace、既存AgentOps gateの内側で実行する | 採択・吸収・構造実装済み（CISO-04） |
 | [ADR-0016](ADR-0016-agentopsctl-lifecycle-authority.md) | 短命な`agentopsctl`だけをApple Container隔離基盤のlifecycle ownerとし、DB権威のdrain fence、復旧、補償、exact loopback publicationを行う | 採択・吸収・実装済み（CISO-06） |
-| [ADR-0017](ADR-0017-private-repository-monitor-broker.md) | private repositoryのIssue/PR readをrunner credential境界内のtyped durable brokerへ閉じ、stale RegistrationとleaseをDBでfenceする | 採択・吸収・実装済み（CISO-07） |
+| [ADR-0017](ADR-0017-private-repository-monitor-broker.md) | private repositoryのIssue/PR readとIssue triageを専用credential境界のtyped durable capabilityへ閉じ、人間ready後だけdevelopmentへpromoteする | 採択・吸収・schema v7構造実装済み（multi-repo live実証待ち） |
 | [ADR-0018](ADR-0018-surrogate-verifier-oracle-calibration.md) | 内部Panel全承認と独立外部検証の棄却をrevision単位の不透明な信号にし、次reviewerの検証被覆を強化する | 採択・吸収・構造実装済み（次revisionでのgrounded効果観測待ち） |

@@ -154,15 +154,11 @@ func (runner *ProductionRunner) pollOnce(
 		return err
 	}
 	if !registration.ExecutionEnabled || runner.Mode != ModeActive {
-		if err := runner.Store.SaveMonitorCursor(
-			ctx,
-			registration.ID,
-			kind,
-			nextCursor,
-			observedAt,
-		); err != nil {
-			return err
-		}
+		// This cursor is the durable processing boundary, not merely a read
+		// watermark. Advancing it while execution is disabled or MONITOR_ONLY
+		// would permanently skip work observed before the next ACTIVE turn.
+		// Keep polling for freshness, but leave the cursor frozen so ACTIVE
+		// deterministically re-observes and enqueues the same identities.
 		return runner.Store.UpsertActualState(
 			ctx,
 			registration,

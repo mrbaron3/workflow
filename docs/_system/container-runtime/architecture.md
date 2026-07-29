@@ -43,10 +43,11 @@
   GitHub/GitHub API/選択providerの443だけへ到達する。PostgreSQLはactual internal IPv4で直接到達する。
 - **ARCH-container-runtime-014 Scoped compensation** — partial startは当該試行が変更したcontainerだけを停止・削除し、
   named volumeと既存in-flight topologyを保存する。
-- **ARCH-container-runtime-015 Runner-only monitor credential boundary** — private repository read credentialとCodex credentialは
-  runnerだけへ渡す。controlのGitHub credentialは空のまま、runnerはinternal network上のcontrol egress allowlist経由で
-  固定typed monitor endpointへ出る。MONITOR_ONLYでもrunner-only GitHub credentialとGitHub broker egressで
-  brokerは動くが、Codex/provider credential・provider egressを持たず、execution leaseはmode fenceが拒否する。
+- **ARCH-container-runtime-015 Triage-only monitor credential boundary** — private repository monitor／Issue triageを
+  専用`triage-runner` image、DB role、GitHub credentialへ閉じる。controlのGitHub credentialは空のまま、
+  triageはinternal network上のcontrol egress allowlist経由で固定typed GitHub operationへ出るが、workspace、
+  git／SSH、runtime socket、host path／portを持たない。MONITOR_ONLYはbrokerだけを動かしprovider credentialを
+  渡さない。ACTIVEだけproviderによるstrict triageと、別credential／workspaceを持つdevelopment runnerを追加する。
 - **ARCH-container-runtime-016 Sealed PostgreSQL rotation boundary** — PostgreSQL actualはimage descriptorと
   credential-redacted canonical spec digestへsealし、credential値はactual比較とauthentication probeだけで検証する。
   driftはrunningのまま受理せず、DRAINING・zero workでtransactionalにadmin credentialを変更・新旧authenticationを
