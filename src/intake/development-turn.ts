@@ -1,9 +1,29 @@
 /** GitHub ready Issue → planning → trace gate → existing live drive orchestration. */
 import path from 'node:path';
 import type { HarnessConfig } from '../config.js';
-import { PlanningEnrichmentOutput, type EnrichmentCandidate, type IntakeRecord } from '../domain/schema.js';
+import {
+  ApprovedDesignReviewProjection,
+  PlanningEnrichmentOutput,
+  type CapabilityReconciliationInput,
+  type DesignDraftCandidate,
+  type DesignRequest,
+  type EnrichmentCandidate,
+  type IntakeRecord,
+} from '../domain/schema.js';
 import { recordAgentInvocation } from '../agents/invocation.js';
 import { resolveAgentRoute, type AgentRoute } from '../agents/routing.js';
+import {
+  createDesignflowContractConsumer,
+  type DesignflowBundleInput,
+  type DesignflowContractResult,
+} from '../designflow/contract-consumer.js';
+import {
+  evaluateMaterializedDesignDecisionGate,
+  type DesignDecisionGateResult,
+} from '../designflow/decision-gate.js';
+import {
+  projectMaterializedDesignBundleReview,
+} from '../designflow/review-projection.js';
 import type { DriveResult } from '../pipeline/execution/loop.js';
 import { runLoopLive, type LiveOptions } from '../pipeline/execution/live.js';
 import type { Store } from '../store/store.js';
@@ -14,8 +34,11 @@ import {
 } from './github-issues.js';
 import {
   applyPlanningEnrichment,
+  finalizeDesignPlanning,
+  rejectDesignPlanningResolution,
   requiresUiDesign,
   uiDesignSubjectId,
+  type ApprovedDesignResolution,
   type UiDesignAttempt,
 } from './planning-enrichment.js';
 import { runPlanningSession, type PlanningSessionResult } from './planning-session.js';
@@ -47,10 +70,54 @@ export interface UiDesignRunnerInput {
 export type UiDesignRunner = (input: UiDesignRunnerInput) => Promise<UiDesignSessionResult>;
 export type QueueDriver = () => Promise<DriveResult[]>;
 
+/** Provider-facing materialization seam; it deliberately cannot return API/Issue planning. */
+export interface DesignflowPlanningResolverInput {
+  intake: IntakeRecord;
+  draft: DesignDraftCandidate;
+  designRequest: DesignRequest;
+}
+
+export interface DesignflowPlanningResolution {
+  bundle: DesignflowBundleInput;
+}
+
+export type DesignflowPlanningResolver = (
+  input: DesignflowPlanningResolverInput,
+) => Promise<DesignflowPlanningResolution | null>;
+
+/** Called only after WF-DF-004 approved and the consumer decoded the exact capability revision. */
+export interface DesignflowCapabilityReconcilerInput
+  extends DesignflowPlanningResolverInput {
+  approvedContract: DesignflowContractResult;
+}
+
+export type DesignflowCapabilityReconciler = (
+  input: DesignflowCapabilityReconcilerInput,
+) => Promise<CapabilityReconciliationInput>;
+
+/** Narrow consumer injection keeps orchestration independent of transport/runtime details. */
+export interface DesignflowPlanningConsumer {
+  validateBundle(input: DesignflowBundleInput): DesignflowContractResult;
+}
+
+export type DesignflowPlanningDecisionGate = (
+  input: DesignflowBundleInput,
+) => DesignDecisionGateResult;
+
+/** Workflow-owned projection seam; production re-reads the digest-bound bundle artifacts. */
+export type DesignflowReviewProjector = (
+  input: DesignflowBundleInput,
+) => ApprovedDesignReviewProjection;
+
 export interface GithubDevelopmentTurnDeps {
   issueRunner: GithubIssueRunner;
   planningRunner?: PlanningRunner;
   uiDesignRunner?: UiDesignRunner;
+  designflowResolver?: DesignflowPlanningResolver;
+  designflowCapabilityReconciler?: DesignflowCapabilityReconciler;
+  designflowConsumer?: DesignflowPlanningConsumer;
+  designflowDecisionGate?: DesignflowPlanningDecisionGate;
+  designflowReviewProjector?: DesignflowReviewProjector;
   driveQueue?: QueueDriver;
   prNativeRunner?: PrNativeGithubRunner;
   repositoryPullRequestReviewer?: RepositoryPullRequestReviewer;
@@ -221,9 +288,15 @@ export async function runGithubDevelopmentTurn(
     });
     const uiDesigns: Record<string, UiDesignAttempt> = {};
     const planningOutput = PlanningEnrichmentOutput.safeParse(result.output);
+    const configuredDesignProviders = config.intake?.designProviders ?? {};
     if (invocation.outcome === 'completed' && planningOutput.success) {
       let selectedUiDesignRoute: AgentRoute | null = null;
       for (const candidate of planningOutput.data.candidates.filter(requiresUiDesign)) {
+        // The retained session is an adapter, not an implicit fallback. A malformed, missing,
+        // or Designflow selection is rejected by the deterministic enrichment gate below.
+        if (configuredDesignProviders[candidate.candidateKey] !== 'legacy-ui-design') {
+          continue;
+        }
         selectedUiDesignRoute ??= resolveAgentRoute(config, 'ui-design');
         const uiDesignRoute = selectedUiDesignRoute;
         const uiResult = await uiDesignRunner({ intake, candidate, route: uiDesignRoute });
@@ -258,6 +331,109 @@ export async function runGithubDevelopmentTurn(
       uiDesigns,
     });
     enrichmentIds.push(enrichment.id);
+  }
+
+  // Design-pending records are durable resume state. Never rerun planning and never allocate
+  // an Issue until every draft resolves to a consumer-validated, human-approved bundle.
+  const awaitingDesign = store.db.planningEnrichments
+    .filter((enrichment) => enrichment.status === 'awaiting-design')
+    .sort((left, right) => {
+      const leftNumber = store.intakeByKey(left.intakeKey)?.snapshot.number ?? Number.MAX_SAFE_INTEGER;
+      const rightNumber = store.intakeByKey(right.intakeKey)?.snapshot.number ?? Number.MAX_SAFE_INTEGER;
+      return leftNumber - rightNumber || left.intakeKey.localeCompare(right.intakeKey);
+    });
+  if (awaitingDesign.length > 0) {
+    const consumer = deps.designflowConsumer
+      ?? (deps.designflowResolver
+        ? createDesignflowContractConsumer({ repositoryRoot: harnessRoot })
+        : null);
+    const decisionGate = deps.designflowDecisionGate
+      ?? evaluateMaterializedDesignDecisionGate;
+    const reviewProjector = deps.designflowReviewProjector
+      ?? projectMaterializedDesignBundleReview;
+    for (const enrichment of awaitingDesign) {
+      const intake = store.intakeByKey(enrichment.intakeKey);
+      if (!intake) throw new Error(`No intake record: ${enrichment.intakeKey}`);
+      if (!deps.designflowResolver || consumer === null) {
+        const rejected = rejectDesignPlanningResolution(
+          store,
+          enrichment.intakeKey,
+          ['selected Designflow provider is unavailable'],
+        );
+        if (!enrichmentIds.includes(rejected.id)) enrichmentIds.push(rejected.id);
+        log(`⚠ Designflow provider unavailable for ${enrichment.intakeKey}`);
+        continue;
+      }
+      const resolutions: ApprovedDesignResolution[] = [];
+      let complete = true;
+      for (const designDraft of enrichment.designDrafts) {
+        try {
+          const resolution = await deps.designflowResolver({
+            intake,
+            draft: designDraft.candidate,
+            designRequest: designDraft.designRequest,
+          });
+          if (!resolution) {
+            throw new Error('selected Designflow provider returned no resolution');
+          }
+          const gate = decisionGate(resolution.bundle);
+          let contract: DesignflowContractResult | null = null;
+          let reconciliation: CapabilityReconciliationInput | null = null;
+          let reviewProjection: ApprovedDesignResolution['reviewProjection'] = null;
+          if (gate.status === 'approved') {
+            contract = consumer.validateBundle(resolution.bundle);
+            reviewProjection = ApprovedDesignReviewProjection.parse(
+              reviewProjector(resolution.bundle),
+            );
+            const capabilityReconciler = deps.designflowCapabilityReconciler;
+            if (!capabilityReconciler) {
+              throw new Error(
+                'workflow capability reconciler is not configured for an approved bundle',
+              );
+            }
+            reconciliation = await capabilityReconciler({
+              intake,
+              draft: designDraft.candidate,
+              designRequest: designDraft.designRequest,
+              approvedContract: contract,
+            });
+          }
+          resolutions.push({
+            candidateKey: designDraft.candidate.candidateKey,
+            contract,
+            decisionGate: gate,
+            reviewProjection,
+            reconciliation,
+          });
+        } catch (error) {
+          complete = false;
+          const detail = error instanceof Error ? error.message : String(error);
+          const rejected = rejectDesignPlanningResolution(
+            store,
+            enrichment.intakeKey,
+            [
+              `${designDraft.candidate.candidateKey}: invalid Designflow resolution: ${detail}`,
+            ],
+          );
+          if (!enrichmentIds.includes(rejected.id)) enrichmentIds.push(rejected.id);
+          log(
+            `⚠ Designflow bundle rejected for ${enrichment.intakeKey}/`
+            + `${designDraft.candidate.candidateKey}: `
+            + detail,
+          );
+          break;
+        }
+      }
+      if (!complete) continue;
+      const finalized = finalizeDesignPlanning(
+        store,
+        config,
+        enrichment.intakeKey,
+        resolutions,
+        { systemDir },
+      );
+      if (!enrichmentIds.includes(finalized.id)) enrichmentIds.push(finalized.id);
+    }
   }
 
   // The downstream is the existing queue driver — no intake-specific implementation pipeline.

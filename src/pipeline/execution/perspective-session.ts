@@ -20,6 +20,8 @@ import {
   Severity,
   Verdict,
   type AgentProvider,
+  type ApprovedDesignReviewProjection,
+  type DesignAuthority,
   type Finding,
   type IssueContract,
   type UiDesignArtifact,
@@ -39,6 +41,7 @@ import {
   MAX_REVIEW_REQUIRED_FIX_CHARS,
   MAX_REVIEW_REQUIRED_FIXES,
 } from './review-output-limits.js';
+import { renderAuthoritativeDesignContext } from '../../designflow/authority.js';
 export { REVIEW_LIVENESS } from './review-liveness.js';
 export {
   appendRestrictedReviewOutput,
@@ -194,6 +197,8 @@ export function perspectivePrompt(
   uiDesign: UiDesignArtifact | null = null,
   reviewTarget: ImmutableReviewTarget | null = null,
   surrogateOracleMismatchCount = 0,
+  designAuthority: DesignAuthority | null = null,
+  designReview: ApprovedDesignReviewProjection | null = null,
 ): string {
   const lens = PERSPECTIVE_LENS[perspective] ?? 'correctness and quality for this lens';
   const rubric = PERSPECTIVE_RUBRIC[perspective] ?? [];
@@ -222,6 +227,13 @@ export function perspectivePrompt(
           `## UI Design Contract`,
           JSON.stringify(uiDesign, null, 2),
           `Judge the implementation against this accepted design contract without inventing new UI scope.`,
+        ]
+      : []),
+    ...(designAuthority
+      ? [
+          ``,
+          renderAuthoritativeDesignContext(designAuthority, designReview),
+          `Implementations and review evidence must remain bound to this exact design revision.`,
         ]
       : []),
     ...(reReview
@@ -276,6 +288,8 @@ export function promptForLens(
   uiDesign: UiDesignArtifact | null = null,
   reviewTarget: ImmutableReviewTarget | null = null,
   surrogateOracleMismatchCount = 0,
+  designAuthority: DesignAuthority | null = null,
+  designReview: ApprovedDesignReviewProjection | null = null,
 ): string {
   return perspectivePrompt(
     perspective,
@@ -285,6 +299,8 @@ export function promptForLens(
     uiDesign,
     reviewTarget,
     surrogateOracleMismatchCount,
+    designAuthority,
+    designReview,
   );
 }
 
@@ -310,6 +326,10 @@ export interface PerspectiveSessionsInput {
   priorFindings?: Record<string, readonly PriorFinding[]>;
   /** Accepted UI design contract, when the issue required the dedicated authoring gate. */
   uiDesign?: UiDesignArtifact | null;
+  /** Exact single-provider revision authority shared with the generator prompt. */
+  designAuthority?: DesignAuthority | null;
+  /** Canonical WF-DF-005 content bound to designAuthority. */
+  designReview?: ApprovedDesignReviewProjection | null;
   /**
    * Number of earlier PR revisions where every surrogate perspective approved
    * but an independent external oracle rejected. Only the count crosses into
@@ -335,6 +355,8 @@ export function perspectiveSessionPrompt(
       ...(input.baseRef ? { baseRef: input.baseRef } : {}),
     },
     input.surrogateOracleMismatchCount,
+    input.designAuthority,
+    input.designReview,
   );
 }
 

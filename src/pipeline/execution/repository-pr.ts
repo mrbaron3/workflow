@@ -393,6 +393,8 @@ export async function reviewRepositoryPullRequest(
           buildRef: fetchedRevision.headSha,
           baseRef: fetchedRevision.baseSha,
           uiDesign: issue.uiDesign,
+          designAuthority: issue.designAuthority,
+          designReview: issue.designReview,
           untrusted: true,
           surrogateOracleMismatchCount: surrogateOracleMismatchRevisions(
             store.db.revisionGateSnapshots,

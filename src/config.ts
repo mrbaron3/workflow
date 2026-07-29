@@ -6,7 +6,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import type { AgentProvider, GeneratorAgent, VerificationMethod } from './domain/schema.js';
+import type {
+  AgentProvider,
+  DesignContractProvider,
+  GeneratorAgent,
+  VerificationMethod,
+} from './domain/schema.js';
 
 export interface TargetGraderConfig {
   /** Legacy aliases retained for existing configs. */
@@ -95,6 +100,12 @@ export interface IntakeConfig {
   repository: string; // owner/name
   readyLabel?: string;
   claimedLabel?: string;
+  /**
+   * Explicit Experience Contract authority for each UI/fullstack planning candidate.
+   * Candidate keys are planner-stable identities. Omitting a UI candidate fails closed;
+   * backend-only candidates never consult this map.
+   */
+  designProviders?: Record<string, DesignContractProvider>;
   /**
    * Recurring GitHub watcher delay in milliseconds. Absent or invalid (non-positive, non-integer,
    * or above Node's 2^31−1 ms timer maximum) uses the watcher default.

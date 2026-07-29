@@ -27,6 +27,7 @@ import { launchSession, capturePane, killSession, monitorLiveness, type Liveness
 import { resolveAgentRoute } from '../../agents/routing.js';
 import { contextFor, renderScopedContext } from './scoped-context.js';
 import { submitPromptWhenSessionReady } from './session-readiness.js';
+import { renderAuthoritativeDesignContext } from '../../designflow/authority.js';
 
 export interface GeneratorSessionInput {
   issue: Issue;
@@ -224,6 +225,12 @@ export function buildGeneratorPrompt(input: GeneratorSessionInput, target: Targe
 
   if (input.issue.uiDesign) {
     sections.push(`\n## UI Design Contract\n\`\`\`yaml\n${YAML.stringify(input.issue.uiDesign)}\`\`\``);
+  }
+  if (input.issue.designAuthority) {
+    sections.push(`\n${renderAuthoritativeDesignContext(
+      input.issue.designAuthority,
+      input.issue.designReview,
+    )}`);
   }
 
   // scoped design context (ARCH-execution-007): the system elements this issue depends on, when resolved

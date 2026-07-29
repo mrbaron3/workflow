@@ -32,7 +32,13 @@ function setup(): { store: Store; config: HarnessConfig; runner: FakeIssueRunner
       reviewer: { provider: 'claude', model: 'sonnet' },
       perspectives: { security: { provider: 'codex', model: 'gpt-5.1-codex' } },
     },
-    intake: { backend: 'github', repository: 'acme/theme', readyLabel: 'ready', claimedLabel: 'agent-claimed' },
+    intake: {
+      backend: 'github',
+      repository: 'acme/theme',
+      readyLabel: 'ready',
+      claimedLabel: 'agent-claimed',
+      designProviders: { 'csv-export': 'legacy-ui-design' },
+    },
   };
   const runner = new FakeIssueRunner();
   return { store, config, runner };

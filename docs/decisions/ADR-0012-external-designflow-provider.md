@@ -1,7 +1,8 @@
 # ADR-0012: UX/UI設計を独立したDesignflow Providerへ分離する
 
-- 状態: 採択（2026-07-25。CISO-03/05で契約bootstrapとDashboard固有gateを実証済み、
-  汎用workflow intake adapter未実装）
+- 状態: 採択・吸収・汎用consumer構造実装済み
+  （2026-07-25採択、2026-07-28ローカル標準intake headless E2E完了。
+  remote provider／live GitHub／実支援技術・端末のblack-box実証待ち）
 - relates:
   - ADR-0002（Published Language）
   - ADR-0008（GitHub Issue intake）
@@ -94,10 +95,29 @@ grounded実走した。これは後続taskが再実装せず再利用するbasel
 - CISO-05はDesign Request→request-changes→revision 2のdigest-bound approve→7 capabilityの
   reconciliation→Dashboard実装→Playwright／UX／a11y evidenceを同一lineageで実証した。
 
-ただし現行gateはCISO Dashboardのapproved digestとreconciliationをcompiled trust anchorとして持つ。
-Source IssueからDesign Requestを作る汎用port、draft→design→final planning、candidate単位provider選択、
-bundleからの人間向けprojectionは未実装である。したがってCISO evidenceはADRの成立証拠だが、
-WF-DF-001..008の標準workflow consumer完了を意味しない。
+ただしこの時点のgateはCISO Dashboardのapproved digestとreconciliationをcompiled trust anchorとして
+持っていた。Source IssueからDesign Requestを作る汎用port、draft→design→final planning、
+candidate単位provider選択、bundleからの人間向けprojectionは未実装であり、CISO evidenceだけでは
+WF-DF-001..008の標準workflow consumer完了を意味しなかった。
+
+### 汎用workflow consumer実装（2026-07-28）
+
+WF-DF-001..008として、固定RC.1 consumer／provider port、Design Request draft、generic decision gate、
+人間向けreview projection、Capability→Issue／AC／system／API reconciliation、明示provider移行、
+標準intake release lineageを実装した。
+
+- request-changesはIssueを作らずappend-onlyに残り、resumeは明示操作だけである。
+- 次revisionのapproveは同じrequest、exact bundle digest、`previousRevisionId`に加え、
+  `supersedesDecisionId`が直前request-changes decisionへ一致するときだけ有効である。
+- 1 candidateのCapability Requirementsが複数Issueへ分かれる場合も、全参照Issueのreleased状態、
+  merged current PR revision／head、approved gateまでrelease lineageが閉じなければならない。
+- legacy `UiDesignArtifact`とDesignflowはcandidate単位の明示選択とし、dual-write／暗黙fallbackを拒否する。
+- CISO-05はhistorical golden adapterで7 capability／9 APIをreplayし、別のfullstack Source Snapshotは
+  CISO固有path／digest／Issue番号なしでrequest-changes→revision 2→headless UI evidence→releaseを通した。
+
+ローカル検証はTypeScript 112 files／942 tests pass（29 skip）、Go 5 packages pass、build passである。
+remote provider、live GitHubのclaim／checks／merge／close、実target、VoiceOver／NVDA／物理deviceは
+black-box運用証拠として残るが、domain gateと標準intakeの構造実装を変更する条件ではない。
 
 ### 並行開発
 

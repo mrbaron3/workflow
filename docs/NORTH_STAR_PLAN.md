@@ -60,8 +60,12 @@
   restart persistence、real Codex job、Codex/Claude 2ラウンドcurrent-head review、repair、
   expected-head mergeを実証した。CISO-05では固定Designflow contractからrequest-changes→revision 2の
   digest-bound approve→7 capability reconciliation→Dashboard→Playwright/UX/a11yまでを実走した。
+  2026-07-28にはWF-DF-001..008の汎用consumerを作業ツリー内へ実装し、CISO golden replayに加えて、
+  CISO固有path／digest／Issue番号を持たない新規fullstack Source Snapshotを
+  request-changes→明示resume→revision 2→backend/UI Issue→headless evidence→releaseまで完走した。
   ただしCISO-07はpre-main bootstrapを明示したbounded cutoverであり、D7/D8の通常watch turn、
-  D9の複数repo常駐forwarder、A5/A6のstore計器付き標準経路を完了扱いにはしない。
+  D9の複数repo常駐forwarder、A5/A6のstore計器付き標準経路、Designflowのremote/live black-box実証を
+  完了扱いにはしない。
 
 残りを一言で: **(a) 測れていない軸を測る、(b) 横幅（規模・並行・多様性）、
 (c) 縦深（診断→改善の精度）、(d) 自分以外を開発する実証。**
@@ -82,7 +86,7 @@
 | A5 | **✅ 構造実装済み（2026-07-14）／grounded release待ち** — `AgentInvocation`、Claude/Codex interactive adapter、role/Perspective routingを実装。security=Codex・他=Claude等を同一panelへ配線でき、EvalRun→invocation→実provider/modelを監査可能。旧PromptRecordはlegacy保持 | 北極星の「誰の・何のため」（複数エージェント前提）に対する欠け | **EPIC-07 FEAT-013..015 実装済み** | 残り: claude以外を含む実remote runで1 released・provider別計器のgrounded証拠 |
 | A6 | **✅ 構造実装済み（FEAT-019）／grounded実走待ち** — method-keyed command registry、AC単位env、未設定fail-closed、artifact evidence、Curator/Regression captureを実装。unit_test legacy aliasも維持 | 実プロダクト（D1）の AC を宣言methodそのもので証拠採点する | EPIC-09 / FEAT-019 | 残り: playwright等unit_test以外のmethodで実target AC 1件をgrounded採点・回帰する |
 | A7 | **✅ 構造実装済み（FEAT-020/021）／grounded UI実走待ち** — frontend/fullstack Candidateごとに専用route/fresh contextのUI designerがprinciples/token/component/state/interaction/a11yをACへtraceして著述。schema・trace・Invocation provenanceのall-or-nothing gate通過後だけIssueへ写り、generator/reviewerが同じ契約を参照。不在・曖昧・不正はneeds-human-review | UI を要する theme で HOW 自律の被覆が UI 設計まで及ぶこと | EPIC-10 FEAT-020/021実装済み | 残り: UIを要する実target 1 featureでartifact著述→playwright採点→ux/a11y review→releaseをgrounded実測する |
-| A8 | **✅ 契約とDashboard固有grounded baseline成立／汎用intake配線待ち** — CISO-03/05で固定contract pin、digest/decision/capability gate、request-changes→revision 2 approve→7 capability reconciliation→Dashboard→Playwright/UX/a11yを実証した。一方、現行`internal/designgate`はCISO固有trust anchorであり、Source Issue→Design Request、draft→design→final planning、provider port、candidate単位移行は未実装 | 「WHATだけから動くソフトウェア」には、実装前に目的達成の労力と視認性を人間が判断でき、frontend/backendを同じ体験根拠から設計できることが必要 | ADR-0012／#24・#26〜#33。CISO baselineを再利用し汎用化 | 新規frontend/fullstack Source Issueが標準intakeでDesignflow revisionを経てreleaseされ、CISO固有digest/pathなしで同じlineage gateを通る |
+| A8 | **✅ 汎用intake構造＋ローカルgrounded headless成立／remote・live実証待ち** — 固定RC consumer、provider port、Source Issue→Design Request、draft→design→final planning、digest/decision/review gate、Capability→Issue/AC/system/API、明示provider移行を実装。CISO 7 capability／9 APIをgolden replayし、無関係なfullstack Source Snapshotもrequest-changes→明示resume→exact supersession approve→backend/UI Issue→expected-head merge→releaseまで通した。release lineageは全capability参照Issueと同一headのPlaywright/UX/a11y証拠を検証する | 「WHATだけから動くソフトウェア」には、実装前に目的達成の労力と視認性を人間が判断でき、frontend/backendを同じ体験根拠から設計できることが必要 | ADR-0012／#24・#26〜#33。TypeScript 942 pass（29 skip）、Go 5 package pass | 残り: remote Designflow、live GitHub claim/check/merge/close、実target、VoiceOver/NVDA・high contrast/zoom・物理deviceのblack-box証拠 |
 
 ### ② 評価（操舵: 証拠裏付き判定率 ↑・false-pass 率 ↓）
 

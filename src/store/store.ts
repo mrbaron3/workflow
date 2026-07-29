@@ -536,6 +536,13 @@ export class Store {
     return record;
   }
 
+  replacePlanningEnrichment(record: PlanningEnrichmentRecord): PlanningEnrichmentRecord {
+    const index = this.db.planningEnrichments.findIndex((candidate) => candidate.id === record.id);
+    if (index < 0) throw new Error(`Planning enrichment not found: ${record.id}`);
+    this.db.planningEnrichments[index] = record;
+    return record;
+  }
+
   /** Create (and return) the evidence directory for an eval run. */
   evidenceDir(evalRunId: string): string {
     const dir = path.join(this.evidenceRoot, evalRunId);
