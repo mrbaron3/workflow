@@ -71,6 +71,25 @@
     },
     "issueNumber": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
 
+    "graderCommand": {
+      "oneOf": [
+        {
+          "description": "Vendored toolchain profile. These are fixed strings the runner emits for a repository carrying both typescript and vitest; pinning them stops an injected absolute path from posing as the vendored profile.",
+          "type": "string",
+          "enum": [
+            "node /app/node_modules/typescript/bin/tsc",
+            "node /app/node_modules/typescript/bin/tsc --noEmit",
+            "node /app/node_modules/vitest/vitest.mjs run --configLoader runner"
+          ]
+        },
+        {
+          "description": "Direct Node contract checker declared by the repository. Mirrors the runtime's path rules: relative only, and no empty, `.` or `..` segment, so a checker resolving outside the checkout cannot be certified as having passed.",
+          "type": "string",
+          "pattern": "^node (?!\\.{1,2}(?:/|$))[A-Za-z0-9._-]+(?:/(?!\\.{1,2}(?:/|$))[A-Za-z0-9._-]+)*\\.(?:mjs|cjs|js)$"
+        }
+      ]
+    },
+
     "target": {
       "description": "The external repository this run developed. `monitoredRepositories` must hold at least two canonical repositories so the artifact also witnesses that the broker observed more than one target without confusing them.",
       "type": "object",
@@ -169,15 +188,12 @@
         "finalHead": { "$ref": "#/$defs/sha" },
         "graderProfileSource": { "const": "repository-metadata" },
         "graderCommands": {
-          "description": "Grader commands as inferred from the checked-out repository metadata. Pinned to the bare `node <script>` form the inference accepts, so a shell operator or an injected command cannot be recorded as a passing grader.",
+          "description": "Grader commands as inferred from the checked-out repository metadata, in the two forms the runner can emit. Anything else — a shell operator, a package install, a job-supplied command, or a checker outside the checkout — is not expressible.",
           "type": "array",
           "minItems": 1,
           "maxItems": 16,
           "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "pattern": "^node [A-Za-z0-9._/-]+\\.(?:mjs|cjs|js)$"
-          }
+          "items": { "$ref": "#/$defs/graderCommand" }
         },
         "auditSha256": { "$ref": "#/$defs/sha256" }
       }
@@ -264,18 +280,26 @@
     },
 
     "providerInvocation": {
-      "description": "One recorded model invocation, bound to the role it served and the head it observed. Roles are enumerated so a run cannot claim a role that the runner does not route.",
+      "description": "One recorded model invocation. `jobId` is the run coordinate: the semantic validator binds triage invocations to the promoted triage job and every other role to the development job, so calls belonging to another issue or run cannot be presented as this release's provenance. A triage invocation carries no `head` because the triage container has no checkout — recording one would be a fiction.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["role", "provider", "model", "invocationKey", "head", "observedAt"],
+      "required": ["role", "provider", "model", "invocationKey", "jobId", "observedAt"],
       "properties": {
         "role": { "enum": ["planning", "generator", "uiDesign", "reviewer", "triage"] },
         "provider": { "type": "string", "minLength": 1, "maxLength": 64 },
         "model": { "type": "string", "minLength": 1, "maxLength": 128 },
         "invocationKey": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "jobId": { "$ref": "#/$defs/uuid" },
         "head": { "$ref": "#/$defs/sha" },
         "observedAt": { "$ref": "#/$defs/timestamp" }
-      }
+      },
+      "if": {
+        "type": "object",
+        "properties": { "role": { "const": "triage" } },
+        "required": ["role"]
+      },
+      "then": { "properties": { "head": false } },
+      "else": { "required": ["head"] }
     },
 
     "designBundle": {

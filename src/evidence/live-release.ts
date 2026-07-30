@@ -122,15 +122,33 @@ export function liveReleaseSemanticErrors(evidence: JsonObject): string[] {
       errors.push(`providerInvocations must record at least one ${role} invocation`);
     }
   }
+  // Each call must name the job it served. Without this the array is unsourced
+  // free text: invocations from another issue or run would satisfy the role and
+  // uniqueness rules while proving nothing about this release.
+  for (const [index, invocation] of invocations.entries()) {
+    const expectedJobId = invocation?.role === 'triage'
+      ? evidence.triage?.promotionJobId
+      : evidence.execution?.jobId;
+    same(
+      errors,
+      `providerInvocations.${index}.jobId`,
+      invocation?.jobId,
+      expectedJobId,
+    );
+  }
 
-  // A design bundle and a verified lineage that both apply must name the same
-  // approved revision, and the lineage must be bound to the released head.
+  // The two design sections describe one fact from two sides, so they apply
+  // together or not at all. Letting them disagree admits a release carrying an
+  // approved bundle with no verified lineage, and a lineage that skips binding
+  // to the bundle it claims to descend from.
   const bundle = evidence.designBundle;
   const lineage = evidence.releaseLineage;
-  if (bundle?.applicable === true && lineage?.applicable === true) {
+  if (bundle?.applicable !== lineage?.applicable) {
+    errors.push(
+      'designBundle.applicable and releaseLineage.applicable must agree',
+    );
+  } else if (bundle?.applicable === true) {
     same(errors, 'releaseLineage.bundleDigest', lineage.bundleDigest, bundle.bundleDigest);
-  }
-  if (lineage?.applicable === true) {
     same(errors, 'releaseLineage.headSha', lineage.headSha, finalHead);
   }
 
