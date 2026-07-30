@@ -44,13 +44,13 @@ func TestExactLoopbackPublication(t *testing.T) {
 
 func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 	cfg := config{
-		Network:          "agentops-internal",
-		RunnerContainer:  "agentops-runner",
-		RunnerImage:      "agentops-runner:dev",
-		RunnerVolume:     "agentops-runner-workspace",
-		CredentialVolume: "agentops-runner-credentials",
-		Provider:         "codex",
-		CodexAuthPath:    "/operator/.codex/auth.json",
+		Network:                "agentops-internal",
+		RunnerContainer:        "agentops-runner",
+		RunnerImage:            "agentops-runner:dev",
+		RunnerVolume:           "agentops-runner-workspace",
+		RunnerCredentialVolume: "agentops-runner-credentials",
+		Provider:               "codex",
+		CodexAuthPath:          "/operator/.codex/auth.json",
 	}
 	actual := &lifecycle.ContainerActual{ID: cfg.RunnerContainer}
 	actual.Status.State = "running"
@@ -72,7 +72,7 @@ func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 		"/tmp":                      "tmpfs",
 		"/home/agentops":            "tmpfs",
 		"/workspace":                cfg.RunnerVolume,
-		"/run/agentops-credentials": cfg.CredentialVolume,
+		"/run/agentops-credentials": cfg.RunnerCredentialVolume,
 	} {
 		mount := struct {
 			Destination string         `json:"destination"`

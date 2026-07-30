@@ -21,7 +21,8 @@ type config struct {
 	Network                string
 	PostgresVolume         string
 	RunnerVolume           string
-	CredentialVolume       string
+	TriageCredentialVolume string
+	RunnerCredentialVolume string
 	GitHubAppKeyVolume     string
 	PostgresContainer      string
 	ControlContainer       string
@@ -128,17 +129,21 @@ func loadConfig() (config, error) {
 		return config{}, err
 	}
 	return config{
-		Prefix:                prefix,
-		Network:               prefix + "-internal",
-		PostgresVolume:        prefix + "-postgres-data",
-		RunnerVolume:          prefix + "-runner-workspace",
-		CredentialVolume:      prefix + "-runner-credentials",
-		GitHubAppKeyVolume:    prefix + "-github-app-key",
-		PostgresContainer:     prefix + "-postgres",
-		ControlContainer:      prefix + "-control",
-		GitHubBrokerContainer: prefix + "-github-broker",
-		TriageContainer:       prefix + "-triage",
-		RunnerContainer:       prefix + "-runner",
+		Prefix:         prefix,
+		Network:        prefix + "-internal",
+		PostgresVolume: prefix + "-postgres-data",
+		RunnerVolume:   prefix + "-runner-workspace",
+		// Apple Containerのnamed volumeは単一VMへの排他attachのため、
+		// credential volumeはmountするroleごとに分ける（共有すると2つ目のattachが
+		// VZErrorDomain Code=2で必ず失敗する）。
+		TriageCredentialVolume: prefix + "-triage-credentials",
+		RunnerCredentialVolume: prefix + "-runner-credentials",
+		GitHubAppKeyVolume:     prefix + "-github-app-key",
+		PostgresContainer:      prefix + "-postgres",
+		ControlContainer:       prefix + "-control",
+		GitHubBrokerContainer:  prefix + "-github-broker",
+		TriageContainer:        prefix + "-triage",
+		RunnerContainer:        prefix + "-runner",
 		PostgresImage: environmentValue(
 			"AGENTOPSCTL_POSTGRES_IMAGE",
 			"agentops-postgres:dev",

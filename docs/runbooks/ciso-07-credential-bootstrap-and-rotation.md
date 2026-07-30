@@ -7,8 +7,11 @@ reads the App private key. Triage and the development runner receive distinct br
 their `gh`/Git helpers request repository/permission-scoped installation tokens in memory at each
 operation. Static PATs and a shared operator `gh auth` credential are rejected. Codex uses either
 `OPENAI_API_KEY` or a private `auth.json`; login-file mode copies that one regular file into
-the managed `agentops-*-runner-credentials` volume and mounts the volume read-only at
-`/run/agentops-credentials`. It never bind-mounts the Mac home directory.
+the managed per-role credential volumes (`agentops-*-triage-credentials` for triage,
+`agentops-*-runner-credentials` for the development runner) and mounts each volume read-only at
+`/run/agentops-credentials`. Roles never share a credential volume — named volumes attach to a
+single VM exclusively, so a shared volume would make the second consumer fail to start. It never
+bind-mounts the Mac home directory.
 
 ## Bootstrap
 
