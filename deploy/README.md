@@ -178,6 +178,10 @@ go run ./cmd/agentopsctl drain --timeout 10m --request-id operator-drain-001
 go run ./cmd/agentopsctl stop --timeout 10m --request-id operator-stop-001
 ```
 
+`open`はcontrolログから最新のone-time bootstrap URLを選び、session未確立ならcookieを発行して
+Dashboardへredirectする。既存の有効sessionはtokenを消費せず再利用し、新規sessionがtokenを
+消費した直後に次のURLがcontrolログへrotationされる。
+
 mode graphは`OFF → MONITOR_ONLY → ACTIVE → DRAINING → OFF|MONITOR_ONLY`。同一`--request-id`はdurableに
 replayされ、不正遷移は拒否・監査される。DRAININGはDB commit後にrouting/enqueue/leaseを止め、SIGTERMを受けたrunnerが
 現在attemptを閉じるまで待つ。timeoutはforce killせず非0終了し、statusへdeadline/timeout/last errorを残す。

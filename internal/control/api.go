@@ -90,9 +90,11 @@ type API struct {
 	initErr         error
 	origin          *url.URL
 	sessions        *browserSessions
-	dashboard       http.Handler
-	pagesMu         sync.Mutex
-	pages           map[string]registrationPageSnapshot
+	// Keep the published URL order identical to the in-memory token order.
+	bootstrapMu sync.Mutex
+	dashboard   http.Handler
+	pagesMu     sync.Mutex
+	pages       map[string]registrationPageSnapshot
 }
 
 type registrationPageSnapshot struct {
@@ -1072,6 +1074,18 @@ func (api *API) bootstrap(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusForbidden, "loopback_required", "bootstrap is available only through the exact loopback dashboard origin")
 		return
 	}
+	if _, present, expired := api.sessions.get(request); present {
+		writer.Header().Set("Location", "/")
+		writer.WriteHeader(http.StatusSeeOther)
+		return
+	} else if expired {
+		api.recordBrowserAudit(
+			request,
+			"browser.session.expired",
+			"session_expired",
+			"browser-cookie-present",
+		)
+	}
 	token := request.URL.Query().Get("token")
 	if token == "" || len(token) > 512 || api.BootstrapToken == "" {
 		api.recordBrowserAudit(request, "browser.session.rejected", "invalid_bootstrap", "browser-anonymous")
@@ -1103,6 +1117,7 @@ func (api *API) bootstrap(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	setSessionCookie(writer, api.origin, session)
+	api.rotateBootstrap("bootstrap_consumed")
 	writer.Header().Set("Location", "/")
 	writer.WriteHeader(http.StatusSeeOther)
 }
@@ -1151,6 +1166,8 @@ func (api *API) browserSession(writer http.ResponseWriter, request *http.Request
 }
 
 func (api *API) rotateBootstrap(reason string) {
+	api.bootstrapMu.Lock()
+	defer api.bootstrapMu.Unlock()
 	token, err := api.sessions.rotateBootstrap()
 	if err != nil {
 		api.Log.Error("dashboard bootstrap rotation failed", "reason", reason, "error", err)

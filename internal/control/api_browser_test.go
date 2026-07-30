@@ -2,12 +2,16 @@ package control
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -25,6 +29,89 @@ func browserTestAPI(store APIStore) *API {
 		RouterWake:      func() {},
 		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+}
+
+func latestDashboardBootstrapURLFromLogs(t *testing.T, logs string) string {
+	t.Helper()
+	latest := ""
+	for _, line := range strings.Split(logs, "\n") {
+		var event struct {
+			DashboardBootstrapURL string `json:"dashboardBootstrapUrl"`
+		}
+		if json.Unmarshal([]byte(line), &event) == nil &&
+			event.DashboardBootstrapURL != "" {
+			latest = event.DashboardBootstrapURL
+		}
+	}
+	if latest == "" {
+		t.Fatal("dashboard bootstrap URL was not logged")
+	}
+	return latest
+}
+
+type reorderedBootstrapLogHandler struct {
+	calls         atomic.Int32
+	firstEntered  chan struct{}
+	secondEntered chan struct{}
+	releaseFirst  chan struct{}
+	mu            sync.Mutex
+	urls          []string
+}
+
+func newReorderedBootstrapLogHandler() *reorderedBootstrapLogHandler {
+	return &reorderedBootstrapLogHandler{
+		firstEntered:  make(chan struct{}),
+		secondEntered: make(chan struct{}),
+		releaseFirst:  make(chan struct{}),
+	}
+}
+
+func (handler *reorderedBootstrapLogHandler) Enabled(
+	context.Context,
+	slog.Level,
+) bool {
+	return true
+}
+
+func (handler *reorderedBootstrapLogHandler) Handle(
+	_ context.Context,
+	record slog.Record,
+) error {
+	target := ""
+	record.Attrs(func(attribute slog.Attr) bool {
+		if attribute.Key == "dashboardBootstrapUrl" {
+			target = attribute.Value.String()
+		}
+		return true
+	})
+	call := handler.calls.Add(1)
+	if call == 1 {
+		close(handler.firstEntered)
+		<-handler.releaseFirst
+	}
+	handler.mu.Lock()
+	handler.urls = append(handler.urls, target)
+	handler.mu.Unlock()
+	if call == 2 {
+		close(handler.secondEntered)
+	}
+	return nil
+}
+
+func (handler *reorderedBootstrapLogHandler) WithAttrs(
+	[]slog.Attr,
+) slog.Handler {
+	return handler
+}
+
+func (handler *reorderedBootstrapLogHandler) WithGroup(string) slog.Handler {
+	return handler
+}
+
+func (handler *reorderedBootstrapLogHandler) URLs() []string {
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	return append([]string(nil), handler.urls...)
 }
 
 func TestBrowserBootstrapSessionOriginAndCSRFLifecycle(t *testing.T) {
@@ -178,6 +265,191 @@ func TestBrowserBootstrapSessionOriginAndCSRFLifecycle(t *testing.T) {
 		if bytes.Contains(details, []byte(secret)) {
 			t.Fatalf("browser audit exposed secret %q: %s", secret, details)
 		}
+	}
+}
+
+func TestBrowserBootstrapReusesValidSessionWithoutConsumingNextToken(t *testing.T) {
+	var logs bytes.Buffer
+	api := browserTestAPI(&fakeAPIStore{})
+	api.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	handler := api.Handler()
+
+	bootstrap := func(target string, cookie *http.Cookie) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Host = "127.0.0.1:8080"
+		request.RemoteAddr = "127.0.0.1:40000"
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	initialURL := "http://127.0.0.1:8080/dashboard/bootstrap?" +
+		"token=one-time-bootstrap-token-with-enough-entropy"
+	response := bootstrap(initialURL, nil)
+	if response.Code != http.StatusSeeOther ||
+		len(response.Result().Cookies()) != 1 {
+		t.Fatalf(
+			"initial bootstrap status=%d cookies=%#v body=%s",
+			response.Code,
+			response.Result().Cookies(),
+			response.Body,
+		)
+	}
+	sessionCookie := response.Result().Cookies()[0]
+
+	rotatedURL := latestDashboardBootstrapURLFromLogs(t, logs.String())
+	parsed, err := url.Parse(rotatedURL)
+	if err != nil ||
+		parsed.Query().Get("token") == "" ||
+		parsed.Query().Get("token") ==
+			"one-time-bootstrap-token-with-enough-entropy" {
+		t.Fatalf("rotated bootstrap URL was not logged: %q", rotatedURL)
+	}
+
+	response = bootstrap(rotatedURL, sessionCookie)
+	if response.Code != http.StatusSeeOther ||
+		response.Header().Get("Location") != "/" ||
+		len(response.Result().Cookies()) != 0 {
+		t.Fatalf(
+			"existing session bootstrap status=%d headers=%v cookies=%#v",
+			response.Code,
+			response.Header(),
+			response.Result().Cookies(),
+		)
+	}
+
+	// The authenticated visit above must not consume the current token. A
+	// browser without the session can still use the same URL exactly once.
+	response = bootstrap(rotatedURL, nil)
+	if response.Code != http.StatusSeeOther ||
+		len(response.Result().Cookies()) != 1 {
+		t.Fatalf(
+			"unconsumed bootstrap status=%d cookies=%#v body=%s",
+			response.Code,
+			response.Result().Cookies(),
+			response.Body,
+		)
+	}
+	response = bootstrap(rotatedURL, nil)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("reused rotated bootstrap status = %d", response.Code)
+	}
+}
+
+func TestBrowserBootstrapReestablishesExpiredSessionWithCurrentToken(t *testing.T) {
+	var logs bytes.Buffer
+	store := &fakeAPIStore{}
+	api := browserTestAPI(store)
+	api.SessionTTL = time.Millisecond
+	api.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	handler := api.Handler()
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"http://127.0.0.1:8080/dashboard/bootstrap?token=one-time-bootstrap-token-with-enough-entropy",
+		nil,
+	)
+	request.Host = "127.0.0.1:8080"
+	request.RemoteAddr = "127.0.0.1:40000"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther ||
+		len(response.Result().Cookies()) != 1 {
+		t.Fatalf("initial bootstrap = %d cookies=%#v", response.Code, response.Result().Cookies())
+	}
+	expiredCookie := response.Result().Cookies()[0]
+	currentURL := latestDashboardBootstrapURLFromLogs(t, logs.String())
+
+	time.Sleep(5 * time.Millisecond)
+	request = httptest.NewRequest(http.MethodGet, currentURL, nil)
+	request.Host = "127.0.0.1:8080"
+	request.RemoteAddr = "127.0.0.1:40000"
+	request.AddCookie(expiredCookie)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther ||
+		len(response.Result().Cookies()) != 1 ||
+		response.Result().Cookies()[0].Value == expiredCookie.Value {
+		t.Fatalf(
+			"expired session bootstrap = %d cookies=%#v body=%s",
+			response.Code,
+			response.Result().Cookies(),
+			response.Body,
+		)
+	}
+	if !strings.Contains(
+		strings.Join(store.auditEvents, ","),
+		"browser.session.expired",
+	) {
+		t.Fatalf("expiry audit events = %#v", store.auditEvents)
+	}
+
+	// The current token was consumed by the replacement session.
+	request = httptest.NewRequest(http.MethodGet, currentURL, nil)
+	request.Host = "127.0.0.1:8080"
+	request.RemoteAddr = "127.0.0.1:40000"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("reused replacement bootstrap status = %d", response.Code)
+	}
+}
+
+func TestConcurrentBootstrapRotationsLogTheCurrentTokenLast(t *testing.T) {
+	api := browserTestAPI(&fakeAPIStore{})
+	if err := api.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	logHandler := newReorderedBootstrapLogHandler()
+	api.Log = slog.New(logHandler)
+
+	firstDone := make(chan struct{})
+	go func() {
+		api.rotateBootstrap("first")
+		close(firstDone)
+	}()
+	select {
+	case <-logHandler.firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first rotation did not reach the logger")
+	}
+
+	secondDone := make(chan struct{})
+	go func() {
+		api.rotateBootstrap("second")
+		close(secondDone)
+	}()
+	// Without API-level serialization, the second rotation reaches the
+	// logger while the first is blocked and makes the final log entry stale.
+	select {
+	case <-logHandler.secondEntered:
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(logHandler.releaseFirst)
+
+	for name, done := range map[string]<-chan struct{}{
+		"first":  firstDone,
+		"second": secondDone,
+	} {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("%s rotation did not finish", name)
+		}
+	}
+	urls := logHandler.URLs()
+	if len(urls) != 2 {
+		t.Fatalf("rotation URLs = %#v", urls)
+	}
+	latest, err := url.Parse(urls[len(urls)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.sessions.bootstrap(latest.Query().Get("token")); err != nil {
+		t.Fatalf("latest logged bootstrap token is not current: %v", err)
 	}
 }
 

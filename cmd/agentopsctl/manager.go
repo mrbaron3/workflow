@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,8 +19,10 @@ import (
 )
 
 type manager struct {
-	config  config
-	runtime *lifecycle.AppleRuntime
+	config             config
+	runtime            *lifecycle.AppleRuntime
+	dashboardReachable func(string, int, time.Duration) bool
+	openDashboard      func(context.Context, string) error
 }
 
 const (
@@ -28,6 +31,7 @@ const (
 	ContainerReadyPollInterval    = 250 * time.Millisecond
 	CredentialInitializerLifetime = 10 * time.Minute
 	RunnerReadinessLogLines       = 100
+	DashboardBootstrapLogLines    = 500
 )
 
 type mutationReceipt struct {
@@ -35,7 +39,14 @@ type mutationReceipt struct {
 }
 
 func newManager(config config, runtime *lifecycle.AppleRuntime) *manager {
-	return &manager{config: config, runtime: runtime}
+	return &manager{
+		config:             config,
+		runtime:            runtime,
+		dashboardReachable: tcpReachable,
+		openDashboard: func(ctx context.Context, target string) error {
+			return exec.CommandContext(ctx, "open", target).Run()
+		},
+	}
 }
 
 func (manager *manager) Start(
@@ -673,19 +684,108 @@ func (manager *manager) Logs(
 }
 
 func (manager *manager) Open(ctx context.Context) error {
-	if !tcpReachable(
+	control, err := manager.runtime.Container(
+		ctx,
+		manager.config.ControlContainer,
+	)
+	if err != nil || !managedDashboardControl(control, manager.config) {
+		return fmt.Errorf(
+			"managed Control API is not running on the expected loopback publication",
+		)
+	}
+	if !manager.dashboardReachable(
 		"127.0.0.1",
 		manager.config.ControlHostPort,
 		time.Second,
 	) {
 		return fmt.Errorf("Control API is not reachable on loopback")
 	}
-	dashboardURL := fmt.Sprintf(
-		"http://127.0.0.1:%d/dashboard",
+	logs := manager.runtime.RecentLogs(
+		ctx,
+		manager.config.ControlContainer,
+		DashboardBootstrapLogLines,
+	)
+	if logs.Status != 0 {
+		return fmt.Errorf("dashboard bootstrap URL is unavailable from control logs")
+	}
+	dashboardURL, err := latestDashboardBootstrapURL(
+		logs.Stdout+"\n"+logs.Stderr,
 		manager.config.ControlHostPort,
 	)
-	command := exec.CommandContext(ctx, "open", dashboardURL)
-	return command.Run()
+	if err != nil {
+		return err
+	}
+	if err := manager.openDashboard(ctx, dashboardURL); err != nil {
+		return redactedDashboardOpenError()
+	}
+	return nil
+}
+
+func managedDashboardControl(
+	actual *lifecycle.ContainerActual,
+	config config,
+) bool {
+	return actual != nil &&
+		actual.ID == config.ControlContainer &&
+		actual.Status.State == "running" &&
+		actual.Configuration.Labels["com.mrbaron3.workflow.agentopsctl"] == "v1" &&
+		actual.Configuration.Labels["com.mrbaron3.workflow.role"] == "control" &&
+		exactLoopbackPublication(actual, config.ControlHostPort)
+}
+
+func latestDashboardBootstrapURL(logOutput string, port int) (string, error) {
+	expectedHost := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	latest := ""
+	for _, line := range strings.Split(logOutput, "\n") {
+		start := strings.IndexByte(line, '{')
+		if start < 0 {
+			continue
+		}
+		var entry struct {
+			DashboardBootstrapURL string `json:"dashboardBootstrapUrl"`
+		}
+		if err := json.NewDecoder(
+			strings.NewReader(line[start:]),
+		).Decode(&entry); err != nil || entry.DashboardBootstrapURL == "" {
+			continue
+		}
+		if validDashboardBootstrapURL(
+			entry.DashboardBootstrapURL,
+			expectedHost,
+		) {
+			latest = entry.DashboardBootstrapURL
+		}
+	}
+	if latest == "" {
+		return "", fmt.Errorf(
+			"valid dashboard bootstrap URL was not found in recent control logs",
+		)
+	}
+	return latest, nil
+}
+
+func validDashboardBootstrapURL(raw, expectedHost string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil ||
+		parsed.Scheme != "http" ||
+		parsed.Host != expectedHost ||
+		parsed.User != nil ||
+		parsed.Path != "/dashboard/bootstrap" ||
+		parsed.RawPath != "" ||
+		parsed.Fragment != "" ||
+		parsed.Opaque != "" {
+		return false
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil || len(query) != 1 || len(query["token"]) != 1 {
+		return false
+	}
+	token := query["token"][0]
+	return len(token) >= 32 && len(token) <= 512
+}
+
+func redactedDashboardOpenError() error {
+	return fmt.Errorf("open Dashboard: browser launcher failed")
 }
 
 func (manager *manager) RotatePostgresAdmin(
