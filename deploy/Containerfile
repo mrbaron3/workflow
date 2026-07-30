@@ -172,11 +172,19 @@ ENTRYPOINT ["node", "dist/src/triage/cli.js"]
 # --- github-broker: the only process that can read the GitHub App private key -------------------
 # The host never publishes this listener. Workers reach it only over the
 # agentops internal network and authenticate with role-derived capabilities.
+#
+# WORKDIR is required, not cosmetic. Without it the runtime starts the process in
+# $HOME, and `agentopsctl` runs the key-seeding helper from this image as root with
+# `--cap-drop ALL --cap-add CAP_CHOWN`. Dropping CAP_DAC_OVERRIDE is what makes that
+# root unable to enter the 0700 nonroot home, so the process fails to start before
+# it can seed the key. `/` is traversable by every uid, so both the seeding root and
+# the 65532 broker start there. Sibling targets already set WORKDIR; this one did not.
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35 AS github-broker
 ENV HOME=/home/nonroot \
     AGENTOPS_GITHUB_BROKER_LISTEN=0.0.0.0:8083
 COPY --from=control-build /out/agentops-github-broker /usr/local/bin/agentops-github-broker
 COPY --from=control-build /out/agentops-github-credential-helper /usr/local/bin/agentops-github-credential-helper
+WORKDIR /
 USER 65532:65532
 EXPOSE 8083
 ENTRYPOINT ["/usr/local/bin/agentops-github-broker"]
