@@ -1,4 +1,7 @@
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   runnerSandboxArgs,
@@ -75,6 +78,60 @@ describe('runner subprocess filesystem sandbox', () => {
       'npm',
       ['test'],
     )).toThrow(/escapes Registration sandbox/);
+  });
+
+  // The /run tmpfs hides the container's read-only credential mount from every
+  // subprocess; provider sessions alone get their credential home re-created
+  // (writable, for codex session state) with the auth file re-bound read-only.
+  // Without this, codex exits at startup ("CODEX_HOME ... does not exist"), the
+  // tmux window closes, and the job burns all attempts on "can't find window".
+  it('re-binds the provider credential home only when one is passed', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-home-'));
+    try {
+      fs.writeFileSync(path.join(home, 'auth.json'), '{}');
+      const withHome = runnerSandboxArgs(
+        registrationRoot,
+        registrationRoot,
+        'codex',
+        [],
+        undefined,
+        home,
+      );
+      expect(withHome).toContain('--dir');
+      expect(withHome).toContain(home);
+      expect(withHome).toContain(path.join(home, 'auth.json'));
+      const withoutHome = runnerSandboxArgs(
+        registrationRoot,
+        registrationRoot,
+        'codex',
+        [],
+      );
+      expect(withoutHome).not.toContain(home);
+      expect(withoutHome.join(' ')).not.toContain('auth.json');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it('derives the credential home from CODEX_HOME only under /run/agentops-credentials', () => {
+    const base = {
+      AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
+      AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
+    };
+    const inside = sandboxedShellCommand(
+      { ...base, CODEX_HOME: '/run/agentops-credentials/codex' },
+      registrationRoot,
+      'codex',
+    );
+    expect(inside).toContain("'/run/agentops-credentials/codex'");
+    for (const rejected of ['/etc', '/run/agentops-credentials/../x', 'relative/path']) {
+      const command = sandboxedShellCommand(
+        { ...base, CODEX_HOME: rejected },
+        registrationRoot,
+        'codex',
+      );
+      expect(command).not.toContain(rejected);
+    }
   });
 
   it('shell-quotes the provider launch under bubblewrap', () => {

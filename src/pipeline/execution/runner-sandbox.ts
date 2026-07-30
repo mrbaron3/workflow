@@ -28,6 +28,7 @@ export function runnerSandboxArgs(
   command: string,
   args: readonly string[],
   dependencyRoot?: string,
+  providerCredentialHome?: string,
 ): string[] {
   const resolvedCwd = path.resolve(cwd);
   if (
@@ -48,6 +49,21 @@ export function runnerSandboxArgs(
     // Trusted provider processes need the credential volume; repository code
     // instead receives an empty /run tree.
     '--tmpfs', '/run',
+    // Provider sessions get their credential home back under the /run tmpfs: a
+    // writable directory (codex writes session state there) plus the read-only
+    // auth file. Grader/repository invocations never pass one.
+    ...(providerCredentialHome
+      ? [
+          '--dir', providerCredentialHome,
+          ...(fs.existsSync(path.join(providerCredentialHome, 'auth.json'))
+            ? [
+                '--ro-bind',
+                path.join(providerCredentialHome, 'auth.json'),
+                path.join(providerCredentialHome, 'auth.json'),
+              ]
+            : []),
+        ]
+      : []),
     '--proc', '/proc',
     '--dev', '/dev',
     '--tmpfs', '/workspace',
@@ -83,6 +99,14 @@ export function sandboxedShellCommand(
 ): string {
   const registrationRoot = runnerSandboxRoot(env);
   if (!registrationRoot) return command;
+  // This path launches trusted provider sessions only (tmux windows); graders
+  // call runnerSandboxArgs directly and never receive a credential home.
+  const codexHome = env.CODEX_HOME ?? '';
+  const providerCredentialHome =
+    codexHome.startsWith('/run/agentops-credentials/')
+    && path.resolve(codexHome) === codexHome
+      ? codexHome
+      : undefined;
   return [
     'bwrap',
     ...runnerSandboxArgs(
@@ -90,6 +114,8 @@ export function sandboxedShellCommand(
       cwd,
       '/bin/sh',
       ['-lc', command],
+      undefined,
+      providerCredentialHome,
     ),
   ].map(shellQuote).join(' ');
 }
