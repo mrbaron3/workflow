@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,96 @@ func (runner *managerRuntimeRunner) Run(
 	}
 	result.Args = append([]string(nil), args...)
 	return result
+}
+
+func TestOpenUsesLatestValidDashboardBootstrapURL(t *testing.T) {
+	oldToken := strings.Repeat("a", 32)
+	currentToken := strings.Repeat("b", 32)
+	currentURL := "http://127.0.0.1:8080/dashboard/bootstrap?token=" +
+		currentToken
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{{
+		Status: 0,
+		Stdout: `{"dashboardBootstrapUrl":"http://127.0.0.1:8080/dashboard/bootstrap?token=` +
+			oldToken + `"}` + "\n" +
+			`{"dashboardBootstrapUrl":"` + currentURL + `"}` + "\n" +
+			`{"dashboardBootstrapUrl":"http://attacker.invalid/dashboard/bootstrap?token=` +
+			strings.Repeat("c", 32) + `"}`,
+	}}}
+	subject := newManager(
+		testManagerConfig(),
+		lifecycle.NewAppleRuntimeForTest(fake),
+	)
+	subject.dashboardReachable = func(string, int, time.Duration) bool {
+		return true
+	}
+	opened := ""
+	subject.openDashboard = func(_ context.Context, target string) error {
+		opened = target
+		return nil
+	}
+
+	if err := subject.Open(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if opened != currentURL {
+		t.Fatalf("opened URL = %q", opened)
+	}
+	if len(fake.args) != 1 ||
+		strings.Join(fake.args[0], " ") !=
+			"logs -n 500 agentops-control" {
+		t.Fatalf("control log lookup argv = %#v", fake.args)
+	}
+}
+
+func TestOpenErrorsDoNotExposeDashboardBootstrapToken(t *testing.T) {
+	token := strings.Repeat("s", 32)
+	dashboardURL := "http://127.0.0.1:8080/dashboard/bootstrap?token=" +
+		token
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{{
+		Status: 0,
+		Stdout: `{"dashboardBootstrapUrl":"` + dashboardURL + `"}`,
+	}}}
+	subject := newManager(
+		testManagerConfig(),
+		lifecycle.NewAppleRuntimeForTest(fake),
+	)
+	subject.dashboardReachable = func(string, int, time.Duration) bool {
+		return true
+	}
+	subject.openDashboard = func(_ context.Context, target string) error {
+		return errors.New("launcher rejected " + target + " token=" + token)
+	}
+
+	err := subject.Open(context.Background())
+	if err == nil ||
+		strings.Contains(err.Error(), token) ||
+		strings.Contains(err.Error(), dashboardURL) {
+		t.Fatalf("Open() error exposed bootstrap credential: %v", err)
+	}
+}
+
+func TestOpenDoesNotExposeControlLogsWhenBootstrapLookupFails(t *testing.T) {
+	token := strings.Repeat("x", 32)
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{{
+		Status: 1,
+		Stdout: `{"dashboardBootstrapUrl":"http://127.0.0.1:8080/dashboard/bootstrap?token=` +
+			token + `"}`,
+		Stderr: "injected log lookup failure",
+	}}}
+	subject := newManager(
+		testManagerConfig(),
+		lifecycle.NewAppleRuntimeForTest(fake),
+	)
+	subject.dashboardReachable = func(string, int, time.Duration) bool {
+		return true
+	}
+
+	err := subject.Open(context.Background())
+	if err == nil ||
+		strings.Contains(err.Error(), token) ||
+		strings.Contains(err.Error(), "injected log lookup failure") {
+		t.Fatalf("Open() exposed control log output: %v", err)
+	}
 }
 
 func TestReplaceControlPreflightFailureHasNoMutationReceipt(t *testing.T) {

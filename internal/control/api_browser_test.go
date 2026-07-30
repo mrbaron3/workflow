@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,24 @@ func browserTestAPI(store APIStore) *API {
 		RouterWake:      func() {},
 		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+}
+
+func latestDashboardBootstrapURLFromLogs(t *testing.T, logs string) string {
+	t.Helper()
+	latest := ""
+	for _, line := range strings.Split(logs, "\n") {
+		var event struct {
+			DashboardBootstrapURL string `json:"dashboardBootstrapUrl"`
+		}
+		if json.Unmarshal([]byte(line), &event) == nil &&
+			event.DashboardBootstrapURL != "" {
+			latest = event.DashboardBootstrapURL
+		}
+	}
+	if latest == "" {
+		t.Fatal("dashboard bootstrap URL was not logged")
+	}
+	return latest
 }
 
 func TestBrowserBootstrapSessionOriginAndCSRFLifecycle(t *testing.T) {
@@ -178,6 +197,136 @@ func TestBrowserBootstrapSessionOriginAndCSRFLifecycle(t *testing.T) {
 		if bytes.Contains(details, []byte(secret)) {
 			t.Fatalf("browser audit exposed secret %q: %s", secret, details)
 		}
+	}
+}
+
+func TestBrowserBootstrapReusesValidSessionWithoutConsumingNextToken(t *testing.T) {
+	var logs bytes.Buffer
+	api := browserTestAPI(&fakeAPIStore{})
+	api.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	handler := api.Handler()
+
+	bootstrap := func(target string, cookie *http.Cookie) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		request.Host = "127.0.0.1:8080"
+		request.RemoteAddr = "127.0.0.1:40000"
+		if cookie != nil {
+			request.AddCookie(cookie)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+
+	initialURL := "http://127.0.0.1:8080/dashboard/bootstrap?" +
+		"token=one-time-bootstrap-token-with-enough-entropy"
+	response := bootstrap(initialURL, nil)
+	if response.Code != http.StatusSeeOther ||
+		len(response.Result().Cookies()) != 1 {
+		t.Fatalf(
+			"initial bootstrap status=%d cookies=%#v body=%s",
+			response.Code,
+			response.Result().Cookies(),
+			response.Body,
+		)
+	}
+	sessionCookie := response.Result().Cookies()[0]
+
+	rotatedURL := latestDashboardBootstrapURLFromLogs(t, logs.String())
+	parsed, err := url.Parse(rotatedURL)
+	if err != nil ||
+		parsed.Query().Get("token") == "" ||
+		parsed.Query().Get("token") ==
+			"one-time-bootstrap-token-with-enough-entropy" {
+		t.Fatalf("rotated bootstrap URL was not logged: %q", rotatedURL)
+	}
+
+	response = bootstrap(rotatedURL, sessionCookie)
+	if response.Code != http.StatusSeeOther ||
+		response.Header().Get("Location") != "/" ||
+		len(response.Result().Cookies()) != 0 {
+		t.Fatalf(
+			"existing session bootstrap status=%d headers=%v cookies=%#v",
+			response.Code,
+			response.Header(),
+			response.Result().Cookies(),
+		)
+	}
+
+	// The authenticated visit above must not consume the current token. A
+	// browser without the session can still use the same URL exactly once.
+	response = bootstrap(rotatedURL, nil)
+	if response.Code != http.StatusSeeOther ||
+		len(response.Result().Cookies()) != 1 {
+		t.Fatalf(
+			"unconsumed bootstrap status=%d cookies=%#v body=%s",
+			response.Code,
+			response.Result().Cookies(),
+			response.Body,
+		)
+	}
+	response = bootstrap(rotatedURL, nil)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("reused rotated bootstrap status = %d", response.Code)
+	}
+}
+
+func TestBrowserBootstrapReestablishesExpiredSessionWithCurrentToken(t *testing.T) {
+	var logs bytes.Buffer
+	store := &fakeAPIStore{}
+	api := browserTestAPI(store)
+	api.SessionTTL = time.Millisecond
+	api.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	handler := api.Handler()
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"http://127.0.0.1:8080/dashboard/bootstrap?token=one-time-bootstrap-token-with-enough-entropy",
+		nil,
+	)
+	request.Host = "127.0.0.1:8080"
+	request.RemoteAddr = "127.0.0.1:40000"
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther ||
+		len(response.Result().Cookies()) != 1 {
+		t.Fatalf("initial bootstrap = %d cookies=%#v", response.Code, response.Result().Cookies())
+	}
+	expiredCookie := response.Result().Cookies()[0]
+	currentURL := latestDashboardBootstrapURLFromLogs(t, logs.String())
+
+	time.Sleep(5 * time.Millisecond)
+	request = httptest.NewRequest(http.MethodGet, currentURL, nil)
+	request.Host = "127.0.0.1:8080"
+	request.RemoteAddr = "127.0.0.1:40000"
+	request.AddCookie(expiredCookie)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusSeeOther ||
+		len(response.Result().Cookies()) != 1 ||
+		response.Result().Cookies()[0].Value == expiredCookie.Value {
+		t.Fatalf(
+			"expired session bootstrap = %d cookies=%#v body=%s",
+			response.Code,
+			response.Result().Cookies(),
+			response.Body,
+		)
+	}
+	if !strings.Contains(
+		strings.Join(store.auditEvents, ","),
+		"browser.session.expired",
+	) {
+		t.Fatalf("expiry audit events = %#v", store.auditEvents)
+	}
+
+	// The current token was consumed by the replacement session.
+	request = httptest.NewRequest(http.MethodGet, currentURL, nil)
+	request.Host = "127.0.0.1:8080"
+	request.RemoteAddr = "127.0.0.1:40000"
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("reused replacement bootstrap status = %d", response.Code)
 	}
 }
 

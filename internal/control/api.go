@@ -1072,6 +1072,18 @@ func (api *API) bootstrap(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusForbidden, "loopback_required", "bootstrap is available only through the exact loopback dashboard origin")
 		return
 	}
+	if _, present, expired := api.sessions.get(request); present {
+		writer.Header().Set("Location", "/")
+		writer.WriteHeader(http.StatusSeeOther)
+		return
+	} else if expired {
+		api.recordBrowserAudit(
+			request,
+			"browser.session.expired",
+			"session_expired",
+			"browser-cookie-present",
+		)
+	}
 	token := request.URL.Query().Get("token")
 	if token == "" || len(token) > 512 || api.BootstrapToken == "" {
 		api.recordBrowserAudit(request, "browser.session.rejected", "invalid_bootstrap", "browser-anonymous")
@@ -1103,6 +1115,7 @@ func (api *API) bootstrap(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	setSessionCookie(writer, api.origin, session)
+	api.rotateBootstrap("bootstrap_consumed")
 	writer.Header().Set("Location", "/")
 	writer.WriteHeader(http.StatusSeeOther)
 }

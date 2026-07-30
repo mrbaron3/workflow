@@ -291,8 +291,11 @@ go run ./cmd/agentopsctl \
 The operator API defaults to `127.0.0.1:8080`; the container target keeps it on
 `127.0.0.1:8081` behind an in-process port-8080 publication proxy, and publishes that proxy to host
 loopback only. PostgreSQL and runner ports stay internal.
-Open the one-time bootstrap URL logged at startup; browser code receives no bearer credential and
-uses only an HttpOnly same-origin session cookie plus a memory-only CSRF proof. Its contract is
+Run `agentopsctl open` (or `mise run open`) to open the latest one-time bootstrap URL from the
+control log. An existing valid browser session is reused without consuming that token; a new
+session consumes it and immediately rotates the next URL. Browser code receives no bearer
+credential and uses only an HttpOnly same-origin session cookie plus a memory-only CSRF proof. Its
+contract is
 [`contracts/control-api/v1/openapi.yaml`](contracts/control-api/v1/openapi.yaml). Create requires
 `Idempotency-Key`; update/disable require both it and `If-Match: "<registration version>"`; retry
 also fences the Registration identity/version and observed route attempts. Non-browser automation
