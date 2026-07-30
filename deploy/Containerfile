@@ -112,7 +112,7 @@ RUN apt-get update \
     && ln -s /usr/local/bin/agentops-github-credential-helper /usr/local/bin/gh \
     && ln -s /usr/local/bin/agentops-github-credential-helper /usr/local/bin/agentops-git-askpass \
     && useradd --uid 65532 --create-home --home-dir /home/agentops \
-         --shell /usr/sbin/nologin agentops \
+         --shell /bin/sh agentops \
     && mkdir -p /workspace \
     && chown agentops:agentops /workspace \
     && /usr/local/libexec/agentops-gh-real pr merge --help \

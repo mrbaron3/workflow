@@ -71,6 +71,10 @@ export function providerSessionEnvironment(): NodeJS.ProcessEnv {
   ]) {
     delete env[key];
   }
+  // SHELL unset means tmux falls back to the passwd login shell; a nologin shell there kills
+  // every window at spawn — including the holder's home tab, taking the whole server down and
+  // making the next new-window fail with "no server running".
+  if (!env.SHELL || env.SHELL.endsWith('nologin')) env.SHELL = '/bin/sh';
   return env;
 }
 
@@ -132,6 +136,7 @@ export function launchSession(opts: LaunchOpts): void {
   for (const key of [
     'PATH',
     'HOME',
+    'SHELL',
     'TMPDIR',
     'LANG',
     'LC_ALL',
