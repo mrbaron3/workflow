@@ -27,6 +27,7 @@
     "triage": "tsx src/triage/cli.ts",
     "control-store:migrate": "tsx scripts/control-store-migrate.ts",
     "evidence:ciso07": "tsx scripts/validate-ciso07-release-evidence.ts",
+    "evidence:live-release": "tsx scripts/validate-live-release-evidence.ts",
     "bundle-skills": "tsx scripts/bundle-skills.ts",
     "prepare": "git config core.hooksPath githooks 2>/dev/null || true"
   },

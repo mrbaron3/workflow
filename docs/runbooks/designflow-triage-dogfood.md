@@ -139,3 +139,54 @@ Registration-owned configurationとして渡す変更を追跡する。
 - App秘密鍵はbrokerだけにread-only mountされ、triage／runner／controlから読めない。
 - Designflowのdirect Node contract checkerをrepository名分岐なしで実行する。
 - 最後にlive GitHub上でclaim→PR→current-head review→required check→expected-head merge→Issue closeを1件通す。
+
+## 証拠の形式と検証
+
+実走の結果は`contracts/live-release-evidence.schema.json`へ適合する1つのJSONにまとめ、
+`evidence/live-release/`へ置く。検証は次で行う。
+
+```sh
+npm run evidence:live-release -- <evidence.json>
+```
+
+CISO-07の`ciso-07-release-evidence.schema.json`はPR 41・`mrbaron3/workflow`・check名`macos`/`postgres`を
+`const`で固定した**その1回のための**契約であり、Designflow実走は入らない。live release契約は識別子
+（repository、Issue番号、PR番号、SHA、check名）を検証だけして固定せず、**主張したい不変条件のほうを`const`で
+固定する**（`aiAppliedReadyLabel: false`、`promotionAtomic: true`、`round3Created: false`、
+`blockingReviewThreads: 0`、`issueState: CLOSED`など）。したがって2件目以降の外部targetでも同じ契約を使う。
+
+schemaは形状と個別の不変条件だけを見る。**独立に観測した各セクションを1つのrelease revisionへ束縛する**のは
+`src/evidence/live-release.ts`の意味検証で、別々の実走から集めた断片を合格の証拠へ組み立てられないようにする。
+主な束縛は次のとおり。
+
+- `target.repository`は`consumer.repository`と異なること（自repo cutoverは外部target実証にならない）。
+- `execution.expectedHead`／`github.finalPrHead`／`formalReviews.round2.head`が`execution.finalHead`と同一。
+  merge fenceは実際にreleaseしたrevisionに対して計算されていなければならない。
+- round 1でfindingが出たなら round 2のheadは前進していること（同一revisionの2度読みを「2ラウンド」と
+  呼べないようにする）。
+- `triage.managedLabelsApplied`にready／claimed labelが混ざらないこと。
+- `providerInvocations`の`invocationKey`が一意で、`triage`と`generator`のinvocationが最低1件ずつあること。
+- 各invocationの`jobId`が、triageなら`triage.promotionJobId`、それ以外なら`execution.jobId`と一致すること。
+  これが無いとinvocation配列は出所不明の自由記述で、別のIssueや別実走の記録を貼っても role と一意性の
+  条件を満たしてしまう。なおtriage containerはcheckoutを持たないので、triageのinvocationは`head`を持たない
+  （持たせると虚偽になる）。
+- `designBundle.applicable`と`releaseLineage.applicable`が一致すること。この2つは同じ事実を両側から
+  述べているので、揃って有効か揃って不適用かのどちらかしかない。
+
+`execution.graderCommands`は、runnerが実際に出す2つのprofileだけを表現できる。vendored toolchain
+（typescriptとvitestを持つrepository向けの固定コマンド）は文字列を固定し、direct Node contract checkerは
+**runtimeと同じ相対パス規則**（絶対パス不可、空・`.`・`..`のsegment不可）を課す。evidenceの側がruntimeより
+緩いと、runnerなら拒否するcheckerを「通った」と証明できてしまうため、両者が受理・拒否とも揃うことを
+`inferRepositoryGraders`を実際に動かすテストで固定している。
+
+### HOW介入とresult
+
+`result`は介入台帳の**読み取り**であり独立した主張ではない。`howInterventions.count`が0なら`passed`、
+1以上なら`passed-with-interventions`でなければならず、`count`は`records`の要素数と一致する必要がある。
+
+介入が1回でもあるとevidence自体が作れない設計にはしていない。作れないと「まだ0になっていない」という事実が
+記録に残らず、実走を重ねて介入が減っていく過程を機械で追えなくなるためである。介入ありの実走も妥当な
+evidenceとして残し、北極星（人間はWHATのみ）へ到達したか否かは`result`が判定する。
+
+なお介入の語彙には人間の**判断点**（adopt／assign／sign／decide／label）が存在しない。`ready` labelを付ける
+行為は自律性の定義に含まれる判断であって介入ではないので、ここには数えない。
