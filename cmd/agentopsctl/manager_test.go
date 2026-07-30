@@ -448,7 +448,8 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 			activeTriage.Environment["CODEX_HOME"] !=
 				"/run/agentops-credentials/codex" ||
 			len(activeTriage.Mounts) != 1 ||
-			activeTriage.Mounts[0].Target != "/run/agentops-credentials" {
+			activeTriage.Mounts[0].Target != "/run/agentops-credentials" ||
+			activeTriage.Mounts[0].Volume != cfg.TriageCredentialVolume {
 			t.Fatal("ACTIVE triage escaped its Issue-only capability boundary")
 		}
 		if activeRunner.Environment["AGENTOPS_GITHUB_BROKER_CAPABILITY"] !=
@@ -460,9 +461,14 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 			t.Fatal("ACTIVE runner did not receive its development-only boundary")
 		}
 		if len(activeRunner.Mounts) != 2 ||
-			activeRunner.Mounts[1].Volume != cfg.CredentialVolume ||
+			activeRunner.Mounts[1].Volume != cfg.RunnerCredentialVolume ||
 			!activeRunner.Mounts[1].ReadOnly {
 			t.Fatalf("ACTIVE credential mounts = %#v", activeRunner.Mounts)
+		}
+		// Apple Containerのnamed volumeは単一VMへの排他attach。triageとrunnerが
+		// credential volumeを共有すると、後からattachする側が必ず起動に失敗する。
+		if activeTriage.Mounts[0].Volume == activeRunner.Mounts[1].Volume {
+			t.Fatal("triage and runner share a credential volume")
 		}
 	})
 }
@@ -546,7 +552,8 @@ func testManagerConfig() config {
 		Network:                "agentops-internal",
 		PostgresVolume:         "agentops-postgres-data",
 		RunnerVolume:           "agentops-runner-workspace",
-		CredentialVolume:       "agentops-runner-credentials",
+		TriageCredentialVolume: "agentops-triage-credentials",
+		RunnerCredentialVolume: "agentops-runner-credentials",
 		GitHubAppKeyVolume:     "agentops-github-app-key",
 		PostgresContainer:      "agentops-postgres",
 		ControlContainer:       "agentops-control",

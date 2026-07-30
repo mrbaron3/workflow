@@ -126,7 +126,13 @@ func (manager *manager) Start(
 	if manager.config.usesCodexAuthFileFor(mode) {
 		if err := manager.runtime.EnsureVolume(
 			ctx,
-			manager.config.CredentialVolume,
+			manager.config.TriageCredentialVolume,
+		); err != nil {
+			return err
+		}
+		if err := manager.runtime.EnsureVolume(
+			ctx,
+			manager.config.RunnerCredentialVolume,
 		); err != nil {
 			return err
 		}
@@ -1096,6 +1102,8 @@ func (manager *manager) ensureRunnerVolumeOwner(ctx context.Context) error {
 func (manager *manager) seedCodexCredentialVolume(
 	ctx context.Context,
 	mode lifecycle.Mode,
+	role string,
+	volume string,
 ) error {
 	if !manager.config.usesCodexAuthFileFor(mode) {
 		return nil
@@ -1103,9 +1111,12 @@ func (manager *manager) seedCodexCredentialVolume(
 	if err := validateCodexAuthSource(manager.config.CodexAuthPath); err != nil {
 		return err
 	}
+	// role別に一意な名前にする。同一プロセスがtriage/runnerの2回seedingを行うため、
+	// PIDだけでは同名になり、先行init VMの非同期teardownとattachが競合する。
 	name := fmt.Sprintf(
-		"%s-credential-init-%d",
+		"%s-credential-init-%s-%d",
 		manager.config.Prefix,
+		role,
 		os.Getpid(),
 	)
 	_, err := manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
@@ -1114,7 +1125,7 @@ func (manager *manager) seedCodexCredentialVolume(
 		Image:    manager.config.RunnerImage,
 		Networks: []string{manager.config.Network},
 		Mounts: []lifecycle.Mount{{
-			Volume: manager.config.CredentialVolume,
+			Volume: volume,
 			Target: "/credentials",
 		}},
 		User:       "root",
@@ -1365,7 +1376,12 @@ func (manager *manager) replaceTriage(
 	if err := manager.runtime.Delete(ctx, manager.config.TriageContainer); err != nil {
 		return receipt, err
 	}
-	if err := manager.seedCodexCredentialVolume(ctx, mode); err != nil {
+	if err := manager.seedCodexCredentialVolume(
+		ctx,
+		mode,
+		"triage",
+		manager.config.TriageCredentialVolume,
+	); err != nil {
 		return receipt, err
 	}
 	if _, err := manager.runtime.RunContainer(ctx, spec); err != nil {
@@ -1424,12 +1440,12 @@ func (manager *manager) triageSpec(
 	runtimeMounts := []lifecycle.Mount{}
 	if manager.config.usesCodexAuthFileFor(mode) {
 		mounts = append(mounts, map[string]any{
-			"source":   manager.config.CredentialVolume,
+			"source":   manager.config.TriageCredentialVolume,
 			"target":   "/run/agentops-credentials",
 			"readOnly": true,
 		})
 		runtimeMounts = append(runtimeMounts, lifecycle.Mount{
-			Volume:   manager.config.CredentialVolume,
+			Volume:   manager.config.TriageCredentialVolume,
 			Target:   "/run/agentops-credentials",
 			ReadOnly: true,
 		})
@@ -1530,7 +1546,12 @@ func (manager *manager) replaceRunner(
 	if err := manager.ensureRunnerVolumeOwner(ctx); err != nil {
 		return receipt, err
 	}
-	if err := manager.seedCodexCredentialVolume(ctx, mode); err != nil {
+	if err := manager.seedCodexCredentialVolume(
+		ctx,
+		mode,
+		"runner",
+		manager.config.RunnerCredentialVolume,
+	); err != nil {
 		return receipt, err
 	}
 	_, err = manager.runtime.RunContainer(ctx, spec)
@@ -1699,12 +1720,12 @@ func (manager *manager) runnerSpec(
 	}}
 	if manager.config.usesCodexAuthFileFor(mode) {
 		mounts = append(mounts, map[string]any{
-			"source":   manager.config.CredentialVolume,
+			"source":   manager.config.RunnerCredentialVolume,
 			"target":   "/run/agentops-credentials",
 			"readOnly": true,
 		})
 		runtimeMounts = append(runtimeMounts, lifecycle.Mount{
-			Volume:   manager.config.CredentialVolume,
+			Volume:   manager.config.RunnerCredentialVolume,
 			Target:   "/run/agentops-credentials",
 			ReadOnly: true,
 		})
@@ -2400,7 +2421,7 @@ func validateTriageActual(
 		"/home/agentops": "tmpfs",
 	}
 	if config.usesCodexAuthFileFor(mode) {
-		expectedMounts["/run/agentops-credentials"] = config.CredentialVolume
+		expectedMounts["/run/agentops-credentials"] = config.TriageCredentialVolume
 	}
 	if !exactMounts(actual, expectedMounts) {
 		return fmt.Errorf("triage mounts do not match the hardened topology")
@@ -2433,7 +2454,7 @@ func validateRunnerActual(
 		"/workspace":     config.RunnerVolume,
 	}
 	if config.usesCodexAuthFileFor(mode) {
-		expectedMounts["/run/agentops-credentials"] = config.CredentialVolume
+		expectedMounts["/run/agentops-credentials"] = config.RunnerCredentialVolume
 	}
 	if !exactMounts(actual, expectedMounts) {
 		return fmt.Errorf("runner mounts do not match the hardened topology")
