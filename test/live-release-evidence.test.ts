@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
+import type { AgentRoutingConfig } from '../src/config.js';
+import { INTERVENTION_KINDS } from '../src/domain/schema.js';
 import { liveReleaseSemanticErrors } from '../src/evidence/live-release.js';
 
 const finalHead = 'a'.repeat(40);
@@ -153,6 +155,36 @@ function compiled() {
   ) as object;
   return new Ajv2020({ strict: true, allErrors: true }).compile(schema);
 }
+
+/**
+ * The schema spells its enums out as JSON literals, so it can drift from the
+ * code that produces the values. These guards fail the moment a vocabulary
+ * grows on one side only.
+ */
+describe('live release evidence vocabularies track the code', () => {
+  const schema = JSON.parse(
+    fs.readFileSync('contracts/live-release-evidence.schema.json', 'utf8'),
+  ) as any;
+
+  it('enumerates exactly the attested intervention kinds', () => {
+    const kinds = schema.$defs.howInterventions
+      .properties.records.items.properties.kind.enum;
+    expect(kinds).toEqual([...INTERVENTION_KINDS]);
+  });
+
+  it('enumerates every role the runner routes, plus triage', () => {
+    // Fails to compile if a role is added to the routing table without being
+    // added here — Record demands every key.
+    const routed: Record<Exclude<keyof AgentRoutingConfig, 'perspectives'>, true> = {
+      generator: true,
+      planning: true,
+      uiDesign: true,
+      reviewer: true,
+    };
+    const roles = schema.$defs.providerInvocation.properties.role.enum;
+    expect([...roles].sort()).toEqual([...Object.keys(routed), 'triage'].sort());
+  });
+});
 
 describe('live release evidence contract', () => {
   it('accepts one structurally complete and coherently bound external release', () => {
