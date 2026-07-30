@@ -46,8 +46,14 @@ const codexBackend: InteractiveAgentBackend = {
   buildCommand(request) {
     const model = request.model ? ` --model ${shellQuote(request.model)}` : '';
     const addDirs = (request.additionalDirs ?? []).map((dir) => ` --add-dir ${shellQuote(dir)}`).join('');
+    // Codex asks whether the working directory is trusted before it accepts any input. Left
+    // unanswered the readiness marker still matches (the menu draws `›`), the driver types the
+    // prompt into the menu, and codex quits — the session dies before it starts. Trust is scoped
+    // to this session's directory and passed per invocation, never persisted to config. Hook trust
+    // is deliberately NOT bypassed, so repository-supplied hooks stay gated.
+    const trust = ` -c ${shellQuote(`projects."${request.cwd}".trust_level="trusted"`)}`;
     return (
-      `codex --no-alt-screen --ask-for-approval never --sandbox workspace-write${model}${addDirs}`
+      `codex --no-alt-screen --ask-for-approval never --sandbox workspace-write${trust}${model}${addDirs}`
     );
   },
 };
