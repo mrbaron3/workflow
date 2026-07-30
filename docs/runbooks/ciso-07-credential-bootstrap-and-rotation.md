@@ -23,8 +23,13 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    `${AGENTOPSCTL_STATE_DIR:-~/.agentops}/<prefix>/broker-capabilities.json`, a mode-0600 file in
    a mode-0700 directory. Every later command reads the same values back, so a running topology
    keeps matching its desired spec. The store is refused — not regenerated — if it is group or
-   world accessible, if its directory is (write permission there is substitution permission), or
-   if its contents are unreadable, unversioned, or share one value across both roles. Set
+   world accessible, if its directory is (write permission there is substitution permission), if
+   the store or its directory belongs to another account, if its directory is a symlink, or if its
+   contents are unreadable, unversioned, or share one value across both roles. The ownership check
+   is what holds when the permission bits stop deciding access — a privileged `agentopsctl`
+   traverses any directory, and an ACL can grant what the mode does not express. Only root may
+   `chown`, so a principal who can write an ancestor of the state directory can replace that
+   directory but cannot forge whose it is. Set
    `AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY` and `AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY`
    only to keep an external secret manager authoritative; supplying both means no store is ever
    written, and `agentopsctl` still rejects a value reused from another credential. The runner

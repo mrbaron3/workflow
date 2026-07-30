@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // The role capabilities are generated rather than authored. Bootstrap asks the
@@ -66,6 +67,14 @@ func generateBrokerCapability() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buffer), nil
 }
 
+// brokerCapabilityStoreOwnedByCaller reports whether the invoking account owns
+// the entry. An unreadable owner is treated as foreign: a store whose provenance
+// cannot be established is not one to mint GitHub tokens from.
+func brokerCapabilityStoreOwnedByCaller(info os.FileInfo) bool {
+	status, ok := info.Sys().(*syscall.Stat_t)
+	return ok && int(status.Uid) == os.Geteuid()
+}
+
 func readBrokerCapabilityStore(path string) (brokerCapabilityStore, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -89,6 +98,20 @@ func readBrokerCapabilityStore(path string) (brokerCapabilityStore, error) {
 		return brokerCapabilityStore{}, fmt.Errorf(
 			"GitHub broker capability store must be a private regular file",
 		)
+	}
+	// Ownership is what makes the mode checks above mean anything. Substituting a
+	// store means presenting a directory and file that look private, and only
+	// root may chown one to another account — so an unprivileged principal who
+	// can write an ancestor can replace this directory but never forge whose it
+	// is. Checking the owner is what still holds when the mode bits do not
+	// decide access: agentopsctl running privileged traverses any directory, and
+	// an ACL can grant access the permission bits do not express.
+	for _, entry := range []os.FileInfo{directory, info} {
+		if !brokerCapabilityStoreOwnedByCaller(entry) {
+			return brokerCapabilityStore{}, fmt.Errorf(
+				"GitHub broker capability store must belong to the account running agentopsctl",
+			)
+		}
 	}
 	file, err := os.Open(path)
 	if err != nil {

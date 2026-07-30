@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/mrbaron3/workflow/internal/lifecycle"
@@ -96,6 +97,54 @@ func TestBrokerCapabilityGenerationIsIdempotentAndPerRole(t *testing.T) {
 	}
 }
 
+// foreignOwner presents a real entry as belonging to another account. Only root
+// may chown one, so the foreign owner is presented rather than created — that is
+// also the point of the check: an unprivileged principal who can write an
+// ancestor may replace the store's directory but cannot forge whose it is.
+type foreignOwner struct {
+	os.FileInfo
+	uid uint32
+}
+
+func (value foreignOwner) Sys() any {
+	return &syscall.Stat_t{Uid: value.uid}
+}
+
+// unknownOwner stands for a filesystem that reports no owner at all.
+type unknownOwner struct{ os.FileInfo }
+
+func (unknownOwner) Sys() any { return nil }
+
+// Mode bits stop deciding access when agentopsctl runs privileged, or when an
+// ACL grants what the permission bits do not express. Ownership is what still
+// holds, so a store that looks private but belongs to someone else is refused.
+func TestBrokerCapabilityStoreRejectsAnotherAccountsOwnership(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agentops", brokerCapabilityFileName)
+	if err := writeBrokerCapabilityStore(path, brokerCapabilityStore{
+		Version: brokerCapabilityStoreVersion,
+		Triage:  strings.Repeat("t", 43),
+		Runner:  strings.Repeat("r", 43),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !brokerCapabilityStoreOwnedByCaller(info) {
+		t.Fatal("a store agentopsctl just created was read as another account's")
+	}
+	if brokerCapabilityStoreOwnedByCaller(foreignOwner{
+		FileInfo: info,
+		uid:      uint32(os.Geteuid() + 1),
+	}) {
+		t.Error("a store owned by another account was accepted")
+	}
+	if brokerCapabilityStoreOwnedByCaller(unknownOwner{FileInfo: info}) {
+		t.Error("a store whose owner could not be established was accepted")
+	}
+}
+
 // Two commands can bootstrap at once — a start in one terminal and a status in
 // another. Whoever loses the race must adopt the persisted capabilities: a
 // command that injected its own pair into the broker while the store kept
@@ -178,6 +227,24 @@ func TestBrokerCapabilityStoreRejectsUntrustworthyState(t *testing.T) {
 		// Directory write permission is substitution permission.
 		"group-writable directory": func(t *testing.T, path string) {
 			if err := os.Chmod(filepath.Dir(path), 0o770); err != nil {
+				t.Fatal(err)
+			}
+		},
+		// The directory the store is read from must be the real one, not a link
+		// an attacker who can write an ancestor planted in its place.
+		"symlinked directory": func(t *testing.T, path string) {
+			elsewhere := t.TempDir()
+			directory := filepath.Dir(path)
+			if err := os.Rename(path, filepath.Join(
+				elsewhere,
+				brokerCapabilityFileName,
+			)); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(directory); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(elsewhere, directory); err != nil {
 				t.Fatal(err)
 			}
 		},

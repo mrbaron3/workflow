@@ -63,8 +63,12 @@ triage／runnerへ渡すと両roleが任意scopeをmintできるため、専用b
    `agentopsctl`自身がbroker／triage／runnerのspecへ注入し、drift比較でも突き合わせる値だからである。
    volumeへ隠すとcommandごとにcontainer execでsecretをstdoutへ流すことになり露出面が増える。
    storeがgroup／world accessible、親directoryが同様（directoryへの書き込み権はstore差し替え権と等価）、
-   version不一致、読めない内容、両role同値のいずれかなら、**再生成せずに拒否する**。modeは修復できても
-   差し替えられた値は信用を回復できないからである。両env varを設定した場合は外部secret managerが正本となり、
+   store／親directoryが別accountの所有、親directoryがsymlink、version不一致、読めない内容、両role同値の
+   いずれかなら、**再生成せずに拒否する**。modeは修復できても差し替えられた値は信用を回復できないからである。
+   所有者検証はmode bitがaccessを決めなくなる場合の担保である（特権実行の`agentopsctl`は任意directoryを
+   traverseでき、ACLはmodeが表現しない権限を与え得る）。`chown`できるのはrootだけなので、state directoryの
+   祖先へ書ける principal はdirectoryを差し替えられても所有者は偽装できない。祖先を辿って検証する代わりに
+   所有者を見るのはこのためである。両env varを設定した場合は外部secret managerが正本となり、
    storeは書かれない。rotationは`OFF`中にstoreを削除して次のstartで再生成させる（両roleが同時に更新される）か、
    単独roleだけ更新するなら`OFF`中に新しい値をexportする。
    wrapperはreal `gh`へtokenを渡す直前にbroker URL／role／capabilityを環境から除く。AI provider、
