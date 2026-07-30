@@ -5,3 +5,5 @@ dist/
 test-results/
 playwright-report/
 .DS_Store
+# operator の env ファイルの在処。秘密そのものは入らないが在処は人による。
+mise.local.toml
