@@ -106,7 +106,25 @@ describe('runner subprocess filesystem sandbox', () => {
         OPENAI_API_KEY: 'provider-secret',
         AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
         AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
+        SHELL: '/bin/sh',
       });
+    } finally {
+      process.env = previous;
+    }
+  });
+
+  // tmux resolves the passwd login shell when SHELL is unset; a nologin shell kills every
+  // window (and the holder session's server with it) at spawn. The environment must always
+  // carry a real shell so sessions survive regardless of the image's passwd entry.
+  it('pins SHELL to a real shell when unset or nologin, and keeps an operator shell', () => {
+    const previous = process.env;
+    try {
+      process.env = { PATH: '/usr/bin' };
+      expect(providerSessionEnvironment().SHELL).toBe('/bin/sh');
+      process.env = { PATH: '/usr/bin', SHELL: '/usr/sbin/nologin' };
+      expect(providerSessionEnvironment().SHELL).toBe('/bin/sh');
+      process.env = { PATH: '/usr/bin', SHELL: '/bin/zsh' };
+      expect(providerSessionEnvironment().SHELL).toBe('/bin/zsh');
     } finally {
       process.env = previous;
     }

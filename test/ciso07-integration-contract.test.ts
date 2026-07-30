@@ -38,6 +38,31 @@ describe('CISO-07 integrated release source contracts', () => {
     }
   });
 
+  // The runner's whole job is to run provider sessions inside tmux. With SHELL unset,
+  // tmux resolves the passwd login shell, and a nologin shell kills every window at
+  // spawn — the holder's home tab dies, the last session closes, the server exits, and
+  // the next new-window fails with "no server running". DF-006's first live claim burned
+  // all three attempts exactly this way, so the runner user must keep a real shell.
+  // triage-runner deliberately ships no tmux, so nologin stays correct there.
+  it('gives the runner user a real login shell for tmux sessions', () => {
+    const containerfile = read('deploy/Containerfile');
+    const stages = new Map<string, string[]>();
+    let current = '';
+    for (const line of containerfile.split('\n')) {
+      const from = /^FROM\s+.*\sAS\s+([a-z0-9-]+)\s*$/.exec(line);
+      if (from) {
+        current = from[1]!;
+        stages.set(current, []);
+        continue;
+      }
+      if (current) stages.get(current)!.push(line);
+    }
+    const runner = (stages.get('runner') ?? []).join('\n');
+    expect(runner, 'runner stage must create the agentops user').toContain('useradd');
+    expect(runner).toContain('--shell /bin/sh');
+    expect(runner).not.toContain('--shell /usr/sbin/nologin');
+  });
+
   it('builds all five release roles from immutable standard-OCI bases', () => {
     const containerfile = read('deploy/Containerfile');
     const externalFromLines = containerfile
