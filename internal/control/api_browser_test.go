@@ -2,6 +2,7 @@ package control
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -9,6 +10,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -44,6 +47,71 @@ func latestDashboardBootstrapURLFromLogs(t *testing.T, logs string) string {
 		t.Fatal("dashboard bootstrap URL was not logged")
 	}
 	return latest
+}
+
+type reorderedBootstrapLogHandler struct {
+	calls         atomic.Int32
+	firstEntered  chan struct{}
+	secondEntered chan struct{}
+	releaseFirst  chan struct{}
+	mu            sync.Mutex
+	urls          []string
+}
+
+func newReorderedBootstrapLogHandler() *reorderedBootstrapLogHandler {
+	return &reorderedBootstrapLogHandler{
+		firstEntered:  make(chan struct{}),
+		secondEntered: make(chan struct{}),
+		releaseFirst:  make(chan struct{}),
+	}
+}
+
+func (handler *reorderedBootstrapLogHandler) Enabled(
+	context.Context,
+	slog.Level,
+) bool {
+	return true
+}
+
+func (handler *reorderedBootstrapLogHandler) Handle(
+	_ context.Context,
+	record slog.Record,
+) error {
+	target := ""
+	record.Attrs(func(attribute slog.Attr) bool {
+		if attribute.Key == "dashboardBootstrapUrl" {
+			target = attribute.Value.String()
+		}
+		return true
+	})
+	call := handler.calls.Add(1)
+	if call == 1 {
+		close(handler.firstEntered)
+		<-handler.releaseFirst
+	}
+	handler.mu.Lock()
+	handler.urls = append(handler.urls, target)
+	handler.mu.Unlock()
+	if call == 2 {
+		close(handler.secondEntered)
+	}
+	return nil
+}
+
+func (handler *reorderedBootstrapLogHandler) WithAttrs(
+	[]slog.Attr,
+) slog.Handler {
+	return handler
+}
+
+func (handler *reorderedBootstrapLogHandler) WithGroup(string) slog.Handler {
+	return handler
+}
+
+func (handler *reorderedBootstrapLogHandler) URLs() []string {
+	handler.mu.Lock()
+	defer handler.mu.Unlock()
+	return append([]string(nil), handler.urls...)
 }
 
 func TestBrowserBootstrapSessionOriginAndCSRFLifecycle(t *testing.T) {
@@ -327,6 +395,61 @@ func TestBrowserBootstrapReestablishesExpiredSessionWithCurrentToken(t *testing.
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("reused replacement bootstrap status = %d", response.Code)
+	}
+}
+
+func TestConcurrentBootstrapRotationsLogTheCurrentTokenLast(t *testing.T) {
+	api := browserTestAPI(&fakeAPIStore{})
+	if err := api.Initialize(); err != nil {
+		t.Fatal(err)
+	}
+	logHandler := newReorderedBootstrapLogHandler()
+	api.Log = slog.New(logHandler)
+
+	firstDone := make(chan struct{})
+	go func() {
+		api.rotateBootstrap("first")
+		close(firstDone)
+	}()
+	select {
+	case <-logHandler.firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("first rotation did not reach the logger")
+	}
+
+	secondDone := make(chan struct{})
+	go func() {
+		api.rotateBootstrap("second")
+		close(secondDone)
+	}()
+	// Without API-level serialization, the second rotation reaches the
+	// logger while the first is blocked and makes the final log entry stale.
+	select {
+	case <-logHandler.secondEntered:
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(logHandler.releaseFirst)
+
+	for name, done := range map[string]<-chan struct{}{
+		"first":  firstDone,
+		"second": secondDone,
+	} {
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatalf("%s rotation did not finish", name)
+		}
+	}
+	urls := logHandler.URLs()
+	if len(urls) != 2 {
+		t.Fatalf("rotation URLs = %#v", urls)
+	}
+	latest, err := url.Parse(urls[len(urls)-1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.sessions.bootstrap(latest.Query().Get("token")); err != nil {
+		t.Fatalf("latest logged bootstrap token is not current: %v", err)
 	}
 }
 

@@ -90,9 +90,11 @@ type API struct {
 	initErr         error
 	origin          *url.URL
 	sessions        *browserSessions
-	dashboard       http.Handler
-	pagesMu         sync.Mutex
-	pages           map[string]registrationPageSnapshot
+	// Keep the published URL order identical to the in-memory token order.
+	bootstrapMu sync.Mutex
+	dashboard   http.Handler
+	pagesMu     sync.Mutex
+	pages       map[string]registrationPageSnapshot
 }
 
 type registrationPageSnapshot struct {
@@ -1164,6 +1166,8 @@ func (api *API) browserSession(writer http.ResponseWriter, request *http.Request
 }
 
 func (api *API) rotateBootstrap(reason string) {
+	api.bootstrapMu.Lock()
+	defer api.bootstrapMu.Unlock()
 	token, err := api.sessions.rotateBootstrap()
 	if err != nil {
 		api.Log.Error("dashboard bootstrap rotation failed", "reason", reason, "error", err)

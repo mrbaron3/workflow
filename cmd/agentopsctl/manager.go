@@ -684,6 +684,15 @@ func (manager *manager) Logs(
 }
 
 func (manager *manager) Open(ctx context.Context) error {
+	control, err := manager.runtime.Container(
+		ctx,
+		manager.config.ControlContainer,
+	)
+	if err != nil || !managedDashboardControl(control, manager.config) {
+		return fmt.Errorf(
+			"managed Control API is not running on the expected loopback publication",
+		)
+	}
 	if !manager.dashboardReachable(
 		"127.0.0.1",
 		manager.config.ControlHostPort,
@@ -707,9 +716,21 @@ func (manager *manager) Open(ctx context.Context) error {
 		return err
 	}
 	if err := manager.openDashboard(ctx, dashboardURL); err != nil {
-		return redactedDashboardOpenError(err, dashboardURL)
+		return redactedDashboardOpenError()
 	}
 	return nil
+}
+
+func managedDashboardControl(
+	actual *lifecycle.ContainerActual,
+	config config,
+) bool {
+	return actual != nil &&
+		actual.ID == config.ControlContainer &&
+		actual.Status.State == "running" &&
+		actual.Configuration.Labels["com.mrbaron3.workflow.agentopsctl"] == "v1" &&
+		actual.Configuration.Labels["com.mrbaron3.workflow.role"] == "control" &&
+		exactLoopbackPublication(actual, config.ControlHostPort)
 }
 
 func latestDashboardBootstrapURL(logOutput string, port int) (string, error) {
@@ -763,23 +784,8 @@ func validDashboardBootstrapURL(raw, expectedHost string) bool {
 	return len(token) >= 32 && len(token) <= 512
 }
 
-func redactedDashboardOpenError(err error, dashboardURL string) error {
-	message := err.Error()
-	message = strings.ReplaceAll(message, dashboardURL, "***")
-	if parsed, parseErr := url.Parse(dashboardURL); parseErr == nil {
-		if token := parsed.Query().Get("token"); token != "" {
-			message = strings.ReplaceAll(message, token, "***")
-			message = strings.ReplaceAll(
-				message,
-				url.QueryEscape(token),
-				"***",
-			)
-		}
-	}
-	if strings.TrimSpace(message) == "" {
-		message = "browser launcher failed"
-	}
-	return fmt.Errorf("open Dashboard: %s", message)
+func redactedDashboardOpenError() error {
+	return fmt.Errorf("open Dashboard: browser launcher failed")
 }
 
 func (manager *manager) RotatePostgresAdmin(
