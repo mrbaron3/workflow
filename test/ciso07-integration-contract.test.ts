@@ -7,6 +7,37 @@ const root = process.cwd();
 const read = (relative: string) => fs.readFileSync(path.join(root, relative), 'utf8');
 
 describe('CISO-07 integrated release source contracts', () => {
+  // Every runtime stage must fix its own working directory. Left unset, the
+  // runtime starts the process in $HOME, and each of these images points HOME at
+  // a 0700 directory owned by its unprivileged user. That is fine for the image's
+  // own user and fatal for the volume-init containers `agentopsctl` runs from
+  // these same images as root with `--cap-drop ALL`: without CAP_DAC_OVERRIDE,
+  // root cannot enter a home it does not own, so the process dies before it can
+  // seed a credential. github-broker shipped without WORKDIR and failed exactly
+  // that way on the first live MONITOR_ONLY start.
+  it('fixes a working directory in every runtime stage', () => {
+    const containerfile = read('deploy/Containerfile');
+    const stages = new Map<string, string[]>();
+    let current = '';
+    for (const line of containerfile.split('\n')) {
+      const from = /^FROM\s+.*\sAS\s+([a-z0-9-]+)\s*$/.exec(line);
+      if (from) {
+        current = from[1]!;
+        stages.set(current, []);
+        continue;
+      }
+      if (current) stages.get(current)!.push(line);
+    }
+    for (const stage of ['control', 'runner', 'triage-runner', 'github-broker']) {
+      const body = stages.get(stage);
+      expect(body, `stage ${stage} is missing`).toBeDefined();
+      expect(
+        body!.some((line) => line.startsWith('WORKDIR ')),
+        `stage ${stage} must declare WORKDIR`,
+      ).toBe(true);
+    }
+  });
+
   it('builds all five release roles from immutable standard-OCI bases', () => {
     const containerfile = read('deploy/Containerfile');
     const externalFromLines = containerfile
