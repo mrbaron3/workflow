@@ -34,8 +34,9 @@ function roundHasFindings(round: JsonObject | undefined): boolean {
 /**
  * JSON Schema proves the evidence shape and the individual invariants. This
  * validator binds independently observed sections to one release revision, one
- * external target, and one intervention account, so sections collected from
- * different runs cannot be assembled into a passing artifact.
+ * external target coordinate, one gate chronology, and one intervention
+ * account, so sections collected from different runs cannot be assembled into
+ * a passing artifact.
  */
 export function liveReleaseSemanticErrors(evidence: JsonObject): string[] {
   const errors: string[] = [];
@@ -53,6 +54,19 @@ export function liveReleaseSemanticErrors(evidence: JsonObject): string[] {
   const monitored: unknown[] = evidence.target?.monitoredRepositories ?? [];
   if (!monitored.includes(evidence.target?.repository)) {
     errors.push('target.repository must appear in target.monitoredRepositories');
+  }
+
+  // Each observed section records the coordinate it was collected against, and
+  // every one of them must name the declared target. Without this, evidence
+  // collected for one issue could be relabeled — by editing `target` alone —
+  // into a certificate for an arbitrary other issue or repository.
+  for (const [section, observed] of [
+    ['triage', evidence.triage],
+    ['execution', evidence.execution],
+    ['github', evidence.github],
+  ] as const) {
+    same(errors, `${section}.repository`, observed?.repository, evidence.target?.repository);
+    same(errors, `${section}.issueNumber`, observed?.issueNumber, evidence.target?.issueNumber);
   }
 
   // Every head that claims to be the released revision must be the same commit.
@@ -109,6 +123,25 @@ export function liveReleaseSemanticErrors(evidence: JsonObject): string[] {
       );
     }
   }
+  // The gate order is itself the invariant: ready was applied after the triage
+  // decision and before everything that followed from it. Equal timestamps
+  // prove no order, and an unparsable one proves nothing, so each event must
+  // strictly advance the clock.
+  const chronology = [
+    ['triage.observedAt', evidence.triage?.observedAt],
+    ['triage.humanReadyAppliedAt', evidence.triage?.humanReadyAppliedAt],
+    ['execution.observedAt', evidence.execution?.observedAt],
+    ['github.observedAt', evidence.github?.observedAt],
+  ] as const;
+  let previous: readonly [string, unknown] = chronology[0];
+  for (const event of chronology.slice(1)) {
+    const [beforePath, before] = previous;
+    const [afterPath, after] = event;
+    if (!(Date.parse(String(before)) < Date.parse(String(after)))) {
+      errors.push(`${afterPath} must be later than ${beforePath}`);
+    }
+    previous = event;
+  }
 
   // Provider invocations account for distinct calls, and the two roles this
   // chain cannot have skipped must both appear.
@@ -140,7 +173,8 @@ export function liveReleaseSemanticErrors(evidence: JsonObject): string[] {
   // The two design sections describe one fact from two sides, so they apply
   // together or not at all. Letting them disagree admits a release carrying an
   // approved bundle with no verified lineage, and a lineage that skips binding
-  // to the bundle it claims to descend from.
+  // to the bundle it claims to descend from. Revision ID and bundle digest are
+  // one identity in the production reconciliation, so both must match.
   const bundle = evidence.designBundle;
   const lineage = evidence.releaseLineage;
   if (bundle?.applicable !== lineage?.applicable) {
@@ -148,6 +182,7 @@ export function liveReleaseSemanticErrors(evidence: JsonObject): string[] {
       'designBundle.applicable and releaseLineage.applicable must agree',
     );
   } else if (bundle?.applicable === true) {
+    same(errors, 'releaseLineage.revisionId', lineage.revisionId, bundle.revisionId);
     same(errors, 'releaseLineage.bundleDigest', lineage.bundleDigest, bundle.bundleDigest);
     same(errors, 'releaseLineage.headSha', lineage.headSha, finalHead);
   }
