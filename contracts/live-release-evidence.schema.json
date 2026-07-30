@@ -122,12 +122,14 @@
     },
 
     "triage": {
-      "description": "AI classification and the human ready gate. `aiAppliedReadyLabel` is pinned false: the decision vocabulary has no `ready` value, so a true here means the run violated the authority boundary.",
+      "description": "AI classification and the human ready gate. Carries the repository/issue coordinate the promoted triage job was recorded against; the semantic validator binds it to `target`, so a decision taken for one issue cannot certify another. `aiAppliedReadyLabel` is pinned false: the decision vocabulary has no `ready` value, so a true here means the run violated the authority boundary.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "passed",
         "observedAt",
+        "repository",
+        "issueNumber",
         "decisionSchemaVersion",
         "readiness",
         "managedLabelsApplied",
@@ -142,6 +144,8 @@
       "properties": {
         "passed": { "const": true },
         "observedAt": { "$ref": "#/$defs/timestamp" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "issueNumber": { "$ref": "#/$defs/issueNumber" },
         "decisionSchemaVersion": { "const": 1 },
         "readiness": { "enum": ["ready_candidate", "blocked", "needs_info"] },
         "managedLabelsApplied": {
@@ -162,11 +166,14 @@
     },
 
     "execution": {
+      "description": "The development job observation. Carries the repository/issue coordinate the job served; the semantic validator binds it to `target`, so an execution record from another run cannot be presented as this release's development.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "passed",
         "observedAt",
+        "repository",
+        "issueNumber",
         "mode",
         "jobId",
         "attemptId",
@@ -180,6 +187,8 @@
       "properties": {
         "passed": { "const": true },
         "observedAt": { "$ref": "#/$defs/timestamp" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "issueNumber": { "$ref": "#/$defs/issueNumber" },
         "mode": { "const": "ACTIVE" },
         "jobId": { "$ref": "#/$defs/uuid" },
         "attemptId": { "$ref": "#/$defs/uuid" },
@@ -244,11 +253,13 @@
     },
 
     "github": {
-      "description": "Observed GitHub state after the merge. `requiredChecks` is an open map so check names are not pinned, but every entry must be SUCCESS and at least one must exist.",
+      "description": "Observed GitHub state after the merge. Carries the repository/issue coordinate the observation was taken from; the semantic validator binds it to `target`, so a closed issue observed in one repository cannot certify another. `requiredChecks` is an open map so check names are not pinned, but every entry must be SUCCESS and at least one must exist.",
       "type": "object",
       "additionalProperties": false,
       "required": [
         "observedAt",
+        "repository",
+        "issueNumber",
         "pullRequest",
         "finalPrHead",
         "mergeSha",
@@ -261,6 +272,8 @@
       ],
       "properties": {
         "observedAt": { "$ref": "#/$defs/timestamp" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "issueNumber": { "$ref": "#/$defs/issueNumber" },
         "pullRequest": { "$ref": "#/$defs/issueNumber" },
         "finalPrHead": { "$ref": "#/$defs/sha" },
         "mergeSha": { "$ref": "#/$defs/sha" },

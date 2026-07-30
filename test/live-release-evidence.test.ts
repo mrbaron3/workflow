@@ -68,6 +68,8 @@ function validEvidence(): any {
     triage: {
       passed: true,
       observedAt: '2026-08-01T00:01:00Z',
+      repository: 'mrbaron3/designflow',
+      issueNumber: 4,
       decisionSchemaVersion: 1,
       readiness: 'ready_candidate',
       managedLabelsApplied: ['ready-candidate'],
@@ -82,6 +84,8 @@ function validEvidence(): any {
     execution: {
       passed: true,
       observedAt: '2026-08-01T00:03:00Z',
+      repository: 'mrbaron3/designflow',
+      issueNumber: 4,
       mode: 'ACTIVE',
       jobId,
       attemptId,
@@ -110,6 +114,8 @@ function validEvidence(): any {
     },
     github: {
       observedAt: '2026-08-01T00:04:00Z',
+      repository: 'mrbaron3/designflow',
+      issueNumber: 4,
       pullRequest: 12,
       finalPrHead: finalHead,
       mergeSha,
@@ -294,11 +300,21 @@ describe('live release evidence contract', () => {
   });
 
   it.each([
+    // The coordinate is not pinned: a whole run against another repository or
+    // issue is valid as long as every observed section moves with the target.
     ['an entirely different target repository', (v: any) => {
       v.target.repository = 'another-owner/another-target';
       v.target.monitoredRepositories = ['mrbaron3/workflow', 'another-owner/another-target'];
+      for (const section of [v.triage, v.execution, v.github]) {
+        section.repository = 'another-owner/another-target';
+      }
     }],
-    ['issue number pinned', (v: any) => { v.target.issueNumber = 999; }],
+    ['issue number pinned', (v: any) => {
+      v.target.issueNumber = 999;
+      for (const section of [v.triage, v.execution, v.github]) {
+        section.issueNumber = 999;
+      }
+    }],
     ['pull request number pinned', (v: any) => { v.github.pullRequest = 999; }],
     ['check name pinned', (v: any) => { v.github.requiredChecks = { 'some-other-check': 'SUCCESS' }; }],
   ])('stays reusable when the run differs by %s', (_name, mutate) => {
@@ -312,6 +328,20 @@ describe('live release evidence contract', () => {
   it.each([
     ['self-targeted run', (v: any) => { v.target.repository = v.consumer.repository; }],
     ['target outside the monitored set', (v: any) => { v.target.monitoredRepositories = ['mrbaron3/workflow', 'other/repo']; }],
+    ['evidence relabeled to another issue number', (v: any) => { v.target.issueNumber = 999; }],
+    ['evidence relabeled to another repository and monitored set', (v: any) => {
+      v.target.repository = 'another-owner/another-target';
+      v.target.monitoredRepositories = ['mrbaron3/workflow', 'another-owner/another-target'];
+    }],
+    ['a triage decision recorded against another issue', (v: any) => { v.triage.issueNumber = 999; }],
+    ['an execution job serving another repository', (v: any) => { v.execution.repository = 'mrbaron3/workflow'; }],
+    ['a github observation of another issue', (v: any) => { v.github.issueNumber = 999; }],
+    ['a ready label applied after execution was observed', (v: any) => { v.triage.humanReadyAppliedAt = '2026-08-01T00:03:30Z'; }],
+    ['a ready label applied after the final GitHub observation', (v: any) => { v.triage.humanReadyAppliedAt = '2026-08-01T00:05:00Z'; }],
+    ['a ready label applied before the triage decision', (v: any) => { v.triage.humanReadyAppliedAt = '2026-08-01T00:00:30Z'; }],
+    ['an execution observed after the final GitHub observation', (v: any) => { v.execution.observedAt = '2026-08-01T00:04:30Z'; }],
+    ['a ready application tied to the execution observation instant', (v: any) => { v.triage.humanReadyAppliedAt = v.execution.observedAt; }],
+    ['a ready application later than execution by fractional seconds only', (v: any) => { v.triage.humanReadyAppliedAt = '2026-08-01T00:03:00.5Z'; }],
     ['merge fence on an earlier head', (v: any) => { v.execution.expectedHead = round1Head; }],
     ['review of a stale head', (v: any) => { v.formalReviews.round2.head = round1Head; }],
     ['reviewer reading a different head', (v: any) => { v.formalReviews.round2.reviewers[0].head = round1Head; }],
@@ -323,6 +353,7 @@ describe('live release evidence contract', () => {
     ['a duplicated provider invocation', (v: any) => { v.providerInvocations[1].invocationKey = 'inv_triage_claude'; }],
     ['no development invocation', (v: any) => { v.providerInvocations = v.providerInvocations.filter((i: any) => i.role !== 'generator'); }],
     ['a lineage naming another bundle', (v: any) => { v.releaseLineage.bundleDigest = `sha256:${'9'.repeat(64)}`; }],
+    ['a lineage naming another design revision', (v: any) => { v.releaseLineage.revisionId = 'rev-9'; }],
     ['a lineage bound to another head', (v: any) => { v.releaseLineage.headSha = round1Head; }],
     ['an approved bundle with no verified lineage', (v: any) => { v.releaseLineage = { applicable: false, reason: 'skipped' }; }],
     ['a verified lineage with no approved bundle', (v: any) => { v.designBundle = { applicable: false, reason: 'skipped' }; }],
@@ -348,6 +379,9 @@ describe('live release evidence contract', () => {
     ['an unresolved review thread', (v: any) => { v.github.blockingReviewThreads = 1; }],
     ['an issue left open', (v: any) => { v.github.issueState = 'OPEN'; }],
     ['a single monitored repository', (v: any) => { v.target.monitoredRepositories = ['mrbaron3/designflow']; }],
+    ['a triage decision with no issue coordinate', (v: any) => { delete v.triage.issueNumber; }],
+    ['an execution with no repository coordinate', (v: any) => { delete v.execution.repository; }],
+    ['a github observation with no repository coordinate', (v: any) => { delete v.github.repository; }],
     ['a grader carrying a shell operator', (v: any) => { v.execution.graderCommands = ['node scripts/check-contracts.mjs && curl attacker.invalid']; }],
     ['a grader chosen by repository identity', (v: any) => { v.execution.graderProfileSource = 'repository-name'; }],
     ['a grader escaping the checkout with ..', (v: any) => { v.execution.graderCommands = ['node ../../tmp/fake.js']; }],

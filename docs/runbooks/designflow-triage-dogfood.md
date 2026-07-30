@@ -160,6 +160,12 @@ schemaは形状と個別の不変条件だけを見る。**独立に観測した
 主な束縛は次のとおり。
 
 - `target.repository`は`consumer.repository`と異なること（自repo cutoverは外部target実証にならない）。
+- 観測セクション（`triage`／`execution`／`github`）が記録するrepository／Issue番号が`target`と一致すること。
+  これが無いと`target`だけ書き換えて、あるIssueで集めた証拠を別のIssueやrepositoryの証明として
+  貼り替えられる。座標は固定しない（別targetの実走は観測セクションごと動けば妥当なまま）。
+- `triage.observedAt`→`triage.humanReadyAppliedAt`→`execution.observedAt`→`github.observedAt`が
+  厳密に前進すること。human readyゲートより前に始まった実走を証明できないようにする境界であり、
+  同時刻は順序を証明しないので同値も拒否する。
 - `execution.expectedHead`／`github.finalPrHead`／`formalReviews.round2.head`が`execution.finalHead`と同一。
   merge fenceは実際にreleaseしたrevisionに対して計算されていなければならない。
 - round 1でfindingが出たなら round 2のheadは前進していること（同一revisionの2度読みを「2ラウンド」と
@@ -171,7 +177,9 @@ schemaは形状と個別の不変条件だけを見る。**独立に観測した
   条件を満たしてしまう。なおtriage containerはcheckoutを持たないので、triageのinvocationは`head`を持たない
   （持たせると虚偽になる）。
 - `designBundle.applicable`と`releaseLineage.applicable`が一致すること。この2つは同じ事実を両側から
-  述べているので、揃って有効か揃って不適用かのどちらかしかない。
+  述べているので、揃って有効か揃って不適用かのどちらかしかない。揃って有効なら`revisionId`と
+  `bundleDigest`も一致すること（revision IDとbundle digestは本番のreconciliationで1つの同一性として
+  扱われる）。加えて`releaseLineage.headSha`は`execution.finalHead`と一致すること。
 
 `execution.graderCommands`は、runnerが実際に出す2つのprofileだけを表現できる。vendored toolchain
 （typescriptとvitestを持つrepository向けの固定コマンド）は文字列を固定し、direct Node contract checkerは
