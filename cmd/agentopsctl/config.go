@@ -3,53 +3,67 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/mrbaron3/workflow/internal/control"
+	"github.com/mrbaron3/workflow/internal/githubapp"
 	"github.com/mrbaron3/workflow/internal/lifecycle"
 )
 
 type config struct {
-	Prefix               string
-	Network              string
-	PostgresVolume       string
-	RunnerVolume         string
-	CredentialVolume     string
-	PostgresContainer    string
-	ControlContainer     string
-	TriageContainer      string
-	RunnerContainer      string
-	PostgresImage        string
-	ControlImage         string
-	TriageImage          string
-	RunnerImage          string
-	ProjectRoot          string
-	ControlHostPort      int
-	PostgresPassword     string
-	NextPostgresPassword string
-	ControlDBPassword    string
-	TriageDBPassword     string
-	RunnerDBPassword     string
-	ControlToken         string
-	DashboardToken       string
-	WebhookSecret        string
-	ControlGitHubToken   string
-	TriageGitHubToken    string
-	RunnerGitHubToken    string
-	Provider             string
-	ProviderToken        string
-	CodexAuthPath        string
-	MonitorRepositories  []string
-	TriageReadyLabel     string
-	TriageClaimedLabel   string
-	TriageCandidateLabel string
-	TriageBlockedLabel   string
-	TriageNeedsInfoLabel string
-	TriageContextPaths   string
+	Prefix                 string
+	Network                string
+	PostgresVolume         string
+	RunnerVolume           string
+	CredentialVolume       string
+	GitHubAppKeyVolume     string
+	PostgresContainer      string
+	ControlContainer       string
+	GitHubBrokerContainer  string
+	TriageContainer        string
+	RunnerContainer        string
+	PostgresImage          string
+	ControlImage           string
+	GitHubBrokerImage      string
+	TriageImage            string
+	RunnerImage            string
+	ProjectRoot            string
+	ControlHostPort        int
+	PostgresPassword       string
+	NextPostgresPassword   string
+	ControlDBPassword      string
+	TriageDBPassword       string
+	RunnerDBPassword       string
+	ControlToken           string
+	DashboardToken         string
+	WebhookSecret          string
+	ControlGitHubToken     string
+	TriageGitHubToken      string
+	RunnerGitHubToken      string
+	GitHubAppID            int64
+	GitHubInstallationID   int64
+	GitHubAppSlug          string
+	GitHubAppOwner         string
+	GitHubAppKeyPath       string
+	TriageBrokerCapability string
+	RunnerBrokerCapability string
+	Provider               string
+	ProviderToken          string
+	CodexAuthPath          string
+	MonitorRepositories    []string
+	RunnerRepositories     []string
+	TriageReadyLabel       string
+	TriageClaimedLabel     string
+	TriageCandidateLabel   string
+	TriageBlockedLabel     string
+	TriageNeedsInfoLabel   string
+	TriageContextPaths     string
 }
 
 func loadConfig() (config, error) {
@@ -69,6 +83,16 @@ func loadConfig() (config, error) {
 	port, err := strconv.Atoi(environmentValue("AGENTOPSCTL_CONTROL_HOST_PORT", "8080"))
 	if err != nil || port < 1 || port > 65535 {
 		return config{}, fmt.Errorf("AGENTOPSCTL_CONTROL_HOST_PORT must be 1..65535")
+	}
+	githubAppID, err := optionalPositiveInt64("AGENTOPS_GITHUB_APP_ID")
+	if err != nil {
+		return config{}, err
+	}
+	githubInstallationID, err := optionalPositiveInt64(
+		"AGENTOPS_GITHUB_APP_INSTALLATION_ID",
+	)
+	if err != nil {
+		return config{}, err
 	}
 	provider := strings.ToLower(environmentValue("AGENTOPS_RUNNER_PROVIDER", "codex"))
 	var providerToken string
@@ -90,39 +114,77 @@ func loadConfig() (config, error) {
 		return config{}, fmt.Errorf("AGENTOPS_RUNNER_PROVIDER must be codex or claude")
 	}
 	return config{
-		Prefix:            prefix,
-		Network:           prefix + "-internal",
-		PostgresVolume:    prefix + "-postgres-data",
-		RunnerVolume:      prefix + "-runner-workspace",
-		CredentialVolume:  prefix + "-runner-credentials",
-		PostgresContainer: prefix + "-postgres",
-		ControlContainer:  prefix + "-control",
-		TriageContainer:   prefix + "-triage",
-		RunnerContainer:   prefix + "-runner",
-		PostgresImage:     environmentValue("AGENTOPSCTL_POSTGRES_IMAGE", "agentops-postgres:dev"),
-		ControlImage:      environmentValue("AGENTOPSCTL_CONTROL_IMAGE", "agentops-control:dev"),
-		TriageImage:       environmentValue("AGENTOPSCTL_TRIAGE_IMAGE", "agentops-triage:dev"),
-		RunnerImage:       environmentValue("AGENTOPSCTL_RUNNER_IMAGE", "agentops-runner:dev"),
-		ProjectRoot:       root,
-		ControlHostPort:   port,
-		PostgresPassword:  strings.TrimSpace(os.Getenv("AGENTOPS_POSTGRES_PASSWORD")),
+		Prefix:                prefix,
+		Network:               prefix + "-internal",
+		PostgresVolume:        prefix + "-postgres-data",
+		RunnerVolume:          prefix + "-runner-workspace",
+		CredentialVolume:      prefix + "-runner-credentials",
+		GitHubAppKeyVolume:    prefix + "-github-app-key",
+		PostgresContainer:     prefix + "-postgres",
+		ControlContainer:      prefix + "-control",
+		GitHubBrokerContainer: prefix + "-github-broker",
+		TriageContainer:       prefix + "-triage",
+		RunnerContainer:       prefix + "-runner",
+		PostgresImage: environmentValue(
+			"AGENTOPSCTL_POSTGRES_IMAGE",
+			"agentops-postgres:dev",
+		),
+		ControlImage: environmentValue(
+			"AGENTOPSCTL_CONTROL_IMAGE",
+			"agentops-control:dev",
+		),
+		GitHubBrokerImage: environmentValue(
+			"AGENTOPSCTL_GITHUB_BROKER_IMAGE",
+			"agentops-github-broker:dev",
+		),
+		TriageImage: environmentValue(
+			"AGENTOPSCTL_TRIAGE_IMAGE",
+			"agentops-triage:dev",
+		),
+		RunnerImage: environmentValue(
+			"AGENTOPSCTL_RUNNER_IMAGE",
+			"agentops-runner:dev",
+		),
+		ProjectRoot:      root,
+		ControlHostPort:  port,
+		PostgresPassword: strings.TrimSpace(os.Getenv("AGENTOPS_POSTGRES_PASSWORD")),
 		NextPostgresPassword: strings.TrimSpace(
 			os.Getenv("AGENTOPS_NEXT_POSTGRES_PASSWORD"),
 		),
-		ControlDBPassword:  strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_DB_PASSWORD")),
-		TriageDBPassword:   strings.TrimSpace(os.Getenv("AGENTOPS_TRIAGE_DB_PASSWORD")),
-		RunnerDBPassword:   strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_DB_PASSWORD")),
-		ControlToken:       strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_TOKEN")),
-		DashboardToken:     strings.TrimSpace(os.Getenv("AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN")),
-		WebhookSecret:      strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_WEBHOOK_SECRET")),
-		ControlGitHubToken: strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_GITHUB_TOKEN")),
-		TriageGitHubToken:  strings.TrimSpace(os.Getenv("AGENTOPS_TRIAGE_GITHUB_TOKEN")),
-		RunnerGitHubToken:  strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_GITHUB_TOKEN")),
-		Provider:           provider,
-		ProviderToken:      providerToken,
-		CodexAuthPath:      codexAuthPath,
+		ControlDBPassword:    strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_DB_PASSWORD")),
+		TriageDBPassword:     strings.TrimSpace(os.Getenv("AGENTOPS_TRIAGE_DB_PASSWORD")),
+		RunnerDBPassword:     strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_DB_PASSWORD")),
+		ControlToken:         strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_TOKEN")),
+		DashboardToken:       strings.TrimSpace(os.Getenv("AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN")),
+		WebhookSecret:        strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_WEBHOOK_SECRET")),
+		ControlGitHubToken:   strings.TrimSpace(os.Getenv("AGENTOPS_CONTROL_GITHUB_TOKEN")),
+		TriageGitHubToken:    strings.TrimSpace(os.Getenv("AGENTOPS_TRIAGE_GITHUB_TOKEN")),
+		RunnerGitHubToken:    strings.TrimSpace(os.Getenv("AGENTOPS_RUNNER_GITHUB_TOKEN")),
+		GitHubAppID:          githubAppID,
+		GitHubInstallationID: githubInstallationID,
+		GitHubAppSlug: strings.TrimSpace(
+			os.Getenv("AGENTOPS_GITHUB_APP_SLUG"),
+		),
+		GitHubAppOwner: strings.TrimSpace(
+			os.Getenv("AGENTOPS_GITHUB_APP_OWNER"),
+		),
+		GitHubAppKeyPath: strings.TrimSpace(
+			os.Getenv("AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE"),
+		),
+		TriageBrokerCapability: strings.TrimSpace(
+			os.Getenv("AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY"),
+		),
+		RunnerBrokerCapability: strings.TrimSpace(
+			os.Getenv("AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"),
+		),
+		Provider:      provider,
+		ProviderToken: providerToken,
+		CodexAuthPath: codexAuthPath,
 		MonitorRepositories: splitRepositories(
 			os.Getenv("AGENTOPS_MONITOR_REPOSITORIES"),
+		),
+		RunnerRepositories: splitRepositories(
+			os.Getenv("AGENTOPS_RUNNER_REPOSITORIES"),
 		),
 		TriageReadyLabel: strings.TrimSpace(
 			environmentValue("AGENTOPS_TRIAGE_READY_LABEL", "ready"),
@@ -183,25 +245,21 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 	if err := validateRepositoryAllowlist(value.MonitorRepositories); err != nil {
 		return err
 	}
+	if value.ControlGitHubToken != "" ||
+		value.TriageGitHubToken != "" ||
+		value.RunnerGitHubToken != "" {
+		return fmt.Errorf(
+			"manual GitHub token environment is forbidden; use the managed GitHub App broker",
+		)
+	}
+	if err := value.validateGitHubApp(mode); err != nil {
+		return err
+	}
 	if err := validateTriageLabels(value.triagePolicyLabels()); err != nil {
 		return err
 	}
 	if err := validateTriageContextPaths(value.TriageContextPaths); err != nil {
 		return err
-	}
-	if len(value.TriageGitHubToken) < 20 {
-		return fmt.Errorf(
-			"AGENTOPS_TRIAGE_GITHUB_TOKEN is required for Issue monitoring and triage",
-		)
-	}
-	if mode == lifecycle.ModeActive && len(value.RunnerGitHubToken) < 20 {
-		return fmt.Errorf(
-			"AGENTOPS_RUNNER_GITHUB_TOKEN is required for development execution",
-		)
-	}
-	if value.RunnerGitHubToken != "" &&
-		value.TriageGitHubToken == value.RunnerGitHubToken {
-		return fmt.Errorf("triage and development GitHub credentials must be distinct")
 	}
 	if mode == lifecycle.ModeActive {
 		if value.Provider == "codex" && len(value.ProviderToken) < 20 {
@@ -212,12 +270,150 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 			return fmt.Errorf("ANTHROPIC_API_KEY is required for the isolated runner")
 		}
 	}
-	if value.ControlGitHubToken != "" {
+	return nil
+}
+
+// brokerCapabilityPattern is the shape both the Go broker and the TypeScript
+// workers accept, so a capability that starts agentopsctl can never be one a
+// worker rejects at runtime.
+var brokerCapabilityPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43,128}$`)
+
+func (value config) validateBrokerCapabilities(mode lifecycle.Mode) error {
+	if !brokerCapabilityPattern.MatchString(value.TriageBrokerCapability) {
 		return fmt.Errorf(
-			"AGENTOPS_CONTROL_GITHUB_TOKEN is forbidden for the private monitor broker",
+			"AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY must be 43..128 URL-safe characters",
 		)
 	}
+	if mode == lifecycle.ModeActive &&
+		!brokerCapabilityPattern.MatchString(value.RunnerBrokerCapability) {
+		return fmt.Errorf(
+			"AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY must be 43..128 URL-safe characters in ACTIVE mode",
+		)
+	}
+	if value.TriageBrokerCapability == value.RunnerBrokerCapability {
+		return fmt.Errorf(
+			"triage and development GitHub broker capabilities must be distinct",
+		)
+	}
+	// Holding a capability is the right to mint GitHub installation tokens for
+	// that role. Sharing a value with any other credential would put that right
+	// inside a trust domain the broker exists to keep it out of.
+	for _, existing := range []string{
+		value.PostgresPassword,
+		value.ControlDBPassword,
+		value.TriageDBPassword,
+		value.RunnerDBPassword,
+		value.ControlToken,
+		value.DashboardToken,
+		value.WebhookSecret,
+	} {
+		if existing == "" {
+			continue
+		}
+		if existing == value.TriageBrokerCapability ||
+			existing == value.RunnerBrokerCapability {
+			return fmt.Errorf(
+				"GitHub broker capabilities must not repeat another credential",
+			)
+		}
+	}
 	return nil
+}
+
+func (value config) validateGitHubApp(mode lifecycle.Mode) error {
+	if value.GitHubAppID <= 0 || value.GitHubInstallationID <= 0 {
+		return fmt.Errorf(
+			"AGENTOPS_GITHUB_APP_ID and AGENTOPS_GITHUB_APP_INSTALLATION_ID are required",
+		)
+	}
+	if !githubapp.ValidAppSlug(value.GitHubAppSlug) ||
+		!control.ValidRepositoryIdentity(value.GitHubAppOwner+"/repository") {
+		return fmt.Errorf(
+			"AGENTOPS_GITHUB_APP_SLUG and AGENTOPS_GITHUB_APP_OWNER must be canonical",
+		)
+	}
+	if err := value.validateBrokerCapabilities(mode); err != nil {
+		return err
+	}
+	for _, repository := range value.MonitorRepositories {
+		if !strings.HasPrefix(repository, value.GitHubAppOwner+"/") {
+			return fmt.Errorf(
+				"monitored repositories must belong to the GitHub App installation owner",
+			)
+		}
+	}
+	if len(value.RunnerRepositories) > 0 {
+		if err := validateRepositoryAllowlistNamed(
+			"AGENTOPS_RUNNER_REPOSITORIES",
+			value.RunnerRepositories,
+		); err != nil {
+			return err
+		}
+		monitored := make(map[string]struct{}, len(value.MonitorRepositories))
+		for _, repository := range value.MonitorRepositories {
+			monitored[repository] = struct{}{}
+		}
+		for _, repository := range value.RunnerRepositories {
+			if !strings.HasPrefix(repository, value.GitHubAppOwner+"/") {
+				return fmt.Errorf(
+					"runner repositories must belong to the GitHub App installation owner",
+				)
+			}
+			if _, present := monitored[repository]; !present {
+				return fmt.Errorf(
+					"AGENTOPS_RUNNER_REPOSITORIES must be a subset of AGENTOPS_MONITOR_REPOSITORIES",
+				)
+			}
+		}
+	}
+	if mode == lifecycle.ModeActive && len(value.RunnerRepositories) == 0 {
+		return fmt.Errorf(
+			"AGENTOPS_RUNNER_REPOSITORIES is required in ACTIVE mode",
+		)
+	}
+	return validateGitHubAppKeySource(value.GitHubAppKeyPath)
+}
+
+func validateGitHubAppKeySource(source string) error {
+	absolute, err := filepath.Abs(source)
+	if err != nil || source == "" || absolute != source ||
+		filepath.Ext(absolute) != ".pem" {
+		return fmt.Errorf(
+			"AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE must be an absolute .pem file",
+		)
+	}
+	info, err := os.Lstat(absolute)
+	if err != nil || !info.Mode().IsRegular() ||
+		info.Mode().Perm()&0o077 != 0 ||
+		info.Size() < 1 || info.Size() > 64*1024 {
+		return fmt.Errorf(
+			"GitHub App private key must be a private regular file of at most 64 KiB",
+		)
+	}
+	file, err := os.Open(absolute)
+	if err != nil {
+		return fmt.Errorf("GitHub App private key is unavailable")
+	}
+	defer file.Close()
+	contents, err := io.ReadAll(io.LimitReader(file, 64*1024+1))
+	if err != nil || len(contents) > 64*1024 {
+		return fmt.Errorf("GitHub App private key is unavailable")
+	}
+	if _, err := githubapp.ParseRSAPrivateKeyPEM(contents); err != nil {
+		return fmt.Errorf("GitHub App private key is invalid")
+	}
+	return nil
+}
+
+// githubBrokerCapability returns the role's own broker capability. It is a
+// first-class secret rather than something derived from another credential:
+// whoever holds it can mint GitHub installation tokens for that role, so it
+// must be revocable — and its holders auditable — independently of PostgreSQL.
+func (value config) githubBrokerCapability(role string) string {
+	if role == "runner" {
+		return value.RunnerBrokerCapability
+	}
+	return value.TriageBrokerCapability
 }
 
 func (value config) usesCodexAuthFile() bool {
@@ -303,6 +499,10 @@ func (value config) monitorRepositoriesCSV() string {
 	return strings.Join(value.MonitorRepositories, ",")
 }
 
+func (value config) runnerRepositoriesCSV() string {
+	return strings.Join(value.RunnerRepositories, ",")
+}
+
 func (value config) triagePolicyLabels() []string {
 	defaults := []string{
 		"ready",
@@ -342,6 +542,18 @@ func environmentValue(name, fallback string) string {
 	return fallback
 }
 
+func optionalPositiveInt64(name string) (int64, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", name)
+	}
+	return value, nil
+}
+
 func resourceName(value string) bool {
 	if value == "" || len(value) > 80 {
 		return false
@@ -370,19 +582,30 @@ func splitRepositories(raw string) []string {
 }
 
 func validateRepositoryAllowlist(repositories []string) error {
+	return validateRepositoryAllowlistNamed(
+		"AGENTOPS_MONITOR_REPOSITORIES",
+		repositories,
+	)
+}
+
+func validateRepositoryAllowlistNamed(
+	name string,
+	repositories []string,
+) error {
 	if len(repositories) < 1 || len(repositories) > 64 {
-		return fmt.Errorf("AGENTOPS_MONITOR_REPOSITORIES must contain 1..64 repositories")
+		return fmt.Errorf("%s must contain 1..64 repositories", name)
 	}
 	seen := make(map[string]struct{}, len(repositories))
 	for _, repository := range repositories {
 		if repository != strings.ToLower(repository) ||
 			!control.ValidRepositoryIdentity(repository) {
 			return fmt.Errorf(
-				"AGENTOPS_MONITOR_REPOSITORIES must contain canonical owner/name values",
+				"%s must contain canonical owner/name values",
+				name,
 			)
 		}
 		if _, duplicate := seen[repository]; duplicate {
-			return fmt.Errorf("AGENTOPS_MONITOR_REPOSITORIES must not contain duplicates")
+			return fmt.Errorf("%s must not contain duplicates", name)
 		}
 		seen[repository] = struct{}{}
 	}

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mrbaron3/workflow/contracts/github-credential/v1/token-request.schema.json",
+  "title": "AgentOps GitHub credential broker request v1",
+  "description": "Internal-network-only request authenticated by a role capability.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "role"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "role": {
+      "type": "string",
+      "enum": ["triage", "runner"]
+    }
+  }
+}

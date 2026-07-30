@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,13 +176,13 @@ func TestMonitorOnlyRequiresNoProviderCredentialOrCredentialMount(t *testing.T) 
 		ControlToken:      strings.Repeat("e", 32),
 		DashboardToken:    strings.Repeat("f", 32),
 		WebhookSecret:     strings.Repeat("g", 32),
-		TriageGitHubToken: strings.Repeat("h", 32),
 		Provider:          "codex",
 		MonitorRepositories: []string{
 			"acme/widgets",
-			"design-lab/component-catalog",
+			"acme/component-catalog",
 		},
 	}
+	configureTestGitHubApp(t, &value, "acme")
 	if err := value.validateStart(lifecycle.ModeMonitorOnly); err != nil {
 		t.Fatalf("provider-free MONITOR_ONLY was rejected: %v", err)
 	}
@@ -246,12 +250,12 @@ func TestActiveAllowsCredentialFreeControlWithPrivateBrokerAndCodexLogin(t *test
 		ControlToken:        strings.Repeat("e", 32),
 		DashboardToken:      strings.Repeat("f", 32),
 		WebhookSecret:       strings.Repeat("g", 32),
-		TriageGitHubToken:   strings.Repeat("h", 32),
-		RunnerGitHubToken:   strings.Repeat("i", 32),
 		Provider:            "codex",
 		CodexAuthPath:       auth,
 		MonitorRepositories: []string{"sample/design-system"},
+		RunnerRepositories:  []string{"sample/design-system"},
 	}
+	configureTestGitHubApp(t, &value, "sample")
 	if err := value.validateStart(lifecycle.ModeActive); err != nil {
 		t.Fatalf("credential-free-control/private-runner boundary was rejected: %v", err)
 	}
@@ -350,6 +354,88 @@ func TestTriagePolicyConfigurationIsBoundedAndRepositoryRelative(t *testing.T) {
 	} {
 		if err := validateTriageContextPaths(raw); err == nil {
 			t.Fatalf("unsafe context paths accepted: %s", raw)
+		}
+	}
+}
+
+func configureTestGitHubApp(
+	t *testing.T,
+	value *config,
+	owner string,
+) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "github-app.pem")
+	contents := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	})
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	value.GitHubAppID = 42
+	value.GitHubInstallationID = 99
+	value.GitHubAppSlug = "agentops-test"
+	value.GitHubAppOwner = owner
+	value.GitHubAppKeyPath = path
+	value.TriageBrokerCapability = strings.Repeat("t", 43)
+	value.RunnerBrokerCapability = strings.Repeat("r", 43)
+}
+
+// A capability is the right to mint GitHub installation tokens for one role, so
+// it may not be reachable from another credential's blast radius.
+func TestBrokerCapabilitiesAreIndependentRevocableSecrets(t *testing.T) {
+	base := func(t *testing.T) config {
+		t.Helper()
+		value := config{
+			PostgresPassword:  strings.Repeat("a", 32),
+			ControlDBPassword: strings.Repeat("b", 32),
+			TriageDBPassword:  strings.Repeat("c", 32),
+			RunnerDBPassword:  strings.Repeat("d", 32),
+			ControlToken:      strings.Repeat("e", 32),
+			DashboardToken:    strings.Repeat("f", 32),
+			WebhookSecret:     strings.Repeat("g", 32),
+		}
+		configureTestGitHubApp(t, &value, "sample")
+		return value
+	}
+	if err := base(t).validateBrokerCapabilities(
+		lifecycle.ModeActive,
+	); err != nil {
+		t.Fatalf("independent capabilities were rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*config){
+		"missing triage capability": func(value *config) {
+			value.TriageBrokerCapability = ""
+		},
+		"short triage capability": func(value *config) {
+			value.TriageBrokerCapability = strings.Repeat("t", 42)
+		},
+		"non-URL-safe triage capability": func(value *config) {
+			value.TriageBrokerCapability = strings.Repeat("t", 42) + "="
+		},
+		"missing runner capability": func(value *config) {
+			value.RunnerBrokerCapability = ""
+		},
+		"shared capability": func(value *config) {
+			value.RunnerBrokerCapability = value.TriageBrokerCapability
+		},
+		"capability reused from a database credential": func(value *config) {
+			value.RunnerDBPassword = value.RunnerBrokerCapability
+		},
+		"capability reused from the control token": func(value *config) {
+			value.ControlToken = value.TriageBrokerCapability
+		},
+	} {
+		value := base(t)
+		mutate(&value)
+		if err := value.validateBrokerCapabilities(
+			lifecycle.ModeActive,
+		); err == nil {
+			t.Errorf("%s was accepted", name)
 		}
 	}
 }

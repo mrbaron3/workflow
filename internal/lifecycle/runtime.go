@@ -28,8 +28,10 @@ const (
 
 var resourceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 var credentialEnvironmentKeyPattern = regexp.MustCompile(
-	`(?:^|_)(?:TOKEN|PASSWORD|SECRET|DATABASE_URL|API_KEY)$`,
+	`(?:^|_)(?:TOKEN|PASSWORD|SECRET|DATABASE_URL|API_KEY|CAPABILITY)$`,
 )
+var privateCopyHelperPattern = regexp.MustCompile(`^/[A-Za-z0-9._/-]+$`)
+var privateCopyOperationPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 type CommandResult struct {
 	Status int      `json:"status"`
@@ -672,6 +674,52 @@ func (runtime *AppleRuntime) CopyFileToContainer(
 		result.Args = []string{
 			"exec", "--interactive", "--user", "65532:65532", name,
 			"/bin/sh", "-c", "***private-stdin-copy***",
+		}
+		return runtimeError(result, nil)
+	}
+	return nil
+}
+
+// CopyPrivateFileWithHelper streams one validated host file to a fixed-purpose
+// helper inside a running managed container. Unlike CopyFileToContainer, this
+// works with shell-free distroless images. Neither the host path nor stdin is
+// retained in argv, logs, or returned errors.
+func (runtime *AppleRuntime) CopyPrivateFileWithHelper(
+	ctx context.Context,
+	name, source, helper, operation string,
+) error {
+	if err := validateResourceName(name); err != nil {
+		return err
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return fmt.Errorf("credential source is unavailable")
+	}
+	if !filepath.IsAbs(source) || !info.Mode().IsRegular() {
+		return fmt.Errorf("credential source must be an absolute regular file")
+	}
+	if !privateCopyHelperPattern.MatchString(helper) ||
+		strings.Contains(helper, "..") ||
+		!privateCopyOperationPattern.MatchString(operation) {
+		return fmt.Errorf("private copy helper invocation is invalid")
+	}
+	sourceFile, err := os.Open(source)
+	if err != nil {
+		return fmt.Errorf("credential source is unavailable")
+	}
+	defer sourceFile.Close()
+	stdinRunner, ok := runtime.runner.(stdinRuntimeRunner)
+	if !ok {
+		return fmt.Errorf("container runtime does not support private stdin copy")
+	}
+	result := stdinRunner.RunWithStdin(ctx, []string{
+		"exec", "--interactive", "--user", "65532:65532", name,
+		helper, operation,
+	}, sourceFile)
+	if result.Status != 0 {
+		result.Args = []string{
+			"exec", "--interactive", "--user", "65532:65532", name,
+			helper, "***private-stdin-copy***",
 		}
 		return runtimeError(result, nil)
 	}

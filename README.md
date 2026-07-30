@@ -268,7 +268,17 @@ export AGENTOPS_CONTROL_TOKEN='<32+ byte random operator bearer token>'
 export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<random single-use bootstrap token>'
 export AGENTOPS_GITHUB_WEBHOOK_SECRET='<webhook secret>'
 export AGENTOPS_MONITOR_REPOSITORIES='mrbaron3/workflow,mrbaron3/designflow'
-export AGENTOPS_TRIAGE_GITHUB_TOKEN='<metadata/issues-only triage token>'
+export AGENTOPS_RUNNER_REPOSITORIES='mrbaron3/designflow'
+export AGENTOPS_GITHUB_APP_ID='<numeric App id>'
+export AGENTOPS_GITHUB_APP_INSTALLATION_ID='<numeric installation id>'
+export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
+export AGENTOPS_GITHUB_APP_OWNER='mrbaron3'
+export AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE='<absolute mode-0600 .pem path>'
+# Holding a capability is the right to mint that role's installation token, so each is
+# its own secret: never derived from, or equal to, any other credential above.
+# 43..128 URL-safe characters, e.g. `openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`.
+export AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY='<43+ URL-safe characters>'
+export AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY='<different 43+ URL-safe characters>'
 
 # Observation is on; AI classification and development execution remain off.
 go run ./cmd/agentopsctl \
@@ -302,11 +312,15 @@ configured triage labels/comment. An exact human-owned `ready` label is then che
 database capability atomically creates a development job.
 
 The triage container and development runner are different images, processes, database roles, and
-GitHub credentials. Triage has no repository workspace, git/SSH tools, runtime socket, host path,
-or host port. The development runner is absent in `MONITOR_ONLY`; in `ACTIVE` it receives its own
-token, workspace, and provider credential. The control process receives neither GitHub token.
+GitHub broker capabilities. Triage has no repository workspace, git/SSH tools, runtime socket,
+host path, or host port. The development runner is absent in `MONITOR_ONLY`; in `ACTIVE` it receives
+its own capability, workspace, and provider credential. A dedicated internal-only broker is the
+only process that can read the GitHub App private key; it returns repository/permission-scoped
+installation tokens in memory to the `gh`/Git helper. Static PAT variables are rejected and the
+control process receives neither a GitHub token nor a broker capability.
 See the [Designflow dogfood runbook](docs/runbooks/designflow-triage-dogfood.md) for registration,
-label policy, and the first external-target validation.
+label policy, and the first external-target validation. The credential threat model and exact
+role matrix are in [ADR-0019](docs/decisions/ADR-0019-github-app-credential-broker.md).
 
 The old TypeScript GUI/router types remain as a non-durable PR #9 compatibility oracle. The legacy
 `webhook-daemon` production command remains fail closed; no production entry point reads or writes

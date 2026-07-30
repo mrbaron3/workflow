@@ -19,13 +19,16 @@ function safeEnv(): NodeJS.ProcessEnv {
     AGENTOPS_OPERATING_MODE: 'ACTIVE',
     AGENTOPS_RUNNER_DATABASE_URL:
       'postgresql://agentops_runner:db-secret@postgres:5432/agentops',
-    AGENTOPS_RUNNER_GITHUB_TOKEN: 'github-secret',
+    AGENTOPS_GITHUB_BROKER_URL: 'http://github-broker:8083',
+    AGENTOPS_GITHUB_BROKER_CAPABILITY: 'r'.repeat(43),
+    AGENTOPS_GITHUB_BROKER_ROLE: 'runner',
     OPENAI_API_KEY: 'provider-secret',
     AGENTOPS_RUNNER_MOUNTS_JSON:
       '[{"source":"agentops-runner-workspace","target":"/workspace","readOnly":false}]',
     AGENTOPS_RUNNER_PUBLISHED_PORTS_JSON: '[]',
     AGENTOPS_RUNNER_OUTBOUND_JSON: JSON.stringify([
       { host: 'postgres', port: 5432 },
+      { host: 'github-broker', port: 8083 },
       { host: 'github.com', port: 443 },
       { host: 'api.github.com', port: 443 },
       { host: 'api.openai.com', port: 443 },
@@ -71,6 +74,7 @@ describe('runner startup isolation', () => {
         AGENTOPS_RUNNER_PROVIDER_AUTH: 'none',
         AGENTOPS_RUNNER_OUTBOUND_JSON: JSON.stringify([
           { host: 'postgres', port: 5432 },
+          { host: 'github-broker', port: 8083 },
           { host: 'github.com', port: 443 },
           { host: 'api.github.com', port: 443 },
         ]),
@@ -84,9 +88,16 @@ describe('runner startup isolation', () => {
       kind: 'none',
       provider: 'codex',
     });
-    expect(loaded.credentials.githubToken).toBe('github-secret');
-    expect(minimalExecutionEnvironment(loaded.credentials).GH_TOKEN)
-      .toBe('github-secret');
+    expect(loaded.credentials.githubBroker).toEqual({
+      url: 'http://github-broker:8083/',
+      capability: 'r'.repeat(43),
+      role: 'runner',
+    });
+    expect(minimalExecutionEnvironment(loaded.credentials))
+      .toMatchObject({
+        AGENTOPS_GITHUB_BROKER_CAPABILITY: 'r'.repeat(43),
+        AGENTOPS_GITHUB_BROKER_ROLE: 'runner',
+      });
   });
 
   it('rejects malformed or structurally incomplete private Codex auth files', () => {
@@ -193,6 +204,7 @@ describe('runner startup isolation', () => {
       {
         AGENTOPS_RUNNER_OUTBOUND_JSON: JSON.stringify([
           { host: 'postgres', port: 5432 },
+          { host: 'github-broker', port: 8083 },
           { host: 'github.com', port: 443 },
           { host: 'api.github.com', port: 443 },
           { host: 'api.openai.com', port: 443 },
@@ -205,6 +217,7 @@ describe('runner startup isolation', () => {
       {
         AGENTOPS_RUNNER_OUTBOUND_JSON: JSON.stringify([
           { host: 'postgres', port: 5432 },
+          { host: 'github-broker', port: 8083 },
           { host: 'github.com', port: 443 },
           { host: 'api.github.com', port: 443 },
         ]),
@@ -220,12 +233,14 @@ describe('runner startup isolation', () => {
     const child = minimalExecutionEnvironment(credentials, safeEnv());
     expect(child).toMatchObject({
       HOME: '/home/agentops',
-      GH_TOKEN: 'github-secret',
-      GITHUB_TOKEN: 'github-secret',
+      AGENTOPS_GITHUB_BROKER_CAPABILITY: 'r'.repeat(43),
+      AGENTOPS_GITHUB_BROKER_ROLE: 'runner',
       OPENAI_API_KEY: 'provider-secret',
       AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
     });
     expect(child).not.toHaveProperty('AGENTOPS_RUNNER_DATABASE_URL');
+    expect(child).not.toHaveProperty('GH_TOKEN');
+    expect(child).not.toHaveProperty('GITHUB_TOKEN');
     expect(child).not.toHaveProperty('AGENTOPS_CONTROL_TOKEN');
     expect(child).not.toHaveProperty('SSH_AUTH_SOCK');
     expect(child).not.toHaveProperty('CONTAINER_HOST');

@@ -20,8 +20,9 @@ describe('isolated-runner trusted command boundary', () => {
   it('gives GitHub and local-git subprocesses disjoint minimal credentials', () => {
     const source = {
       PATH: '/usr/bin:/bin',
-      GH_TOKEN: 'github-secret',
-      GITHUB_TOKEN: 'github-secret',
+      AGENTOPS_GITHUB_BROKER_URL: 'http://github-broker:8083/',
+      AGENTOPS_GITHUB_BROKER_CAPABILITY: 'r'.repeat(43),
+      AGENTOPS_GITHUB_BROKER_ROLE: 'runner',
       GIT_ASKPASS: '/usr/local/bin/agentops-git-askpass',
       OPENAI_API_KEY: 'provider-secret',
       ANTHROPIC_API_KEY: 'other-provider-secret',
@@ -29,15 +30,16 @@ describe('isolated-runner trusted command boundary', () => {
       AGENTOPS_RUNNER_DATABASE_URL: 'postgresql://db-secret',
     };
     expect(commandEnvironment('github', source)).toMatchObject({
-      GH_TOKEN: 'github-secret',
-      GITHUB_TOKEN: 'github-secret',
+      AGENTOPS_GITHUB_BROKER_CAPABILITY: 'r'.repeat(43),
+      AGENTOPS_GITHUB_BROKER_ROLE: 'runner',
     });
     expect(commandEnvironment('github', source)).not.toHaveProperty('OPENAI_API_KEY');
     expect(commandEnvironment('github', source)).not.toHaveProperty('ANTHROPIC_API_KEY');
     expect(commandEnvironment('github', source)).not.toHaveProperty('CODEX_HOME');
     expect(commandEnvironment('github', source))
       .not.toHaveProperty('AGENTOPS_RUNNER_DATABASE_URL');
-    expect(commandEnvironment('none', source)).not.toHaveProperty('GH_TOKEN');
+    expect(commandEnvironment('none', source))
+      .not.toHaveProperty('AGENTOPS_GITHUB_BROKER_CAPABILITY');
     expect(commandEnvironment('none', source)).not.toHaveProperty('GIT_ASKPASS');
   });
 

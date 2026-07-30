@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { PostgresControlStore } from '../control-store/store.js';
+import { resolveGitHubActorLogin } from '../github/credential.js';
 import {
   inspectRunnerRuntime,
   replaceProcessEnvironment,
@@ -38,7 +39,10 @@ async function main(): Promise<void> {
     sourceEnvironment,
   );
   replaceProcessEnvironment(processEnvironment);
-  const github = new TypedGhTriageClient(credentials.githubToken);
+  const github = new TypedGhTriageClient(
+    credentials.githubBroker,
+    await resolveGitHubActorLogin(credentials.githubBroker),
+  );
   const provider = new CliTriageProvider(
     config.provider,
     providerEnvironment,
@@ -66,7 +70,7 @@ async function main(): Promise<void> {
     store,
     workerId: config.workerId,
     repositories: config.repositories,
-    githubToken: credentials.githubToken,
+    githubBroker: credentials.githubBroker,
     log: (message) => process.stdout.write(`${message}\n`),
   });
   const drain = (): void => {

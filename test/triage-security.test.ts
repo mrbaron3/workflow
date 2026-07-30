@@ -19,13 +19,16 @@ function safeEnvironment(): NodeJS.ProcessEnv {
     AGENTOPS_OPERATING_MODE: 'ACTIVE',
     AGENTOPS_TRIAGE_DATABASE_URL:
       'postgresql://agentops_triage:db-secret@postgres:5432/agentops',
-    AGENTOPS_TRIAGE_GITHUB_TOKEN: 'triage-github-secret-value',
+    AGENTOPS_GITHUB_BROKER_URL: 'http://github-broker:8083',
+    AGENTOPS_GITHUB_BROKER_CAPABILITY: 't'.repeat(43),
+    AGENTOPS_GITHUB_BROKER_ROLE: 'triage',
     AGENTOPS_MONITOR_REPOSITORIES: 'acme/widgets,sample/design-system',
     OPENAI_API_KEY: 'provider-secret-value',
     AGENTOPS_TRIAGE_MOUNTS_JSON: '[]',
     AGENTOPS_TRIAGE_PUBLISHED_PORTS_JSON: '[]',
     AGENTOPS_TRIAGE_OUTBOUND_JSON: JSON.stringify([
       { host: 'postgres', port: 5432 },
+      { host: 'github-broker', port: 8083 },
       { host: 'api.github.com', port: 443 },
       { host: 'api.openai.com', port: 443 },
     ]),
@@ -61,6 +64,11 @@ describe('triage startup capability boundary', () => {
       provider: 'codex',
       token: 'provider-secret-value',
     });
+    expect(loaded.credentials.githubBroker).toEqual({
+      url: 'http://github-broker:8083/',
+      capability: 't'.repeat(43),
+      role: 'triage',
+    });
     const providerChild = minimalTriageProviderEnvironment(
       loaded.credentials,
       safeEnvironment(),
@@ -75,6 +83,8 @@ describe('triage startup capability boundary', () => {
       safeEnvironment(),
     );
     expect(processEnvironment).not.toHaveProperty('GH_TOKEN');
+    expect(processEnvironment)
+      .not.toHaveProperty('AGENTOPS_GITHUB_BROKER_CAPABILITY');
     expect(processEnvironment).not.toHaveProperty('OPENAI_API_KEY');
   });
 
@@ -87,6 +97,7 @@ describe('triage startup capability boundary', () => {
       AGENTOPS_TRIAGE_PROVIDER_AUTH: 'none',
       AGENTOPS_TRIAGE_OUTBOUND_JSON: JSON.stringify([
         { host: 'postgres', port: 5432 },
+        { host: 'github-broker', port: 8083 },
         { host: 'api.github.com', port: 443 },
       ]),
     }, '/app', safeRuntimeBoundary());
@@ -118,6 +129,7 @@ describe('triage startup capability boundary', () => {
     ['extra outbound', {
       AGENTOPS_TRIAGE_OUTBOUND_JSON: JSON.stringify([
         { host: 'postgres', port: 5432 },
+        { host: 'github-broker', port: 8083 },
         { host: 'api.github.com', port: 443 },
         { host: 'api.openai.com', port: 443 },
         { host: 'attacker.invalid', port: 443 },

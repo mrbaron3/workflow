@@ -155,8 +155,14 @@ export AGENTOPS_CONTROL_TOKEN='<32+ bytes>'
 export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<32+ bytes>'
 export AGENTOPS_GITHUB_WEBHOOK_SECRET='<32+ bytes>'
 export AGENTOPS_MONITOR_REPOSITORIES='owner/repo-a,owner/repo-b'
-export AGENTOPS_TRIAGE_GITHUB_TOKEN='<metadata read + Issues read/write scope>'
-export AGENTOPS_RUNNER_GITHUB_TOKEN='<runner development scope>'
+export AGENTOPS_RUNNER_REPOSITORIES='owner/repo-b'
+export AGENTOPS_GITHUB_APP_ID='<numeric App id>'
+export AGENTOPS_GITHUB_APP_INSTALLATION_ID='<numeric installation id>'
+export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
+export AGENTOPS_GITHUB_APP_OWNER='owner'
+export AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE='<absolute mode-0600 .pem path>'
+export AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY='<43+ URL-safe characters>'
+export AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY='<different 43+ URL-safe characters>'
 export AGENTOPS_RUNNER_PROVIDER=codex
 export OPENAI_API_KEY='<ACTIVE triage/development provider credential>'
 
@@ -175,9 +181,11 @@ replayされ、不正遷移は拒否・監査される。DRAININGはDB commit後
 現在attemptを閉じるまで待つ。timeoutはforce killせず非0終了し、statusへdeadline/timeout/last errorを残す。
 
 controlだけがexact `127.0.0.1:${AGENTOPSCTL_CONTROL_HOST_PORT:-8080}:8080/tcp`を1件publishする。
-triage/runner/PostgreSQLはownership label付きhost-only networkを使い、host port/socket/host path/runtime
-socketを持たない。triageはworkspace volumeも持たず、runnerだけがprivate workspace volumeを持つ。
-`MONITOR_ONLY` topologyはPostgreSQL＋control＋triageで、`ACTIVE`だけdevelopment runnerを追加する。
+GitHub App broker／triage／runner／PostgreSQLはhost port/socket/host path/runtime socketを持たない。
+brokerだけが秘密鍵named volumeをread-only mountし、triageはworkspace volumeを持たず、runnerだけが
+private workspace volumeを持つ。`MONITOR_ONLY` topologyはPostgreSQL＋control＋GitHub App broker＋triageで、
+`ACTIVE`だけdevelopment runnerを追加する。`agentopsctl logs --component github-broker`でtoken値を含まない
+readiness／failureだけを確認できる。
 通常stopはcontainerを削除してListen消失を検査するがnamed volumeは保存する。start途中失敗では、
 そのstartが変更したcontainerだけを補償停止し、既存in-flight topologyとvolumeは保持する。詳細は
 [ADR-0016](../docs/decisions/ADR-0016-agentopsctl-lifecycle-authority.md)と

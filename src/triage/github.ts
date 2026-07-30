@@ -3,6 +3,10 @@ import { createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { z } from 'zod';
 import { CanonicalRepository } from '../control-store/types.js';
+import {
+  githubBrokerEnvironment,
+  type GitHubBrokerCredential,
+} from '../github/credential.js';
 import type { TriagePolicy } from './policy.js';
 import { managedTriageLabels } from './policy.js';
 
@@ -42,7 +46,6 @@ const GitHubContent = z.object({
   content: z.string(),
   size: z.number().int().nonnegative().max(128 * 1024),
 }).passthrough();
-const GitHubUser = z.object({ login: z.string().min(1) }).passthrough();
 
 export interface TriageIssue {
   number: number;
@@ -172,23 +175,21 @@ function parsedJSON<T>(
 
 export class TypedGhTriageClient implements TriageGitHub {
   private readonly env: NodeJS.ProcessEnv;
+  private readonly actorLogin: string;
 
   constructor(
-    githubToken: string,
+    githubBroker: GitHubBrokerCredential,
+    actorLogin: string,
     private readonly run: GhCommand = defaultGhCommand,
   ) {
-    if (githubToken.trim().length < 20) {
-      throw new Error('triage GitHub credential is missing');
+    if (
+      githubBroker.role !== 'triage'
+      || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\[bot\]$/.test(actorLogin)
+    ) {
+      throw new Error('triage GitHub broker identity is invalid');
     }
-    this.env = {
-      PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
-      HOME: '/home/agentops',
-      GH_TOKEN: githubToken,
-      GITHUB_TOKEN: githubToken,
-      ...(process.env.HTTP_PROXY ? { HTTP_PROXY: process.env.HTTP_PROXY } : {}),
-      ...(process.env.HTTPS_PROXY ? { HTTPS_PROXY: process.env.HTTPS_PROXY } : {}),
-      ...(process.env.NO_PROXY ? { NO_PROXY: process.env.NO_PROXY } : {}),
-    };
+    this.env = githubBrokerEnvironment(githubBroker);
+    this.actorLogin = actorLogin;
   }
 
   private async api(
@@ -224,8 +225,7 @@ export class TypedGhTriageClient implements TriageGitHub {
   ): Promise<TriageSnapshot> {
     const safeRepository = Repository.parse(repository);
     const safeNumber = z.number().int().positive().parse(issueNumber);
-    const [actorRaw, issueRaw, commentsRaw] = await Promise.all([
-      this.api(['/user'], 'current-user'),
+    const [issueRaw, commentsRaw] = await Promise.all([
       this.api(
         [endpoint(safeRepository, `/issues/${safeNumber}`)],
         'issue-read',
@@ -242,7 +242,6 @@ export class TypedGhTriageClient implements TriageGitHub {
         'comment-read',
       ),
     ]);
-    const actor = parsedJSON(GitHubUser, actorRaw, 'current-user');
     const issue = parsedJSON(GitHubIssue, issueRaw, 'issue-read');
     const commentPages = parsedJSON(
       z.array(z.array(GitHubComment)).max(10),
@@ -254,7 +253,7 @@ export class TypedGhTriageClient implements TriageGitHub {
       throw new Error('comment-read exceeded the item limit');
     }
     return {
-      actorLogin: actor.login,
+      actorLogin: this.actorLogin,
       issue: {
         number: issue.number,
         title: issue.title.slice(0, 2_000),

@@ -72,6 +72,20 @@ func (manager *manager) Start(
 			return err
 		}
 	}
+	if build || !manager.runtime.ImageExists(
+		ctx,
+		manager.config.GitHubBrokerImage,
+	) {
+		if err := manager.runtime.BuildImage(
+			ctx,
+			manager.config.GitHubBrokerImage,
+			"github-broker",
+			filepath.Join(manager.config.ProjectRoot, "deploy", "Containerfile"),
+			manager.config.ProjectRoot,
+		); err != nil {
+			return err
+		}
+	}
 	if build || !manager.runtime.ImageExists(ctx, manager.config.TriageImage) {
 		if err := manager.runtime.BuildImage(
 			ctx,
@@ -103,6 +117,12 @@ func (manager *manager) Start(
 	if err := manager.runtime.EnsureVolume(ctx, manager.config.RunnerVolume); err != nil {
 		return err
 	}
+	if err := manager.runtime.EnsureVolume(
+		ctx,
+		manager.config.GitHubAppKeyVolume,
+	); err != nil {
+		return err
+	}
 	if manager.config.usesCodexAuthFileFor(mode) {
 		if err := manager.runtime.EnsureVolume(
 			ctx,
@@ -113,6 +133,7 @@ func (manager *manager) Start(
 	}
 	postgresStarted := false
 	controlChanged := false
+	githubBrokerChanged := false
 	triageChanged := false
 	runnerChanged := false
 	var initialMode *lifecycle.Mode
@@ -128,6 +149,7 @@ func (manager *manager) Start(
 				context.Background(),
 				postgresStarted,
 				controlChanged,
+				githubBrokerChanged,
 				triageChanged,
 				runnerChanged,
 				initialMode,
@@ -165,9 +187,18 @@ func (manager *manager) Start(
 		if err != nil {
 			return err
 		}
+		actualGitHubBroker, err := manager.runtime.Container(
+			ctx,
+			manager.config.GitHubBrokerContainer,
+		)
+		if err != nil {
+			return err
+		}
 		if mode == lifecycle.ModeActive &&
 			!build &&
 			actualControl != nil && actualControl.Status.State == "running" &&
+			actualGitHubBroker != nil &&
+			actualGitHubBroker.Status.State == "running" &&
 			actualTriage != nil && actualTriage.Status.State == "running" &&
 			actualRunner != nil && actualRunner.Status.State == "running" {
 			if err := manager.verifyPublishedSurface(
@@ -235,7 +266,12 @@ func (manager *manager) Start(
 			}
 		}
 	}
-	receipt, err := manager.replaceTriage(ctx, mode)
+	receipt, err := manager.replaceGitHubBroker(ctx, mode)
+	githubBrokerChanged = githubBrokerChanged || receipt.Mutated
+	if err != nil {
+		return err
+	}
+	receipt, err = manager.replaceTriage(ctx, mode)
 	triageChanged = triageChanged || receipt.Mutated
 	if err != nil {
 		return err
@@ -435,6 +471,7 @@ func (manager *manager) Stop(
 	for _, name := range []string{
 		manager.config.RunnerContainer,
 		manager.config.TriageContainer,
+		manager.config.GitHubBrokerContainer,
 		manager.config.ControlContainer,
 	} {
 		if err := manager.gracefulStop(ctx, name, 30*time.Second); err != nil {
@@ -496,10 +533,11 @@ func (manager *manager) Status(ctx context.Context) (combinedStatus, error) {
 		Containers: make(map[string]*lifecycle.ContainerActual),
 	}
 	for role, name := range map[string]string{
-		"control":  manager.config.ControlContainer,
-		"triage":   manager.config.TriageContainer,
-		"runner":   manager.config.RunnerContainer,
-		"postgres": manager.config.PostgresContainer,
+		"control":       manager.config.ControlContainer,
+		"github-broker": manager.config.GitHubBrokerContainer,
+		"triage":        manager.config.TriageContainer,
+		"runner":        manager.config.RunnerContainer,
+		"postgres":      manager.config.PostgresContainer,
 	} {
 		actual, err := manager.runtime.Container(ctx, name)
 		if err != nil {
@@ -566,7 +604,13 @@ func printStatus(status combinedStatus) {
 		mode = string(status.Persisted.State.Mode)
 	}
 	fmt.Printf("mode: %s\n", mode)
-	for _, role := range []string{"control", "triage", "runner", "postgres"} {
+	for _, role := range []string{
+		"control",
+		"github-broker",
+		"triage",
+		"runner",
+		"postgres",
+	} {
 		state := "absent"
 		if status.Containers[role] != nil {
 			state = status.Containers[role].Status.State
@@ -601,13 +645,16 @@ func (manager *manager) Logs(
 	follow bool,
 ) error {
 	name, present := map[string]string{
-		"control":  manager.config.ControlContainer,
-		"triage":   manager.config.TriageContainer,
-		"runner":   manager.config.RunnerContainer,
-		"postgres": manager.config.PostgresContainer,
+		"control":       manager.config.ControlContainer,
+		"github-broker": manager.config.GitHubBrokerContainer,
+		"triage":        manager.config.TriageContainer,
+		"runner":        manager.config.RunnerContainer,
+		"postgres":      manager.config.PostgresContainer,
 	}[strings.ToLower(strings.TrimSpace(component))]
 	if !present {
-		return fmt.Errorf("component must be control, triage, runner, or postgres")
+		return fmt.Errorf(
+			"component must be control, github-broker, triage, runner, or postgres",
+		)
 	}
 	actual, err := manager.runtime.Container(ctx, name)
 	if err != nil {
@@ -1116,6 +1163,169 @@ func (manager *manager) seedCodexCredentialVolume(
 	return nil
 }
 
+func (manager *manager) seedGitHubAppKeyVolume(
+	ctx context.Context,
+) error {
+	if err := validateGitHubAppKeySource(
+		manager.config.GitHubAppKeyPath,
+	); err != nil {
+		return err
+	}
+	name := fmt.Sprintf(
+		"%s-github-key-init-%d",
+		manager.config.Prefix,
+		os.Getpid(),
+	)
+	_, err := manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+		Name:     name,
+		Role:     "volume-init",
+		Image:    manager.config.GitHubBrokerImage,
+		Networks: []string{manager.config.Network},
+		Mounts: []lifecycle.Mount{{
+			Volume: manager.config.GitHubAppKeyVolume,
+			Target: "/run/agentops-github-app",
+		}},
+		User:       "root",
+		Entrypoint: "/usr/local/bin/agentops-github-credential-helper",
+		Command:    []string{"seed-wait"},
+		CapDropAll: true,
+		CapAdd:     []string{"CAP_CHOWN"},
+		Detach:     true,
+		Remove:     true,
+	})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = manager.runtime.Stop(context.Background(), name, 5)
+		_ = manager.runtime.Delete(context.Background(), name)
+	}()
+	ready, cancel := context.WithTimeout(ctx, CredentialSeedReadyTimeout)
+	defer cancel()
+	if err := manager.runtime.WaitState(
+		ready,
+		name,
+		"running",
+		ContainerReadyPollInterval,
+	); err != nil {
+		return err
+	}
+	if err := manager.runtime.CopyPrivateFileWithHelper(
+		ctx,
+		name,
+		manager.config.GitHubAppKeyPath,
+		"/usr/local/bin/agentops-github-credential-helper",
+		"seed",
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (manager *manager) replaceGitHubBroker(
+	ctx context.Context,
+	mode lifecycle.Mode,
+) (mutationReceipt, error) {
+	spec := manager.githubBrokerSpec(mode)
+	if err := manager.sealSpec(ctx, &spec); err != nil {
+		return mutationReceipt{}, err
+	}
+	receipt := mutationReceipt{Mutated: true}
+	if err := manager.gracefulStop(
+		ctx,
+		manager.config.GitHubBrokerContainer,
+		20*time.Second,
+	); err != nil {
+		return receipt, err
+	}
+	if err := manager.runtime.Delete(
+		ctx,
+		manager.config.GitHubBrokerContainer,
+	); err != nil {
+		return receipt, err
+	}
+	if err := manager.seedGitHubAppKeyVolume(ctx); err != nil {
+		return receipt, err
+	}
+	if _, err := manager.runtime.RunContainer(ctx, spec); err != nil {
+		return receipt, err
+	}
+	ready, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	ticker := time.NewTicker(ContainerReadyPollInterval)
+	defer ticker.Stop()
+	for {
+		result := manager.runtime.Exec(
+			ready,
+			manager.config.GitHubBrokerContainer,
+			"/usr/local/bin/agentops-github-credential-helper",
+			"health",
+		)
+		if result.Status == 0 {
+			return receipt, nil
+		}
+		select {
+		case <-ready.Done():
+			return receipt, fmt.Errorf(
+				"GitHub credential broker readiness timeout: %w",
+				ready.Err(),
+			)
+		case <-ticker.C:
+		}
+	}
+}
+
+func (manager *manager) githubBrokerSpec(
+	mode lifecycle.Mode,
+) lifecycle.ContainerSpec {
+	environment := map[string]string{
+		"AGENTOPS_GITHUB_APP_ID": strconv.FormatInt(
+			manager.config.GitHubAppID,
+			10,
+		),
+		"AGENTOPS_GITHUB_APP_INSTALLATION_ID": strconv.FormatInt(
+			manager.config.GitHubInstallationID,
+			10,
+		),
+		"AGENTOPS_GITHUB_APP_SLUG":                 manager.config.GitHubAppSlug,
+		"AGENTOPS_GITHUB_APP_OWNER":                manager.config.GitHubAppOwner,
+		"AGENTOPS_MONITOR_REPOSITORIES":            manager.config.monitorRepositoriesCSV(),
+		"AGENTOPS_OPERATING_MODE":                  string(mode),
+		"AGENTOPS_GITHUB_BROKER_LISTEN":            "0.0.0.0:8083",
+		"AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY": manager.config.githubBrokerCapability("triage"),
+		// The readiness probe calls /healthz, which is unauthenticated, so the
+		// broker's own container never receives a role capability to hold.
+		"AGENTOPS_GITHUB_BROKER_URL": "http://127.0.0.1:8083",
+	}
+	// DRAINING carries ACTIVE's development scope: compensation restores the
+	// broker while draining, and the runner it is draining still needs to close
+	// its attempt. Withholding the runner policy here would start a broker the
+	// draining runner cannot use.
+	if mode == lifecycle.ModeActive || mode == lifecycle.ModeDraining {
+		environment["AGENTOPS_RUNNER_REPOSITORIES"] =
+			manager.config.runnerRepositoriesCSV()
+		environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] =
+			manager.config.githubBrokerCapability("runner")
+	}
+	return lifecycle.ContainerSpec{
+		Name:        manager.config.GitHubBrokerContainer,
+		Role:        "github-broker",
+		Image:       manager.config.GitHubBrokerImage,
+		Networks:    []string{"default", manager.config.Network},
+		Environment: environment,
+		Mounts: []lifecycle.Mount{{
+			Volume:   manager.config.GitHubAppKeyVolume,
+			Target:   "/run/agentops-github-app",
+			ReadOnly: true,
+		}},
+		Tmpfs:      []string{"/tmp"},
+		ReadOnly:   true,
+		CapDropAll: true,
+		Init:       true,
+		Detach:     true,
+	}
+}
+
 func (manager *manager) replaceTriage(
 	ctx context.Context,
 	mode lifecycle.Mode,
@@ -1128,7 +1338,19 @@ func (manager *manager) replaceTriage(
 	if err != nil {
 		return mutationReceipt{}, err
 	}
-	spec := manager.triageSpec(mode, databaseHost, controlHost)
+	githubBrokerHost, err := manager.networkHost(
+		ctx,
+		manager.config.GitHubBrokerContainer,
+	)
+	if err != nil {
+		return mutationReceipt{}, err
+	}
+	spec := manager.triageSpec(
+		mode,
+		databaseHost,
+		controlHost,
+		githubBrokerHost,
+	)
 	if err := manager.sealSpec(ctx, &spec); err != nil {
 		return mutationReceipt{}, err
 	}
@@ -1170,10 +1392,11 @@ func (manager *manager) replaceTriage(
 
 func (manager *manager) triageSpec(
 	mode lifecycle.Mode,
-	databaseHost, controlHost string,
+	databaseHost, controlHost, githubBrokerHost string,
 ) lifecycle.ContainerSpec {
 	outbound := []map[string]any{
 		{"host": databaseHost, "port": 5432},
+		{"host": githubBrokerHost, "port": 8083},
 		{"host": "api.github.com", "port": 443},
 	}
 	providerAuth := manager.config.providerAuth(mode)
@@ -1223,7 +1446,9 @@ func (manager *manager) triageSpec(
 		"AGENTOPS_TRIAGE_MOUNTS_JSON":          string(mountJSON),
 		"AGENTOPS_TRIAGE_PUBLISHED_PORTS_JSON": "[]",
 		"AGENTOPS_TRIAGE_OUTBOUND_JSON":        string(outboundJSON),
-		"AGENTOPS_TRIAGE_GITHUB_TOKEN":         manager.config.TriageGitHubToken,
+		"AGENTOPS_GITHUB_BROKER_URL":           "http://" + githubBrokerHost + ":8083",
+		"AGENTOPS_GITHUB_BROKER_CAPABILITY":    manager.config.githubBrokerCapability("triage"),
+		"AGENTOPS_GITHUB_BROKER_ROLE":          "triage",
 		"AGENTOPS_TRIAGE_READY_LABEL":          labels[0],
 		"AGENTOPS_TRIAGE_CLAIMED_LABEL":        labels[1],
 		"AGENTOPS_TRIAGE_CANDIDATE_LABEL":      labels[2],
@@ -1232,7 +1457,8 @@ func (manager *manager) triageSpec(
 		"AGENTOPS_APP_ROOT":                    "/app",
 		"HTTPS_PROXY":                          "http://" + controlHost + ":8082",
 		"HTTP_PROXY":                           "http://" + controlHost + ":8082",
-		"NO_PROXY":                             databaseHost + ",127.0.0.1,localhost",
+		"NO_PROXY": databaseHost + "," + githubBrokerHost +
+			",127.0.0.1,localhost",
 	}
 	if manager.config.TriageContextPaths != "" {
 		environment["AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON"] =
@@ -1274,7 +1500,19 @@ func (manager *manager) replaceRunner(
 	if err != nil {
 		return mutationReceipt{}, err
 	}
-	spec := manager.runnerSpec(mode, databaseHost, controlHost)
+	githubBrokerHost, err := manager.networkHost(
+		ctx,
+		manager.config.GitHubBrokerContainer,
+	)
+	if err != nil {
+		return mutationReceipt{}, err
+	}
+	spec := manager.runnerSpec(
+		mode,
+		databaseHost,
+		controlHost,
+		githubBrokerHost,
+	)
 	if err := manager.sealSpec(ctx, &spec); err != nil {
 		return mutationReceipt{}, err
 	}
@@ -1421,10 +1659,11 @@ func (manager *manager) probeProvider(
 
 func (manager *manager) runnerSpec(
 	mode lifecycle.Mode,
-	databaseHost, controlHost string,
+	databaseHost, controlHost, githubBrokerHost string,
 ) lifecycle.ContainerSpec {
 	outbound := []map[string]any{
 		{"host": databaseHost, "port": 5432},
+		{"host": githubBrokerHost, "port": 8083},
 		{"host": "github.com", "port": 443},
 		{"host": "api.github.com", "port": 443},
 	}
@@ -1480,10 +1719,13 @@ func (manager *manager) runnerSpec(
 		"AGENTOPS_RUNNER_MOUNTS_JSON":          string(mountJSON),
 		"AGENTOPS_RUNNER_PUBLISHED_PORTS_JSON": "[]",
 		"AGENTOPS_RUNNER_OUTBOUND_JSON":        string(outboundJSON),
-		"AGENTOPS_RUNNER_GITHUB_TOKEN":         manager.config.RunnerGitHubToken,
+		"AGENTOPS_GITHUB_BROKER_URL":           "http://" + githubBrokerHost + ":8083",
+		"AGENTOPS_GITHUB_BROKER_CAPABILITY":    manager.config.githubBrokerCapability("runner"),
+		"AGENTOPS_GITHUB_BROKER_ROLE":          "runner",
 		"HTTPS_PROXY":                          "http://" + controlHost + ":8082",
 		"HTTP_PROXY":                           "http://" + controlHost + ":8082",
-		"NO_PROXY":                             databaseHost + ",127.0.0.1,localhost",
+		"NO_PROXY": databaseHost + "," + githubBrokerHost +
+			",127.0.0.1,localhost",
 	}
 	if mode == lifecycle.ModeActive && manager.config.Provider == "codex" {
 		if manager.config.usesCodexAuthFileFor(mode) {
@@ -1623,7 +1865,8 @@ func (manager *manager) inFlight(ctx context.Context) (int64, int64, error) {
 
 func (manager *manager) compensateStart(
 	ctx context.Context,
-	postgresStarted, controlChanged, triageChanged, runnerChanged bool,
+	postgresStarted, controlChanged, githubBrokerChanged bool,
+	triageChanged, runnerChanged bool,
 	initialMode *lifecycle.Mode,
 	requestID string,
 ) error {
@@ -1663,15 +1906,18 @@ func (manager *manager) compensateStart(
 		)
 	}
 
-	names, restoreControl, restoreTriage, restoreRunner := compensationTopology(
-		target,
-		controlChanged,
-		triageChanged,
-		runnerChanged,
-		manager.config.ControlContainer,
-		manager.config.TriageContainer,
-		manager.config.RunnerContainer,
-	)
+	names, restoreControl, restoreGitHubBroker, restoreTriage, restoreRunner :=
+		compensationTopology(
+			target,
+			controlChanged,
+			githubBrokerChanged,
+			triageChanged,
+			runnerChanged,
+			manager.config.ControlContainer,
+			manager.config.GitHubBrokerContainer,
+			manager.config.TriageContainer,
+			manager.config.RunnerContainer,
+		)
 	for _, name := range names {
 		_ = manager.gracefulStop(ctx, name, 10*time.Second)
 		_ = manager.runtime.Delete(ctx, name)
@@ -1681,6 +1927,9 @@ func (manager *manager) compensateStart(
 		// durable mode; this restores a pre-existing MONITOR_ONLY topology and
 		// retains the recovery proxy for DRAINING.
 		_, _ = manager.replaceControl(ctx, target)
+	}
+	if restoreGitHubBroker {
+		_, _ = manager.replaceGitHubBroker(ctx, target)
 	}
 	if restoreRunner {
 		_, _ = manager.replaceRunner(ctx, target)
@@ -1701,11 +1950,12 @@ func (manager *manager) compensateStart(
 
 func compensationTopology(
 	target lifecycle.Mode,
-	controlChanged, triageChanged, runnerChanged bool,
-	controlContainer, triageContainer, runnerContainer string,
+	controlChanged, githubBrokerChanged, triageChanged, runnerChanged bool,
+	controlContainer, githubBrokerContainer, triageContainer,
+	runnerContainer string,
 ) (
 	stopNames []string,
-	restoreControl, restoreTriage, restoreRunner bool,
+	restoreControl, restoreGitHubBroker, restoreTriage, restoreRunner bool,
 ) {
 	if runnerChanged {
 		stopNames = append(stopNames, runnerContainer)
@@ -1713,11 +1963,15 @@ func compensationTopology(
 	if triageChanged {
 		stopNames = append(stopNames, triageContainer)
 	}
+	if githubBrokerChanged {
+		stopNames = append(stopNames, githubBrokerContainer)
+	}
 	if controlChanged && target == lifecycle.ModeOff {
 		stopNames = append(stopNames, controlContainer)
 	}
 	return stopNames,
 		controlChanged && target != lifecycle.ModeOff,
+		githubBrokerChanged && target != lifecycle.ModeOff,
 		triageChanged && target == lifecycle.ModeMonitorOnly,
 		runnerChanged && target == lifecycle.ModeActive
 }
@@ -1839,6 +2093,7 @@ func (manager *manager) verifyPublishedSurface(
 		}
 	}
 	for _, role := range []string{
+		manager.config.GitHubBrokerContainer,
 		manager.config.TriageContainer,
 		manager.config.RunnerContainer,
 		manager.config.PostgresContainer,
@@ -1878,6 +2133,13 @@ func (manager *manager) verifyManagedTopology(
 	if err != nil {
 		return err
 	}
+	githubBroker, err := manager.runtime.Container(
+		ctx,
+		manager.config.GitHubBrokerContainer,
+	)
+	if err != nil {
+		return err
+	}
 	if err := validateControlActual(control, manager.config); err != nil {
 		return err
 	}
@@ -1902,9 +2164,32 @@ func (manager *manager) verifyManagedTopology(
 	if err := validateSpecActual(postgres, postgresSpec); err != nil {
 		return err
 	}
+	if err := validateGitHubBrokerActual(
+		githubBroker,
+		manager.config,
+	); err != nil {
+		return err
+	}
+	githubBrokerSpec := manager.githubBrokerSpec(mode)
+	if err := manager.sealSpec(ctx, &githubBrokerSpec); err != nil {
+		return err
+	}
+	if err := validateSpecActual(
+		githubBroker,
+		githubBrokerSpec,
+	); err != nil {
+		return err
+	}
 	controlHost, err := manager.networkHost(
 		ctx,
 		manager.config.ControlContainer,
+	)
+	if err != nil {
+		return err
+	}
+	githubBrokerHost, err := manager.networkHost(
+		ctx,
+		manager.config.GitHubBrokerContainer,
 	)
 	if err != nil {
 		return err
@@ -1913,7 +2198,12 @@ func (manager *manager) verifyManagedTopology(
 		if err := validateTriageActual(triage, manager.config, mode); err != nil {
 			return err
 		}
-		triageSpec := manager.triageSpec(mode, databaseHost, controlHost)
+		triageSpec := manager.triageSpec(
+			mode,
+			databaseHost,
+			controlHost,
+			githubBrokerHost,
+		)
 		if err := manager.sealSpec(ctx, &triageSpec); err != nil {
 			return err
 		}
@@ -1927,7 +2217,12 @@ func (manager *manager) verifyManagedTopology(
 		if err := validateRunnerActual(runner, manager.config, mode); err != nil {
 			return err
 		}
-		runnerSpec := manager.runnerSpec(mode, databaseHost, controlHost)
+		runnerSpec := manager.runnerSpec(
+			mode,
+			databaseHost,
+			controlHost,
+			githubBrokerHost,
+		)
 		if err := manager.sealSpec(ctx, &runnerSpec); err != nil {
 			return err
 		}
@@ -1998,6 +2293,7 @@ func (manager *manager) validateExistingTopology(
 ) error {
 	for _, name := range []string{
 		manager.config.ControlContainer,
+		manager.config.GitHubBrokerContainer,
 		manager.config.TriageContainer,
 		manager.config.RunnerContainer,
 		manager.config.PostgresContainer,
@@ -2011,6 +2307,8 @@ func (manager *manager) validateExistingTopology(
 			switch name {
 			case manager.config.ControlContainer:
 				validateErr = validateControlActual(actual, manager.config)
+			case manager.config.GitHubBrokerContainer:
+				validateErr = validateGitHubBrokerActual(actual, manager.config)
 			case manager.config.TriageContainer:
 				validateErr = validateTriageActual(actual, manager.config, mode)
 			case manager.config.RunnerContainer:
@@ -2022,6 +2320,35 @@ func (manager *manager) validateExistingTopology(
 				return validateErr
 			}
 		}
+	}
+	return nil
+}
+
+func validateGitHubBrokerActual(
+	actual *lifecycle.ContainerActual,
+	config config,
+) error {
+	if err := validateManagedActual(
+		actual,
+		config.GitHubBrokerContainer,
+		"github-broker",
+		config.GitHubBrokerImage,
+		[]string{"default", config.Network},
+		true,
+	); err != nil {
+		return err
+	}
+	if len(actual.Configuration.PublishedPorts) != 0 ||
+		len(actual.Configuration.PublishedSock) != 0 {
+		return fmt.Errorf("GitHub credential broker exposes a host port or socket")
+	}
+	if !exactMounts(actual, map[string]string{
+		"/tmp":                     "tmpfs",
+		"/run/agentops-github-app": config.GitHubAppKeyVolume,
+	}) {
+		return fmt.Errorf(
+			"GitHub credential broker mounts do not match the hardened topology",
+		)
 	}
 	return nil
 }
@@ -2309,6 +2636,8 @@ func redactedError(err error, config config) string {
 		config.ControlGitHubToken,
 		config.TriageGitHubToken,
 		config.RunnerGitHubToken,
+		config.githubBrokerCapability("triage"),
+		config.githubBrokerCapability("runner"),
 		config.ProviderToken,
 	} {
 		if secret != "" {
@@ -2323,10 +2652,11 @@ func hasManagedService(
 	config config,
 ) bool {
 	names := map[string]bool{
-		config.ControlContainer:  true,
-		config.TriageContainer:   true,
-		config.RunnerContainer:   true,
-		config.PostgresContainer: true,
+		config.ControlContainer:      true,
+		config.GitHubBrokerContainer: true,
+		config.TriageContainer:       true,
+		config.RunnerContainer:       true,
+		config.PostgresContainer:     true,
 	}
 	for _, container := range containers {
 		if names[container.ID] {

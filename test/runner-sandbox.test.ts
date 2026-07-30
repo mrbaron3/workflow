@@ -92,8 +92,9 @@ describe('runner subprocess filesystem sandbox', () => {
     process.env = {
       PATH: '/usr/bin',
       OPENAI_API_KEY: 'provider-secret',
-      GH_TOKEN: 'github-secret',
-      GITHUB_TOKEN: 'github-secret',
+      AGENTOPS_GITHUB_BROKER_URL: 'http://github-broker:8083/',
+      AGENTOPS_GITHUB_BROKER_CAPABILITY: 'r'.repeat(43),
+      AGENTOPS_GITHUB_BROKER_ROLE: 'runner',
       AGENTOPS_RUNNER_DATABASE_URL: 'postgresql://secret',
       SSH_AUTH_SOCK: '/tmp/agent.sock',
       AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
