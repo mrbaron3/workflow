@@ -45,8 +45,10 @@ development runner（別capability、private workspace、ACTIVEだけ）
    export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
    export AGENTOPS_GITHUB_APP_OWNER='mrbaron3'
    export AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE='<absolute mode-0600 .pem path>'
-   export AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY='<43+ URL-safe文字>'
-   export AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY='<別の43+ URL-safe文字>'
+   # broker capabilityは任意。未設定なら`agentopsctl`がrole別に生成し、
+   # privateな`~/.agentops/<prefix>/broker-capabilities.json`（mode 0600）へ保存して読み戻す。
+   # export AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY='<43..128 URL-safe文字>'
+   # export AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY='<別の43..128 URL-safe文字>'
    export AGENTOPS_TRIAGE_READY_LABEL='ready'
    export AGENTOPS_TRIAGE_CLAIMED_LABEL='agent-claimed'
    export AGENTOPS_TRIAGE_CANDIDATE_LABEL='ready-candidate'
@@ -57,6 +59,7 @@ development runner（別capability、private workspace、ACTIVEだけ）
 
    `GH_TOKEN`、`GITHUB_TOKEN`、`AGENTOPS_{CONTROL,TRIAGE,RUNNER}_GITHUB_TOKEN`は設定しない。
    role capabilityは他のcredentialから導出せず、他のcredentialと同値にもしない（`agentopsctl`が拒否する）。
+   生成されたstoreはoperatorが読み書きしない。rotationは`OFF`中にstoreを削除して次のstartで再生成させる。
    AppはWorkflowとDesignflowだけへinstallし、permission union／role別token subsetは
    [ADR-0019](../decisions/ADR-0019-github-app-credential-broker.md)に固定する。
    4つのDB password、control token、Dashboard bootstrap token、webhook secretも

@@ -113,6 +113,20 @@ func loadConfig() (config, error) {
 	default:
 		return config{}, fmt.Errorf("AGENTOPS_RUNNER_PROVIDER must be codex or claude")
 	}
+	// Capabilities are resolved rather than merely read: with no operator value
+	// agentopsctl generates one and keeps it in its own private state, so
+	// bootstrap asks for no manual secret while the capability stays independent
+	// of every other credential. Resolution belongs here, on the path every
+	// subcommand takes, because status compares a running topology against the
+	// same values a start injected.
+	triageCapability, runnerCapability, err := resolveBrokerCapabilities(
+		prefix,
+		strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY")),
+		strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY")),
+	)
+	if err != nil {
+		return config{}, err
+	}
 	return config{
 		Prefix:                prefix,
 		Network:               prefix + "-internal",
@@ -171,15 +185,11 @@ func loadConfig() (config, error) {
 		GitHubAppKeyPath: strings.TrimSpace(
 			os.Getenv("AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE"),
 		),
-		TriageBrokerCapability: strings.TrimSpace(
-			os.Getenv("AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY"),
-		),
-		RunnerBrokerCapability: strings.TrimSpace(
-			os.Getenv("AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"),
-		),
-		Provider:      provider,
-		ProviderToken: providerToken,
-		CodexAuthPath: codexAuthPath,
+		TriageBrokerCapability: triageCapability,
+		RunnerBrokerCapability: runnerCapability,
+		Provider:               provider,
+		ProviderToken:          providerToken,
+		CodexAuthPath:          codexAuthPath,
 		MonitorRepositories: splitRepositories(
 			os.Getenv("AGENTOPS_MONITOR_REPOSITORIES"),
 		),
