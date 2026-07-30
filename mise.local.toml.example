@@ -1,0 +1,13 @@
+# これを mise.local.toml にコピーして使う（mise.local.toml は追跡しない）。
+#
+# operator の env ファイルは秘密（4 つの DB password・control token・Dashboard token・
+# webhook secret）を含むのでリポジトリへは入れない。ここに書くのはその「在処」だけで、
+# 在処は人によって違うため追跡対象から外す。
+#
+# 形式は dotenv。`export` 前置・クォート・行末コメントはそのまま解釈される。
+# シェルの変数展開（$HOME 等）は解釈されないので、パスは絶対で書くこと。
+#
+# 中身の作り方は docs/runbooks/ciso-07-credential-bootstrap-and-rotation.md を見る。
+
+[env]
+_.file = "~/.config/agentops/env"

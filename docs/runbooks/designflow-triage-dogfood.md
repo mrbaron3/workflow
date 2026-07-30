@@ -68,9 +68,23 @@ development runner（別capability、private workspace、ACTIVEだけ）
 2. observation-onlyで起動する。
 
    ```sh
-   go run ./cmd/agentopsctl start \
-     --mode MONITOR_ONLY --build --request-id designflow-monitor-bootstrap-001
+   mise run monitor
    ```
+
+   初回は`mise.local.toml.example`を`mise.local.toml`へコピーし、1.のenv fileの絶対パスを
+   指しておく。task側が`[env] _.file`でenvを読み、`[tools] go`でtoolchainを解決するので、
+   `set -a; . <env file>; set +a`も`mise exec go@<version> --`も要らない。依存の`env:check`が
+   必須13変数の欠落を名前付きで落とし、通ったときはallowlistを表示する（`monitor`が1
+   repositoryのまま静かに動く事故を入口で見せるため）。素で叩くなら次と等価:
+
+   ```sh
+   go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build
+   ```
+
+   `--request-id`は渡していない。省略時は`commandID()`が
+   `<operation>-<unixnano>-<pid>`を生成するので、固定値を焼き込んで再実行が前回の要求と
+   衝突する事故を避けられる。冪等性を明示的に握りたいときだけ
+   `mise run monitor -- --request-id <id>`のように`--`の後ろへ渡す。
 
    このmodeではIssue/PR identityの観測だけを行う。AI classification、label/comment mutation、
    development runner、provider credentialは存在しない。freshnessは更新するがprocessing cursorは
@@ -96,9 +110,20 @@ development runner（別capability、private workspace、ACTIVEだけ）
    ACTIVEではprovider credentialも必要になる。
 
    ```sh
-   go run ./cmd/agentopsctl start \
-     --mode ACTIVE --request-id designflow-active-001
+   mise run active
    ```
+
+   その他のlifecycle操作も同じ入口に揃えてある。`mise tasks`で一覧できる。
+
+   | task | 実体 |
+   | --- | --- |
+   | `mise run status` | `agentopsctl status`（`-- --json`でJSON） |
+   | `mise run monitor` | `agentopsctl start --mode MONITOR_ONLY --build` |
+   | `mise run active` | `agentopsctl start --mode ACTIVE` |
+   | `mise run drain` | `agentopsctl drain` |
+   | `mise run stop` | `agentopsctl stop` |
+   | `mise run logs` | `agentopsctl logs`（`-- --component triage --follow`） |
+   | `mise run open` | `agentopsctl open` |
 
 ## 最初に流すIssue
 
