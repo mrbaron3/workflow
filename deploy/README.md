@@ -161,8 +161,10 @@ export AGENTOPS_GITHUB_APP_INSTALLATION_ID='<numeric installation id>'
 export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
 export AGENTOPS_GITHUB_APP_OWNER='owner'
 export AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE='<absolute mode-0600 .pem path>'
-export AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY='<43+ URL-safe characters>'
-export AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY='<different 43+ URL-safe characters>'
+# Optional: agentopsctl generates both broker capabilities into a private
+# ~/.agentops/<prefix>/broker-capabilities.json unless an external secret manager supplies them.
+# export AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY='<43..128 URL-safe characters>'
+# export AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY='<different 43..128 URL-safe characters>'
 export AGENTOPS_RUNNER_PROVIDER=codex
 export OPENAI_API_KEY='<ACTIVE triage/development provider credential>'
 

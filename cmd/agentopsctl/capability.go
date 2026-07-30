@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,6 +71,19 @@ func readBrokerCapabilityStore(path string) (brokerCapabilityStore, error) {
 	if err != nil {
 		return brokerCapabilityStore{}, err
 	}
+	// Write permission on the containing directory is enough to rename a chosen
+	// store over this one, so a private file mode alone would not keep the
+	// capabilities the operator's. A store that could have been substituted is
+	// refused rather than tightened: the mode is repairable, the value is not.
+	directory, err := os.Lstat(filepath.Dir(path))
+	if err != nil {
+		return brokerCapabilityStore{}, err
+	}
+	if !directory.IsDir() || directory.Mode().Perm()&0o077 != 0 {
+		return brokerCapabilityStore{}, fmt.Errorf(
+			"GitHub broker capability store must sit in a private directory",
+		)
+	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 ||
 		info.Size() < 1 || info.Size() > maxBrokerCapabilityStoreSize {
 		return brokerCapabilityStore{}, fmt.Errorf(
@@ -105,6 +120,13 @@ func readBrokerCapabilityStore(path string) (brokerCapabilityStore, error) {
 	return store, nil
 }
 
+// errBrokerCapabilityStoreExists reports that another command created the store
+// first. The command that lost the race must adopt the persisted capabilities
+// rather than the ones it generated, or the two would inject different values.
+var errBrokerCapabilityStoreExists = errors.New(
+	"GitHub broker capability store already exists",
+)
+
 func writeBrokerCapabilityStore(
 	path string,
 	store brokerCapabilityStore,
@@ -122,22 +144,17 @@ func writeBrokerCapabilityStore(
 	if err != nil {
 		return err
 	}
-	temporary := path + ".new"
-	_ = os.Remove(temporary)
-	file, err := os.OpenFile(
-		temporary,
-		os.O_WRONLY|os.O_CREATE|os.O_EXCL,
-		0o600,
-	)
+	// The temporary carries a unique name so two commands bootstrapping at once
+	// cannot collide on it, and it is a sibling because the link below cannot
+	// cross a filesystem.
+	file, err := os.CreateTemp(directory, brokerCapabilityFileName+".*")
 	if err != nil {
 		return fmt.Errorf("create the GitHub broker capability store")
 	}
-	removeTemporary := true
+	temporary := file.Name()
 	defer func() {
 		_ = file.Close()
-		if removeTemporary {
-			_ = os.Remove(temporary)
-		}
+		_ = os.Remove(temporary)
 	}()
 	if _, err := file.Write(contents); err != nil {
 		return fmt.Errorf("write the GitHub broker capability store")
@@ -148,10 +165,16 @@ func writeBrokerCapabilityStore(
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close the GitHub broker capability store")
 	}
-	if err := os.Rename(temporary, path); err != nil {
+	// Linking rather than renaming makes activation exclusive as well as atomic:
+	// a rename would silently clobber a store another command had just created,
+	// leaving that command with a capability the store no longer holds. Nothing
+	// may overwrite a capability store in place — rotation removes it first.
+	if err := os.Link(temporary, path); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return errBrokerCapabilityStoreExists
+		}
 		return fmt.Errorf("activate the GitHub broker capability store")
 	}
-	removeTemporary = false
 	return nil
 }
 
@@ -183,7 +206,13 @@ func loadOrCreateBrokerCapabilities(
 		Runner:  runner,
 	}
 	if err := writeBrokerCapabilityStore(path, store); err != nil {
-		return brokerCapabilityStore{}, err
+		if !errors.Is(err, errBrokerCapabilityStoreExists) {
+			return brokerCapabilityStore{}, err
+		}
+		// Another command bootstrapped first. Its capabilities are the ones the
+		// broker will be started with, so this command returns them too instead
+		// of the pair it generated and threw away.
+		return readBrokerCapabilityStore(path)
 	}
 	return store, nil
 }

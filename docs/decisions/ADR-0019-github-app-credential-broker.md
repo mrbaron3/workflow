@@ -53,6 +53,20 @@ triage／runnerへ渡すと両roleが任意scopeをmintできるため、専用b
    同値にしない。capabilityの保持はそのroleのinstallation tokenをmintする権利そのものなので、PostgreSQL role
    passwordなど別のtrust domainの秘密からdomain-separated HMACで導出すると、そのdomainの読み手全員が
    GitHub書き込み権を得てしまい、単独失効もできない。
+   独立したsecretの**供給元はoperatorの手登録ではなく`agentopsctl`自身の生成**である。両env varが未設定なら、
+   `agentopsctl`はrole別に32 byteのCSPRNG値（RawURLEncodingで43文字）を生成し、
+   `${AGENTOPSCTL_STATE_DIR:-~/.agentops}/<prefix>/broker-capabilities.json`（mode 0600・親directoryは
+   mode 0700）へversion付きで保存する。以後のcommandは同じ値を読み戻すので、bootstrapはoperator入力ゼロで
+   済みながらrunning topologyがdesired specと一致し続ける。store作成はatomicかつ**exclusive**（既存があれば
+   linkが失敗し、負けたcommandは自分が生成した値を捨てて永続化済みの値を採る）なので、`start`と`status`が
+   同時にbootstrapしても両者は同一pairへ収束する。上書きは行わない。storeをnamed volumeではなくhostに置くのは、
+   `agentopsctl`自身がbroker／triage／runnerのspecへ注入し、drift比較でも突き合わせる値だからである。
+   volumeへ隠すとcommandごとにcontainer execでsecretをstdoutへ流すことになり露出面が増える。
+   storeがgroup／world accessible、親directoryが同様（directoryへの書き込み権はstore差し替え権と等価）、
+   version不一致、読めない内容、両role同値のいずれかなら、**再生成せずに拒否する**。modeは修復できても
+   差し替えられた値は信用を回復できないからである。両env varを設定した場合は外部secret managerが正本となり、
+   storeは書かれない。rotationは`OFF`中にstoreを削除して次のstartで再生成させる（両roleが同時に更新される）か、
+   単独roleだけ更新するなら`OFF`中に新しい値をexportする。
    wrapperはreal `gh`へtokenを渡す直前にbroker URL／role／capabilityを環境から除く。AI provider、
    tmux session、grader、credentialなしのgit commandからもcapabilityとaskpassを除く。
    Git askpassはpromptを全文で構造照合し、`https://github.com`宛のusername／password要求だけに答える。
@@ -74,7 +88,11 @@ triage／runnerへ渡すと両roleが任意scopeをmintできるため、専用b
   拡張、秘密鍵失効だけがGitHub側の管理操作である。既存のsigned-in browser sessionがあればCodexがこの一回限りの
   setupも実施できるが、GitHubのpassword／2FA／organization approvalはsecurity boundaryとして代行不能な場合がある。
 - `gh auth`はdeveloper CLIの操作には使えても、このruntimeのcredential sourceにはならない。
-- role capabilityはDB role passwordから独立して単独でrotationできる。新しい値をexportして`agentopsctl start`
-  すれば、brokerとworkerが同じdesired specへ置換される。逆にDB password rotationはcapabilityへ波及しない。
+- role capabilityはDB role passwordから独立して単独でrotationできる。`OFF`中にstoreを削除するか新しい値を
+  exportして`agentopsctl start`すれば、brokerとworkerが同じdesired specへ置換される。逆にDB password
+  rotationはcapabilityへ波及しない。
+- capability bootstrapはoperator手順から外れる代わりに、`agentopsctl`を動かすhost accountの保護が
+  capabilityの保護になる。そのaccountを取れる主体はstoreを読める。tokenを持たせないclient境界は変わらないが、
+  信頼の置き場所がoperatorのsecret管理からhost accountへ移ることは明示的な受容事項である。
 - App permission unionを広げる変更とrunner repository追加はsecurity review対象である。token発行時のsubset指定が
   App installation自体の過剰権限を正当化するものではない。

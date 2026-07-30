@@ -16,11 +16,18 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    `AGENTOPS_POSTGRES_PASSWORD`, `AGENTOPS_CONTROL_DB_PASSWORD`,
    `AGENTOPS_TRIAGE_DB_PASSWORD`, `AGENTOPS_RUNNER_DB_PASSWORD`, `AGENTOPS_CONTROL_TOKEN`,
    `AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN`, and `AGENTOPS_GITHUB_WEBHOOK_SECRET`.
-   Create two more distinct random values of 43–128 URL-safe characters for
+   Create no broker capability by hand. Holding a capability is the right to mint that role's
+   GitHub installation token, so it must never be derived from — or set equal to — any database
+   password or operator token. `agentopsctl` therefore generates one distinct 43-character
+   URL-safe value per role on first use and keeps them in
+   `${AGENTOPSCTL_STATE_DIR:-~/.agentops}/<prefix>/broker-capabilities.json`, a mode-0600 file in
+   a mode-0700 directory. Every later command reads the same values back, so a running topology
+   keeps matching its desired spec. The store is refused — not regenerated — if it is group or
+   world accessible, if its directory is (write permission there is substitution permission), or
+   if its contents are unreadable, unversioned, or share one value across both roles. Set
    `AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY` and `AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY`
-   (`openssl rand -base64 32 | tr '+/' '-_' | tr -d '='`). Holding a capability is the right to
-   mint that role's GitHub installation token, so it must never be derived from — or set equal
-   to — any database password or operator token; `agentopsctl` rejects a reused value. The runner
+   only to keep an external secret manager authoritative; supplying both means no store is ever
+   written, and `agentopsctl` still rejects a value reused from another credential. The runner
    capability is required in `ACTIVE`.
 2. Create one GitHub App owned by the same account as every monitored repository. Disable
    webhooks and grant only this repository permission union: Actions read, Checks read,
@@ -78,10 +85,15 @@ the managed `agentops-*-runner-credentials` volume and mounts the volume read-on
    operator-side values while `OFF`; the next bootstrap transaction rotates the distinct
    control, triage, and runner database roles. Broker capabilities are independent secrets, so
    rotating a database password does not rotate them and rotating a capability does not touch the
-   database: export the new `AGENTOPS_GITHUB_BROKER_*_CAPABILITY` value while `OFF` and the next
-   start replaces broker and workers as one desired topology. For Codex login rotation, atomically replace
-   only the private `auth.json`; never copy a whole home, `.codex` directory, SSH agent,
-   development root, or container socket.
+   database. To rotate the generated capabilities, delete
+   `${AGENTOPSCTL_STATE_DIR:-~/.agentops}/<prefix>/broker-capabilities.json` while `OFF`; the next
+   command generates a fresh pair and the next start replaces broker and workers as one desired
+   topology. Deleting the store rotates both roles at once — it is one file — and it must be done
+   while `OFF`, because a broker already running holds the previous values and would be reported
+   as drift. To rotate one role alone, or to hand rotation to an external secret manager, export
+   the new `AGENTOPS_GITHUB_BROKER_*_CAPABILITY` value while `OFF` instead; an exported value wins
+   over the store. For Codex login rotation, atomically replace only the private `auth.json`;
+   never copy a whole home, `.codex` directory, SSH agent, development root, or container socket.
 3. Start in `MONITOR_ONLY`. Migration/bootstrap is transactional: any invalid credential,
    failed copy, failed migration, readiness failure, or topology drift returns nonzero,
    records the failure when the database is available, compensates toward the prior safe
