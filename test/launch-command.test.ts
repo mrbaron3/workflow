@@ -46,6 +46,23 @@ describe('interactive provider adapters', () => {
     expect(cmd).not.toMatch(/\bcodex\s+(exec|review)\b/);
   });
 
+  it('trusts only this session directory so the codex trust prompt never eats the first prompt', () => {
+    const cmd = buildLaunchCommand({
+      provider: 'codex', session: 'ao-plan', cwd: '/workspace/registrations/r1/jobs/j1/worktree',
+      purpose: 'planner',
+    });
+    expect(cmd).toContain(
+      `-c 'projects."/workspace/registrations/r1/jobs/j1/worktree".trust_level="trusted"'`,
+    );
+    // Repository-supplied hooks must stay gated by persisted hook trust.
+    expect(cmd).not.toContain('--dangerously-bypass-hook-trust');
+    expect(cmd).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+    const claude = buildLaunchCommand({
+      provider: 'claude', session: 'ao-gen', cwd: '/wt', purpose: 'generator',
+    });
+    expect(claude).not.toContain('trust_level');
+  });
+
   it('AC-AGBACK-004 rejects providers without an interactive adapter instead of falling back', () => {
     expect(() => backendFor('gemini')).toThrow(UnsupportedInteractiveProviderError);
     expect(() => backendFor('mock')).toThrow(/mock/);
