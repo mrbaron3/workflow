@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { Pool, type PoolClient } from 'pg';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   CONTROL_SCHEMA_VERSION,
   CONTROL_MIGRATION_LOCK_KEY,
@@ -24,6 +24,14 @@ import {
   type WorkspaceCommandRunner,
 } from '../src/runner/workspace.js';
 
+// Each test in this file rebuilds the control schema against a real PostgreSQL
+// before doing its own work, so the default 5s per-test budget leaves no room
+// for a loaded CI runner: one test was observed timing out at 5009ms while its
+// neighbours in the same run took 4-6x their local duration. The bound sits
+// above the lock timeout in reset() so a genuine lock wait fails naming itself
+// rather than as an expired test.
+vi.setConfig({ testTimeout: 20_000 });
+
 const databaseUrl = process.env.AGENTOPS_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe.sequential : describe.skip;
 
@@ -38,8 +46,21 @@ integration('PostgreSQL control store', () => {
     await pool?.end();
   });
 
+  // Every test rebuilds the schema, so this DROP is the one statement in the
+  // suite that never means to wait: if it cannot take its locks, a previous
+  // test left a connection holding them. An unbounded wait surfaces as an
+  // opaque "test timed out", which says nothing about the cause — a bounded one
+  // fails naming the lock. The bound is generous so ordinary CI slowness never
+  // reaches it. The three statements travel as one simple query, which
+  // PostgreSQL wraps in an implicit transaction, so the bound never outlives
+  // this call on a pooled connection: the trailing reset restores it, and a
+  // failing DROP rolls the SET back with everything else.
   async function reset(): Promise<void> {
-    await pool.query('DROP SCHEMA IF EXISTS agentops_control CASCADE');
+    await pool.query(
+      `SET lock_timeout = '10s';
+       DROP SCHEMA IF EXISTS agentops_control CASCADE;
+       SET lock_timeout = DEFAULT;`,
+    );
   }
 
   async function migratedStore(): Promise<PostgresControlStore> {
