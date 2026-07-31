@@ -56,11 +56,20 @@ export function buildTriagePrompt(input: TriageAnalysisInput): string {
   ].join('\n');
 }
 
-interface ProcessResult {
+export interface ProcessResult {
   status: number | null;
   stdout: string;
   stderr: string;
 }
+
+export type TriageProviderProcessRunner = (
+  command: string,
+  args: readonly string[],
+  prompt: string,
+  cwd: string,
+  environment: NodeJS.ProcessEnv,
+  timeoutMs: number,
+) => Promise<ProcessResult>;
 
 async function runProviderProcess(
   command: string,
@@ -117,6 +126,32 @@ async function runProviderProcess(
   });
 }
 
+/**
+ * Codex login credentials remain read-only at the container boundary, while
+ * each Codex process receives a disposable writable home for its session and
+ * app-server state. Only auth.json crosses into that invocation-local tmpfs
+ * directory; the whole root is removed by analyze()'s existing finally block.
+ */
+export function writableCodexEnvironment(
+  environment: NodeJS.ProcessEnv,
+  tempRoot: string,
+): NodeJS.ProcessEnv {
+  const sourceHome = environment.CODEX_HOME;
+  if (!sourceHome) return environment;
+  const sourceAuth = path.join(sourceHome, 'auth.json');
+  const sourceStat = fs.lstatSync(sourceAuth);
+  if (!sourceStat.isFile() || sourceStat.isSymbolicLink()) {
+    throw new Error('Codex auth source must be a regular file');
+  }
+  const invocationHome = path.join(tempRoot, 'codex-home');
+  fs.mkdirSync(invocationHome, { mode: 0o700 });
+  const invocationAuth = path.join(invocationHome, 'auth.json');
+  fs.copyFileSync(sourceAuth, invocationAuth, fs.constants.COPYFILE_EXCL);
+  fs.chmodSync(invocationHome, 0o700);
+  fs.chmodSync(invocationAuth, 0o600);
+  return { ...environment, CODEX_HOME: invocationHome };
+}
+
 function parseClaudeResult(raw: string): unknown {
   const envelope = JSON.parse(raw) as {
     structured_output?: unknown;
@@ -138,6 +173,8 @@ export class CliTriageProvider implements TriageProvider {
     private readonly appRoot: string,
     private readonly model?: string,
     private readonly timeoutMs = 10 * 60_000,
+    private readonly runProcess: TriageProviderProcessRunner =
+      runProviderProcess,
   ) {}
 
   async analyze(input: TriageAnalysisInput): Promise<TriageDecisionV1> {
@@ -152,7 +189,7 @@ export class CliTriageProvider implements TriageProvider {
       let result: ProcessResult;
       let output: unknown;
       if (this.provider === 'codex') {
-        result = await runProviderProcess(
+        result = await this.runProcess(
           'codex',
           [
             '-c', 'web_search="disabled"',
@@ -172,7 +209,7 @@ export class CliTriageProvider implements TriageProvider {
           ],
           prompt,
           tempRoot,
-          this.environment,
+          writableCodexEnvironment(this.environment, tempRoot),
           this.timeoutMs,
         );
         if (result.status !== 0 || !fs.existsSync(outputPath)) {
@@ -181,7 +218,7 @@ export class CliTriageProvider implements TriageProvider {
         output = JSON.parse(fs.readFileSync(outputPath, 'utf8'));
       } else {
         const schema = fs.readFileSync(schemaPath, 'utf8');
-        result = await runProviderProcess(
+        result = await this.runProcess(
           'claude',
           [
             '--print',

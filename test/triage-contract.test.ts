@@ -97,6 +97,25 @@ describe('issue triage published contracts', () => {
       missingInformation: [],
     };
     expect(TriageDecisionV1Contract.parse(decision)).toEqual(decision);
+    const schema = JSON.parse(fs.readFileSync(path.join(
+      process.cwd(),
+      'contracts/control-store/v1/triage-decision.schema.json',
+    ), 'utf8')) as Record<string, unknown>;
+    const validate = validator().compile(schema);
+    expect(validate(decision), JSON.stringify(validate.errors)).toBe(true);
+    const visit = (value: unknown, location = '$'): void => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+      const node = value as Record<string, unknown>;
+      if ('const' in node || 'enum' in node) {
+        expect(node.type, `${location} must state its JSON type`).toEqual(
+          expect.any(String),
+        );
+      }
+      for (const [key, child] of Object.entries(node)) {
+        visit(child, `${location}.${key}`);
+      }
+    };
+    visit(schema);
     expect(() => TriageDecisionV1Contract.parse({
       ...decision,
       labels: ['ready'],
