@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
@@ -129,6 +130,33 @@ describe('CISO-07 integrated release source contracts', () => {
     ]) {
       expect(manager).toMatch(new RegExp(`BuildImage\\([\\s\\S]*?"${target}"`));
     }
+  });
+
+  it('vendors the direct Node contract checker dependencies into the runner root', () => {
+    const manifest = JSON.parse(read('package.json')) as {
+      devDependencies: Record<string, string>;
+    };
+    const lock = JSON.parse(read('package-lock.json')) as {
+      packages: Record<string, { version?: string; integrity?: string }>;
+    };
+    const require = createRequire(import.meta.url);
+    for (const dependency of ['ajv', 'ajv-formats']) {
+      expect(manifest.devDependencies[dependency]).toBeDefined();
+      expect(lock.packages[`node_modules/${dependency}`]).toEqual(
+        expect.objectContaining({
+          version: expect.any(String),
+          integrity: expect.stringMatching(/^sha512-/),
+        }),
+      );
+      expect(require.resolve(`${dependency}/package.json`)).toContain(
+        `${path.sep}node_modules${path.sep}${dependency}${path.sep}`,
+      );
+    }
+    const containerfile = read('deploy/Containerfile');
+    expect(containerfile).toContain(
+      'COPY --from=build --chown=node:node /app /app',
+    );
+    expect(containerfile).toContain('FROM runtime AS runner');
   });
 
   it('keeps Codex login and runtime mounts inside named credential boundaries', () => {
