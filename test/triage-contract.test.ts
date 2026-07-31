@@ -111,11 +111,41 @@ describe('issue triage published contracts', () => {
           expect.any(String),
         );
       }
+      if (typeof node.pattern === 'string') {
+        expect(
+          node.pattern,
+          `${location} must avoid response-schema lookaround`,
+        ).not.toMatch(/\(\?(?:[=!]|<[=!])/);
+      }
       for (const [key, child] of Object.entries(node)) {
         visit(child, `${location}.${key}`);
       }
     };
     visit(schema);
+    for (const repository of ['sample/.', 'sample/..']) {
+      const invalid = {
+        ...decision,
+        dependencies: [{
+          repository,
+          issueNumber: 4,
+          relationship: 'blocked_by',
+        }],
+      };
+      expect(validate(invalid), JSON.stringify(validate.errors)).toBe(false);
+      expect(() => TriageDecisionV1Contract.parse(invalid)).toThrow();
+    }
+    for (const repository of ['sample/.a', 'sample/...']) {
+      const valid = {
+        ...decision,
+        dependencies: [{
+          repository,
+          issueNumber: 4,
+          relationship: 'blocked_by',
+        }],
+      };
+      expect(validate(valid), JSON.stringify(validate.errors)).toBe(true);
+      expect(TriageDecisionV1Contract.parse(valid)).toEqual(valid);
+    }
     expect(() => TriageDecisionV1Contract.parse({
       ...decision,
       labels: ['ready'],
