@@ -41,6 +41,7 @@ const BLOCKING_GATES = [
   'typecheck',
   'unit_tests',
   'api_tests',
+  'grader_profile',
   'secrets_scan',
   'scope_check',
 ] as const;
@@ -119,6 +120,11 @@ export function gradeBuild(
     typecheck: artifact.typecheckPasses ? 'pass' : 'fail',
     unit_tests: artifact.unitTestsPass ? 'pass' : 'fail',
     api_tests: artifact.apiTestsPass ? 'pass' : 'fail',
+    grader_profile: artifact.graderProfileValid === undefined
+      ? 'skip'
+      : artifact.graderProfileValid
+        ? 'pass'
+        : 'fail',
     secrets_scan: artifact.secretsLeaked ? 'fail' : 'pass',
     scope_check: artifact.scopeViolations.length ? 'fail' : 'pass',
     playwright,
@@ -182,6 +188,10 @@ function fixForGate(gate: string, artifact: BuildArtifact): string {
       return 'Fix failing unit tests.';
     case 'api_tests':
       return 'Fix failing API contract tests.';
+    case 'grader_profile':
+      return artifact.graderProfileError
+        ? `Restore the immutable-at-claim grader profile: ${artifact.graderProfileError}`
+        : 'Restore the immutable-at-claim repository grader profile.';
     case 'build':
       return 'Fix the build.';
     default:

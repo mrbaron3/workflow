@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import type { HarnessConfig } from '../config.js';
 import type { TargetGraderConfig } from '../config.js';
 import { DEFAULT_CONFIG } from '../config.js';
@@ -15,6 +16,7 @@ import {
 import { runPlanningSession } from '../intake/planning-session.js';
 import { runUiDesignSession } from '../intake/ui-design-session.js';
 import { runGeneratorSession } from '../pipeline/execution/session.js';
+import { groundArtifact } from '../pipeline/execution/grade.js';
 import {
   runPerspectiveSessions,
 } from '../pipeline/execution/perspective-session.js';
@@ -213,6 +215,36 @@ export function inferRepositoryGraders(
     'registered repository has no supported bounded grader profile',
     false,
   );
+}
+
+export function repositoryGraderProfileEvidence(
+  worktreePath: string,
+  claimedProfile: TargetGraderConfig,
+): {
+  graderProfileValid: boolean;
+  graderProfileError?: string;
+} {
+  let observedProfile: TargetGraderConfig;
+  try {
+    observedProfile = inferRepositoryGraders(worktreePath);
+  } catch (error) {
+    return {
+      graderProfileValid: false,
+      graderProfileError:
+        `built checkout has no supported bounded profile: `
+        + `${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  if (!isDeepStrictEqual(observedProfile, claimedProfile)) {
+    return {
+      graderProfileValid: false,
+      graderProfileError:
+        `built checkout profile differs from the claimed profile `
+        + `(claimed=${JSON.stringify(claimedProfile)}, `
+        + `observed=${JSON.stringify(observedProfile)})`,
+    };
+  }
+  return { graderProfileValid: true };
 }
 
 function scopedIssueRunner(
@@ -550,9 +582,13 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             this.dependencies.generatorSession ?? runGeneratorSession,
           perspectiveSessions:
             this.dependencies.perspectiveSessions ?? runPerspectiveSessions,
-          ...(this.dependencies.groundBuild
-            ? { groundBuild: this.dependencies.groundBuild }
-            : {}),
+          groundBuild: (options) => ({
+            ...(this.dependencies.groundBuild ?? groundArtifact)(options),
+            ...repositoryGraderProfileEvidence(
+              options.worktree,
+              options.target.graders ?? {},
+            ),
+          }),
         },
       },
       input.workspace.statePath,

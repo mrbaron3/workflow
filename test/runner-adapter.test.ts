@@ -22,6 +22,7 @@ import {
   hasDurableCurrentHeadRequestChanges,
   ExistingAgentOpsRunnerAdapter,
   inferRepositoryGraders,
+  repositoryGraderProfileEvidence,
 } from '../src/runner/adapter.js';
 import { RunnerLeaseFence } from '../src/runner/guard.js';
 
@@ -117,6 +118,39 @@ describe('existing AgentOps isolated-runner adapter', () => {
         /supported bounded grader profile/,
       );
     }
+  });
+
+  it('fails closed when a build changes the immutable-at-claim grader profile', () => {
+    const root = fs.mkdtempSync(path.join(
+      os.tmpdir(),
+      'grader-profile-drift-',
+    ));
+    roots.push(root);
+    fs.mkdirSync(path.join(root, 'scripts'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, 'scripts', 'check-contracts.mjs'),
+      'process.exitCode = 0;\n',
+    );
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
+      scripts: { test: 'node scripts/check-contracts.mjs' },
+    }));
+    const claimed = inferRepositoryGraders(root);
+    expect(repositoryGraderProfileEvidence(root, claimed)).toEqual({
+      graderProfileValid: true,
+    });
+
+    fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({
+      scripts: {
+        test:
+          'node scripts/check-contracts.mjs && node --test test/*.test.js',
+      },
+    }));
+    expect(repositoryGraderProfileEvidence(root, claimed)).toMatchObject({
+      graderProfileValid: false,
+      graderProfileError: expect.stringContaining(
+        'no supported bounded profile',
+      ),
+    });
   });
 
   it('surfaces planning ambiguity as one non-PR human-review outcome and releases the claim', async () => {

@@ -57,6 +57,25 @@ describe('gradeBuild', () => {
     expect(g.findings.some((f) => f.criterionId === 'GATE-scope_check')).toBe(true);
   });
 
+  it('turns post-build grader profile drift into an actionable blocking gate', () => {
+    const g = gradeBuild(contract, artifact({
+      graderProfileValid: false,
+      graderProfileError:
+        'built checkout has no supported bounded profile',
+    }), DEFAULT_CONFIG);
+    expect(g.hardGates.grader_profile).toBe('fail');
+    expect(g.verdict).toBe('request_changes');
+    expect(g.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        criterionId: 'GATE-grader_profile',
+        requiredFix: [
+          'Restore the immutable-at-claim grader profile: '
+          + 'built checkout has no supported bounded profile',
+        ],
+      }),
+    ]));
+  });
+
   it('a failing minor criterion lowers score but is not a blocker', () => {
     const g = gradeBuild(contract, artifact({ satisfied: { 'AC-001': true, 'AC-002': false } }), DEFAULT_CONFIG);
     expect(g.blockerCount).toBe(0);
