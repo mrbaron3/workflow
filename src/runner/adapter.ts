@@ -546,6 +546,11 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           );
         },
         prNativeRunner,
+        repositoryGraderProfileEvidence: (worktree) =>
+          repositoryGraderProfileEvidence(
+            worktree,
+            config.target?.graders ?? {},
+          ),
         discoverPullRequests: input.payload.event.kind !== 'issue',
         // Issue jobs start from a fresh job-scoped store, so there is nothing
         // to reconcile before intake. PR/repository jobs arm permits only

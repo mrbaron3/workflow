@@ -54,6 +54,7 @@ import {
   discoverRepositoryPullRequests,
   reviewRepositoryPullRequest,
   type RepositoryPullRequestReviewer,
+  type RepositoryPullRequestReviewOptions,
 } from '../pipeline/execution/repository-pr.js';
 
 export interface PlanningRunnerInput {
@@ -121,6 +122,8 @@ export interface GithubDevelopmentTurnDeps {
   driveQueue?: QueueDriver;
   prNativeRunner?: PrNativeGithubRunner;
   repositoryPullRequestReviewer?: RepositoryPullRequestReviewer;
+  repositoryGraderProfileEvidence?:
+    RepositoryPullRequestReviewOptions['graderProfileEvidence'];
   /** A scoped issue job must not import unrelated repository PRs. */
   discoverPullRequests?: boolean;
   /** Isolated-runner hooks; ordinary CLI callers leave these absent. */
@@ -216,6 +219,9 @@ export async function runGithubDevelopmentTurn(
             : {}),
           ...(deps.liveOptions?.beforeProviderExecution
             ? { beforeProviderExecution: deps.liveOptions.beforeProviderExecution }
+            : {}),
+          ...(deps.repositoryGraderProfileEvidence
+            ? { graderProfileEvidence: deps.repositoryGraderProfileEvidence }
             : {}),
         },
       ));
