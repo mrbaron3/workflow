@@ -64,6 +64,48 @@ export function prHeadRefspec(branch: string): string {
   return `HEAD:refs/heads/${branch}`;
 }
 
+/**
+ * Publish a generated HEAD with a lease grounded in the mirror's last fetch.
+ *
+ * Production passes a literal GitHub URL instead of the configured `origin`
+ * name. Bare `--force-with-lease` cannot associate that URL with
+ * `refs/remotes/origin/*`, so it treats an existing destination as stale even
+ * when the fetched tracking ref matches it. Spell out the expected object:
+ * an existing tracking ref must still be at that SHA, while an absent tracking
+ * ref requires the destination branch to remain absent.
+ */
+export function pushGeneratedBranch(
+  worktree: string,
+  remote: string,
+  branch: string,
+): void {
+  const destination = `refs/heads/${branch}`;
+  const trackingRef = `refs/remotes/origin/${branch}`;
+  let expected = '';
+  try {
+    expected = run('git', [
+      '-C',
+      worktree,
+      'rev-parse',
+      '--verify',
+      `${trackingRef}^{commit}`,
+    ], worktree).trim();
+  } catch {
+    // An empty expected object is Git's explicit "branch must not exist"
+    // lease. If probing failed for any other reason, the push still fails
+    // closed whenever the destination already exists.
+  }
+  run('git', [
+    '-C',
+    worktree,
+    'push',
+    `--force-with-lease=${destination}:${expected}`,
+    '-u',
+    remote,
+    prHeadRefspec(branch),
+  ], worktree, { credentials: 'github' });
+}
+
 export interface OpenGateInput {
   pr: PR;
   /** The checkout whose branch is pushed and from which the PR is opened. */
@@ -281,15 +323,7 @@ export function realGhGateRunner(repository?: string): GhGateRunner {
     pushBranch(worktree, branch) {
       // Push an AgentOps-generated worktree HEAD to its stable remote PR branch.
       // Repository-discovered heads never reach this credential-bearing adapter.
-      run('git', [
-        '-C',
-        worktree,
-        'push',
-        '--force-with-lease',
-        '-u',
-        remote,
-        prHeadRefspec(branch),
-      ], worktree, { credentials: 'github' });
+      pushGeneratedBranch(worktree, remote, branch);
     },
     createPr(cwd, args) {
       const bodyFile = path.join(os.tmpdir(), `ao-gate-body-${args.head.replace(/\W+/g, '-')}.md`);
