@@ -75,6 +75,27 @@ describe('commitBuild + buildChangedFiles: the build is one amended commit vs it
     expect(execFileSync('git', ['-C', wt, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()).not.toBe(headAfter1);
   });
 
+  it('repair that removes the whole build drops the temporary commit instead of empty-amending', () => {
+    const repo = tmpRepo('bc-repair-empty');
+    const wt = path.join(repo, '.wt');
+    const base = execFileSync(
+      'git',
+      ['-C', repo, 'rev-parse', 'HEAD'],
+      { encoding: 'utf8' },
+    ).trim();
+    createWorktree(repo, 'HEAD', wt);
+    write(wt, 'src/roman.ts', 'export const x = 1;');
+    expect(commitBuild(wt, 'attempt 1')).toBe(true);
+
+    // The repair agent fully reverts the prior build. The index differs from the
+    // current build commit but its tree is now exactly the immutable fork point.
+    fs.rmSync(path.join(wt, 'src', 'roman.ts'));
+
+    expect(commitBuild(wt, 'attempt 2')).toBe(false);
+    expect(headCommit(wt)).toBe(base);
+    expect(changedFiles(wt)).toEqual([]);
+  });
+
   it('an empty build (no edits) does not create a commit', () => {
     const repo = tmpRepo('bc-empty');
     const wt = path.join(repo, '.wt');
