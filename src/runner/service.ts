@@ -290,18 +290,41 @@ export class IsolatedRunnerService {
           jobId: lease.job.id,
           attemptNumber: lease.attemptNumber,
           repository,
+          outcome: adapterResult.outcome,
           headSha: adapterResult.headSha,
           pullRequestNumber: adapterResult.pullRequestNumber,
           developmentTurn: adapterResult.developmentTurn,
+          humanReview: adapterResult.humanReview === null
+            ? null
+            : {
+                ...adapterResult.humanReview,
+                classification: 'what-judgment',
+                howIntervention: false,
+                aiAppliedReadyLabel: false,
+                claimedLabelRemoved: true,
+              },
           completedAt: new Date().toISOString(),
         },
       });
+      const humanReview = adapterResult.humanReview === null
+        ? null
+        : {
+            issueNumber: adapterResult.humanReview.issueNumber,
+            reasonCount: adapterResult.humanReview.reasons.length,
+            commentUrl: adapterResult.humanReview.commentUrl,
+            classification: 'what-judgment' as const,
+            howIntervention: false as const,
+            aiAppliedReadyLabel: false as const,
+            claimedLabelRemoved: true as const,
+          };
       const result = RunnerJobResultV1Contract.parse({
         schemaVersion: 1,
         status: 'succeeded',
         jobId: lease.job.id,
         attemptNumber: lease.attemptNumber,
         repository,
+        outcome: adapterResult.outcome,
+        humanReview,
         headSha: adapterResult.headSha,
         pullRequestNumber: adapterResult.pullRequestNumber,
         artifacts: [evidence],
@@ -310,7 +333,7 @@ export class IsolatedRunnerService {
       await this.store.finishLease(lease.token, { status: 'succeeded', result });
       this.log(
         `runner completed ${lease.job.id} attempt ${lease.attemptNumber} `
-        + `at ${result.headSha ?? 'no-head'}`,
+        + `with ${result.outcome} at ${result.headSha ?? 'no-head'}`,
       );
     } catch (error) {
       await this.recordFailure(lease, runnerFailure(error));

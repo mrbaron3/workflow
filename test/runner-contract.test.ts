@@ -27,6 +27,14 @@ function ajv(): Ajv2020 {
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
   );
   validator.addFormat('date-time', (value: string) => !Number.isNaN(Date.parse(value)));
+  validator.addFormat('uri', (value: string) => {
+    try {
+      new URL(value);
+      return true;
+    } catch {
+      return false;
+    }
+  });
   return validator;
 }
 
@@ -204,11 +212,35 @@ describe('isolated runner published contracts', () => {
       jobId: 'db837db2-30d7-4788-a56f-00056f5d550e',
       attemptNumber: 1,
       repository: 'mrbaron3/workflow',
+      outcome: 'completed',
+      humanReview: null,
       headSha: 'b'.repeat(40),
       pullRequestNumber: 38,
       artifacts: [artifact],
       completedAt: '2026-07-25T00:01:00.000Z',
     }).artifacts).toEqual([artifact]);
+    expect(RunnerJobResultV1Contract.parse({
+      schemaVersion: 1,
+      status: 'succeeded',
+      jobId: 'db837db2-30d7-4788-a56f-00056f5d550e',
+      attemptNumber: 1,
+      repository: 'mrbaron3/workflow',
+      outcome: 'needs-human-review',
+      humanReview: {
+        issueNumber: 14,
+        reasonCount: 5,
+        commentUrl:
+          'https://github.com/mrbaron3/workflow/issues/14#issuecomment-1',
+        classification: 'what-judgment',
+        howIntervention: false,
+        aiAppliedReadyLabel: false,
+        claimedLabelRemoved: true,
+      },
+      headSha: null,
+      pullRequestNumber: null,
+      artifacts: [artifact],
+      completedAt: '2026-07-25T00:01:00.000Z',
+    }).outcome).toBe('needs-human-review');
     expect(RunnerJobFailureV1Contract.parse({
       schemaVersion: 1,
       status: 'failed',
@@ -248,6 +280,49 @@ describe('isolated runner published contracts', () => {
     validator.addSchema(jobSchema);
     const validateResult = validator.compile(resultSchema);
     const validateFailure = validator.compile(failureSchema);
+    const humanReviewResult = {
+      schemaVersion: 1,
+      status: 'succeeded',
+      jobId: 'db837db2-30d7-4788-a56f-00056f5d550e',
+      attemptNumber: 1,
+      repository: 'mrbaron3/workflow',
+      outcome: 'needs-human-review',
+      humanReview: {
+        issueNumber: 14,
+        reasonCount: 5,
+        commentUrl:
+          'https://github.com/mrbaron3/workflow/issues/14#issuecomment-1',
+        classification: 'what-judgment',
+        howIntervention: false,
+        aiAppliedReadyLabel: false,
+        claimedLabelRemoved: true,
+      },
+      headSha: null,
+      pullRequestNumber: null,
+      artifacts: [],
+      completedAt: '2026-07-25T00:01:00.000Z',
+    };
+    expect(
+      validateResult(humanReviewResult),
+      JSON.stringify(validateResult.errors),
+    ).toBe(true);
+    expect(() => RunnerJobResultV1Contract.parse(humanReviewResult))
+      .not.toThrow();
+    for (const invalidHumanReviewResult of [
+      {
+        ...humanReviewResult,
+        humanReview: {
+          ...humanReviewResult.humanReview,
+          aiAppliedReadyLabel: true,
+        },
+      },
+      { ...humanReviewResult, headSha: 'a'.repeat(40) },
+      { ...humanReviewResult, outcome: 'completed' },
+    ]) {
+      expect(validateResult(invalidHumanReviewResult)).toBe(false);
+      expect(() => RunnerJobResultV1Contract.parse(invalidHumanReviewResult))
+        .toThrow();
+    }
     const invalidResult = {
       schemaVersion: 1,
       status: 'succeeded',

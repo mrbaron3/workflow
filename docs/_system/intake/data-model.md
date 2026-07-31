@@ -24,3 +24,7 @@
   bundleDigestを監査参照として保持する。decision本文とpreviewはbundle側artifactへの参照とする。
 - **DATA-intake-012 capability trace projection** — capabilityIdから最終Issue id、criterion id、system element idへの
   1..N edgeを保持する。dangling/zero coverage/異revision混在をschema適用前のall-or-nothing gateで拒否する。
+- **DATA-intake-013 runner human-review result** — runner resultのadditiveな`outcome`は
+  `completed|'needs-human-review'`、`humanReview`はIssue番号、理由数、managed comment URL、
+  `classification:'what-judgment'`、`howIntervention:false`、ready非付与、claim解除の証拠を保持する。
+  queue処理は`succeeded`で終端し、failure/retry台帳と分離する。

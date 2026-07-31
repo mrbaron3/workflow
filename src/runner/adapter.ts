@@ -31,16 +31,36 @@ import type {
   Lease,
   RunnerJobPayloadV1,
 } from '../control-store/types.js';
+import {
+  realPlanningHumanReviewGitHub,
+  renderPlanningHumanReviewComment,
+  type PlanningHumanReviewGitHub,
+} from '../triage/planning-human-review.js';
 import { RunnerExecutionError } from './errors.js';
 import type { RunnerLeaseFence } from './guard.js';
 import { isolatedGraderEnvironment } from './security.js';
 import type { PreparedRunnerWorkspace } from './workspace.js';
 
-export interface AgentOpsAdapterResult {
+interface AgentOpsAdapterResultBase {
   headSha: string | null;
   pullRequestNumber: number | null;
   developmentTurn: GithubDevelopmentTurnResult;
 }
+
+export type AgentOpsAdapterResult = AgentOpsAdapterResultBase & (
+  | {
+    outcome: 'completed';
+    humanReview: null;
+  }
+  | {
+    outcome: 'needs-human-review';
+    humanReview: {
+      issueNumber: number;
+      reasons: string[];
+      commentUrl: string;
+    };
+  }
+);
 
 export interface AgentOpsAdapterInput {
   lease: Lease;
@@ -67,6 +87,7 @@ export interface ExistingAgentOpsAdapterDependencies {
   generatorSession?: typeof runGeneratorSession;
   perspectiveSessions?: typeof runPerspectiveSessions;
   groundBuild?: LiveOptions['groundBuild'];
+  planningHumanReviewGithub?: (cwd: string) => PlanningHumanReviewGitHub;
 }
 
 function baseBranch(ref: string): string {
@@ -276,6 +297,59 @@ function guardedPrNativeRunner(
   };
 }
 
+function guardedPlanningHumanReviewGithub(
+  fence: RunnerLeaseFence,
+  delegate: PlanningHumanReviewGitHub,
+  repository: string,
+  issueNumber: number,
+): PlanningHumanReviewGitHub {
+  const assertScope = (
+    requestedRepository: string,
+    requestedIssueNumber: number,
+  ): void => {
+    if (
+      requestedRepository !== repository
+      || requestedIssueNumber !== issueNumber
+    ) {
+      throw new RunnerExecutionError(
+        'provider_failure',
+        `runner job cannot surface human review for unexpected Issue `
+        + `${requestedRepository}#${requestedIssueNumber}`,
+        false,
+        'release',
+      );
+    }
+  };
+  return {
+    ensureManagedComment(
+      requestedRepository,
+      requestedIssueNumber,
+      comment,
+    ) {
+      assertScope(requestedRepository, requestedIssueNumber);
+      fence.consume('release');
+      return delegate.ensureManagedComment(
+        requestedRepository,
+        requestedIssueNumber,
+        comment,
+      );
+    },
+    removeClaimedLabel(
+      requestedRepository,
+      requestedIssueNumber,
+      claimedLabel,
+    ) {
+      assertScope(requestedRepository, requestedIssueNumber);
+      fence.consume('release');
+      delegate.removeClaimedLabel(
+        requestedRepository,
+        requestedIssueNumber,
+        claimedLabel,
+      );
+    },
+  };
+}
+
 function runnerConfig(input: AgentOpsAdapterInput): HarnessConfig {
   const repository = `${input.payload.repository.owner}/${input.payload.repository.name}`;
   const branch = baseBranch(input.payload.target.baseRef);
@@ -350,6 +424,17 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             );
           },
         };
+    const planningHumanReviewGithub = input.payload.event.kind === 'issue'
+      ? guardedPlanningHumanReviewGithub(
+          input.fence,
+          (
+            this.dependencies.planningHumanReviewGithub
+            ?? realPlanningHumanReviewGitHub
+          )(input.workspace.worktreePath),
+          repository,
+          input.payload.event.number,
+        )
+      : null;
     const gateRunner = guardedGateRunner(
       input.fence,
       (this.dependencies.gateRunner ?? realGhGateRunner)(repository),
@@ -446,25 +531,77 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       input.log,
     );
 
+    const issueIntake = event.kind === 'issue'
+      ? store.db.intakeRecords.find(
+          (record) =>
+            record.snapshot.repository === repository
+            && record.snapshot.number === event.number,
+        )
+      : undefined;
     const matchingPr = event.kind === 'pull_request'
       ? [...store.db.prs].reverse().find(
           (pr) => pr.externalRef?.number === event.number,
         )
       : event.kind === 'issue'
         ? (() => {
-          const intake = store.db.intakeRecords.find(
-            (record) =>
-              record.snapshot.repository
-                === `${input.payload.repository.owner}/${input.payload.repository.name}`
-              && record.snapshot.number === event.number,
-          );
-          if (!intake) return undefined;
+          if (!issueIntake) return undefined;
           return [...store.db.prs].reverse().find((pr) =>
-            intake.storeIssueIds.includes(pr.issueId));
+            issueIntake.storeIssueIds.includes(pr.issueId));
         })()
         : [...store.db.prs].reverse().find((pr) => pr.status === 'merged');
     if (input.payload.event.kind === 'repository' && !matchingPr) {
       return {
+        outcome: 'completed',
+        humanReview: null,
+        headSha: null,
+        pullRequestNumber: null,
+        developmentTurn,
+      };
+    }
+    if (
+      !matchingPr
+      && event.kind === 'issue'
+      && issueIntake?.status === 'needs-human-review'
+    ) {
+      const enrichment = store.planningEnrichmentFor(issueIntake.intakeKey);
+      if (
+        !enrichment
+        || enrichment.status !== 'needs-human-review'
+        || enrichment.reasons.length === 0
+        || planningHumanReviewGithub === null
+      ) {
+        throw new RunnerExecutionError(
+          'internal_failure',
+          'needs-human-review intake has no recorded planning stop reasons',
+          false,
+          'release',
+        );
+      }
+      const comment = renderPlanningHumanReviewComment({
+        repository,
+        issueNumber: event.number,
+        reasons: enrichment.reasons,
+        readyLabel: input.payload.execution.readyLabel,
+      });
+      await input.fence.arm('release');
+      const commentUrl = planningHumanReviewGithub.ensureManagedComment(
+        repository,
+        event.number,
+        comment,
+      );
+      await input.fence.arm('release');
+      planningHumanReviewGithub.removeClaimedLabel(
+        repository,
+        event.number,
+        input.payload.execution.claimedLabel,
+      );
+      return {
+        outcome: 'needs-human-review',
+        humanReview: {
+          issueNumber: event.number,
+          reasons: [...enrichment.reasons],
+          commentUrl,
+        },
         headSha: null,
         pullRequestNumber: null,
         developmentTurn,
@@ -487,6 +624,8 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       );
     }
     return {
+      outcome: 'completed',
+      humanReview: null,
       headSha: matchingPr.mergedHeadSha,
       pullRequestNumber: matchingPr.externalRef?.number ?? null,
       developmentTurn,
