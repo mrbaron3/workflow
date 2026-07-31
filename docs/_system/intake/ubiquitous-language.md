@@ -23,3 +23,4 @@
 | LANG-intake-016 | Experience Contract | page purpose、task、flow、effort budget、attention hierarchyと、全elementのplacement rationale/removal impactを表す体験設計契約。 |
 | LANG-intake-017 | Capability Requirement | UI/UXが必要とするquery/command、認可、freshness、idempotency、failure semantics等の能力要求。endpointや実装方式はplanning/designが決める。 |
 | LANG-intake-018 | Human Design Decision | 人間が特定`revisionId`＋`bundleDigest`へ与えるapprove/request-changes/reject。artifact変更後へ持ち越せない。 |
+| LANG-intake-019 | Planning Human Review Outcome | planning gateの未解決点をSource Issueへ戻し、人間のWHAT判断までretryせず終端する正常系outcome。provider failureやHOW介入ではない。 |

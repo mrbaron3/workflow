@@ -1563,6 +1563,8 @@ integration('PostgreSQL control store', () => {
         await input.fence.arm('release');
         input.fence.consume('release');
         return {
+          outcome: 'completed',
+          humanReview: null,
           headSha: 'b'.repeat(40),
           pullRequestNumber: 38,
           developmentTurn: {
@@ -1611,6 +1613,7 @@ integration('PostgreSQL control store', () => {
       result: {
         schemaVersion: 1,
         status: 'succeeded',
+        outcome: 'completed',
         jobId: queued.job.id,
         headSha: 'b'.repeat(40),
         pullRequestNumber: 38,

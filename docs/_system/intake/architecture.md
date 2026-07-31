@@ -48,3 +48,6 @@
   preview、目的、effort、attention、element rationale、design system/capability deltaを提示する。
 - **ARCH-intake-018 legacy migration** — 現行`runUiDesignSession`はlegacy provider adapterとして維持し、
   candidate単位の明示設定で新providerへ切り替える。dual-writeせず、外部provider失敗時にlegacyへ暗黙fallbackしない。
+- **ARCH-intake-019 planning human-review projection** — planning enrichmentが`needs-human-review`で停止したIssue jobは、
+  PR不在をprovider障害へ分類せず、runner resultを`outcome:'needs-human-review'`として1 attemptで終える。記録済み理由を
+  managed marker commentへ決定論投影した後にclaimed labelだけを外し、ready signalは人間の判断として付与しない。

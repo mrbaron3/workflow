@@ -24,6 +24,42 @@
       "type": "string",
       "pattern": "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/(?!\\.{1,2}$)[a-z0-9_.-]{1,100}$"
     },
+    "outcome": {
+      "enum": ["completed", "needs-human-review"],
+      "default": "completed"
+    },
+    "humanReview": {
+      "default": null,
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "issueNumber",
+            "reasonCount",
+            "commentUrl",
+            "classification",
+            "howIntervention",
+            "aiAppliedReadyLabel",
+            "claimedLabelRemoved"
+          ],
+          "properties": {
+            "issueNumber": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2147483647
+            },
+            "reasonCount": { "type": "integer", "minimum": 1 },
+            "commentUrl": { "type": "string", "format": "uri" },
+            "classification": { "const": "what-judgment" },
+            "howIntervention": { "const": false },
+            "aiAppliedReadyLabel": { "const": false },
+            "claimedLabelRemoved": { "const": true }
+          }
+        },
+        { "type": "null" }
+      ]
+    },
     "headSha": {
       "oneOf": [
         { "type": "string", "pattern": "^[0-9a-f]{40,64}$" },
@@ -45,5 +81,35 @@
       "format": "date-time",
       "pattern": "Z$"
     }
-  }
+  },
+  "dependentRequired": {
+    "humanReview": ["outcome"]
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": ["outcome"],
+        "properties": { "outcome": { "const": "needs-human-review" } }
+      },
+      "then": {
+        "required": ["humanReview"],
+        "properties": {
+          "humanReview": { "type": "object" },
+          "headSha": { "type": "null" },
+          "pullRequestNumber": { "type": "null" }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": ["outcome"],
+        "properties": { "outcome": { "const": "completed" } }
+      },
+      "then": {
+        "properties": {
+          "humanReview": { "type": "null" }
+        }
+      }
+    }
+  ]
 }

@@ -244,17 +244,55 @@ export const RunnerJobPayloadV1Contract = z.object({
 });
 export type RunnerJobPayloadV1 = z.infer<typeof RunnerJobPayloadV1Contract>;
 
+export const RunnerHumanReviewV1Contract = z.object({
+  issueNumber: z.number().int().positive().max(2_147_483_647),
+  reasonCount: z.number().int().positive(),
+  commentUrl: z.string().url(),
+  classification: z.literal('what-judgment'),
+  howIntervention: z.literal(false),
+  aiAppliedReadyLabel: z.literal(false),
+  claimedLabelRemoved: z.literal(true),
+}).strict();
+export type RunnerHumanReviewV1 = z.infer<
+  typeof RunnerHumanReviewV1Contract
+>;
+
 export const RunnerJobResultV1Contract = z.object({
   schemaVersion: z.literal(1),
   status: z.literal('succeeded'),
   jobId: z.string().uuid(),
   attemptNumber: z.number().int().positive(),
   repository: CanonicalRepository,
+  outcome: z.enum(['completed', 'needs-human-review']).default('completed'),
+  humanReview: RunnerHumanReviewV1Contract.nullable().default(null),
   headSha: z.string().regex(/^[0-9a-f]{40,64}$/).nullable(),
   pullRequestNumber: z.number().int().positive().nullable(),
   artifacts: z.array(ArtifactReferenceContract),
   completedAt: z.string().datetime(),
-}).strict();
+}).strict().superRefine((result, context) => {
+  if (result.outcome === 'needs-human-review') {
+    if (result.humanReview === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['humanReview'],
+        message: 'needs-human-review outcome requires human-review evidence',
+      });
+    }
+    if (result.headSha !== null || result.pullRequestNumber !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['headSha'],
+        message: 'needs-human-review outcome cannot claim a PR revision',
+      });
+    }
+  } else if (result.humanReview !== null) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['humanReview'],
+      message: 'completed outcome cannot carry human-review evidence',
+    });
+  }
+});
 export type RunnerJobResultV1 = z.infer<typeof RunnerJobResultV1Contract>;
 
 export const RunnerFailureCode = z.enum([
