@@ -5,6 +5,7 @@
  * including the false-pass harvest onto EvalRun.humanVerdict. No network.
  */
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -28,6 +29,7 @@ import {
   pollGate,
   prHeadRefspec,
   projectReviewRevision,
+  pushGeneratedBranch,
   renderGatePrBody,
   renderReviewPrBody,
   type GhGateRunner,
@@ -135,7 +137,84 @@ describe('trusted AgentOps PR repair projection', () => {
       'HEAD:refs/heads/feature/existing-pr',
     );
   });
+
+  it('publishes through a literal remote when the fetched tracking SHA still matches', () => {
+    const fixture = pushLeaseFixture('matching');
+    const candidate = commitFile(fixture.worktree, 'candidate.txt', 'candidate');
+
+    pushGeneratedBranch(fixture.worktree, fixture.remote, fixture.branch);
+
+    expect(revParse(fixture.remote, fixture.branch)).toBe(candidate);
+  });
+
+  it('fails closed when the remote branch moves after the tracking ref was fetched', () => {
+    const fixture = pushLeaseFixture('concurrent');
+    commitFile(fixture.worktree, 'candidate.txt', 'candidate');
+    const concurrent = commitFile(fixture.seed, 'concurrent.txt', 'concurrent');
+    git(fixture.seed, ['push', '--force', 'origin', `HEAD:${fixture.branch}`]);
+
+    expect(() => pushGeneratedBranch(
+      fixture.worktree,
+      fixture.remote,
+      fixture.branch,
+    )).toThrow(/stale info/);
+    expect(revParse(fixture.remote, fixture.branch)).toBe(concurrent);
+  });
+
+  it('creates a new branch only while the remote destination is absent', () => {
+    const fixture = pushLeaseFixture('new-branch', false);
+    const candidate = commitFile(fixture.worktree, 'candidate.txt', 'candidate');
+
+    pushGeneratedBranch(fixture.worktree, fixture.remote, fixture.branch);
+
+    expect(revParse(fixture.remote, fixture.branch)).toBe(candidate);
+  });
 });
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+}
+
+function commitFile(repository: string, name: string, contents: string): string {
+  fs.writeFileSync(path.join(repository, name), contents, 'utf8');
+  git(repository, ['add', name]);
+  git(repository, ['commit', '-m', `test: ${name}`]);
+  return revParse(repository, 'HEAD');
+}
+
+function revParse(repository: string, ref: string): string {
+  return git(repository, ['rev-parse', ref]);
+}
+
+function pushLeaseFixture(name: string, existingBranch = true): {
+  remote: string;
+  seed: string;
+  worktree: string;
+  branch: string;
+} {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), `agentops-push-lease-${name}-`));
+  const remote = path.join(root, 'remote.git');
+  const seed = path.join(root, 'seed');
+  const worktree = path.join(root, 'worktree');
+  const branch = 'agent/issue-0001-s0';
+  fs.mkdirSync(seed);
+  git(root, ['init', '--bare', remote]);
+  git(seed, ['init', '-b', 'main']);
+  git(seed, ['config', 'user.name', 'AgentOps Test']);
+  git(seed, ['config', 'user.email', 'agentops@example.test']);
+  commitFile(seed, 'base.txt', 'base');
+  git(seed, ['remote', 'add', 'origin', remote]);
+  git(seed, ['push', '-u', 'origin', 'main']);
+  if (existingBranch) {
+    git(seed, ['push', 'origin', `HEAD:${branch}`]);
+  }
+  git(remote, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  git(root, ['clone', remote, worktree]);
+  git(worktree, ['config', 'user.name', 'AgentOps Test']);
+  git(worktree, ['config', 'user.email', 'agentops@example.test']);
+  git(worktree, ['checkout', '--detach']);
+  return { remote, seed, worktree, branch };
+}
 
 describe('openGate: project an approved build to the gate UI', () => {
   it('store backend is a no-op — no push, no PR, no externalRef', () => {
