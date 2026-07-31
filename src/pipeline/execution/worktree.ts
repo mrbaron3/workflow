@@ -2,9 +2,10 @@
  * Git worktree isolation (ARCH-execution-004, realising LANG-execution-007).
  *
  * Each sample gets its own git worktree of the target repo, so a session edits real files
- * in isolation and the harness can diff / grade that checkout. Repair attempts reuse the
- * same worktree so fixes accumulate. Worktrees are ephemeral (DOM-execution-002): the
- * durable footprint is the PR/Issue status in the store.
+ * in isolation and the harness can diff / grade that checkout. Generator worktrees use a
+ * detached HEAD: the stable PR branch is a remote projection identity, not a shared local
+ * checkout identity. Repair attempts reuse the same worktree so fixes accumulate. Worktrees
+ * are ephemeral (DOM-execution-002): the durable footprint is the PR/Issue status in the store.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -53,14 +54,20 @@ function clearWorktree(repo: string, worktreePath: string): void {
 }
 
 /**
- * Create a fresh worktree at `worktreePath` on branch `branch`, forked from `baseRef`.
- * Idempotent: tears down any stale worktree/branch of the same name first.
+ * Create a fresh generator worktree at `worktreePath`, detached from `baseRef`.
+ *
+ * Detached is deliberate: ARCH-execution-014 keeps stuck worktrees alive for a human, and a
+ * later job can legitimately drive the same stable PR branch. Git refuses to check one local
+ * branch out in both worktrees. The GitHub gate already publishes the completed checkout with
+ * `HEAD:refs/heads/<stable-branch>`, so local branch sharing is unnecessary and would let a new
+ * job move the retained worktree's ref behind the human's back.
+ *
+ * Idempotent for this physical path: tears down any stale worktree there first.
  */
-export function createWorktree(repo: string, branch: string, baseRef: string, worktreePath: string): void {
+export function createWorktree(repo: string, baseRef: string, worktreePath: string): void {
   fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
   clearWorktree(repo, worktreePath);
-  git(repo, ['branch', '-D', branch], true);
-  git(repo, ['worktree', 'add', '-B', branch, worktreePath, baseRef]);
+  git(repo, ['worktree', 'add', '--detach', worktreePath, baseRef]);
   excludeAgentops(worktreePath);
 }
 

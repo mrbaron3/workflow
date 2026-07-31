@@ -127,7 +127,7 @@ export async function runGeneratorSession(
   )) {
     // A repository-discovered PR is already an implementation: its first AgentOps
     // generator turn is a repair and must start from the observed PR head, not main.
-    createWorktree(repoAbs, branch, generatorStartRef(input.resumeRef, baseRef), wt);
+    createWorktree(repoAbs, generatorStartRef(input.resumeRef, baseRef), wt);
   }
 
   // the full prompt lives in a file — send-keys can't carry multi-line text without
