@@ -149,11 +149,29 @@ describe('trusted AgentOps PR repair projection', () => {
     expect(revParse(fixture.remote, fixture.branch)).toBe(candidate);
   });
 
-  it('fails closed when the remote branch moves after the tracking ref was fetched', () => {
+  it('uses each successfully published repair head as the next literal-remote lease', () => {
+    const fixture = pushLeaseFixture('sequential-repairs');
+    const first = commitFile(fixture.worktree, 'first.txt', 'first repair');
+
+    pushGeneratedBranch(fixture.worktree, fixture.remote, fixture.branch);
+    const second = commitFile(fixture.worktree, 'second.txt', 'second repair');
+    pushGeneratedBranch(fixture.worktree, fixture.remote, fixture.branch);
+
+    expect(revParse(fixture.remote, fixture.branch)).toBe(second);
+    expect(revParse(
+      fixture.worktree,
+      `refs/remotes/origin/${fixture.branch}`,
+    )).toBe(second);
+    expect(first).not.toBe(second);
+  });
+
+  it('fails closed when the remote branch moves after a successful repair push', () => {
     const fixture = pushLeaseFixture('concurrent');
-    commitFile(fixture.worktree, 'candidate.txt', 'candidate');
+    const first = commitFile(fixture.worktree, 'first.txt', 'first repair');
+    pushGeneratedBranch(fixture.worktree, fixture.remote, fixture.branch);
     const concurrent = commitFile(fixture.seed, 'concurrent.txt', 'concurrent');
     git(fixture.seed, ['push', '--force', 'origin', `HEAD:${fixture.branch}`]);
+    commitFile(fixture.worktree, 'second.txt', 'second repair');
 
     expect(() => pushGeneratedBranch(
       fixture.worktree,
@@ -161,6 +179,10 @@ describe('trusted AgentOps PR repair projection', () => {
       fixture.branch,
     )).toThrow(/stale info/);
     expect(revParse(fixture.remote, fixture.branch)).toBe(concurrent);
+    expect(revParse(
+      fixture.worktree,
+      `refs/remotes/origin/${fixture.branch}`,
+    )).toBe(first);
   });
 
   it('creates a new branch only while the remote destination is absent', () => {
