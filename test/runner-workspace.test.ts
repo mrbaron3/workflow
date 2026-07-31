@@ -113,6 +113,66 @@ describe('Registration-rooted runner workspace', () => {
     expect(prepared.headSha).toBe(sha);
   });
 
+  // The harness keeps worktrees of this same mirror alive, and git refuses to update a
+  // branch any worktree has checked out. Once a generator's branch reaches the remote, a
+  // refs/heads:refs/heads mirror fetch fails for every later job — so the mirror must only
+  // ever write remote-tracking refs, and resolve targets from there first.
+  it('fetches into remote-tracking refs and resolves the target from origin first', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-mirror-'));
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const originSha = 'b'.repeat(40);
+    const runner: WorkspaceCommandRunner = (command, args) => {
+      calls.push({ command, args });
+      if (args[0] === 'clone') fs.mkdirSync(String(args.at(-1)), { recursive: true });
+      if (args.includes('add')) {
+        const index = args.indexOf('add');
+        fs.mkdirSync(String(args[index + 4]), { recursive: true });
+      }
+      if (args.includes('rev-parse')) {
+        const ref = String(args.at(-1));
+        if (ref.startsWith('refs/remotes/origin/')) {
+          return { status: 0, stdout: `${originSha}\n`, stderr: '' };
+        }
+        return { status: 0, stdout: `${sha}\n`, stderr: '' };
+      }
+      if (args.includes('get-url')) {
+        return { status: 0, stdout: 'https://github.com/mrbaron3/workflow.git\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    const prepared = new RunnerWorkspaceManager(root, { PATH: '/usr/bin' }, runner)
+      .prepare(lease(), payload());
+    const fetch = calls.find((call) => call.args.includes('fetch'));
+    expect(fetch?.args).toContain('+refs/heads/*:refs/remotes/origin/*');
+    expect(fetch?.args.join(' ')).not.toContain('refs/heads/*:refs/heads/*');
+    expect(prepared.headSha).toBe(originSha);
+  });
+
+  it('falls back to the local ref when the target is absent from origin', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-mirror-local-'));
+    const runner: WorkspaceCommandRunner = (command, args) => {
+      if (args[0] === 'clone') fs.mkdirSync(String(args.at(-1)), { recursive: true });
+      if (args.includes('add')) {
+        const index = args.indexOf('add');
+        fs.mkdirSync(String(args[index + 4]), { recursive: true });
+      }
+      if (args.includes('rev-parse')) {
+        const ref = String(args.at(-1));
+        if (ref.startsWith('refs/remotes/origin/')) {
+          return { status: 1, stdout: '', stderr: 'unknown revision' };
+        }
+        return { status: 0, stdout: `${sha}\n`, stderr: '' };
+      }
+      if (args.includes('get-url')) {
+        return { status: 0, stdout: 'https://github.com/mrbaron3/workflow.git\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    const prepared = new RunnerWorkspaceManager(root, { PATH: '/usr/bin' }, runner)
+      .prepare(lease(), payload());
+    expect(prepared.headSha).toBe(sha);
+  });
+
   it('accepts exact artifact digest/size and rejects tampering or cross-Registration reuse', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-artifact-'));
     const registrationRoot = registrationWorkspacePath(root, registrationId);
