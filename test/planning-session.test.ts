@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { IntakeRecord } from '../src/domain/schema.js';
 import { buildPlanningPrompt, PLANNING_LIVENESS } from '../src/intake/planning-session.js';
+import type { TargetRepoConfig } from '../src/config.js';
 
 describe('planning session contract', () => {
   const intake = IntakeRecord.parse({
@@ -12,9 +13,26 @@ describe('planning session contract', () => {
     },
     claimedAt: '2026-07-14T01:00:01.000Z', createdAt: '2026-07-14T01:00:00.000Z', updatedAt: '2026-07-14T01:00:01.000Z',
   });
+  const directCheckerTarget: TargetRepoConfig = {
+    repo: '/repo',
+    graders: {
+      typecheck: 'node scripts/check-contracts.mjs',
+      commands: {
+        build: 'node scripts/check-contracts.mjs',
+        typecheck: 'node scripts/check-contracts.mjs',
+        api_test: 'node scripts/check-contracts.mjs',
+        db_state_check: 'node scripts/check-contracts.mjs',
+      },
+    },
+  };
 
   it('AC-GHSLICE-002 gives the planner only source/system/output contracts and treats source text as untrusted', () => {
-    const prompt = buildPlanningPrompt(intake, '/evidence/enrichment.json', '/evidence/system');
+    const prompt = buildPlanningPrompt(
+      intake,
+      '/evidence/enrichment.json',
+      '/evidence/system',
+      directCheckerTarget,
+    );
     expect(prompt).toContain('untrusted product input');
     expect(prompt).toContain('/evidence/enrichment.json');
     expect(prompt).toContain('/evidence/system');
@@ -26,6 +44,48 @@ describe('planning session contract', () => {
     expect(prompt).toContain('Do not emit a');
     expect(prompt).toContain('final Issue Contract');
     expect(prompt).toContain('only after an approved Design Bundle');
+    expect(prompt).toContain('repo-relative file paths or');
+    expect(prompt).toContain('"contracts/v1/**"');
+    expect(prompt).toContain('Never put deliverable descriptions');
+  });
+
+  it('presents only verification methods executable by the claimed repository profile', () => {
+    const direct = buildPlanningPrompt(
+      intake,
+      '/evidence/enrichment.json',
+      '/evidence/system',
+      directCheckerTarget,
+    );
+    expect(direct).toContain(
+      'are: build, typecheck, api_test, db_state_check, scope_check.',
+    );
+    expect(direct).toContain(
+      'Use api_test for schema/contract validation; do not emit unit_test.',
+    );
+
+    const vitest = buildPlanningPrompt(
+      intake,
+      '/evidence/enrichment.json',
+      '/evidence/system',
+      {
+        repo: '/repo',
+        graders: {
+          typecheck: 'tsc --noEmit',
+          unit_tests: 'vitest run',
+          commands: {
+            build: 'tsc',
+            typecheck: 'tsc --noEmit',
+            unit_test: 'vitest run',
+          },
+        },
+      },
+    );
+    expect(vitest).toContain(
+      'are: build, typecheck, unit_test, scope_check.',
+    );
+    expect(vitest).toContain(
+      'unit_test criterion requires structured test assertions',
+    );
   });
 
   it('AC-GHSLICE-002 keeps planner liveness finite while allowing long active analysis', () => {

@@ -6,7 +6,7 @@ import type {
   IntakeRecord,
   InvocationOutcome,
 } from '../domain/schema.js';
-import type { HarnessConfig } from '../config.js';
+import type { HarnessConfig, TargetRepoConfig } from '../config.js';
 import type { AgentRoute } from '../agents/routing.js';
 import { providerReadyPattern } from '../agents/interactive-backend.js';
 import {
@@ -22,6 +22,7 @@ import {
   removeWorktree,
 } from '../pipeline/execution/worktree.js';
 import { partitionReviewChanges } from '../pipeline/execution/perspective-session.js';
+import { supportedPlanningVerificationMethods } from './planning-enrichment.js';
 
 export interface PlanningSessionResult {
   provider: AgentProvider;
@@ -41,7 +42,22 @@ function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'intake';
 }
 
-export function buildPlanningPrompt(intake: IntakeRecord, outputPath: string, systemSnapshotDir: string): string {
+export function buildPlanningPrompt(
+  intake: IntakeRecord,
+  outputPath: string,
+  systemSnapshotDir: string,
+  target: TargetRepoConfig,
+): string {
+  const verificationMethods = supportedPlanningVerificationMethods(target);
+  const directCheckerGuidance = verificationMethods.includes('api_test')
+    && !verificationMethods.includes('unit_test')
+    ? [
+        `This repository profile has a direct contract checker but no structured unit-test`,
+        `reporter. Use api_test for schema/contract validation; do not emit unit_test.`,
+      ]
+    : [
+        `A unit_test criterion requires structured test assertions whose titles include its AC ID.`,
+      ];
   return [
     `You are the issue-planner. Convert the immutable GitHub Source Issue below into 1..N`,
     `draft requirements. Inspect the application and the system views at`,
@@ -70,7 +86,7 @@ export function buildPlanningPrompt(intake: IntakeRecord, outputPath: string, sy
     `"area":"backend|infra|docs|eval|harness",`,
     `"contract":{"productGoal":"...","userStory":"...","scope":{"include":[],"exclude":[]},`,
     `"acceptanceCriteria":[{"id":"AC-NAME-001","severity":"blocker|major|minor",`,
-    `"behavior":"...","verification":{"method":"unit_test","expected":["..."]}}],"redLines":[]},`,
+    `"behavior":"...","verification":{"method":"one-available-method","expected":["..."]}}],"redLines":[]},`,
     `"traces":[{"criterionId":"AC-NAME-001","sources":[{"kind":"source","text":"..."}]}]}],`,
     `"designDrafts":[{"candidateKey":"stable-ui-key","title":"...","type":"feature|story|bug|tech-debt",`,
     `"area":"frontend|fullstack","productIntent":{"primaryOutcome":"...","users":["..."],`,
@@ -81,9 +97,15 @@ export function buildPlanningPrompt(intake: IntakeRecord, outputPath: string, sy
     `"existingDesignSystemRef":null,"traces":[{"requirementId":"REQ-NAME-001",`,
     `"sources":[{"kind":"source","text":"..."}]}]}],`,
     `"ambiguities":[]}`,
-    `verification.method MUST be one of build, typecheck, unit_test, api_test, db_state_check,`,
-    `playwright, secrets_scan, scope_check, or llm_rubric. Never emit manual. Choose the method`,
-    `that directly verifies the behaviour; do not rewrite browser/API acceptance as unit_test.`,
+    `scope.include and scope.exclude are execution-enforced arrays of repo-relative file paths or`,
+    `simple globs using * or ** (for example "contracts/v1/**" or "scripts/check-contracts.mjs").`,
+    `Never put deliverable descriptions, type names, prose, or AC IDs in scope. An empty include`,
+    `means intentionally unrestricted; otherwise include every file the implementation may change.`,
+    `The only grounded verification.method values available for this immutable repository profile`,
+    `are: ${verificationMethods.join(', ')}. Never emit any other method or manual.`,
+    ...directCheckerGuidance,
+    `Choose the method that directly verifies the behaviour; do not rewrite browser/API acceptance`,
+    `as unit_test.`,
     `Do not write any other file.`,
   ].join('\n');
 }
@@ -120,7 +142,12 @@ export async function runPlanningSession(
   if (fs.existsSync(sourceSystemDir)) fs.cpSync(sourceSystemDir, systemSnapshotDir, { recursive: true });
   const promptPath = path.join(evidenceDir, 'PROMPT.md');
   const outputPath = path.join(evidenceDir, 'enrichment.json');
-  const prompt = buildPlanningPrompt(intake, outputPath, systemSnapshotDir);
+  const prompt = buildPlanningPrompt(
+    intake,
+    outputPath,
+    systemSnapshotDir,
+    config.target,
+  );
   fs.writeFileSync(promptPath, prompt, 'utf8');
 
   const session = `ao-plan-${key}`;
