@@ -164,6 +164,18 @@ function runBestEffort(
   run(command, args, { cwd, env });
 }
 
+/** Stdout when the command succeeds, empty string when it fails — for probing a ref. */
+function runOptional(
+  run: WorkspaceCommandRunner,
+  command: string,
+  args: readonly string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): string {
+  const result = run(command, args, { cwd, env });
+  return result.error || result.status !== 0 ? '' : result.stdout.trim();
+}
+
 export class RunnerWorkspaceManager {
   constructor(
     readonly root: string,
@@ -227,14 +239,31 @@ export class RunnerWorkspaceManager {
       this.run,
       'git',
       [
+        // Fetch into remote-tracking refs, never into local branches. The harness
+        // keeps worktrees of this same mirror alive (a stuck session's worktree is
+        // retained for a human), and git refuses to update any branch one of them
+        // has checked out — so once a generator's branch reaches the remote, a
+        // refs/heads:refs/heads mirror fetch fails for every later job.
         '-C', repositoryPath, 'fetch', '--prune',
-        cloneUrl, '+refs/heads/*:refs/heads/*',
+        cloneUrl, '+refs/heads/*:refs/remotes/origin/*',
       ],
       registrationRoot,
       this.env,
     );
     const targetRef = payload.target.headRef ?? payload.target.baseRef;
-    const headSha = runChecked(
+    // Remote-tracking first: the mirror also carries local branches created by
+    // harness worktrees, and a ref present in both must resolve to what the
+    // remote publishes. Local resolution stays as the fallback for refs that
+    // exist only in the mirror.
+    const originRef =
+      `refs/remotes/origin/${targetRef.replace(/^refs\/heads\//, '')}`;
+    const headSha = runOptional(
+      this.run,
+      'git',
+      ['-C', repositoryPath, 'rev-parse', '--verify', `${originRef}^{commit}`],
+      registrationRoot,
+      this.env,
+    ) || runChecked(
       this.run,
       'git',
       ['-C', repositoryPath, 'rev-parse', '--verify', `${targetRef}^{commit}`],
