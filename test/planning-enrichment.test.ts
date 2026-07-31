@@ -14,7 +14,9 @@ import {
 } from '../src/intake/planning-enrichment.js';
 
 const roots: string[] = [];
-function setup(): { store: Store; systemDir: string; config: HarnessConfig; intakeKey: string; invocationKey: string } {
+function setup(
+  body = 'Users must export a report as CSV. Keep the stable domain rule.',
+): { store: Store; systemDir: string; config: HarnessConfig; intakeKey: string; invocationKey: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-enrichment-'));
   roots.push(root);
   const systemDir = path.join(root, 'docs', '_system');
@@ -30,7 +32,7 @@ function setup(): { store: Store; systemDir: string; config: HarnessConfig; inta
     id: 'INTAKE-0001', intakeKey, provider: 'github', status: 'claimed',
     snapshot: {
       repository: 'acme/theme', number: 42, externalId: 'I_42', title: 'Add export action',
-      body: 'Users must export a report as CSV. Keep the stable domain rule.',
+      body,
       url: 'https://github.com/acme/theme/issues/42', labels: ['ready'], state: 'open',
       sourceUpdatedAt: '2026-07-14T00:00:00.000Z', snapshotAt: '2026-07-14T01:00:00.000Z',
     },
@@ -72,6 +74,32 @@ function candidate(key: string, acId: string, sourceText: string) {
       redLines: ['Do not invent another export format'],
     },
     traces: [{ criterionId: acId, sources: [{ kind: 'source' as const, text: sourceText }] }],
+  };
+}
+
+function designDraft(sourceText: string) {
+  return {
+    candidateKey: 'ui-export',
+    title: 'Design CSV export action',
+    type: 'feature' as const,
+    area: 'frontend' as const,
+    productIntent: {
+      primaryOutcome: 'Users export the current report',
+      users: ['Report operators'],
+      usageContext: 'While reviewing a report',
+    },
+    requirements: [{
+      id: 'REQ-UI-001',
+      statement: 'Users can start CSV export',
+      priority: 'blocker' as const,
+    }],
+    constraints: [],
+    targetSurfaces: ['web' as const],
+    existingDesignSystemRef: null,
+    traces: [{
+      requirementId: 'REQ-UI-001',
+      sources: [{ kind: 'source' as const, text: sourceText }],
+    }],
   };
 }
 
@@ -281,6 +309,85 @@ describe('planning enrichment gate', () => {
     expect(result.reasons.join('\n')).toContain('source text not found');
     expect(rejected.store.db.issues).toEqual([]);
   });
+
+  it.each([
+    ['asterisk', '**検証**: 呼出し前後で snapshot digest を再計算する。'],
+    ['underscore', '__検証__: 呼出し前後で snapshot digest を再計算する。'],
+  ])(
+    'AC-ENRICH-002 accepts a candidate trace that omits %s strong presentation markers',
+    (_marker, body) => {
+      const env = setup(body);
+      const record = applyPlanningEnrichment(
+        env.store,
+        env.config,
+        env.intakeKey,
+        {
+          candidates: [
+            candidate(
+              'snapshot-validation',
+              'AC-SNAPSHOT-001',
+              '検証: 呼出し前後で snapshot digest を再計算する。',
+            ),
+          ],
+          ambiguities: [],
+        },
+        { systemDir: env.systemDir, invocationKey: env.invocationKey },
+      );
+
+      expect(record.status).toBe('accepted');
+      expect(record.reasons).toEqual([]);
+    },
+  );
+
+  it('AC-ENRICH-002 applies strong-marker matching to design draft traces', () => {
+    const env = setup('Users must **export** a report as CSV.');
+    const record = applyPlanningEnrichment(
+      env.store,
+      env.config,
+      env.intakeKey,
+      {
+        candidates: [],
+        designDrafts: [designDraft('Users must export a report as CSV.')],
+        ambiguities: [],
+      },
+      { systemDir: env.systemDir, invocationKey: env.invocationKey },
+    );
+
+    expect(record.reasons.join('\n')).not.toContain('source text not found');
+  });
+
+  it.each([
+    [
+      'lexical text',
+      '**検証**: 呼出し前後で snapshot digest を再計算する。',
+      '検証: 呼出し後に snapshot digest を再計算する。',
+    ],
+    [
+      'inline code',
+      'Use `**literal**` exactly.',
+      'Use `literal` exactly.',
+    ],
+  ])(
+    'AC-ENRICH-002 still rejects a trace that changes %s',
+    (_difference, body, traceText) => {
+      const env = setup(body);
+      const record = applyPlanningEnrichment(
+        env.store,
+        env.config,
+        env.intakeKey,
+        {
+          candidates: [
+            candidate('snapshot-validation', 'AC-SNAPSHOT-001', traceText),
+          ],
+          ambiguities: [],
+        },
+        { systemDir: env.systemDir, invocationKey: env.invocationKey },
+      );
+
+      expect(record.status).toBe('needs-human-review');
+      expect(record.reasons.join('\n')).toContain('source text not found');
+    },
+  );
 
   it('AC-ENRICH-003 resolves system traces into deduplicated Issue context', () => {
     const env = setup();

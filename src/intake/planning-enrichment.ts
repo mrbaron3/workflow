@@ -85,6 +85,92 @@ export function uiDesignSubjectId(intakeKey: string, candidateKey: string): stri
   return `${intakeKey}:ui-design:${encodeURIComponent(candidateKey)}`;
 }
 
+function stripStrongMarkers(prose: string): string {
+  return prose
+    .replace(/(?<![\\*])\*\*(?=\S)(.*?\S)(?<!\\)\*\*(?!\*)/g, '$1')
+    .replace(
+      /(?<![\\_\p{L}\p{N}])__(?=\S)(.*?\S)(?<!\\)__(?![_\p{L}\p{N}])/gu,
+      '$1',
+    );
+}
+
+/**
+ * Remove Markdown strong presentation markers without changing code spans or
+ * fenced code. Planning traces identify visible source language, so a provider
+ * omitting `**` / `__` must not create a false WHAT stop; lexical and inline
+ * code differences remain exact.
+ */
+function normalizeStrongPresentation(markdown: string): string {
+  const lines = markdown.match(/[^\n]*(?:\n|$)/g) ?? [];
+  let fence: { marker: '`' | '~'; length: number } | null = null;
+  let inlineTicks = 0;
+  let normalized = '';
+
+  for (const lineWithEnding of lines) {
+    if (lineWithEnding === '') continue;
+    const hasNewline = lineWithEnding.endsWith('\n');
+    const line = hasNewline ? lineWithEnding.slice(0, -1) : lineWithEnding;
+
+    if (fence) {
+      normalized += lineWithEnding;
+      const close = line.match(/^ {0,3}(`+|~+)[ \t]*$/);
+      if (
+        close
+        && close[1]![0] === fence.marker
+        && close[1]!.length >= fence.length
+      ) {
+        fence = null;
+      }
+      continue;
+    }
+
+    if (inlineTicks === 0) {
+      const open = line.match(/^ {0,3}(`{3,}|~{3,})/);
+      if (open) {
+        const marker = open[1]![0] as '`' | '~';
+        fence = { marker, length: open[1]!.length };
+        normalized += lineWithEnding;
+        continue;
+      }
+    }
+
+    let prose = '';
+    const flushProse = (): void => {
+      normalized += stripStrongMarkers(prose);
+      prose = '';
+    };
+    for (let index = 0; index < line.length;) {
+      if (line[index] !== '`') {
+        if (inlineTicks === 0) prose += line[index];
+        else normalized += line[index];
+        index += 1;
+        continue;
+      }
+
+      let end = index + 1;
+      while (line[end] === '`') end += 1;
+      const ticks = end - index;
+      if (inlineTicks === 0) {
+        flushProse();
+        inlineTicks = ticks;
+      } else if (ticks === inlineTicks) {
+        inlineTicks = 0;
+      }
+      normalized += line.slice(index, end);
+      index = end;
+    }
+    flushProse();
+    if (hasNewline) normalized += '\n';
+  }
+  return normalized;
+}
+
+function sourceContainsTrace(sourceText: string, traceText: string): boolean {
+  if (sourceText.includes(traceText)) return true;
+  return normalizeStrongPresentation(sourceText)
+    .includes(normalizeStrongPresentation(traceText));
+}
+
 function traceReasons(
   candidates: readonly EnrichmentCandidate[],
   sourceText: string,
@@ -117,7 +203,7 @@ function traceReasons(
       }
       for (const source of trace.sources) {
         if (source.kind === 'source') {
-          if (!sourceText.includes(source.text)) {
+          if (!sourceContainsTrace(sourceText, source.text)) {
             reasons.push(`${candidate.candidateKey}/${trace.criterionId}: source text not found: ${source.text}`);
           }
         } else {
@@ -166,7 +252,7 @@ function designDraftTraceReasons(
       }
       for (const source of trace.sources) {
         if (source.kind === 'source') {
-          if (!sourceText.includes(source.text)) {
+          if (!sourceContainsTrace(sourceText, source.text)) {
             reasons.push(
               `${candidate.candidateKey}/${trace.requirementId}: source text not found: ${source.text}`,
             );
