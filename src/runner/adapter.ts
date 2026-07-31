@@ -31,6 +31,7 @@ import type {
   Lease,
   RunnerJobPayloadV1,
 } from '../control-store/types.js';
+import type { PR } from '../domain/schema.js';
 import {
   realPlanningHumanReviewGitHub,
   renderPlanningHumanReviewComment,
@@ -88,6 +89,33 @@ export interface ExistingAgentOpsAdapterDependencies {
   perspectiveSessions?: typeof runPerspectiveSessions;
   groundBuild?: LiveOptions['groundBuild'];
   planningHumanReviewGithub?: (cwd: string) => PlanningHumanReviewGitHub;
+}
+
+/**
+ * A current immutable head that already has durable request-changes evidence
+ * is a completed PR-event review, not a transient reconciliation failure.
+ * Reconciliation can project the PR/revision back to open/reviewing when other
+ * perspective evidence is intentionally absent after a deterministic veto, so
+ * the revision-bound EvalRun is the fallback source of truth.
+ */
+export function hasDurableCurrentHeadRequestChanges(
+  store: Store,
+  pr: PR,
+): boolean {
+  if (pr.headSha === null || pr.currentRevisionId === null) return false;
+  const revision = store.revisionForHead(pr.id, pr.headSha);
+  if (!revision || revision.id !== pr.currentRevisionId) return false;
+  if (
+    pr.status === 'changes-requested'
+    || revision.status === 'changes-requested'
+  ) {
+    return true;
+  }
+  return store.db.evalRuns.some((run) =>
+    run.prId === pr.id
+    && run.revisionId === revision.id
+    && run.headSha === revision.headSha
+    && run.verdict === 'request_changes');
 }
 
 function baseBranch(ref: string): string {
@@ -614,6 +642,18 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         true,
         'provider',
       );
+    }
+    if (
+      event.kind === 'pull_request'
+      && hasDurableCurrentHeadRequestChanges(store, matchingPr)
+    ) {
+      return {
+        outcome: 'completed',
+        humanReview: null,
+        headSha: matchingPr.headSha,
+        pullRequestNumber: matchingPr.externalRef?.number ?? null,
+        developmentTurn,
+      };
     }
     if (matchingPr.status !== 'merged') {
       throw new RunnerExecutionError(
