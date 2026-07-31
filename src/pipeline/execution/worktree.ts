@@ -109,14 +109,25 @@ function hasBuildCommit(worktreePath: string): boolean {
  * first attempt, `--amend` on repair attempts so the branch always carries exactly one build
  * commit (⇒ `HEAD^` is always the fork point, see buildChangedFiles). `.agentops/` is excluded
  * (excludeAgentops). Returns false when there is nothing to commit and no prior build commit —
- * a degenerate empty build that grading will fail on its own. A committed build is what makes a
- * real `git push` (the gate) non-empty and what read-only review worktrees check out.
+ * or when a repair has restored the fork-point tree and removed the prior build commit. A
+ * committed build is what makes a real `git push` (the gate) non-empty and what read-only review
+ * worktrees check out.
  */
 export function commitBuild(worktreePath: string, message: string): boolean {
   git(worktreePath, ['add', '-A'], true);
   const staged = git(worktreePath, ['diff', '--cached', '--name-only'], true).out.trim();
   const amend = hasBuildCommit(worktreePath);
   if (!staged) return amend; // nothing new: a prior build commit still stands; otherwise no build
+  if (
+    amend
+    && git(worktreePath, ['diff', '--cached', '--quiet', 'HEAD^', '--'], true).ok
+  ) {
+    // The repair fully cancelled the one harness-owned build commit. Moving detached HEAD
+    // back one commit and resetting only the index keeps the already-correct worktree tree
+    // intact while avoiding git's empty-amend refusal.
+    git(worktreePath, ['reset', '--mixed', 'HEAD^']);
+    return false;
+  }
   const ident = ['-c', 'user.name=agentops', '-c', 'user.email=agentops@localhost'];
   const commit = amend
     ? ['commit', '--amend', '--no-edit', '--no-verify']
