@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import type { IssueContract } from '../src/domain/schema.js';
 import { EvalTask } from '../src/domain/schema.js';
 import { groundArtifact } from '../src/pipeline/execution/grade.js';
+import { runLoopLive } from '../src/pipeline/execution/live.js';
 import { runRegressionTasks } from '../src/pipeline/regression.js';
 import { Store } from '../src/store/store.js';
 
@@ -30,7 +31,11 @@ function contract(method: 'playwright' | 'api_test' | 'unit_test' | 'scope_check
   };
 }
 
-function ground(c: IssueContract, graders: NonNullable<HarnessConfig['target']>['graders'] = {}) {
+function ground(
+  c: IssueContract,
+  graders: NonNullable<HarnessConfig['target']>['graders'] = {},
+  graderEnvironment?: NodeJS.ProcessEnv,
+) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-method-grader-'));
   roots.push(root);
   return groundArtifact({
@@ -40,6 +45,7 @@ function ground(c: IssueContract, graders: NonNullable<HarnessConfig['target']>[
     branch: 'agent/test',
     changed: [],
     issueId: 'ISSUE-0042',
+    ...(graderEnvironment ? { graderEnvironment } : {}),
   });
 }
 
@@ -80,6 +86,28 @@ describe('verification-method command registry', () => {
     expect(artifact.satisfied['AC-E2E-001']).toBe(true);
     expect(artifact.verificationEvidence?.['AC-E2E-001']).toMatchObject({
       method: 'scope_check', command: null, passed: true,
+    });
+  });
+
+  it('ISSUE-0104 runs api_test with the same credential-free grader environment as unit/typecheck', () => {
+    const artifact = ground(
+      contract('api_test'),
+      {
+        commands: {
+          api_test:
+            'node -e "process.exit(process.env.AGENTOPS_GRADER_ENV_SENTINEL===\'ground-api\'?0:1)"',
+        },
+      },
+      {
+        PATH: process.env.PATH,
+        AGENTOPS_GRADER_ENV_SENTINEL: 'ground-api',
+      },
+    );
+
+    expect(artifact.apiTestsPass).toBe(true);
+    expect(artifact.verificationEvidence?.['AC-E2E-001']).toMatchObject({
+      method: 'api_test',
+      passed: true,
     });
   });
 });
@@ -137,5 +165,43 @@ describe('non-unit regression execution', () => {
       result: 'fail', matchedAssertions: 1, failedNames: ['expected status 200, received 500'],
     });
     expect(store.db.regressionRuns).toHaveLength(1);
+  });
+
+  it('ISSUE-0104 carries the live grader environment into turn-tail regression commands', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-method-live-regression-'));
+    roots.push(root);
+    const store = new Store(root);
+    store.addEvalTask(EvalTask.parse({
+      id: 'EVAL-TASK-ISSUE-0042-AC-API-001',
+      sourceIssueId: 'ISSUE-0042',
+      featureArea: 'backend',
+      userGoal: 'API dependency tree remains available',
+      expected: ['dependency-backed API command passes'],
+      graders: ['api_test'],
+      target: '.',
+      graderCommands: {
+        api_test:
+          'node -e "process.exit(process.env.AGENTOPS_GRADER_ENV_SENTINEL===\'live-regression\'?0:1)"',
+      },
+      createdAt: '2026-07-15T00:00:00.000Z',
+    }));
+
+    await runLoopLive(
+      store,
+      { ...DEFAULT_CONFIG, target: { repo: '.' } },
+      root,
+      {
+        graderEnvironment: {
+          PATH: process.env.PATH,
+          AGENTOPS_GRADER_ENV_SENTINEL: 'live-regression',
+        },
+      },
+    );
+
+    expect(store.db.regressionRuns).toHaveLength(1);
+    expect(store.db.regressionRuns[0]).toMatchObject({
+      taskId: 'EVAL-TASK-ISSUE-0042-AC-API-001',
+      result: 'pass',
+    });
   });
 });

@@ -39,6 +39,7 @@ import {
   type PrNativeGithubRunner,
 } from './pr-native.js';
 import { improveTick } from '../improve.js';
+import type { RegressReportRunner } from '../regression.js';
 import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
 
 export interface LiveOptions {
@@ -56,6 +57,8 @@ export interface LiveOptions {
   groundBuild?: typeof groundArtifact;
   /** Credential-free environment inherited by repository-controlled grader commands. */
   graderEnvironment?: NodeJS.ProcessEnv;
+  /** Test/embedding seam for the turn-tail unit regression report. */
+  regressReport?: RegressReportRunner;
   /** Test/embedding seam for the Perspective fan-out. */
   perspectiveSessions?: typeof runPerspectiveSessions;
   /** Isolated-runner lease/Registration fence immediately before provider execution. */
@@ -492,7 +495,11 @@ export async function runLoopLive(
   // ③ every live turn ends by capturing failures into the regression registry,
   // re-verifying the bound registry against the target's real graders, and reporting
   // (never enacting) improvement suggestions — ADR-0007 I2.
-  improveTick(store, log, { config });
+  improveTick(store, log, {
+    config,
+    regressReport: opts.regressReport,
+    graderEnvironment: opts.graderEnvironment,
+  });
   store.save();
   return results;
 }

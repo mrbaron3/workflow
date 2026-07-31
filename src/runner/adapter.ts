@@ -90,6 +90,7 @@ export interface ExistingAgentOpsAdapterDependencies {
   generatorSession?: typeof runGeneratorSession;
   perspectiveSessions?: typeof runPerspectiveSessions;
   groundBuild?: LiveOptions['groundBuild'];
+  regressReport?: LiveOptions['regressReport'];
   planningHumanReviewGithub?: (cwd: string) => PlanningHumanReviewGitHub;
 }
 
@@ -578,6 +579,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             process.env,
             input.workspace.registrationRoot,
           ),
+          regressReport: this.dependencies.regressReport,
           generatorSession:
             this.dependencies.generatorSession ?? runGeneratorSession,
           perspectiveSessions:
