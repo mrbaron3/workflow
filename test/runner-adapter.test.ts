@@ -2,7 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { GithubIssueSnapshot } from '../src/domain/schema.js';
+import {
+  EvalRun,
+  GithubIssueSnapshot,
+  Issue,
+  PR,
+  PrRevision,
+} from '../src/domain/schema.js';
 import { Store } from '../src/store/store.js';
 import { findingsPath } from '../src/pipeline/execution/perspective-session.js';
 import type { PostgresControlStore } from '../src/control-store/store.js';
@@ -13,6 +19,7 @@ import type {
   RunnerJobPayloadV1,
 } from '../src/control-store/types.js';
 import {
+  hasDurableCurrentHeadRequestChanges,
   ExistingAgentOpsRunnerAdapter,
   inferRepositoryGraders,
 } from '../src/runner/adapter.js';
@@ -287,6 +294,94 @@ describe('existing AgentOps isolated-runner adapter', () => {
     expect(persisted.db.planningEnrichments[0]?.status)
       .toBe('needs-human-review');
     expect(persisted.db.prs).toHaveLength(0);
+  });
+
+  it('recognizes a durable current-head request after reconciliation reopens the PR', () => {
+    const root = fs.mkdtempSync(path.join(
+      os.tmpdir(),
+      'agentops-runner-request-changes-',
+    ));
+    roots.push(root);
+    const store = new Store(root);
+    const now = '2026-07-25T00:00:00.000Z';
+    const headSha = 'a'.repeat(40);
+    const issue = store.addIssue(Issue.parse({
+      id: 'ISSUE-PR-38',
+      type: 'feature',
+      title: 'Review current head',
+      area: 'backend',
+      status: 'changes-requested',
+      assignedAgent: 'codex',
+      contract: {
+        productGoal: 'Review safely',
+        userStory: 'As a maintainer I receive current-head review',
+        scope: { include: [], exclude: [] },
+        acceptanceCriteria: [{
+          id: 'AC-PR-001',
+          severity: 'blocker',
+          behavior: 'The current head is safe',
+          verification: {
+            method: 'scope_check',
+            expected: ['no protected paths change'],
+          },
+        }],
+        redLines: [],
+      },
+      createdAt: now,
+      updatedAt: now,
+    }));
+    const revision = store.upsertPrRevision(PrRevision.parse({
+      id: 'PRREV-38-1',
+      prId: 'PR-38',
+      headSha,
+      ordinal: 1,
+      status: 'reviewing',
+      createdAt: now,
+    }));
+    const pr = store.addPR(PR.parse({
+      id: revision.prId,
+      issueId: issue.id,
+      branch: 'feature/review',
+      generator: 'codex',
+      status: 'open',
+      currentRevisionId: revision.id,
+      headSha,
+      externalRef: {
+        provider: 'github',
+        repository: 'owner/repo',
+        number: 38,
+        url: 'https://github.com/owner/repo/pull/38',
+      },
+      createdAt: now,
+      updatedAt: now,
+    }));
+    store.db.evalRuns.push(EvalRun.parse({
+      id: 'EVAL-PR-38',
+      issueId: issue.id,
+      prId: pr.id,
+      attempt: 1,
+      sampleIndex: 0,
+      agent: 'codex',
+      verdict: 'request_changes',
+      hardGates: { scope_check: 'fail' },
+      findings: [],
+      scores: {
+        functionality: 0,
+        codeQuality: 0,
+        testQuality: 0,
+        ux: 0,
+        accessibility: 0,
+      },
+      overall: 0,
+      cost: {},
+      revisionId: revision.id,
+      headSha,
+      createdAt: now,
+    }));
+
+    expect(hasDurableCurrentHeadRequestChanges(store, pr)).toBe(true);
+    store.db.evalRuns[0]!.verdict = 'approve';
+    expect(hasDurableCurrentHeadRequestChanges(store, pr)).toBe(false);
   });
 
   it('drives planning, PR-native review, checks, expected-SHA merge, and release through every fence', async () => {
