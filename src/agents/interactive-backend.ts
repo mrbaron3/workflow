@@ -13,6 +13,8 @@ export interface InteractiveLaunchRequest {
   purpose: InteractivePurpose;
   model?: string;
   additionalDirs?: string[];
+  /** Extra roots a provider must treat as trusted (codex keys trust by git repository root). */
+  trustRoots?: readonly string[];
 }
 
 export interface InteractiveAgentBackend {
@@ -48,10 +50,13 @@ const codexBackend: InteractiveAgentBackend = {
     const addDirs = (request.additionalDirs ?? []).map((dir) => ` --add-dir ${shellQuote(dir)}`).join('');
     // Codex asks whether the working directory is trusted before it accepts any input. Left
     // unanswered the readiness marker still matches (the menu draws `›`), the driver types the
-    // prompt into the menu, and codex quits — the session dies before it starts. Trust is scoped
-    // to this session's directory and passed per invocation, never persisted to config. Hook trust
-    // is deliberately NOT bypassed, so repository-supplied hooks stay gated.
-    const trust = ` -c ${shellQuote(`projects."${request.cwd}".trust_level="trusted"`)}`;
+    // prompt into the menu, and codex quits — the session dies before it starts. Codex keys trust
+    // by GIT REPOSITORY ROOT, not by cwd, so a session running in a worktree needs that root too
+    // (the caller derives it). Trust is passed per invocation, never persisted to config, and hook
+    // trust is deliberately NOT bypassed, so repository-supplied hooks stay gated.
+    const trust = [...new Set([request.cwd, ...(request.trustRoots ?? [])])]
+      .map((root) => ` -c ${shellQuote(`projects."${root}".trust_level="trusted"`)}`)
+      .join('');
     return (
       `codex --no-alt-screen --ask-for-approval never --sandbox workspace-write${trust}${model}${addDirs}`
     );

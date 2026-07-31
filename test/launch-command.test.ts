@@ -1,6 +1,6 @@
 /** FEAT-014 — provider-neutral interactive request mapped by CLI-specific adapters. */
 import { describe, expect, it } from 'vitest';
-import { buildLaunchCommand } from '../src/pipeline/execution/tmux.js';
+import { buildLaunchCommand, repositoryTrustRoot } from '../src/pipeline/execution/tmux.js';
 import {
   UnsupportedInteractiveProviderError,
   backendFor,
@@ -54,6 +54,16 @@ describe('interactive provider adapters', () => {
     expect(cmd).toContain(
       `-c 'projects."/workspace/registrations/r1/jobs/j1/worktree".trust_level="trusted"'`,
     );
+    // Codex keys trust by git repository root, so a worktree session must trust that root too.
+    const worktreeCmd = buildLaunchCommand({
+      provider: 'codex', session: 'ao-plan', cwd: '/workspace/registrations/r1/jobs/j1/worktree',
+      purpose: 'planner', trustRoots: ['/workspace/registrations/r1'],
+    });
+    expect(worktreeCmd).toContain(`-c 'projects."/workspace/registrations/r1".trust_level="trusted"'`);
+    const deduped = buildLaunchCommand({
+      provider: 'codex', session: 'ao-plan', cwd: '/repo', purpose: 'planner', trustRoots: ['/repo'],
+    });
+    expect(deduped.match(/trust_level/g)).toHaveLength(1);
     // Repository-supplied hooks must stay gated by persisted hook trust.
     expect(cmd).not.toContain('--dangerously-bypass-hook-trust');
     expect(cmd).not.toContain('--dangerously-bypass-approvals-and-sandbox');
@@ -61,6 +71,17 @@ describe('interactive provider adapters', () => {
       provider: 'claude', session: 'ao-gen', cwd: '/wt', purpose: 'generator',
     });
     expect(claude).not.toContain('trust_level');
+  });
+
+  // Measured in the runner container: a harness worktree reports the bare mirror as its common
+  // dir, and codex named that mirror's parent as the repository root it keys trust by. An ordinary
+  // checkout reports <repo>/.git, whose parent is the repo itself — one rule covers both.
+  it('derives the repository root codex keys trust by from the git common dir', () => {
+    expect(repositoryTrustRoot('/workspace/registrations/r1/repository.git'))
+      .toBe('/workspace/registrations/r1');
+    expect(repositoryTrustRoot('/home/me/project/.git')).toBe('/home/me/project');
+    expect(repositoryTrustRoot(null)).toBeNull();
+    expect(repositoryTrustRoot('/')).toBeNull();
   });
 
   it('AC-AGBACK-004 rejects providers without an interactive adapter instead of falling back', () => {
