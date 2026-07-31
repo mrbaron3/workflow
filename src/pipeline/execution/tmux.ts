@@ -15,6 +15,7 @@
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import {
   buildInteractiveLaunchCommand,
   type InteractiveLaunchRequest,
@@ -109,6 +110,31 @@ export function buildLaunchCommand(opts: LaunchOpts): string {
   return buildInteractiveLaunchCommand(opts);
 }
 
+/**
+ * The root a provider must trust for a session running in `cwd`. Codex keys directory trust by
+ * git repository root, and every harness session runs in a worktree whose root is elsewhere:
+ * `--git-common-dir` is the bare mirror (`…/repository.git`) for a worktree and `<repo>/.git` for
+ * an ordinary checkout, so the parent directory is the repository root in both shapes. Returns
+ * null when git cannot answer — the caller then trusts only the cwd, as before.
+ */
+export function repositoryTrustRoot(gitCommonDir: string | null): string | null {
+  if (!gitCommonDir) return null;
+  const resolved = path.resolve(gitCommonDir);
+  const parent = path.dirname(resolved);
+  return parent === resolved ? null : parent;
+}
+
+function gitCommonDirOf(cwd: string): string | null {
+  const res = spawnSync(
+    'git',
+    ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+    { encoding: 'utf8' },
+  );
+  if (res.status !== 0) return null;
+  const value = (res.stdout ?? '').trim();
+  return value === '' ? null : value;
+}
+
 /** Launch an interactive Claude Code session as a WINDOW (tab) of the holder session. */
 export function launchSession(opts: LaunchOpts): void {
   killSession(opts.session); // idempotent: close any stale tab of the same name
@@ -148,10 +174,14 @@ export function launchSession(opts: LaunchOpts): void {
     const value = environment[key];
     if (value !== undefined) tmux(['set-environment', '-g', key, value]);
   }
+  const trustRoot = repositoryTrustRoot(gitCommonDirOf(opts.cwd));
   const command = sandboxedShellCommand(
     environment,
     opts.cwd,
-    buildLaunchCommand(opts),
+    buildLaunchCommand({
+      ...opts,
+      trustRoots: [...(opts.trustRoots ?? []), ...(trustRoot ? [trustRoot] : [])],
+    }),
   );
   const res = tmux([
     'new-window',
