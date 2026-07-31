@@ -30,8 +30,10 @@ import {
   prHeadRefspec,
   projectReviewRevision,
   pushGeneratedBranch,
+  realGhGateRunner,
   renderGatePrBody,
   renderReviewPrBody,
+  type GateCommandRunner,
   type GhGateRunner,
   type GhPrState,
 } from '../src/pipeline/execution/gate.js';
@@ -168,6 +170,140 @@ describe('trusted AgentOps PR repair projection', () => {
     pushGeneratedBranch(fixture.worktree, fixture.remote, fixture.branch);
 
     expect(revParse(fixture.remote, fixture.branch)).toBe(candidate);
+  });
+});
+
+describe('realGhGateRunner: stable GitHub PR identity', () => {
+  const args = {
+    base: 'main',
+    head: 'agent/issue-0001-s0',
+    title: 'ISSUE-0001: title',
+    body: 'review body',
+  };
+  const existing = [{
+    number: 12,
+    url: 'https://github.com/mrbaron3/designflow/pull/12',
+    headRefName: args.head,
+    baseRefName: args.base,
+    isCrossRepository: false,
+  }];
+
+  it('reuses the unique OPEN PR with the exact head and base', () => {
+    const calls: string[][] = [];
+    const command: GateCommandRunner = (_cmd, commandArgs) => {
+      calls.push(commandArgs);
+      return JSON.stringify(existing);
+    };
+
+    const ref = realGhGateRunner('mrbaron3/designflow', command)
+      .createPr('/repo', args);
+
+    expect(ref).toEqual({
+      provider: 'github',
+      number: 12,
+      url: existing[0]!.url,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual([
+      'pr', 'list', '--repo', 'mrbaron3/designflow',
+      '--state', 'open',
+      '--head', args.head,
+      '--base', args.base,
+      '--limit', '2',
+      '--json', 'number,url,headRefName,baseRefName,isCrossRepository',
+    ]);
+  });
+
+  it('creates a PR when no matching OPEN PR exists, then resolves its exact identity', () => {
+    let listCalls = 0;
+    let createCalls = 0;
+    const command: GateCommandRunner = (_cmd, commandArgs) => {
+      if (commandArgs[1] === 'list') {
+        listCalls += 1;
+        return JSON.stringify(listCalls === 1 ? [] : existing);
+      }
+      if (commandArgs[1] === 'create') {
+        createCalls += 1;
+        return existing[0]!.url;
+      }
+      throw new Error(`unexpected gh command: ${commandArgs.join(' ')}`);
+    };
+
+    const ref = realGhGateRunner('mrbaron3/designflow', command)
+      .createPr('/repo', args);
+
+    expect(ref.number).toBe(12);
+    expect(listCalls).toBe(2);
+    expect(createCalls).toBe(1);
+  });
+
+  it('adopts an exact OPEN PR created during the gh pr create race', () => {
+    let listCalls = 0;
+    const observedError = new Error(
+      'gh pr create failed: a pull request for branch '
+      + '"agent/issue-0001-s0" into branch "main" already exists',
+    );
+    const command: GateCommandRunner = (_cmd, commandArgs) => {
+      if (commandArgs[1] === 'list') {
+        listCalls += 1;
+        return JSON.stringify(listCalls === 1 ? [] : existing);
+      }
+      if (commandArgs[1] === 'create') throw observedError;
+      throw new Error(`unexpected gh command: ${commandArgs.join(' ')}`);
+    };
+
+    const ref = realGhGateRunner('mrbaron3/designflow', command)
+      .createPr('/repo', args);
+
+    expect(ref.number).toBe(12);
+    expect(listCalls).toBe(2);
+  });
+
+  it('does not adopt a PR whose head or base differs after create fails', () => {
+    const observedError = new Error('gh pr create failed: already exists');
+    const wrongIdentity = [{
+      ...existing[0],
+      headRefName: 'agent/different',
+    }];
+    const command: GateCommandRunner = (_cmd, commandArgs) => {
+      if (commandArgs[1] === 'list') return JSON.stringify(wrongIdentity);
+      if (commandArgs[1] === 'create') throw observedError;
+      throw new Error(`unexpected gh command: ${commandArgs.join(' ')}`);
+    };
+
+    expect(() => realGhGateRunner('mrbaron3/designflow', command)
+      .createPr('/repo', args)).toThrow(observedError);
+  });
+
+  it('does not adopt a fork PR with the same branch and base names', () => {
+    const observedError = new Error('gh pr create failed');
+    const forkIdentity = [{ ...existing[0], isCrossRepository: true }];
+    const command: GateCommandRunner = (_cmd, commandArgs) => {
+      if (commandArgs[1] === 'list') return JSON.stringify(forkIdentity);
+      if (commandArgs[1] === 'create') throw observedError;
+      throw new Error(`unexpected gh command: ${commandArgs.join(' ')}`);
+    };
+
+    expect(() => realGhGateRunner('mrbaron3/designflow', command)
+      .createPr('/repo', args)).toThrow(observedError);
+  });
+
+  it('fails closed instead of choosing among multiple exact OPEN PRs', () => {
+    let createCalls = 0;
+    const command: GateCommandRunner = (_cmd, commandArgs) => {
+      if (commandArgs[1] === 'list') {
+        return JSON.stringify([
+          existing[0],
+          { ...existing[0], number: 13, url: 'https://github.com/mrbaron3/designflow/pull/13' },
+        ]);
+      }
+      createCalls += 1;
+      return '';
+    };
+
+    expect(() => realGhGateRunner('mrbaron3/designflow', command)
+      .createPr('/repo', args)).toThrow(/multiple open pull requests/);
+    expect(createCalls).toBe(0);
   });
 });
 

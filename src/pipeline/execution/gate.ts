@@ -33,6 +33,12 @@ import { observePrRevision } from './pr-native.js';
 /** A GitHub PR's lifecycle state, normalised from `gh pr view --json state`. */
 export type GhPrState = 'open' | 'merged' | 'closed';
 
+export type GateCommandRunner = (
+  cmd: string,
+  args: string[],
+  cwd: string,
+) => string;
+
 /**
  * The pure heart of the gate: a polled PR state → the human decision it stands for (ADR-0006 G1).
  * `open` = the human hasn't acted yet, so no decision (keep polling). merged = the human accepted
@@ -53,7 +59,7 @@ export function prStateToDecision(state: GhPrState): HumanDecision | null {
 export interface GhGateRunner {
   /** Push `branch` (checked out in `worktree`) to the remote so a PR can target it. */
   pushBranch(worktree: string, branch: string): void;
-  /** Open a PR from `head` into `base`; return its number + url. `cwd` is a checkout with the remote. */
+  /** Ensure an open PR from `head` into `base`; return its number + url. */
   createPr(cwd: string, args: { base: string; head: string; title: string; body: string }): PrExternalRef;
   /** The current lifecycle state of PR `number`. `cwd` is any checkout of the target repo. */
   viewPr(cwd: string, prNumber: number): GhPrState;
@@ -311,10 +317,71 @@ function latestAttemptRuns(runs: EvalRun[]): EvalRun[] {
   return runs.filter((r) => r.attempt === maxAttempt);
 }
 
-// --- real backend (shells out; grounded only, never exercised in unit tests) ----------------
+// --- real backend (shells out; command seam keeps grounded CLI contracts testable) ----------
+
+interface OpenPullRequest {
+  number: number;
+  url: string;
+  headRefName: string;
+  baseRefName: string;
+  isCrossRepository: boolean;
+}
+
+function matchingOpenPullRequest(
+  command: GateCommandRunner,
+  cwd: string,
+  repoArgs: string[],
+  head: string,
+  base: string,
+): PrExternalRef | null {
+  const output = command('gh', [
+    'pr', 'list', ...repoArgs,
+    '--state', 'open',
+    '--head', head,
+    '--base', base,
+    '--limit', '2',
+    '--json', 'number,url,headRefName,baseRefName,isCrossRepository',
+  ], cwd);
+  const parsed: unknown = JSON.parse(output);
+  if (!Array.isArray(parsed)) {
+    throw new Error('gh pr list returned a non-array response');
+  }
+  const candidates = parsed.map((candidate): OpenPullRequest => {
+    if (!candidate || typeof candidate !== 'object') {
+      throw new Error('gh pr list returned an invalid pull request');
+    }
+    const value = candidate as Record<string, unknown>;
+    if (
+      !Number.isInteger(value.number)
+      || typeof value.url !== 'string'
+      || typeof value.headRefName !== 'string'
+      || typeof value.baseRefName !== 'string'
+      || typeof value.isCrossRepository !== 'boolean'
+    ) {
+      throw new Error('gh pr list returned an invalid pull request');
+    }
+    return value as unknown as OpenPullRequest;
+  });
+  const matches = candidates.filter((candidate) =>
+    candidate.headRefName === head
+    && candidate.baseRefName === base
+    && !candidate.isCrossRepository);
+  if (matches.length > 1) {
+    throw new Error(
+      `multiple open pull requests match head "${head}" and base "${base}"`,
+    );
+  }
+  const match = matches[0];
+  return match
+    ? { provider: 'github', number: match.number, url: match.url }
+    : null;
+}
 
 /** The production GhGateRunner: real `git push` + `gh` against the target repo's remote. */
-export function realGhGateRunner(repository?: string): GhGateRunner {
+export function realGhGateRunner(
+  repository?: string,
+  command: GateCommandRunner = run,
+): GhGateRunner {
   const remote = repository
     ? `https://github.com/${repository}.git`
     : 'origin';
@@ -326,26 +393,61 @@ export function realGhGateRunner(repository?: string): GhGateRunner {
       pushGeneratedBranch(worktree, remote, branch);
     },
     createPr(cwd, args) {
+      const existing = matchingOpenPullRequest(
+        command,
+        cwd,
+        repoArgs,
+        args.head,
+        args.base,
+      );
+      if (existing) return existing;
+
       const bodyFile = path.join(os.tmpdir(), `ao-gate-body-${args.head.replace(/\W+/g, '-')}.md`);
       fs.writeFileSync(bodyFile, args.body, 'utf8');
       try {
-        run('gh', [
-          'pr', 'create', ...repoArgs,
-          '--base', args.base, '--head', args.head,
-          '--title', args.title, '--body-file', bodyFile,
-        ], cwd);
+        try {
+          command('gh', [
+            'pr', 'create', ...repoArgs,
+            '--base', args.base, '--head', args.head,
+            '--title', args.title, '--body-file', bodyFile,
+          ], cwd);
+        } catch (createError) {
+          // A matching PR may have appeared after the first lookup. Resolve
+          // that exact identity; never infer it from the error text or URL.
+          let raced: PrExternalRef | null = null;
+          try {
+            raced = matchingOpenPullRequest(
+              command,
+              cwd,
+              repoArgs,
+              args.head,
+              args.base,
+            );
+          } catch {
+            throw createError;
+          }
+          if (raced) return raced;
+          throw createError;
+        }
       } finally {
         fs.rmSync(bodyFile, { force: true });
       }
-      // read back number + url (gh pr create prints only the url; --json gives both)
-      const out = run('gh', [
-        'pr', 'view', args.head, ...repoArgs, '--json', 'number,url',
-      ], cwd);
-      const json = JSON.parse(out) as { number: number; url: string };
-      return { provider: 'github', number: json.number, url: json.url };
+      const created = matchingOpenPullRequest(
+        command,
+        cwd,
+        repoArgs,
+        args.head,
+        args.base,
+      );
+      if (!created) {
+        throw new Error(
+          `created pull request could not be resolved for head "${args.head}" and base "${args.base}"`,
+        );
+      }
+      return created;
     },
     viewPr(cwd, prNumber) {
-      const out = run('gh', [
+      const out = command('gh', [
         'pr', 'view', String(prNumber), ...repoArgs, '--json', 'state',
       ], cwd);
       const state = String((JSON.parse(out) as { state: string }).state).toLowerCase();
