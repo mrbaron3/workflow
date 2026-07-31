@@ -423,7 +423,7 @@ export function groundArtifact(opts: GroundOpts): BuildArtifact {
       AGENTOPS_ISSUE_ID: opts.issueId ?? '',
       AGENTOPS_VERIFICATION_METHOD: method,
       AGENTOPS_EXPECTED_JSON: JSON.stringify(ac.verification.expected),
-    });
+    }, execution);
     satisfied[ac.id] = result.ok;
     verificationEvidence[ac.id] = {
       method,

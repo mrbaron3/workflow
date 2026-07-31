@@ -31,6 +31,7 @@ import {
   runGraderCommand,
   runVitest,
   type CmdResult,
+  type GraderExecutionOptions,
   type VitestReport,
 } from './execution/grade.js';
 
@@ -54,6 +55,8 @@ export interface RegressOptions {
   command?: RegressCommandRunner;
   /** Resolve each task's bound target repo against this root (defaults to the store's root). */
   harnessRoot?: string;
+  /** Credential-free environment and Registration sandbox for real grader subprocesses. */
+  graderEnvironment?: NodeJS.ProcessEnv;
 }
 
 /**
@@ -131,7 +134,11 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
     unitGroups.set(key, group);
   }
 
-  const runReport = opts.report ?? runVitest;
+  const graderExecution: GraderExecutionOptions = opts.graderEnvironment
+    ? { environment: opts.graderEnvironment }
+    : {};
+  const runReport = opts.report ?? ((command: string, cwd: string) =>
+    runVitest(command, cwd, undefined, graderExecution));
   for (const { target, command, tasks } of unitGroups.values()) {
     const report = runReport(command, path.resolve(root, target));
     for (const task of tasks) {
@@ -157,7 +164,11 @@ export function runRegressionTasks(store: Store, config: HarnessConfig, opts: Re
     }
   }
 
-  const runCommand = opts.command ?? runGraderCommand;
+  const runCommand = opts.command ?? ((
+    command: string,
+    cwd: string,
+    env: Record<string, string>,
+  ) => runGraderCommand(command, cwd, env, graderExecution));
   for (const { task, method, command } of commandTasks) {
     const target = task.target!;
     const criterion = taskCriterion(task);

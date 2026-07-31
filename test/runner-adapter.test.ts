@@ -548,6 +548,13 @@ describe('existing AgentOps isolated-runner adapter', () => {
         },
         notes: [],
       }),
+      regressReport: () => ({
+        success: true,
+        total: 1,
+        passed: 1,
+        failedNames: [],
+        assertions: [{ name: 'AC-SAFE-001 safe path works', passed: true }],
+      }),
       perspectiveSessions: async (_config, input) => {
         const evalRoot = path.join(input.worktree, '.agentops', 'eval');
         const reviewed = input.perspectives.filter((perspective) =>

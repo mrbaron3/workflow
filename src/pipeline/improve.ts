@@ -25,6 +25,8 @@ export interface ImproveTickOptions {
   config?: HarnessConfig;
   /** Injectable vitest-report producer for the executor (tests; defaults to the real run). */
   regressReport?: RegressReportRunner;
+  /** Credential-free environment and Registration sandbox for real regression graders. */
+  graderEnvironment?: NodeJS.ProcessEnv;
 }
 
 export interface ImproveTickResult {
@@ -45,7 +47,10 @@ export function improveTick(store: Store, log: (m: string) => void = () => {}, o
 
   let regression: RegressResult | null = null;
   if (opts.config?.target) {
-    regression = runRegressionTasks(store, opts.config, { report: opts.regressReport });
+    regression = runRegressionTasks(store, opts.config, {
+      report: opts.regressReport,
+      graderEnvironment: opts.graderEnvironment,
+    });
     const fails = regression.results.filter((r) => r.result === 'fail');
     const unverified = regression.results.filter((r) => r.result === 'unverified');
     if (regression.results.length || regression.skipped.length) {
