@@ -87,6 +87,13 @@ export function pushGeneratedBranch(
 ): void {
   const destination = `refs/heads/${branch}`;
   const trackingRef = `refs/remotes/origin/${branch}`;
+  const published = run('git', [
+    '-C',
+    worktree,
+    'rev-parse',
+    '--verify',
+    'HEAD^{commit}',
+  ], worktree).trim();
   let expected = '';
   try {
     expected = run('git', [
@@ -110,6 +117,34 @@ export function pushGeneratedBranch(
     remote,
     prHeadRefspec(branch),
   ], worktree, { credentials: 'github' });
+
+  // A named-remote push advances its remote-tracking ref, but a literal URL
+  // does not. Production uses a literal GitHub URL, so carry the successfully
+  // published object forward as the next repair attempt's lease. The old-value
+  // fence prevents this bookkeeping step from overwriting a concurrent fetch.
+  const trackedAfterPush = (() => {
+    try {
+      return run('git', [
+        '-C',
+        worktree,
+        'rev-parse',
+        '--verify',
+        `${trackingRef}^{commit}`,
+      ], worktree).trim();
+    } catch {
+      return '';
+    }
+  })();
+  if (trackedAfterPush !== published) {
+    run('git', [
+      '-C',
+      worktree,
+      'update-ref',
+      trackingRef,
+      published,
+      expected || '0'.repeat(40),
+    ], worktree);
+  }
 }
 
 export interface OpenGateInput {
