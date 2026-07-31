@@ -81,6 +81,15 @@ export interface RepositoryPullRequestReviewOptions {
   perspectiveSessions?: typeof runPerspectiveSessions;
   /** Fresh lease/Registration authorization immediately before review agents. */
   beforeProviderExecution?: () => Promise<void>;
+  /**
+   * Re-resolve the bounded grader profile from the detached current head.
+   * The isolated runner compares it with the immutable-at-claim profile so a
+   * PR cannot weaken or replace its own deterministic gate before review.
+   */
+  graderProfileEvidence?: (worktree: string) => {
+    graderProfileValid: boolean;
+    graderProfileError?: string;
+  };
 }
 
 function syntheticContract(pullRequest: GithubOpenPullRequest): IssueContractType {
@@ -365,17 +374,20 @@ export async function reviewRepositoryPullRequest(
     store.save();
 
     const changed = runner.pullRequestChangedFiles(repo, pullRequest.number);
-    const artifact = groundArtifact({
-      contract: issue.contract!,
-      target: config.target,
-      worktree,
-      branch: pr.branch,
-      changed,
-      untrusted: options.graderIsolation !== 'runner-container',
-      ...(options.graderEnvironment
-        ? { graderEnvironment: options.graderEnvironment }
-        : {}),
-    });
+    const artifact = {
+      ...groundArtifact({
+        contract: issue.contract!,
+        target: config.target,
+        worktree,
+        branch: pr.branch,
+        changed,
+        untrusted: options.graderIsolation !== 'runner-container',
+        ...(options.graderEnvironment
+          ? { graderEnvironment: options.graderEnvironment }
+          : {}),
+      }),
+      ...(options.graderProfileEvidence?.(worktree) ?? {}),
+    };
     const deterministicGrade = gradeBuild(issue.contract!, artifact, config);
     const invocationKeys: Record<string, string> = {};
     let evalRoot = path.join(worktree, '.agentops', 'eval');

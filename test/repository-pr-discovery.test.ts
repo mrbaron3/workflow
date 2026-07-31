@@ -29,6 +29,10 @@ import type {
 } from '../src/pipeline/execution/pr-native.js';
 import { realPrNativeGithubRunner } from '../src/pipeline/execution/pr-native.js';
 import { staticUntrustedReviewMaterial } from '../src/pipeline/execution/perspective-session.js';
+import {
+  inferRepositoryGraders,
+  repositoryGraderProfileEvidence,
+} from '../src/runner/adapter.js';
 import { Store, nowISO } from '../src/store/store.js';
 
 const roots: string[] = [];
@@ -323,6 +327,111 @@ describe('repository-wide pull request discovery', () => {
       else expect(storedRevision.completedAt).toEqual(expect.any(String));
     },
   );
+
+  it('PR-INTENT rejects current-head grader profile drift before reviewer execution', async () => {
+    const env = setup();
+    const repositoryRoot = path.join(env.root, 'repo');
+    fs.mkdirSync(path.join(repositoryRoot, 'scripts'), { recursive: true });
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repositoryRoot });
+    fs.writeFileSync(
+      path.join(repositoryRoot, 'scripts', 'check-contracts.mjs'),
+      'process.exitCode = 0;\n',
+    );
+    fs.writeFileSync(path.join(repositoryRoot, 'package.json'), JSON.stringify({
+      scripts: { test: 'node scripts/check-contracts.mjs' },
+    }));
+    execFileSync('git', ['add', '.'], { cwd: repositoryRoot });
+    execFileSync(
+      'git',
+      [
+        '-c', 'user.name=test', '-c', 'user.email=test@example.com',
+        'commit', '-m', 'bounded base profile',
+      ],
+      { cwd: repositoryRoot },
+    );
+    const baseSha = execFileSync(
+      'git',
+      ['rev-parse', 'HEAD'],
+      { cwd: repositoryRoot, encoding: 'utf8' },
+    ).trim();
+    const claimedProfile = inferRepositoryGraders(repositoryRoot);
+
+    fs.writeFileSync(path.join(repositoryRoot, 'package.json'), JSON.stringify({
+      scripts: {
+        test: 'npm run test:contracts && npm run test:api',
+        'test:contracts': 'node scripts/check-contracts.mjs',
+        'test:api': 'node --test test/*.test.js',
+      },
+    }));
+    execFileSync('git', ['add', 'package.json'], { cwd: repositoryRoot });
+    execFileSync(
+      'git',
+      [
+        '-c', 'user.name=test', '-c', 'user.email=test@example.com',
+        'commit', '-m', 'replace grader entrypoint',
+      ],
+      { cwd: repositoryRoot },
+    );
+    const headSha = execFileSync(
+      'git',
+      ['rev-parse', 'HEAD'],
+      { cwd: repositoryRoot, encoding: 'utf8' },
+    ).trim();
+    env.pulls[0]!.headSha = headSha;
+    env.pulls[0]!.isDraft = false;
+    env.config.target = {
+      repo: 'repo',
+      baseRef: baseSha,
+      graders: claimedProfile,
+    };
+    const discovery = discoverRepositoryPullRequests(
+      env.store,
+      env.config,
+      env.runner,
+      env.root,
+    )[0]!;
+    let providerExecutions = 0;
+    const runner: PrNativeGithubRunner = {
+      ...env.runner,
+      viewRevision: () => ({
+        state: 'open',
+        headSha,
+        isDraft: false,
+        mergeability: 'mergeable',
+        checks: [],
+        unresolvedBlockingThreadIds: [],
+      }),
+      fetchPullRequestHead: () => ({ headSha, baseSha }),
+      pullRequestChangedFiles: () => ['package.json'],
+    };
+
+    const result = await reviewRepositoryPullRequest(
+      env.store,
+      env.config,
+      discovery,
+      runner,
+      env.root,
+      () => {},
+      [{ key: 'functionality', deterministic: true }],
+      {
+        beforeProviderExecution: async () => {
+          providerExecutions += 1;
+        },
+        graderProfileEvidence: (worktree) =>
+          repositoryGraderProfileEvidence(worktree, claimedProfile),
+      },
+    );
+
+    expect(result?.verdict).toBe('request_changes');
+    expect(providerExecutions).toBe(0);
+    expect(env.store.getPR(discovery.pr.id)?.status).toBe('changes-requested');
+    expect(env.store.db.evalRuns.at(-1)?.hardGates).toMatchObject({
+      grader_profile: 'fail',
+    });
+    expect(env.store.db.evalRuns.at(-1)?.findings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ criterionId: 'GATE-grader_profile' }),
+    ]));
+  });
 
   it('persists final reviewed-revision checks and blocking thread IDs before reconciliation', async () => {
     const env = setup();
