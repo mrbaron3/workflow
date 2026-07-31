@@ -11,6 +11,7 @@ import {
   PlanningEnrichmentOutput,
   PlanningEnrichmentRecord,
   UiDesignOutput,
+  VerificationMethod,
   type CapabilityReconciliationInput,
   type ApprovedDesignReviewProjection,
   type DesignContractProvider as DesignContractProviderType,
@@ -22,7 +23,11 @@ import {
   type PlanningEnrichmentRecord as PlanningEnrichmentRecordType,
   type UiDesignArtifact,
 } from '../domain/schema.js';
-import type { HarnessConfig } from '../config.js';
+import {
+  configuredGraderCommand,
+  type HarnessConfig,
+  type TargetRepoConfig,
+} from '../config.js';
 import { resolvedGeneratorProvider } from '../agents/routing.js';
 import { resolveSystemContext } from '../pipeline/execution/scoped-context.js';
 import { Store, nowISO } from '../store/store.js';
@@ -47,6 +52,36 @@ export interface ApplyPlanningEnrichmentOptions {
 export interface UiDesignAttempt {
   output: unknown;
   invocationKey: string | null;
+}
+
+/**
+ * The planner may only promise evidence the immutable-at-claim repository
+ * profile can actually execute. scope_check is intrinsic; every other method
+ * needs a bounded configured command.
+ */
+export function supportedPlanningVerificationMethods(
+  target: TargetRepoConfig,
+): VerificationMethod[] {
+  return VerificationMethod.options.filter((method) =>
+    method !== 'manual'
+    && (
+      method === 'scope_check'
+      || configuredGraderCommand(target, method) !== undefined
+    ));
+}
+
+/**
+ * scope_check's matcher supports repo-relative paths plus `*` / `**`.
+ * Planning output is untrusted prose, so reject descriptions and unsupported
+ * glob dialects before they can turn every legitimate edit out-of-scope.
+ */
+export function isPlanningScopeGlob(pattern: string): boolean {
+  if (!/^[A-Za-z0-9._/*-]+$/.test(pattern) || pattern.startsWith('/')) {
+    return false;
+  }
+  const segments = pattern.split('/');
+  return segments.every((segment) =>
+    segment !== '' && segment !== '.' && segment !== '..');
 }
 
 export interface ApprovedDesignResolution {
@@ -556,6 +591,35 @@ export function applyPlanningEnrichment(
     reasons.push(`invalid planning output: ${parsed.error.issues.map((issue) => issue.message).join('; ')}`);
   } else {
     reasons.push(...parsed.data.ambiguities.map((ambiguity) => `planning ambiguity: ${ambiguity}`));
+    const supportedMethods = config.target
+      ? supportedPlanningVerificationMethods(config.target)
+      : null;
+    const supportedMethodSet = supportedMethods
+      ? new Set<VerificationMethod>(supportedMethods)
+      : null;
+    for (const candidate of parsed.data.candidates) {
+      for (const field of ['include', 'exclude'] as const) {
+        const invalid = candidate.contract.scope[field]
+          .filter((pattern) => !isPlanningScopeGlob(pattern));
+        if (invalid.length > 0) {
+          reasons.push(
+            `${candidate.candidateKey}: scope.${field} must contain only repo-relative `
+            + `file globs understood by scope_check; invalid: ${invalid.join(', ')}`,
+          );
+        }
+      }
+      if (supportedMethodSet) {
+        for (const criterion of candidate.contract.acceptanceCriteria) {
+          if (!supportedMethodSet.has(criterion.verification.method)) {
+            reasons.push(
+              `${candidate.candidateKey}/${criterion.id}: verification method `
+              + `${criterion.verification.method} is unavailable in the registered grader `
+              + `profile (available: ${supportedMethods?.join(', ') ?? '(none)'})`,
+            );
+          }
+        }
+      }
+    }
     const trace = traceReasons(
       parsed.data.candidates,
       `${intake.snapshot.title}\n${intake.snapshot.body}`,

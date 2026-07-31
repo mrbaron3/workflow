@@ -4,11 +4,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
-import { IntakeRecord } from '../src/domain/schema.js';
+import {
+  IntakeRecord,
+  type VerificationMethod,
+} from '../src/domain/schema.js';
 import { Store } from '../src/store/store.js';
 import { recordAgentInvocation } from '../src/agents/invocation.js';
 import {
   applyPlanningEnrichment,
+  isPlanningScopeGlob,
   requiresUiDesign,
   uiDesignSubjectId,
 } from '../src/intake/planning-enrichment.js';
@@ -58,7 +62,12 @@ afterEach(() => {
   while (roots.length) fs.rmSync(roots.pop()!, { recursive: true, force: true });
 });
 
-function candidate(key: string, acId: string, sourceText: string) {
+function candidate(
+  key: string,
+  acId: string,
+  sourceText: string,
+  method: VerificationMethod = 'unit_test',
+) {
   return {
     candidateKey: key,
     title: `Implement ${key}`,
@@ -69,7 +78,7 @@ function candidate(key: string, acId: string, sourceText: string) {
       userStory: 'As a user, I can export a report as CSV',
       scope: { include: ['src/**'], exclude: [] },
       acceptanceCriteria: [
-        { id: acId, severity: 'blocker' as const, behavior: 'CSV export works', verification: { method: 'unit_test' as const, expected: ['CSV is returned'] } },
+        { id: acId, severity: 'blocker' as const, behavior: 'CSV export works', verification: { method, expected: ['CSV is returned'] } },
       ],
       redLines: ['Do not invent another export format'],
     },
@@ -165,6 +174,91 @@ describe('planning enrichment gate', () => {
       designCapabilityIds: [],
     });
     expect(env.store.db.issues[0]!.contract?.apiOperations).toBeUndefined();
+  });
+
+  it('rejects prose scope and verification unavailable to the claimed grader profile', () => {
+    expect(isPlanningScopeGlob('contracts/v1/**')).toBe(true);
+    expect(isPlanningScopeGlob('scripts/check-contracts.mjs')).toBe(true);
+    expect(isPlanningScopeGlob('AuthoringContextSnapshot v1 schema')).toBe(false);
+    expect(isPlanningScopeGlob('../outside/**')).toBe(false);
+
+    const scopeEnv = setup();
+    const proseScope = candidate('api', 'AC-API-001', 'export a report as CSV');
+    proseScope.contract.scope.include = ['AuthoringContextSnapshot v1 schema'];
+    const scopeResult = applyPlanningEnrichment(
+      scopeEnv.store,
+      scopeEnv.config,
+      scopeEnv.intakeKey,
+      { candidates: [proseScope], ambiguities: [] },
+      { systemDir: scopeEnv.systemDir, invocationKey: scopeEnv.invocationKey },
+    );
+    expect(scopeResult.status).toBe('needs-human-review');
+    expect(scopeResult.reasons.join('\n')).toContain(
+      'scope.include must contain only repo-relative file globs',
+    );
+    expect(scopeEnv.store.db.issues).toEqual([]);
+
+    const methodEnv = setup();
+    methodEnv.config.target = {
+      repo: '/repo',
+      graders: {
+        typecheck: 'node scripts/check-contracts.mjs',
+        commands: {
+          build: 'node scripts/check-contracts.mjs',
+          typecheck: 'node scripts/check-contracts.mjs',
+          api_test: 'node scripts/check-contracts.mjs',
+        },
+      },
+    };
+    const unsupported = candidate(
+      'api',
+      'AC-API-001',
+      'export a report as CSV',
+    );
+    const methodResult = applyPlanningEnrichment(
+      methodEnv.store,
+      methodEnv.config,
+      methodEnv.intakeKey,
+      { candidates: [unsupported], ambiguities: [] },
+      { systemDir: methodEnv.systemDir, invocationKey: methodEnv.invocationKey },
+    );
+    expect(methodResult.status).toBe('needs-human-review');
+    expect(methodResult.reasons.join('\n')).toContain(
+      'verification method unit_test is unavailable',
+    );
+    expect(methodEnv.store.db.issues).toEqual([]);
+  });
+
+  it('accepts api_test selected from a direct checker profile', () => {
+    const env = setup();
+    env.config.target = {
+      repo: '/repo',
+      graders: {
+        typecheck: 'node scripts/check-contracts.mjs',
+        commands: {
+          build: 'node scripts/check-contracts.mjs',
+          typecheck: 'node scripts/check-contracts.mjs',
+          api_test: 'node scripts/check-contracts.mjs',
+        },
+      },
+    };
+    const backend = candidate(
+      'api',
+      'AC-API-001',
+      'export a report as CSV',
+      'api_test',
+    );
+
+    const result = applyPlanningEnrichment(
+      env.store,
+      env.config,
+      env.intakeKey,
+      { candidates: [backend], ambiguities: [] },
+      { systemDir: env.systemDir, invocationKey: env.invocationKey },
+    );
+
+    expect(result.status).toBe('accepted');
+    expect(env.store.db.issues).toHaveLength(1);
   });
 
   it('accepts a trace-complete UI artifact with dedicated provenance and projects it onto the Issue', () => {
