@@ -46,29 +46,45 @@ describe('interactive provider adapters', () => {
     expect(cmd).not.toMatch(/\bcodex\s+(exec|review)\b/);
   });
 
-  it('trusts only this session directory so the codex trust prompt never eats the first prompt', () => {
-    const cmd = buildLaunchCommand({
-      provider: 'codex', session: 'ao-plan', cwd: '/workspace/registrations/r1/jobs/j1/worktree',
-      purpose: 'planner',
-    });
-    expect(cmd).toContain(
-      `-c 'projects."/workspace/registrations/r1/jobs/j1/worktree".trust_level="trusted"'`,
-    );
-    // Codex keys trust by git repository root, so a worktree session must trust that root too.
-    const worktreeCmd = buildLaunchCommand({
+  // Codex refuses input until the directory is trusted, and measurement against codex 0.145 showed
+  // `-c projects.<path>.trust_level=…` never applies in any quoting — only a config file does. The
+  // write is confined to a disposable per-session config home so an operator's own config is safe.
+  it('writes codex trust for cwd and repository root, only into a disposable config home', () => {
+    const sandboxed = buildLaunchCommand({
       provider: 'codex', session: 'ao-plan', cwd: '/workspace/registrations/r1/jobs/j1/worktree',
       purpose: 'planner', trustRoots: ['/workspace/registrations/r1'],
+      disposableConfigHome: '/run/agentops-credentials/codex',
     });
-    expect(worktreeCmd).toContain(`-c 'projects."/workspace/registrations/r1".trust_level="trusted"'`);
+    expect(sandboxed).toContain(
+      `printf '[projects."%s"]\\ntrust_level = "trusted"\\n' `
+      + `'/workspace/registrations/r1/jobs/j1/worktree' > '/run/agentops-credentials/codex/config.toml'`,
+    );
+    expect(sandboxed).toContain(
+      `'/workspace/registrations/r1' >> '/run/agentops-credentials/codex/config.toml'`,
+    );
+    expect(sandboxed).not.toContain('-c projects');
+    // Repository-supplied hooks must stay gated by persisted hook trust.
+    expect(sandboxed).not.toContain('--dangerously-bypass-hook-trust');
+    expect(sandboxed).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+
     const deduped = buildLaunchCommand({
       provider: 'codex', session: 'ao-plan', cwd: '/repo', purpose: 'planner', trustRoots: ['/repo'],
+      disposableConfigHome: '/run/agentops-credentials/codex',
     });
     expect(deduped.match(/trust_level/g)).toHaveLength(1);
-    // Repository-supplied hooks must stay gated by persisted hook trust.
-    expect(cmd).not.toContain('--dangerously-bypass-hook-trust');
-    expect(cmd).not.toContain('--dangerously-bypass-approvals-and-sandbox');
+
+    // No disposable home means the operator's own config home: write nothing.
+    const operator = buildLaunchCommand({
+      provider: 'codex', session: 'ao-plan', cwd: '/repo', purpose: 'planner',
+      trustRoots: ['/repo'],
+    });
+    expect(operator).not.toContain('trust_level');
+    expect(operator).not.toContain('config.toml');
+    expect(operator.startsWith('codex ')).toBe(true);
+
     const claude = buildLaunchCommand({
       provider: 'claude', session: 'ao-gen', cwd: '/wt', purpose: 'generator',
+      disposableConfigHome: '/run/agentops-credentials/codex',
     });
     expect(claude).not.toContain('trust_level');
   });

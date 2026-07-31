@@ -92,6 +92,22 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * The provider config home when it is a disposable per-session copy inside the sandbox — a tmpfs
+ * directory holding a read-only bind of the auth file. Callers may write provider configuration
+ * there. Returns undefined for anything else, which is what keeps an operator's own `~/.codex`
+ * from ever being rewritten by a session launch.
+ */
+export function disposableProviderConfigHome(
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  const home = env.CODEX_HOME ?? '';
+  return home.startsWith('/run/agentops-credentials/')
+    && path.resolve(home) === home
+    ? home
+    : undefined;
+}
+
 export function sandboxedShellCommand(
   env: NodeJS.ProcessEnv,
   cwd: string,
@@ -101,12 +117,7 @@ export function sandboxedShellCommand(
   if (!registrationRoot) return command;
   // This path launches trusted provider sessions only (tmux windows); graders
   // call runnerSandboxArgs directly and never receive a credential home.
-  const codexHome = env.CODEX_HOME ?? '';
-  const providerCredentialHome =
-    codexHome.startsWith('/run/agentops-credentials/')
-    && path.resolve(codexHome) === codexHome
-      ? codexHome
-      : undefined;
+  const providerCredentialHome = disposableProviderConfigHome(env);
   return [
     'bwrap',
     ...runnerSandboxArgs(

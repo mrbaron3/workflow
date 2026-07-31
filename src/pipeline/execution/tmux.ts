@@ -20,7 +20,10 @@ import {
   buildInteractiveLaunchCommand,
   type InteractiveLaunchRequest,
 } from '../../agents/interactive-backend.js';
-import { sandboxedShellCommand } from './runner-sandbox.js';
+import {
+  disposableProviderConfigHome,
+  sandboxedShellCommand,
+} from './runner-sandbox.js';
 
 export interface LaunchOpts extends InteractiveLaunchRequest {
   cols?: number;
@@ -181,6 +184,7 @@ export function launchSession(opts: LaunchOpts): void {
     buildLaunchCommand({
       ...opts,
       trustRoots: [...(opts.trustRoots ?? []), ...(trustRoot ? [trustRoot] : [])],
+      disposableConfigHome: disposableProviderConfigHome(environment),
     }),
   );
   const res = tmux([
