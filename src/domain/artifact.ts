@@ -33,6 +33,14 @@ export interface BuildArtifact {
   unitTestsPass: boolean;
   apiTestsPass: boolean;
   hasTests: boolean;
+  /**
+   * Isolated runner only: whether the built checkout still exposes exactly the
+   * bounded repository grader profile captured before untrusted generation.
+   * Undefined keeps legacy/non-runner artifacts additive.
+   */
+  graderProfileValid?: boolean;
+  /** Bounded repair evidence when graderProfileValid is false. */
+  graderProfileError?: string;
   secretsLeaked: boolean;
   /** Files touched outside the contract's declared scope (AI-antipattern: scope creep). */
   scopeViolations: string[];
