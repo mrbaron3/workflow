@@ -2525,7 +2525,7 @@ func validateTriageActual(
 		"/tmp":           "tmpfs",
 		"/home/agentops": "tmpfs",
 	}
-	if config.usesCodexAuthFileFor(mode) {
+	if config.usesCodexAuthFileFor(workerCredentialMode(mode)) {
 		expectedMounts["/run/agentops-credentials"] = config.TriageCredentialVolume
 	}
 	if !exactMounts(actual, expectedMounts) {
@@ -2558,13 +2558,23 @@ func validateRunnerActual(
 		"/home/agentops": "tmpfs",
 		"/workspace":     config.RunnerVolume,
 	}
-	if config.usesCodexAuthFileFor(mode) {
+	if config.usesCodexAuthFileFor(workerCredentialMode(mode)) {
 		expectedMounts["/run/agentops-credentials"] = config.RunnerCredentialVolume
 	}
 	if !exactMounts(actual, expectedMounts) {
 		return fmt.Errorf("runner mounts do not match the hardened topology")
 	}
 	return nil
+}
+
+// DRAINING retains the already-running ACTIVE workers until their leases and
+// attempts reach zero. Validate those workers against the credential boundary
+// they were started with; no DRAINING worker replacement is performed.
+func workerCredentialMode(mode lifecycle.Mode) lifecycle.Mode {
+	if mode == lifecycle.ModeDraining {
+		return lifecycle.ModeActive
+	}
+	return mode
 }
 
 func validatePostgresActual(
