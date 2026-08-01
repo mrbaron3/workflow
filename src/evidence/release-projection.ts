@@ -129,6 +129,7 @@ type ReleaseReceiptControl = Pick<PostgresControlStore,
   | 'listReleaseReceipts'
   | 'recordReleaseReceipt'
   | 'observeReleaseHead'
+  | 'bindReleasePullRequest'
   | 'authorizeReleaseMerge'
   | 'completeReleaseMerge'
 >;
@@ -146,9 +147,10 @@ export interface ProjectReleasePreMergeInput {
   runtime: ReleaseRuntimeConfiguration;
 }
 
-/** Project independently produced local/GitHub facts before the merge mutation. */
-export async function projectReleasePreMerge(
+/** Project independently produced facts without requiring this job to reach merge. */
+async function projectReleaseEvidence(
   input: ProjectReleasePreMergeInput,
+  authorizeMerge: boolean,
 ): Promise<void> {
   const runtime = ReleaseRuntimeConfigurationContract.parse(input.runtime);
   const head = Head.parse(input.observedPrHead.toLowerCase());
@@ -156,7 +158,13 @@ export async function projectReleasePreMerge(
     || input.pr.externalRef?.number !== input.pullRequest) {
     throw new Error('release projection PR/head does not match the observed GitHub revision');
   }
+  await input.control.bindReleasePullRequest({
+    jobId: input.producer.jobId,
+    releaseId: input.release.id,
+    pullRequest: input.pullRequest,
+  });
   if (input.release.status === 'merge-authorized') {
+    if (!authorizeMerge) return;
     const intent = (await input.control.listReleaseReceipts(input.release.id, {
       includeMergeIntent: true,
     })).map((entry) => entry.receipt).find(
@@ -466,6 +474,8 @@ export async function projectReleasePreMerge(
     });
   }
 
+  if (!authorizeMerge) return;
+
   const preMerge = (await input.control.listReleaseReceipts(input.release.id))
     .map((entry) => entry.receipt)
     .filter((receipt) => receipt.kind !== 'merge-intent' && receipt.kind !== 'merge');
@@ -487,6 +497,20 @@ export async function projectReleasePreMerge(
       observedPrHead: head,
     },
   });
+}
+
+/** Persist progress after a reviewed head even when it requests another job. */
+export async function projectReleaseProgress(
+  input: ProjectReleasePreMergeInput,
+): Promise<void> {
+  await projectReleaseEvidence(input, false);
+}
+
+/** Project all current facts and durably authorize the exact merge head. */
+export async function projectReleasePreMerge(
+  input: ProjectReleasePreMergeInput,
+): Promise<void> {
+  await projectReleaseEvidence(input, true);
 }
 
 export async function projectReleaseMerge(

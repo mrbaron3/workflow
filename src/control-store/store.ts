@@ -645,6 +645,29 @@ export class PostgresControlStore {
     });
   }
 
+  /** Persist the stable GitHub PR coordinate before review or recovery splits jobs. */
+  async bindReleasePullRequest(input: {
+    jobId: string;
+    releaseId: string;
+    pullRequest: number;
+  }): Promise<void> {
+    const parsed = z.object({
+      jobId: z.string().uuid(),
+      releaseId: z.string().uuid(),
+      pullRequest: z.number().int().positive().max(2_147_483_647),
+    }).strict().parse(input);
+    const result = await this.pool.query<{ pull_request_number: string }>(
+      `SELECT agentops_control.bind_release_pull_request($1, $2, $3)
+         AS pull_request_number`,
+      [parsed.jobId, parsed.releaseId, parsed.pullRequest],
+    );
+    if (Number(result.rows[0]?.pull_request_number) !== parsed.pullRequest) {
+      throw new ReleaseReceiptConflictError(
+        'release pull request binding did not converge',
+      );
+    }
+  }
+
   /** Allocate a stable release-scoped epoch for a head, independent of job/retry order. */
   async observeReleaseHead(input: {
     releaseId: string;

@@ -18,6 +18,7 @@ import {
 import {
   projectReleaseMerge,
   projectReleasePreMerge,
+  projectReleaseProgress,
 } from '../src/evidence/release-projection.js';
 import { observePrRevision } from '../src/pipeline/execution/pr-native.js';
 import { Store } from '../src/store/store.js';
@@ -225,26 +226,40 @@ integration('production release receipt projection', () => {
     local.save();
 
     const producer = { jobId: queued.job.id, attemptId: lease!.attemptId };
-    await projectReleasePreMerge({
+    const projectionInput = {
       control,
       release: created.release,
       local,
       pr: currentPr,
       pullRequest: 51,
       observedPrHead: head,
-      githubChecks: [{ name: 'ci', status: 'success' }],
+      githubChecks: [{ name: 'ci', status: 'success' as const }],
       githubObservedAt: at(6),
       producer,
       runtime: {
         consumer: { repository: 'mrbaron3/servo', revision: 'b'.repeat(40) },
         environment: {
-          kind: 'container',
+          kind: 'container' as const,
           reference: 'ghcr.io/mrbaron3/agentops@sha256:fixture',
           digest: `sha256:${'c'.repeat(64)}`,
         },
         providerDefaults: [],
       },
+    };
+    await projectReleaseProgress({
+      ...projectionInput,
+      githubChecks: [],
     });
+    expect(await control.getRelease(created.release.id)).toMatchObject({
+      status: 'collecting',
+      pullRequest: 51,
+      finalHead: null,
+    });
+    await expect(control.findReleaseForRunnerEvent({
+      registrationId: registration.id,
+      pullRequest: 51,
+    })).resolves.toMatchObject({ id: created.release.id });
+    await projectReleasePreMerge(projectionInput);
     expect(await control.getRelease(created.release.id)).toMatchObject({
       status: 'merge-authorized',
       pullRequest: 51,
@@ -294,6 +309,7 @@ integration('production release receipt projection', () => {
       update: boolean;
       execute: boolean;
       completion: boolean;
+      bindPullRequest: boolean;
     }>(
       `SELECT
          has_table_privilege(
@@ -309,13 +325,18 @@ integration('production release receipt projection', () => {
          has_function_privilege(
            'agentops_runner',
            'agentops_control.lock_release_completion_state(uuid,uuid)', 'EXECUTE'
-         ) AS completion`,
+         ) AS completion,
+         has_function_privilege(
+           'agentops_runner',
+           'agentops_control.bind_release_pull_request(uuid,uuid,bigint)', 'EXECUTE'
+         ) AS "bindPullRequest"`,
     );
     expect(privileges.rows[0]).toEqual({
       insert: false,
       update: false,
       execute: true,
       completion: true,
+      bindPullRequest: true,
     });
   });
 });

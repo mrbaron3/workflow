@@ -248,7 +248,8 @@ async function main(): Promise<void> {
        agentops_control.authorize_release_merge(jsonb),
        agentops_control.complete_release_merge(jsonb),
        agentops_control.record_release_artifact(text, jsonb),
-       agentops_control.lock_release_completion_state(uuid, uuid)
+       agentops_control.lock_release_completion_state(uuid, uuid),
+       agentops_control.bind_release_pull_request(uuid, uuid, bigint)
        TO agentops_runner;
      GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
        agentops_control.job_leases,
@@ -283,6 +284,10 @@ async function main(): Promise<void> {
          'agentops_runner',
          'agentops_control.lock_release_completion_state(uuid,uuid)', 'EXECUTE'
        ),
+       'releasePullRequestBindingCapability', has_function_privilege(
+         'agentops_runner',
+         'agentops_control.bind_release_pull_request(uuid,uuid,bigint)', 'EXECUTE'
+       ),
        'registrationExecutionUpdate', has_column_privilege(
          'agentops_runner',
          'agentops_control.repository_registrations',
@@ -311,6 +316,7 @@ async function main(): Promise<void> {
     || rolePrivileges.recordReceiptCapability !== true
     || rolePrivileges.authorizeMergeCapability !== true
     || rolePrivileges.releaseCompletionCapability !== true
+    || rolePrivileges.releasePullRequestBindingCapability !== true
     || rolePrivileges.registrationExecutionUpdate !== false
     || rolePrivileges.registrationVersionUpdate !== false
     || rolePrivileges.webhookUpdate !== false

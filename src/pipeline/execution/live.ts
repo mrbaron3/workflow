@@ -68,6 +68,11 @@ export interface LiveOptions {
   beforePush?: () => Promise<void>;
   /** Fresh isolated-runner fence immediately before the distinct GitHub PR-create mutation. */
   beforeCreatePr?: () => Promise<void>;
+  /** Durable observation after the generated head and stable PR identity are projected. */
+  afterProjectRevision?: (input: {
+    pr: PRType;
+    headSha: string;
+  }) => Promise<void>;
   /** Isolated-runner lease/Registration fence immediately before expected-SHA merge evaluation. */
   beforeMerge?: () => Promise<void>;
   /** Isolated-runner lease/Registration fence armed for the exact durable release mutation. */
@@ -172,6 +177,10 @@ export async function runLiveSample(
         log,
         opts.beforeCreatePr,
       );
+      await opts.afterProjectRevision?.({
+        pr: store.getPR(pr.id)!,
+        headSha: revision.headSha,
+      });
     }
     // Persist the actual runtime provider separately from its model/routing intent. This replaces
     // new PromptRecord writes; legacy promptRecords remain readable but are never dual-written.

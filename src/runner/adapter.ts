@@ -39,6 +39,7 @@ import type { ReleaseRuntimeConfiguration } from '../evidence/release-projection
 import {
   projectReleaseMerge,
   projectReleasePreMerge,
+  projectReleaseProgress,
 } from '../evidence/release-projection.js';
 import type { PR } from '../domain/schema.js';
 import {
@@ -675,6 +676,27 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           beforeProviderExecution: beforeProvider,
           beforePush: () => input.fence.arm('push'),
           beforeCreatePr: () => input.fence.arm('push'),
+          ...(release && input.controlStore
+            ? {
+                afterProjectRevision: async ({ pr }: { pr: PR; headSha: string }) => {
+                  if (!pr.externalRef) {
+                    throw new RunnerExecutionError(
+                      'internal_failure',
+                      'release build projection has no stable GitHub PR identity',
+                      false,
+                      'release',
+                    );
+                  }
+                  await input.fence.arm('release');
+                  input.fence.consume('release');
+                  await input.controlStore!.bindReleasePullRequest({
+                    jobId: input.lease.job.id,
+                    releaseId: release.id,
+                    pullRequest: pr.externalRef.number,
+                  });
+                },
+              }
+            : {}),
           ...(releaseMergeOptions
             ? {
                 authorizeMerge: releaseMergeOptions.authorizeMerge,
@@ -794,6 +816,29 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         true,
         'provider',
       );
+    }
+    if (
+      release
+      && input.controlStore
+      && input.releaseRuntime
+      && matchingPr.status !== 'merged'
+      && matchingPr.externalRef
+      && matchingPr.headSha
+    ) {
+      await input.fence.arm('release');
+      input.fence.consume('release');
+      await projectReleaseProgress({
+        control: input.controlStore,
+        release,
+        local: store,
+        pr: matchingPr,
+        pullRequest: matchingPr.externalRef.number,
+        observedPrHead: matchingPr.headSha,
+        githubChecks: [],
+        githubObservedAt: new Date().toISOString(),
+        producer,
+        runtime: input.releaseRuntime,
+      });
     }
     if (
       event.kind === 'pull_request'

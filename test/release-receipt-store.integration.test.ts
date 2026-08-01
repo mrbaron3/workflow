@@ -589,6 +589,12 @@ integration('PostgreSQL release receipt outbox', () => {
         final_head: null,
         pull_request_number: null,
       }]);
+      const bound = await runner.query<{ pull_request_number: string }>(
+        `SELECT agentops_control.bind_release_pull_request($1, $2, $3)
+           AS pull_request_number`,
+        [promotedJobId, linked.rows[0]!.release_id, 91],
+      );
+      expect(bound.rows).toEqual([{ pull_request_number: '91' }]);
     } finally {
       await runner.query('RESET ROLE');
       runner.release();
@@ -602,6 +608,10 @@ integration('PostgreSQL release receipt outbox', () => {
       actor: { type: 'human', login: 'product-owner' },
     });
     expect(receipt).not.toHaveProperty('triageInvocationId');
+    await expect(store.findReleaseForRunnerEvent({
+      registrationId: registration.id,
+      pullRequest: 91,
+    })).resolves.toMatchObject({ id: linked.rows[0]!.release_id });
   });
 
   it('fails promotion closed until a required pre-ready AI decision is proven', async () => {
