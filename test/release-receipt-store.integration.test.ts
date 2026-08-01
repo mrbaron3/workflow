@@ -22,7 +22,24 @@ integration('PostgreSQL release receipt outbox', () => {
   beforeAll(async () => {
     pool = new Pool({ connectionString: databaseUrl, max: 8 });
     await pool.query('DROP SCHEMA IF EXISTS agentops_control CASCADE');
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'agentops_triage'
+        ) THEN
+          CREATE ROLE agentops_triage NOLOGIN;
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'agentops_runner'
+        ) THEN
+          CREATE ROLE agentops_runner NOLOGIN;
+        END IF;
+      END $$
+    `);
     expect(await migrateControlSchema(pool)).toBe(CONTROL_SCHEMA_VERSION);
+    await pool.query(
+      'GRANT USAGE ON SCHEMA agentops_control TO agentops_triage',
+    );
     await pool.query(
       `UPDATE agentops_control.lifecycle_state
           SET mode = 'ACTIVE', generation = generation + 1,
@@ -502,32 +519,43 @@ integration('PostgreSQL release receipt outbox', () => {
       durationMs: 10_000,
       jobType: 'agentops.triage',
     });
-    const promotedJobId = await store.promoteTriageLease({
-      token: lease!.token,
-      workerId: 'triage-direct-human',
-      readyLabel: 'ready',
-      claimedLabel: 'claimed',
-      authority: {
-        actor: 'product-owner',
-        readyAt: '2026-08-01T00:00:30Z',
-      },
-      result: {
-        schemaVersion: 1,
-        status: 'succeeded',
-        jobId: queued.job.id,
-        attemptNumber: lease!.attemptNumber,
-        repository: registration.repository,
-        issueNumber: 31,
-        outcome: 'promoted',
-        sourceDigest: null,
-        decision: null,
-        commentUrl: null,
-        appliedLabels: [],
-        promotedJobId: null,
-        providerProvenance: null,
-        completedAt: '2026-08-01T00:00:31Z',
-      },
-    });
+    const result = {
+      schemaVersion: 1,
+      status: 'succeeded',
+      jobId: queued.job.id,
+      attemptNumber: lease!.attemptNumber,
+      repository: registration.repository,
+      issueNumber: 31,
+      outcome: 'promoted',
+      sourceDigest: null,
+      decision: null,
+      commentUrl: null,
+      appliedLabels: [],
+      promotedJobId: null,
+      providerProvenance: null,
+      completedAt: '2026-08-01T00:00:31Z',
+    };
+    const triage = await pool.connect();
+    let promotedJobId: string;
+    try {
+      await triage.query('SET ROLE agentops_triage');
+      const promoted = await triage.query<{ job_id: string }>(
+        `SELECT job_id
+           FROM agentops_control.promote_triage_release($1, $2, $3, $4, $5, $6)`,
+        [
+          lease!.token,
+          'triage-direct-human',
+          result,
+          'ready',
+          'claimed',
+          { actor: 'product-owner', readyAt: '2026-08-01T00:00:30Z' },
+        ],
+      );
+      promotedJobId = promoted.rows[0]!.job_id;
+    } finally {
+      await triage.query('RESET ROLE');
+      triage.release();
+    }
     const linked = await pool.query<{
       id: string;
       release_id: string;
