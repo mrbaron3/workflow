@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	ControlSchemaVersion = 9
+	ControlSchemaVersion = 10
 	migrationLockKey     = int64(0x4349534f02)
 )
 

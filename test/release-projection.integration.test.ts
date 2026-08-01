@@ -289,7 +289,12 @@ integration('production release receipt projection', () => {
   });
 
   it('keeps runner table DML denied while exposing only release capabilities', async () => {
-    const privileges = await pool.query<{ insert: boolean; update: boolean; execute: boolean }>(
+    const privileges = await pool.query<{
+      insert: boolean;
+      update: boolean;
+      execute: boolean;
+      completion: boolean;
+    }>(
       `SELECT
          has_table_privilege(
            'agentops_runner', 'agentops_control.release_receipt_outbox', 'INSERT'
@@ -300,8 +305,17 @@ integration('production release receipt projection', () => {
          has_function_privilege(
            'agentops_runner',
            'agentops_control.authorize_release_merge(jsonb)', 'EXECUTE'
-         ) AS execute`,
+         ) AS execute,
+         has_function_privilege(
+           'agentops_runner',
+           'agentops_control.lock_release_completion_state(uuid,uuid)', 'EXECUTE'
+         ) AS completion`,
     );
-    expect(privileges.rows[0]).toEqual({ insert: false, update: false, execute: true });
+    expect(privileges.rows[0]).toEqual({
+      insert: false,
+      update: false,
+      execute: true,
+      completion: true,
+    });
   });
 });

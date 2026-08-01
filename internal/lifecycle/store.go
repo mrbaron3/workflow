@@ -655,7 +655,8 @@ func BootstrapRoles(
 		   agentops_control.record_release_receipt(jsonb),
 		   agentops_control.authorize_release_merge(jsonb),
 		   agentops_control.complete_release_merge(jsonb),
-		   agentops_control.record_release_artifact(text, jsonb)
+		   agentops_control.record_release_artifact(text, jsonb),
+		   agentops_control.lock_release_completion_state(uuid, uuid)
 		   TO agentops_runner`,
 		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
 		   agentops_control.job_leases, agentops_control.artifact_links

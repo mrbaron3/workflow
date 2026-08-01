@@ -38,7 +38,7 @@ integration('PostgreSQL release receipt outbox', () => {
     `);
     expect(await migrateControlSchema(pool)).toBe(CONTROL_SCHEMA_VERSION);
     await pool.query(
-      'GRANT USAGE ON SCHEMA agentops_control TO agentops_triage',
+      'GRANT USAGE ON SCHEMA agentops_control TO agentops_triage, agentops_runner',
     );
     await pool.query(
       `UPDATE agentops_control.lifecycle_state
@@ -572,6 +572,27 @@ integration('PostgreSQL release receipt outbox', () => {
       expect.objectContaining({ id: queued.job.id, status: 'succeeded' }),
       expect.objectContaining({ id: promotedJobId, status: 'queued' }),
     ]));
+    const runner = await pool.connect();
+    try {
+      await runner.query('SET ROLE agentops_runner');
+      const locked = await runner.query<{
+        status: string;
+        final_head: string | null;
+        pull_request_number: string | null;
+      }>(
+        `SELECT status, final_head, pull_request_number
+           FROM agentops_control.lock_release_completion_state($1, $2)`,
+        [promotedJobId, linked.rows[0]!.release_id],
+      );
+      expect(locked.rows).toEqual([{
+        status: 'collecting',
+        final_head: null,
+        pull_request_number: null,
+      }]);
+    } finally {
+      await runner.query('RESET ROLE');
+      runner.release();
+    }
     const receipt = (await store.listReleaseReceipts(
       linked.rows[0]!.release_id,
     ))[0]!.receipt;

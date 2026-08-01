@@ -2333,10 +2333,8 @@ export class PostgresControlStore {
             pull_request_number: string | null;
           }>(
             `SELECT status, final_head, pull_request_number
-               FROM agentops_control.releases
-              WHERE id = $1
-              FOR SHARE`,
-            [row.release_id],
+               FROM agentops_control.lock_release_completion_state($1, $2)`,
+            [row.job_id, row.release_id],
           )
         : null;
       const mergedRelease = durableRelease?.rows[0]?.status === 'merged'
