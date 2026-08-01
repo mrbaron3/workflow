@@ -252,7 +252,10 @@ export function runPanel(store: Store, config: HarnessConfig, input: PanelInput,
       escalated = true;
       continue;
     }
-    graded.push(persistRun(store, config, input, p.key, result, {}, area));
+    // Keep repository-grader facts on successful perspective rows. Release
+    // evidence must not reconstruct a passed local gate after the job-local
+    // build artifact is gone or relabel it as a GitHub CheckRun.
+    graded.push(persistRun(store, config, input, p.key, result, base.hardGates, area));
   }
 
   if (escalated) {

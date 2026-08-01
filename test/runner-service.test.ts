@@ -211,4 +211,119 @@ describe('isolated runner terminal outcomes', () => {
       },
     });
   });
+
+  it('does not reverse a completed release when workspace cleanup fails', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-cleanup-failure-'));
+    roots.push(root);
+    const registrationRoot = path.join(root, 'registrations', registrationId);
+    const artifactPath = path.join(
+      registrationRoot,
+      'jobs',
+      jobId,
+      'attempt-1',
+      'artifacts',
+    );
+    const worktreePath = path.join(
+      registrationRoot,
+      'jobs',
+      jobId,
+      'attempt-1',
+      'worktree',
+    );
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.mkdirSync(worktreePath, { recursive: true });
+    const prepared: PreparedRunnerWorkspace = {
+      registrationRoot,
+      repositoryPath: path.join(registrationRoot, 'repository.git'),
+      worktreePath,
+      statePath: path.join(registrationRoot, 'jobs', jobId, 'state'),
+      artifactPath,
+      headSha: 'a'.repeat(40),
+    };
+    const activeLease = lease();
+    const finishLease = vi.fn(async () => {});
+    const failOrRetryLease = vi.fn(async () => 'queued' as const);
+    const log = vi.fn();
+    const store = {
+      reclaimExpiredLeases: vi.fn(async () => 0),
+      acquireLease: vi.fn().mockResolvedValueOnce(activeLease),
+      getRegistration: vi.fn(async () => ({
+        id: registrationId,
+        repository: 'owner/repo',
+        enabled: true,
+        issueMonitorEnabled: true,
+        prMonitorEnabled: true,
+        executionEnabled: true,
+        configuration: {},
+        version: 1,
+        createdAt: '2026-07-31T00:00:00.000Z',
+        updatedAt: '2026-07-31T00:00:00.000Z',
+      })),
+      assertExecutionGuard: vi.fn(async () => ({
+        ok: true,
+        reason: null,
+        registration: null,
+        jobId,
+        leaseExpiresAt: activeLease.expiresAt,
+      })),
+      linkLeaseArtifact: vi.fn(async () => {}),
+      finishLease,
+      failOrRetryLease,
+    } as unknown as PostgresControlStore;
+    const cleanup = vi.fn(() => {
+      throw new Error('temporary worktree removal failure');
+    });
+    const workspace = {
+      prepare: vi.fn(() => prepared),
+      cleanup,
+    } as unknown as RunnerWorkspaceManager;
+    const adapter: AgentOpsRunnerAdapter = {
+      async execute() {
+        return {
+          outcome: 'completed',
+          humanReview: null,
+          headSha: prepared.headSha,
+          pullRequestNumber: 38,
+          developmentTurn: {
+            intake: [],
+            enrichmentIds: [],
+            driveResults: [],
+          },
+        };
+      },
+    };
+    const service = new IsolatedRunnerService({
+      operatingMode: 'ACTIVE',
+      workerId: activeLease.workerId,
+      workspaceRoot: root,
+      provider: 'codex',
+      leaseDurationMs: 600_000,
+      heartbeatIntervalMs: 300_000,
+      reconciliationIntervalMs: 250,
+      maxAttempts: 3,
+      retryBaseMs: 0,
+      attemptTimeoutMs: 600_000,
+    }, {
+      store,
+      workspace,
+      adapter,
+      log,
+    });
+
+    await expect(service.runOnce()).resolves.toBe(true);
+
+    expect(finishLease).toHaveBeenCalledWith(activeLease.token, expect.objectContaining({
+      status: 'succeeded',
+      result: expect.objectContaining({
+        outcome: 'completed',
+        headSha: prepared.headSha,
+        pullRequestNumber: 38,
+      }),
+    }));
+    expect(failOrRetryLease).not.toHaveBeenCalled();
+    expect(cleanup).toHaveBeenCalledWith(prepared);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining(
+      'runner workspace cleanup failed',
+    ));
+  });
 });

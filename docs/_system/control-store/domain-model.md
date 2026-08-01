@@ -18,6 +18,15 @@
   identity-only envelope。command、ref、clone URL、label、provider credentialを持たない。
 - **DOM-control-store-015 Triage Promotion Capability** — exact human ready labelをGitHubで再確認したtriage leaseを
   完了し、設定済みready／claimed labelを持つdevelopment jobを同一transactionで作る限定DB capability。
+- **DOM-control-store-016 Release** — Registration、repository、Issue、policy、final head、PR、merge resultを所有する
+  durable aggregate。複数jobとattemptは同じReleaseへlinkする。
+- **DOM-control-store-017 Release Receipt** — release内idempotency keyとcausal predecessorsを持つimmutable semantic fact。
+  authority/build/grade/review/finding-resolution/runtime/merge/interventionをkindで区別する。
+- **DOM-control-store-018 Merge Authorization** — required receipt集合をexpected headへ束縛したpre-merge verdict。
+  authorizationなしのGitHub mergeはrelease成功として取り込まない。
+- **DOM-control-store-019 Release Certificate** — outbox receiptとdigest-bound artifactから独立certifierが導出する
+  published evidence。複数runtime producer、durable head epoch、artifact receipt bindingをPostgreSQLから再構成し、
+  job topologyやjob-local DBを入力の必須条件にしない。
 
 不変条件: active jobはrepositoryごとに高々1件、active leaseはjobごとに高々1件、stale/disabled Registrationのjobは
 claimしない。artifactはRegistration rootからreal pathで逸脱できず、lease loss後にside effect permitを消費できない。
@@ -25,4 +34,5 @@ monitor capabilityはtriage roleだけ、development lease／guard capabilityは
 jobs／attempts／leases tableでもRLSがjob typeを強制し、両roleは互いのjob rowを読書きできない。
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
-[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)、
+[ADR-0020](../../decisions/ADR-0020-release-receipt-evidence.md)

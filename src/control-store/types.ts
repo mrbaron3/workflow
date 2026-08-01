@@ -1,6 +1,15 @@
 import { z } from 'zod';
 
-export const CONTROL_SCHEMA_VERSION = 7;
+import {
+  ProviderModelSelectionContract,
+  ReleaseRuntimeConsumerContract,
+  ReleaseRuntimeEnvironmentContract,
+  ReleasePolicyContract,
+  type DurableReleaseReceipt,
+  type ReleasePolicy,
+} from '../evidence/release-receipt.js';
+
+export const CONTROL_SCHEMA_VERSION = 8;
 
 const RepositoryOwner = z.string()
   .min(1)
@@ -62,7 +71,9 @@ export const RepositoryRegistrationInput = z.object({
   issueMonitorEnabled: z.boolean().default(true),
   prMonitorEnabled: z.boolean().default(true),
   executionEnabled: z.boolean().default(true),
-  configuration: z.object({}).strict().default({}),
+  configuration: z.object({
+    releaseEvidence: ReleasePolicyContract.optional(),
+  }).strict().default({}),
 });
 export type RepositoryRegistrationInput = z.infer<typeof RepositoryRegistrationInput>;
 export const RepositoryRegistrationPatch = RepositoryRegistrationInput
@@ -140,6 +151,17 @@ export const TriageDecisionV1Contract = z.object({
 }).strict();
 export type TriageDecisionV1 = z.infer<typeof TriageDecisionV1Contract>;
 
+export const TriageProviderProvenanceContract = z.object({
+  attemptId: z.string().uuid(),
+  provider: z.string().min(1).max(128),
+  model: ProviderModelSelectionContract,
+  consumer: ReleaseRuntimeConsumerContract,
+  environment: ReleaseRuntimeEnvironmentContract,
+}).strict();
+export type TriageProviderProvenance = z.infer<
+  typeof TriageProviderProvenanceContract
+>;
+
 export const TriageJobResultV1Contract = z.object({
   schemaVersion: z.literal(1),
   status: z.literal('succeeded'),
@@ -157,6 +179,7 @@ export const TriageJobResultV1Contract = z.object({
     ),
   ).max(3),
   promotedJobId: z.string().uuid().nullable(),
+  providerProvenance: TriageProviderProvenanceContract.nullable().default(null),
   completedAt: z.string().datetime(),
 }).strict();
 export type TriageJobResultV1 = z.infer<typeof TriageJobResultV1Contract>;
@@ -370,6 +393,8 @@ export interface JobEnvelope {
   payload: Record<string, unknown>;
   status: 'queued' | 'leased' | 'succeeded' | 'failed' | 'cancelled' | 'rejected';
   createdAt: string;
+  /** Durable release identity; optional only for legacy/non-release jobs. */
+  releaseId?: string;
 }
 
 export const JobEnvelopeContract = z.object({
@@ -383,6 +408,7 @@ export const JobEnvelopeContract = z.object({
   payload: z.record(z.unknown()),
   status: z.enum(['queued', 'leased', 'succeeded', 'failed', 'cancelled', 'rejected']),
   createdAt: z.string().datetime(),
+  releaseId: z.string().uuid().optional(),
 }).strict();
 
 export interface EnqueueResult {
@@ -443,6 +469,28 @@ export interface BuildDefect {
   createdAt: string;
 }
 
+export interface ReleaseRecord {
+  id: string;
+  registrationId: string;
+  releaseKey: string;
+  repository: string;
+  issueNumber: number;
+  policy: ReleasePolicy;
+  status: 'collecting' | 'merge-authorized' | 'merged';
+  pullRequest: number | null;
+  finalHead: string | null;
+  mergeSha: string | null;
+  mergeActor: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+export interface ReleaseReceiptOutboxEntry {
+  receipt: DurableReleaseReceipt;
+  publishedAt: string | null;
+}
+
 export class ControlStoreUnavailableError extends Error {
   override readonly name = 'ControlStoreUnavailableError';
 }
@@ -465,6 +513,14 @@ export class OperatingModeError extends Error {
 
 export class IdempotencyConflictError extends Error {
   override readonly name = 'IdempotencyConflictError';
+}
+
+export class ReleaseReceiptConflictError extends Error {
+  override readonly name = 'ReleaseReceiptConflictError';
+}
+
+export class ReleaseCertificationError extends Error {
+  override readonly name = 'ReleaseCertificationError';
 }
 
 export class LeaseRejectedError extends Error {

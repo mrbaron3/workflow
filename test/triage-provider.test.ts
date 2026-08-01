@@ -91,6 +91,7 @@ describe('Codex triage provider runtime boundary', () => {
           isPullRequest: false,
         },
         comments: [],
+        labelEvents: [],
       },
       context: { documents: [], openIssues: [] },
     })).resolves.toMatchObject({

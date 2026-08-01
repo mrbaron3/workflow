@@ -32,6 +32,10 @@ export interface TriageServiceConfig {
   maxAttempts: number;
   retryBaseMs: number;
   attemptTimeoutMs: number;
+  providerProvenance?: Omit<
+    NonNullable<TriageJobResultV1['providerProvenance']>,
+    'attemptId'
+  > | null;
 }
 
 interface TriageStore {
@@ -199,7 +203,7 @@ function triageResult(
     | 'commentUrl'
     | 'appliedLabels'
     | 'promotedJobId'
-  >,
+  > & Partial<Pick<TriageJobResultV1, 'providerProvenance'>>,
 ): TriageJobResultV1 {
   return TriageJobResultV1Contract.parse({
     schemaVersion: 1,
@@ -209,6 +213,7 @@ function triageResult(
     repository,
     issueNumber: payload.issue.number,
     ...values,
+    providerProvenance: values.providerProvenance ?? null,
     completedAt: new Date().toISOString(),
   });
 }
@@ -268,6 +273,12 @@ export class TriageRunnerService {
     repository: string,
     snapshot: TriageSnapshot,
     heartbeat: TriageHeartbeat,
+    triageAuthority?: {
+      sourceDigest: string;
+      decision: TriageDecisionV1;
+      completedAt: string;
+      providerProvenance: NonNullable<TriageJobResultV1['providerProvenance']>;
+    },
   ): Promise<void> {
     if (!snapshot.issue.labels.includes(this.dependencies.policy.readyLabel)) {
       throw new RunnerExecutionError(
@@ -277,6 +288,19 @@ export class TriageRunnerService {
       );
     }
     await heartbeat.assertLive();
+    const latestReadyEvent = [...snapshot.labelEvents]
+      .filter((event) => event.label === this.dependencies.policy.readyLabel)
+      .sort((left, right) => (
+        left.createdAt.localeCompare(right.createdAt) || left.id - right.id
+      ))
+      .at(-1);
+    if (!latestReadyEvent || latestReadyEvent.action !== 'labeled') {
+      throw new RunnerExecutionError(
+        'provider_failure',
+        'ready authority cannot be proven from the GitHub Issue event ledger',
+        false,
+      );
+    }
     const result = triageResult(lease, payload, repository, {
       outcome: 'promoted',
       sourceDigest: null,
@@ -291,6 +315,11 @@ export class TriageRunnerService {
       result,
       readyLabel: this.dependencies.policy.readyLabel,
       claimedLabel: this.dependencies.policy.claimedLabel,
+      authority: {
+        actor: latestReadyEvent.actor,
+        readyAt: latestReadyEvent.createdAt,
+        ...(triageAuthority ? { triage: triageAuthority } : {}),
+      },
     });
     this.log(
       `triage promoted ${repository}#${payload.issue.number} `
@@ -413,11 +442,23 @@ export class TriageRunnerService {
         payload.issue.number,
         this.dependencies.policy.contextPaths,
       );
+      if (registration.configuration.releaseEvidence
+        && !this.config.providerProvenance) {
+        throw new RunnerExecutionError(
+          'startup_isolation_failure',
+          'release receipt runtime provenance is not configured for AI triage',
+          false,
+        );
+      }
       const decision = await this.dependencies.provider.analyze({
         repository,
         snapshot,
         context,
       });
+      const triageCompletedAt = new Date().toISOString();
+      const providerProvenance = !this.config.providerProvenance
+        ? null
+        : { ...this.config.providerProvenance, attemptId: lease.attemptId };
       const current = await this.dependencies.github.snapshot(
         repository,
         payload.issue.number,
@@ -429,6 +470,14 @@ export class TriageRunnerService {
           repository,
           current,
           heartbeat,
+          providerProvenance === null
+            ? undefined
+            : {
+                sourceDigest,
+                decision,
+                completedAt: triageCompletedAt,
+                providerProvenance,
+              },
         );
         return;
       }
@@ -480,6 +529,7 @@ export class TriageRunnerService {
           commentUrl,
           appliedLabels,
           promotedJobId: null,
+          providerProvenance,
         }),
       });
       this.log(

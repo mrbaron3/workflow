@@ -36,6 +36,7 @@ import {
 import {
   autoMergeCurrentRevision,
   realPrNativeGithubRunner,
+  type AutoMergeOptions,
   type PrNativeGithubRunner,
 } from './pr-native.js';
 import { improveTick } from '../improve.js';
@@ -72,7 +73,11 @@ export interface LiveOptions {
   /** Isolated-runner lease/Registration fence armed for the exact durable release mutation. */
   beforeRelease?: () => Promise<void>;
   /** Synchronous single-use permit consumed at the exact durable release mutation. */
-  assertReleasePermit?: () => void;
+  assertReleasePermit?: () => void | Promise<void>;
+  /** Durable receipt certification performed against the exact observed head. */
+  authorizeMerge?: AutoMergeOptions['authorizeMerge'];
+  /** Durable GitHub merge observation performed before local release state. */
+  completeMerge?: AutoMergeOptions['completeMerge'];
   /** Best-of-N: independent samples to drive per issue (default config.samples; real default = 1). */
   samples?: number;
   /** Measurement run: drive ALL samples to completion for pass@k / pass^k, not first-approve-stop (E5). */
@@ -409,14 +414,18 @@ export async function driveIssueLive(
     const pr = store.getPR(winner.prId)!;
     await opts.beforeMerge?.();
     await opts.beforeRelease?.();
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       config,
       pr,
       opts.prNativeRunner ?? realPrNativeGithubRunner(config.gate?.mergeMethod),
       path.resolve(harnessRoot, config.target.repo),
       (opts.perspectives ?? PERSPECTIVES).map((perspective) => perspective.key),
-      { beforeRelease: opts.assertReleasePermit },
+      {
+        beforeRelease: opts.assertReleasePermit,
+        authorizeMerge: opts.authorizeMerge,
+        completeMerge: opts.completeMerge,
+      },
     );
     log(
       `  ⇩ ${issue.id}: revision ${result.headSha?.slice(0, 12) ?? 'unobserved'} `

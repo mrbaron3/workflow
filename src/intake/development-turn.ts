@@ -235,7 +235,7 @@ export async function runGithubDevelopmentTurn(
       if (discovery.reviewRequired) await review(discovery);
     }
     await deps.beforeReconcile?.();
-    const results = reconcilePrNativeGates(
+    const results = await reconcilePrNativeGates(
       store,
       config,
       prNativeRunner,

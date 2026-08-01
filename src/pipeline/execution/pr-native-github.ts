@@ -2,7 +2,11 @@ import { z } from 'zod';
 import type { HarnessConfig } from '../../config.js';
 import type { RevisionCheck, RevisionReviewThread } from '../../domain/schema.js';
 import { runCommand as run } from './command.js';
-import type { GithubOpenPullRequest, PrNativeGithubRunner } from './pr-native.js';
+import type {
+  GithubOpenPullRequest,
+  GithubReleaseObservation,
+  PrNativeGithubRunner,
+} from './pr-native.js';
 
 export const MAX_REVIEW_THREAD_BODY_CHARS = 8_000;
 export const BLOCKING_REVIEW_COMMENT = /\[(?:P0|P1)\]|\bblocker\b|\brequest_changes\b/i;
@@ -69,6 +73,72 @@ export type GithubCommandRunner = (
   args: string[],
   cwd: string,
 ) => string;
+
+const GhReleasePrViewResponse = z.object({
+  state: z.literal('MERGED'),
+  headRefOid: GithubSha,
+  mergeCommit: z.object({ oid: GithubSha }).strict(),
+  mergedBy: z.object({ login: z.string().min(1).max(128) }).strict(),
+  mergedAt: z.string().datetime({ offset: true }),
+}).strict();
+const GhReleaseIssueViewResponse = z.object({
+  state: z.literal('CLOSED'),
+  stateReason: z.literal('COMPLETED'),
+}).strict();
+const GhRepositoryViewResponse = z.object({
+  defaultBranchRef: z.object({ name: z.string().min(1).max(255) }).strict(),
+}).strict();
+const GhCompareResponse = z.object({
+  status: z.enum(['ahead', 'identical', 'behind', 'diverged']),
+}).passthrough();
+
+/** Capture the external release boundary from independently queried GitHub facts. */
+export function observeGithubRelease(
+  commandRunner: GithubCommandRunner,
+  cwd: string,
+  repository: string,
+  issueNumber: number,
+  prNumber: number,
+  expectedHead: string,
+): GithubReleaseObservation {
+  const parsedHead = GithubSha.parse(expectedHead);
+  const pr = GhReleasePrViewResponse.parse(JSON.parse(commandRunner('gh', [
+    'pr', 'view', String(prNumber), '--repo', repository, '--json',
+    'state,headRefOid,mergeCommit,mergedBy,mergedAt',
+  ], cwd)));
+  if (pr.headRefOid !== parsedHead) {
+    throw new Error(
+      `merged PR #${prNumber} head ${pr.headRefOid} does not match ${parsedHead}`,
+    );
+  }
+  GhReleaseIssueViewResponse.parse(JSON.parse(commandRunner('gh', [
+    'issue', 'view', String(issueNumber), '--repo', repository, '--json',
+    'state,stateReason',
+  ], cwd)));
+  const repositoryView = GhRepositoryViewResponse.parse(JSON.parse(commandRunner('gh', [
+    'repo', 'view', repository, '--json', 'defaultBranchRef',
+  ], cwd)));
+  const comparison = GhCompareResponse.parse(JSON.parse(commandRunner('gh', [
+    'api', `repos/${repository}/compare/${pr.mergeCommit.oid}...${repositoryView.defaultBranchRef.name}`,
+  ], cwd)));
+  if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
+    throw new Error(
+      `merge commit ${pr.mergeCommit.oid} is not reachable from `
+      + `${repositoryView.defaultBranchRef.name}`,
+    );
+  }
+  return {
+    pullRequest: prNumber,
+    expectedHead: parsedHead,
+    observedPrHead: pr.headRefOid,
+    mergeSha: pr.mergeCommit.oid,
+    actor: pr.mergedBy.login,
+    issueState: 'CLOSED',
+    issueStateReason: 'COMPLETED',
+    mergeReachableFromDefaultBranch: true,
+    mergedAt: pr.mergedAt,
+  };
+}
 
 /** Retrieve every open PR page; `gh pr list --limit` silently truncates large repositories. */
 export function listOpenGithubPullRequests(
@@ -259,6 +329,21 @@ export function realPrNativeGithubRunner(
         'pr', 'diff', String(prNumber), ...repoArgs, '--name-only',
       ], cwd,
     ).split('\n').map((line) => line.trim()).filter(Boolean),
+    observeRelease(cwd, targetRepository, issueNumber, prNumber, expectedHead) {
+      if (repository && repository !== targetRepository) {
+        throw new Error(
+          `release repository ${targetRepository} does not match scoped ${repository}`,
+        );
+      }
+      return observeGithubRelease(
+        run,
+        cwd,
+        targetRepository,
+        issueNumber,
+        prNumber,
+        expectedHead,
+      );
+    },
     merge(cwd, prNumber, expectedHeadSha) {
       run('gh', [
         'pr', 'merge', String(prNumber), ...repoArgs, `--${mergeMethod}`,

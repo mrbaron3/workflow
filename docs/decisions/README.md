@@ -31,3 +31,4 @@
 | [ADR-0016](ADR-0016-agentopsctl-lifecycle-authority.md) | 短命な`agentopsctl`だけをApple Container隔離基盤のlifecycle ownerとし、DB権威のdrain fence、復旧、補償、exact loopback publicationを行う | 採択・吸収・実装済み（CISO-06） |
 | [ADR-0017](ADR-0017-private-repository-monitor-broker.md) | private repositoryのIssue/PR readとIssue triageを専用credential境界のtyped durable capabilityへ閉じ、人間ready後だけdevelopmentへpromoteする | 採択・吸収・schema v7構造実装済み（multi-repo live実証待ち） |
 | [ADR-0018](ADR-0018-surrogate-verifier-oracle-calibration.md) | 内部Panel全承認と独立外部検証の棄却をrevision単位の不透明な信号にし、次reviewerの検証被覆を強化する | 採択・吸収・構造実装済み（次revisionでのgrounded効果観測待ち） |
+| [ADR-0020](ADR-0020-release-receipt-evidence.md) | live release evidenceをjob topologyでなくdurable release identityとhead-bound causal receiptからcertifyする | 採択・production配線済み（external-target live run待ち） |

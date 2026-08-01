@@ -32,7 +32,22 @@
   strict version 1 JSON contract。`promote_triage_job`はready／claimed labelをdevelopment payloadへ写し、
   triage完了とrunner enqueueをatomicにする。jobs／attempts／leases／artifact linksのRLSは
   `agentops_triage=agentops.triage`、`agentops_runner=agentops.runner`をDBで再強制する。
+- **DATA-control-store-019** `releases` — Registration-scoped release key、repository/Issue、policy、
+  `collecting|merge-authorized|merged`、PR/final head/merge SHA/actor/timeを持つ。
+- **DATA-control-store-020** `jobs.release_id` — topologyを同一性へ昇格させず、任意個のproducer jobを一つのreleaseへ
+  linkするnullable foreign key。
+- **DATA-control-store-021** `release_receipt_outbox` — immutable receipt payload、release内key、kind、head、cause IDs、
+  recorded/published time。causeは同じreleaseの既存receiptだけを指し、authority/merge intent/mergeは
+  releaseごとに高々一件、runtimeはproducer jobごとに複数件を許す。
+- **DATA-control-store-022** Registration `configuration.releaseEvidence` — authority route、required gate signals、
+  required review perspectives、minimum head epochsを固定するopt-in policy。未設定Registrationはv1-compatibleであり、
+  v2 releaseのreceipt欠落をv1 artifactから補完しない。
+- **DATA-control-store-023** `release_heads` — release内のhead SHA、単調なhead epoch、同一releaseの先行parent headを
+  保持する。job/retry順序からreview epochを推測しない。
+- **DATA-control-store-024** `release_artifacts` — release/final head/receipt IDsへ束縛したartifact key、URI、digest、size。
+  bytesはDBへ入れず、未知receipt、重複receipt ID、別headをconstraint triggerとstoreで拒否する。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
-[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)、
+[ADR-0020](../../decisions/ADR-0020-release-receipt-evidence.md)

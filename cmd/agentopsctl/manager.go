@@ -1580,6 +1580,10 @@ func (manager *manager) triageSpec(
 		environment["AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON"] =
 			manager.config.TriageContextPaths
 	}
+	if manager.config.TriageModel != "" {
+		environment["AGENTOPS_TRIAGE_MODEL"] = manager.config.TriageModel
+	}
+	manager.config.addReleaseProvenance(environment)
 	if mode == lifecycle.ModeActive && manager.config.Provider == "codex" {
 		if manager.config.usesCodexAuthFileFor(mode) {
 			environment["CODEX_HOME"] = "/run/agentops-credentials/codex"
@@ -1848,6 +1852,7 @@ func (manager *manager) runnerSpec(
 		"NO_PROXY": databaseHost + "," + githubBrokerHost +
 			",127.0.0.1,localhost",
 	}
+	manager.config.addReleaseProvenance(environment)
 	if mode == lifecycle.ModeActive && manager.config.Provider == "codex" {
 		if manager.config.usesCodexAuthFileFor(mode) {
 			environment["CODEX_HOME"] = "/run/agentops-credentials/codex"

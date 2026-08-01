@@ -17,54 +17,61 @@ import (
 )
 
 type config struct {
-	Prefix                 string
-	Network                string
-	PostgresVolume         string
-	RunnerVolume           string
-	TriageCredentialVolume string
-	RunnerCredentialVolume string
-	GitHubAppKeyVolume     string
-	PostgresContainer      string
-	ControlContainer       string
-	GitHubBrokerContainer  string
-	TriageContainer        string
-	RunnerContainer        string
-	PostgresImage          string
-	ControlImage           string
-	GitHubBrokerImage      string
-	TriageImage            string
-	RunnerImage            string
-	ProjectRoot            string
-	ControlHostPort        int
-	PostgresPassword       string
-	NextPostgresPassword   string
-	ControlDBPassword      string
-	TriageDBPassword       string
-	RunnerDBPassword       string
-	ControlToken           string
-	DashboardToken         string
-	WebhookSecret          string
-	ControlGitHubToken     string
-	TriageGitHubToken      string
-	RunnerGitHubToken      string
-	GitHubAppID            int64
-	GitHubInstallationID   int64
-	GitHubAppSlug          string
-	GitHubAppOwner         string
-	GitHubAppKeyPath       string
-	TriageBrokerCapability string
-	RunnerBrokerCapability string
-	Provider               string
-	ProviderToken          string
-	CodexAuthPath          string
-	MonitorRepositories    []string
-	RunnerRepositories     []string
-	TriageReadyLabel       string
-	TriageClaimedLabel     string
-	TriageCandidateLabel   string
-	TriageBlockedLabel     string
-	TriageNeedsInfoLabel   string
-	TriageContextPaths     string
+	Prefix                      string
+	Network                     string
+	PostgresVolume              string
+	RunnerVolume                string
+	TriageCredentialVolume      string
+	RunnerCredentialVolume      string
+	GitHubAppKeyVolume          string
+	PostgresContainer           string
+	ControlContainer            string
+	GitHubBrokerContainer       string
+	TriageContainer             string
+	RunnerContainer             string
+	PostgresImage               string
+	ControlImage                string
+	GitHubBrokerImage           string
+	TriageImage                 string
+	RunnerImage                 string
+	ProjectRoot                 string
+	ControlHostPort             int
+	PostgresPassword            string
+	NextPostgresPassword        string
+	ControlDBPassword           string
+	TriageDBPassword            string
+	RunnerDBPassword            string
+	ControlToken                string
+	DashboardToken              string
+	WebhookSecret               string
+	ControlGitHubToken          string
+	TriageGitHubToken           string
+	RunnerGitHubToken           string
+	GitHubAppID                 int64
+	GitHubInstallationID        int64
+	GitHubAppSlug               string
+	GitHubAppOwner              string
+	GitHubAppKeyPath            string
+	TriageBrokerCapability      string
+	RunnerBrokerCapability      string
+	Provider                    string
+	ProviderToken               string
+	CodexAuthPath               string
+	MonitorRepositories         []string
+	RunnerRepositories          []string
+	TriageReadyLabel            string
+	TriageClaimedLabel          string
+	TriageCandidateLabel        string
+	TriageBlockedLabel          string
+	TriageNeedsInfoLabel        string
+	TriageContextPaths          string
+	TriageModel                 string
+	ReleaseConsumerRepository   string
+	ReleaseConsumerRevision     string
+	ReleaseEnvironmentKind      string
+	ReleaseEnvironmentReference string
+	ReleaseEnvironmentDigest    string
+	ReleaseProviderDefaults     string
 }
 
 func loadConfig() (config, error) {
@@ -219,7 +226,42 @@ func loadConfig() (config, error) {
 		TriageContextPaths: strings.TrimSpace(
 			os.Getenv("AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON"),
 		),
+		TriageModel: strings.TrimSpace(os.Getenv("AGENTOPS_TRIAGE_MODEL")),
+		ReleaseConsumerRepository: strings.TrimSpace(
+			os.Getenv("AGENTOPS_RELEASE_CONSUMER_REPOSITORY"),
+		),
+		ReleaseConsumerRevision: strings.TrimSpace(
+			os.Getenv("AGENTOPS_RELEASE_CONSUMER_REVISION"),
+		),
+		ReleaseEnvironmentKind: strings.TrimSpace(
+			os.Getenv("AGENTOPS_RELEASE_ENVIRONMENT_KIND"),
+		),
+		ReleaseEnvironmentReference: strings.TrimSpace(
+			os.Getenv("AGENTOPS_RELEASE_ENVIRONMENT_REFERENCE"),
+		),
+		ReleaseEnvironmentDigest: strings.TrimSpace(
+			os.Getenv("AGENTOPS_RELEASE_ENVIRONMENT_DIGEST"),
+		),
+		ReleaseProviderDefaults: strings.TrimSpace(
+			os.Getenv("AGENTOPS_RELEASE_PROVIDER_DEFAULTS_JSON"),
+		),
 	}, nil
+}
+
+func (value config) addReleaseProvenance(environment map[string]string) {
+	values := map[string]string{
+		"AGENTOPS_RELEASE_CONSUMER_REPOSITORY":    value.ReleaseConsumerRepository,
+		"AGENTOPS_RELEASE_CONSUMER_REVISION":      value.ReleaseConsumerRevision,
+		"AGENTOPS_RELEASE_ENVIRONMENT_KIND":       value.ReleaseEnvironmentKind,
+		"AGENTOPS_RELEASE_ENVIRONMENT_REFERENCE":  value.ReleaseEnvironmentReference,
+		"AGENTOPS_RELEASE_ENVIRONMENT_DIGEST":     value.ReleaseEnvironmentDigest,
+		"AGENTOPS_RELEASE_PROVIDER_DEFAULTS_JSON": value.ReleaseProviderDefaults,
+	}
+	for key, item := range values {
+		if item != "" {
+			environment[key] = item
+		}
+	}
 }
 
 func (value config) validateStart(mode lifecycle.Mode) error {

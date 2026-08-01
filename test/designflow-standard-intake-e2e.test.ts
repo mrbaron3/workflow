@@ -580,7 +580,7 @@ async function releaseIssues(
     const revision = observePrRevision(store, pr, headSha);
     addReleaseEvalRuns(store, issue, pr.id, revision.id, headSha, isWorkspace);
     store.save();
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       cfg,
       store.getPR(pr.id)!,

@@ -631,6 +631,9 @@ func BootstrapRoles(
 		`GRANT EXECUTE ON FUNCTION
 		   agentops_control.promote_triage_job(uuid, text, jsonb, text, text)
 		   TO agentops_triage`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.promote_triage_release(uuid, text, jsonb, text, text, jsonb)
+		   TO agentops_triage`,
 		`GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_triage`,
 		`GRANT USAGE, SELECT ON SEQUENCE agentops_control.runtime_audit_id_seq
 		   TO agentops_triage`,
@@ -644,6 +647,16 @@ func BootstrapRoles(
 		`GRANT UPDATE(updated_at) ON agentops_control.repository_registrations
 		   TO agentops_runner`,
 		`GRANT SELECT, UPDATE ON agentops_control.jobs TO agentops_runner`,
+		`GRANT SELECT ON agentops_control.releases TO agentops_runner`,
+		`GRANT SELECT ON agentops_control.release_heads,
+		   agentops_control.release_receipt_outbox,
+		   agentops_control.release_artifacts TO agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.record_release_receipt(jsonb),
+		   agentops_control.authorize_release_merge(jsonb),
+		   agentops_control.complete_release_merge(jsonb),
+		   agentops_control.record_release_artifact(text, jsonb)
+		   TO agentops_runner`,
 		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
 		   agentops_control.job_leases, agentops_control.artifact_links
 		   TO agentops_runner`,
@@ -660,6 +673,9 @@ func BootstrapRoles(
 		   FROM agentops_runner`,
 		`REVOKE EXECUTE ON FUNCTION
 		   agentops_control.promote_triage_job(uuid, text, jsonb, text, text)
+		   FROM agentops_runner`,
+		`REVOKE EXECUTE ON FUNCTION
+		   agentops_control.promote_triage_release(uuid, text, jsonb, text, text, jsonb)
 		   FROM agentops_runner`,
 		`GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_runner`,
 		`GRANT USAGE, SELECT ON SEQUENCE agentops_control.runtime_audit_id_seq

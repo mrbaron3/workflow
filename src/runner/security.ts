@@ -7,6 +7,10 @@ import {
   type GitHubBrokerCredential,
 } from '../github/credential.js';
 import { assertContainerNeutralPath } from '../runtime/paths.js';
+import {
+  ReleaseRuntimeConfigurationContract,
+  releaseRuntimeConfigurationFromEnvironment,
+} from '../evidence/release-projection.js';
 import { RunnerExecutionError } from './errors.js';
 
 const NamedVolume = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/);
@@ -39,6 +43,7 @@ export const RunnerStartupInput = z.object({
   mounts: z.array(Mount),
   publishedPorts: z.array(z.number().int().min(1).max(65_535)),
   outbound: z.array(OutboundDestination).min(1),
+  releaseRuntime: ReleaseRuntimeConfigurationContract.nullable(),
 }).strict().refine(
   (value) => value.heartbeatIntervalMs * 2 < value.leaseDurationMs,
   'heartbeat interval must be less than half the lease duration',
@@ -544,6 +549,7 @@ export function loadRunnerStartup(
     mounts,
     publishedPorts,
     outbound,
+    releaseRuntime: releaseRuntimeConfigurationFromEnvironment(env),
   });
 
   const workspaceMount = config.mounts.find(
