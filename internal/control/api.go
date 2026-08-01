@@ -373,11 +373,12 @@ func (api *API) createRegistration(
 		return
 	}
 	var body struct {
-		Repository          string `json:"repository"`
-		Enabled             *bool  `json:"enabled,omitempty"`
-		IssueMonitorEnabled *bool  `json:"issueMonitorEnabled,omitempty"`
-		PRMonitorEnabled    *bool  `json:"prMonitorEnabled,omitempty"`
-		ExecutionEnabled    *bool  `json:"executionEnabled,omitempty"`
+		Repository          string          `json:"repository"`
+		Enabled             *bool           `json:"enabled,omitempty"`
+		IssueMonitorEnabled *bool           `json:"issueMonitorEnabled,omitempty"`
+		PRMonitorEnabled    *bool           `json:"prMonitorEnabled,omitempty"`
+		ExecutionEnabled    *bool           `json:"executionEnabled,omitempty"`
+		Configuration       json.RawMessage `json:"configuration,omitempty"`
 	}
 	if !decodeJSON(writer, request, &body) {
 		return
@@ -388,6 +389,7 @@ func (api *API) createRegistration(
 		IssueMonitorEnabled: body.IssueMonitorEnabled,
 		PRMonitorEnabled:    body.PRMonitorEnabled,
 		ExecutionEnabled:    body.ExecutionEnabled,
+		Configuration:       body.Configuration,
 	}
 	validated, validationErr := input.Validated()
 	if validationErr != nil {
@@ -499,10 +501,11 @@ func (api *API) registrationCommand(
 	switch {
 	case request.Method == http.MethodPatch && len(parts) == 3:
 		var body struct {
-			Enabled             *bool `json:"enabled,omitempty"`
-			IssueMonitorEnabled *bool `json:"issueMonitorEnabled,omitempty"`
-			PRMonitorEnabled    *bool `json:"prMonitorEnabled,omitempty"`
-			ExecutionEnabled    *bool `json:"executionEnabled,omitempty"`
+			Enabled             *bool           `json:"enabled,omitempty"`
+			IssueMonitorEnabled *bool           `json:"issueMonitorEnabled,omitempty"`
+			PRMonitorEnabled    *bool           `json:"prMonitorEnabled,omitempty"`
+			ExecutionEnabled    *bool           `json:"executionEnabled,omitempty"`
+			Configuration       json.RawMessage `json:"configuration,omitempty"`
 		}
 		if !decodeJSON(writer, request, &body) {
 			return
@@ -512,6 +515,7 @@ func (api *API) registrationCommand(
 			IssueMonitorEnabled: body.IssueMonitorEnabled,
 			PRMonitorEnabled:    body.PRMonitorEnabled,
 			ExecutionEnabled:    body.ExecutionEnabled,
+			Configuration:       body.Configuration,
 		}
 		if err := patch.Validate(); err != nil {
 			writeCommandError(
