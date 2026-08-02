@@ -28,11 +28,19 @@ import { resolveAgentRoute } from '../../agents/routing.js';
 import { contextFor, renderScopedContext } from './scoped-context.js';
 import { submitPromptWhenSessionReady } from './session-readiness.js';
 import { renderAuthoritativeDesignContext } from '../../designflow/authority.js';
+import {
+  sampleKey,
+  type ExternalWorkIdentity,
+} from './work-identity.js';
+
+export { sampleKey } from './work-identity.js';
 
 export interface GeneratorSessionInput {
   issue: Issue;
   contract: IssueContract;
   sampleIndex: number;
+  /** Stable external mutation identity; absent only for store-local/sandbox work. */
+  workIdentity?: ExternalWorkIdentity | null;
   attempt: number;
   /** Present on repair attempts (attempt > 1): the reviewers' required fixes to apply on top. */
   repairBrief?: RepairBrief | null;
@@ -85,17 +93,6 @@ export function generatorWorktreeRequiresReset(
     || (resumeRef !== null && resumeRef !== undefined && worktreeHead !== resumeRef);
 }
 
-/**
- * The per-(issue, sample) identity every physical resource derives from — branch
- * `agent/<key>`, tmux session `ao-<key>`, worktree `.harness/worktrees/<key>`. Exported so
- * the guard can pin its injectivity over distinct (issueId, sampleIndex) pairs (gate pin
- * ISSUE-0019): issues driven CONCURRENTLY (FEAT-008) must never collide on a workspace or
- * session name — uniqueness here is what makes the parallel substrate collision-free.
- */
-export function sampleKey(issueId: string, sampleIndex: number): string {
-  return `${issueId.toLowerCase()}-s${sampleIndex}`;
-}
-
 export async function runGeneratorSession(
   config: HarnessConfig,
   input: GeneratorSessionInput,
@@ -107,7 +104,7 @@ export async function runGeneratorSession(
 
   const repoAbs = path.resolve(harnessRoot, target.repo);
   const baseRef = target.baseRef ?? 'HEAD';
-  const key = sampleKey(input.issue.id, input.sampleIndex);
+  const key = sampleKey(input.issue.id, input.sampleIndex, input.workIdentity);
   const branch = `agent/${key}`;
   const session = `ao-${key}`;
   const route = resolveAgentRoute(config, 'generator');

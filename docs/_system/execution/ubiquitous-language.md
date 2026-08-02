@@ -31,3 +31,4 @@
 | LANG-execution-021 | Revision Gate | current PR Revisionについて、必須Perspective・hard gates・GitHub checks・blocking thread・mergeabilityを集約する決定論ゲート。 |
 | LANG-execution-022 | Blocking Review Finding | P0/P1、blocker、`request_changes`、missing evidence等、current revisionのmerge資格を単独で拒否する指摘。 |
 | LANG-execution-023 | Repository-discovered PR | Repository RegistrationからGitHub current snapshotをpollして取り込んだOpen PR。個別登録を持たず、外部PR番号で冪等化し、same-repository headだけを自動修正対象にする。 |
+| LANG-execution-024 | External Work Identity | GitHub Source Issue由来の1 work unit / sampleを、canonical repository・external Issue番号・intake key・planning work-unit key・release correlation・sample indexで識別する安定identity。job-local Storeの表示ID（`ISSUE-0001`等）は含めない。branch・worktree・session・PR body markerの同じ派生元にする。 |

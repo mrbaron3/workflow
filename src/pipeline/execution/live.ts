@@ -23,7 +23,12 @@ import { recordAgentInvocation } from '../../agents/invocation.js';
 import { resolveAgentRoute, resolvedGeneratorProvider } from '../../agents/routing.js';
 import { pollable, blockedByDependencies, formatBlockedLine } from './guard.js';
 import { mapPool } from './pool.js';
-import { runGeneratorSession, sampleKey } from './session.js';
+import { runGeneratorSession } from './session.js';
+import {
+  canonicalGithubRepository,
+  sampleKey,
+  type ExternalWorkIdentity,
+} from './work-identity.js';
 import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader, type PriorFinding } from './perspective-session.js';
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
@@ -73,6 +78,8 @@ export interface LiveOptions {
     pr: PRType;
     headSha: string;
   }) => Promise<void>;
+  /** Durable release correlation for external branch/PR identity. */
+  releaseIdentity?: string | null;
   /** Isolated-runner lease/Registration fence immediately before expected-SHA merge evaluation. */
   beforeMerge?: () => Promise<void>;
   /** Isolated-runner lease/Registration fence armed for the exact durable release mutation. */
@@ -94,6 +101,48 @@ export interface LiveOptions {
    * dependency exclusion are observable — while the real path stays byte-for-byte the same.
    */
   driveIssue?: (issue: Issue) => Promise<DriveResult>;
+}
+
+/**
+ * Resolve external mutation coordinates without using the Store-local display
+ * Issue id. A split Source Issue must carry a stable planning candidate key;
+ * falling back to ISSUE-0001 there would recreate the collision this boundary
+ * exists to prevent.
+ */
+export function externalWorkIdentityFor(
+  store: Store,
+  issue: Issue,
+  releaseId: string | null = null,
+): ExternalWorkIdentity | null {
+  const byKey = issue.intakeKey ? store.intakeByKey(issue.intakeKey) : undefined;
+  const byProjection = store.db.intakeRecords.find((record) =>
+    record.storeIssueIds.includes(issue.id));
+  if (byKey && byProjection && byKey.intakeKey !== byProjection.intakeKey) {
+    throw new Error(`${issue.id} has conflicting external intake identities`);
+  }
+  const intake = byKey ?? byProjection;
+  if (!intake) return null;
+  if (
+    intake.storeIssueIds.length > 0
+    && !intake.storeIssueIds.includes(issue.id)
+  ) {
+    throw new Error(`${issue.id} is not projected by intake ${intake.intakeKey}`);
+  }
+  const workUnitKey = intake.storeIssueIds.length <= 1
+    ? 'source'
+    : issue.planningCandidateKey;
+  if (!workUnitKey) {
+    throw new Error(
+      `${issue.id} is one of multiple external work units but has no stable planning candidate key`,
+    );
+  }
+  return {
+    repository: intake.snapshot.repository,
+    issueNumber: intake.snapshot.number,
+    intakeKey: intake.intakeKey,
+    workUnitKey,
+    releaseId,
+  };
 }
 
 /**
@@ -126,7 +175,22 @@ export async function runLiveSample(
   const contract = issue.contract!;
   const target = config.target!;
   const perspectives = opts.perspectives ?? PERSPECTIVES;
-  const issueKey = sampleKey(issue.id, sampleIndex);
+  const workIdentity = externalWorkIdentityFor(
+    store,
+    issue,
+    opts.releaseIdentity ?? null,
+  );
+  if (
+    workIdentity
+    && config.intake?.backend === 'github'
+    && canonicalGithubRepository(config.intake.repository)
+      !== canonicalGithubRepository(workIdentity.repository)
+  ) {
+    throw new Error(
+      `external work repository ${workIdentity.repository} does not match configured intake ${config.intake.repository}`,
+    );
+  }
+  const issueKey = sampleKey(issue.id, sampleIndex, workIdentity);
   const startAttempt = opts.resumePr ? opts.resumePr.attempts + 1 : 1;
   const maxAttempts = startAttempt + config.maxRepairs;
   const manageIssueStatus = opts.manageIssueStatus;
@@ -154,6 +218,7 @@ export async function runLiveSample(
         issue,
         contract,
         sampleIndex,
+        workIdentity,
         attempt,
         repairBrief,
         resumeRef: store.getPR(pr.id)?.headSha ?? pr.headSha,
@@ -163,7 +228,6 @@ export async function runLiveSample(
     );
     let revision: Awaited<ReturnType<typeof projectReviewRevision>> | null = null;
     if (sess.outcome === 'completed' && sess.headSha) {
-      await opts.beforePush?.();
       revision = await (opts.projectRevision ?? projectReviewRevision)(
         store,
         config,
@@ -172,10 +236,17 @@ export async function runLiveSample(
           worktree: sess.worktree,
           title: `${issue.id}: ${issue.title}`,
           headSha: sess.headSha,
+          workIdentity,
+          sampleIndex,
         },
-        opts.gateRunner ?? realGhGateRunner(),
+        opts.gateRunner ?? realGhGateRunner(
+          config.intake?.backend === 'github'
+            ? config.intake.repository
+            : undefined,
+        ),
         log,
         opts.beforeCreatePr,
+        opts.beforePush,
       );
       await opts.afterProjectRevision?.({
         pr: store.getPR(pr.id)!,

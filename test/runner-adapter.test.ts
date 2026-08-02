@@ -584,6 +584,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
         };
       },
       gateRunner: () => ({
+        preflightPr: (_cwd, args) => args.existingRef,
         pushBranch: () => {
           githubSideEffects.push('push');
         },

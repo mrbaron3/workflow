@@ -25,6 +25,7 @@ PR #8では、ローカルの検証結果とGitHub上のレビュー結果が別
 ### PR-first と revision identity
 
 - 初回Generatorがbuild commitを作った直後、LLM観点レビューより先にGitHub PRを作る。
+- PRの物理identityはjob-local Store IDでなく、canonical repository・external Issue番号・planning work unit・release・sampleから決定的に導く。既存branch/PRはこのidentityとqualified closing targetがexact matchした場合だけ再利用し、曖昧なbranchへのpush前にfail-closedとする。
 - 評価単位を `(prId, headSha)` の **PR Revision** とする。
 - EvalRun、Reviewer Invocation、finding、check結果は必ず同じhead SHAへ束縛する。
 - pushでhead SHAが変わった時点で旧revisionの承認はstaleとなり、merge資格へ寄与しない。
@@ -77,3 +78,4 @@ Issueを閉じる。
 | current revision gate | `ARCH-execution-020` |
 | 修正push後の全観点再レビュー | `ARCH-execution-021` |
 | atomic auto-mergeとqueue継続 | `ARCH-execution-022` |
+| external work identityとPR再利用のfail-closed境界 | `LANG-execution-024` / `DOM-execution-016` / `DATA-execution-013` / `ARCH-execution-024` |
