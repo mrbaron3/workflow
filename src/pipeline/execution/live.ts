@@ -15,6 +15,7 @@
 
 import path from 'node:path';
 import type { Issue, PR as PRType } from '../../domain/schema.js';
+import { findingOriginRef } from '../../domain/finding-lineage.js';
 import { resolveConcurrentIssueCap, type HarnessConfig } from '../../config.js';
 import type { RepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
@@ -23,7 +24,12 @@ import { recordAgentInvocation } from '../../agents/invocation.js';
 import { resolveAgentRoute, resolvedGeneratorProvider } from '../../agents/routing.js';
 import { pollable, blockedByDependencies, formatBlockedLine } from './guard.js';
 import { mapPool } from './pool.js';
-import { runGeneratorSession, sampleKey } from './session.js';
+import { runGeneratorSession } from './session.js';
+import {
+  canonicalGithubRepository,
+  sampleKey,
+  type ExternalWorkIdentity,
+} from './work-identity.js';
 import { groundArtifact } from './grade.js';
 import { runPerspectiveSessions, sessionBackedGrader, type PriorFinding } from './perspective-session.js';
 import { runPanel, PERSPECTIVES, type PerspectiveSpec } from '../panel.js';
@@ -36,6 +42,7 @@ import {
 import {
   autoMergeCurrentRevision,
   realPrNativeGithubRunner,
+  type AutoMergeOptions,
   type PrNativeGithubRunner,
 } from './pr-native.js';
 import { improveTick } from '../improve.js';
@@ -67,12 +74,23 @@ export interface LiveOptions {
   beforePush?: () => Promise<void>;
   /** Fresh isolated-runner fence immediately before the distinct GitHub PR-create mutation. */
   beforeCreatePr?: () => Promise<void>;
+  /** Durable observation after the generated head and stable PR identity are projected. */
+  afterProjectRevision?: (input: {
+    pr: PRType;
+    headSha: string;
+  }) => Promise<void>;
+  /** Durable release correlation for external branch/PR identity. */
+  releaseIdentity?: string | null;
   /** Isolated-runner lease/Registration fence immediately before expected-SHA merge evaluation. */
   beforeMerge?: () => Promise<void>;
   /** Isolated-runner lease/Registration fence armed for the exact durable release mutation. */
   beforeRelease?: () => Promise<void>;
   /** Synchronous single-use permit consumed at the exact durable release mutation. */
-  assertReleasePermit?: () => void;
+  assertReleasePermit?: () => void | Promise<void>;
+  /** Durable receipt certification performed against the exact observed head. */
+  authorizeMerge?: AutoMergeOptions['authorizeMerge'];
+  /** Durable GitHub merge observation performed before local release state. */
+  completeMerge?: AutoMergeOptions['completeMerge'];
   /** Best-of-N: independent samples to drive per issue (default config.samples; real default = 1). */
   samples?: number;
   /** Measurement run: drive ALL samples to completion for pass@k / pass^k, not first-approve-stop (E5). */
@@ -87,6 +105,48 @@ export interface LiveOptions {
 }
 
 /**
+ * Resolve external mutation coordinates without using the Store-local display
+ * Issue id. A split Source Issue must carry a stable planning candidate key;
+ * falling back to ISSUE-0001 there would recreate the collision this boundary
+ * exists to prevent.
+ */
+export function externalWorkIdentityFor(
+  store: Store,
+  issue: Issue,
+  releaseId: string | null = null,
+): ExternalWorkIdentity | null {
+  const byKey = issue.intakeKey ? store.intakeByKey(issue.intakeKey) : undefined;
+  const byProjection = store.db.intakeRecords.find((record) =>
+    record.storeIssueIds.includes(issue.id));
+  if (byKey && byProjection && byKey.intakeKey !== byProjection.intakeKey) {
+    throw new Error(`${issue.id} has conflicting external intake identities`);
+  }
+  const intake = byKey ?? byProjection;
+  if (!intake) return null;
+  if (
+    intake.storeIssueIds.length > 0
+    && !intake.storeIssueIds.includes(issue.id)
+  ) {
+    throw new Error(`${issue.id} is not projected by intake ${intake.intakeKey}`);
+  }
+  const workUnitKey = intake.storeIssueIds.length <= 1
+    ? 'source'
+    : issue.planningCandidateKey;
+  if (!workUnitKey) {
+    throw new Error(
+      `${issue.id} is one of multiple external work units but has no stable planning candidate key`,
+    );
+  }
+  return {
+    repository: intake.snapshot.repository,
+    issueNumber: intake.snapshot.number,
+    intakeKey: intake.intakeKey,
+    workUnitKey,
+    releaseId,
+  };
+}
+
+/**
  * The store→prior-findings selection for a re-review (ISSUE-0009), extracted pure like
  * collectFindings (AC-LIVE-003) so the deterministic sub-logic is pinned by unit tests, not
  * buried in the tmux orchestration: each lens is handed ONLY its own findings from the
@@ -98,7 +158,19 @@ export function priorFindingsByLens(store: Store, prId: string, attempt: number)
   return Object.fromEntries(
     store.db.evalRuns
       .filter((r) => r.prId === prId && r.attempt === attempt - 1 && r.perspective !== null)
-      .map((r) => [r.perspective!, r.findings]),
+      .map((r) => [r.perspective!, r.findings.map((finding, findingIndex) => ({
+        criterionId: finding.criterionId,
+        observed: finding.observed,
+        lineageRef: finding.lineage === 'persisted' && finding.lineageRef
+          ? finding.lineageRef
+          : findingOriginRef({
+              runId: r.id,
+              prId: r.prId,
+              headSha: r.headSha,
+              attempt: r.attempt,
+              perspective: r.perspective!,
+            }, findingIndex),
+      }))]),
   );
 }
 
@@ -116,7 +188,22 @@ export async function runLiveSample(
   const contract = issue.contract!;
   const target = config.target!;
   const perspectives = opts.perspectives ?? PERSPECTIVES;
-  const issueKey = sampleKey(issue.id, sampleIndex);
+  const workIdentity = externalWorkIdentityFor(
+    store,
+    issue,
+    opts.releaseIdentity ?? null,
+  );
+  if (
+    workIdentity
+    && config.intake?.backend === 'github'
+    && canonicalGithubRepository(config.intake.repository)
+      !== canonicalGithubRepository(workIdentity.repository)
+  ) {
+    throw new Error(
+      `external work repository ${workIdentity.repository} does not match configured intake ${config.intake.repository}`,
+    );
+  }
+  const issueKey = sampleKey(issue.id, sampleIndex, workIdentity);
   const startAttempt = opts.resumePr ? opts.resumePr.attempts + 1 : 1;
   const maxAttempts = startAttempt + config.maxRepairs;
   const manageIssueStatus = opts.manageIssueStatus;
@@ -144,6 +231,7 @@ export async function runLiveSample(
         issue,
         contract,
         sampleIndex,
+        workIdentity,
         attempt,
         repairBrief,
         resumeRef: store.getPR(pr.id)?.headSha ?? pr.headSha,
@@ -153,7 +241,6 @@ export async function runLiveSample(
     );
     let revision: Awaited<ReturnType<typeof projectReviewRevision>> | null = null;
     if (sess.outcome === 'completed' && sess.headSha) {
-      await opts.beforePush?.();
       revision = await (opts.projectRevision ?? projectReviewRevision)(
         store,
         config,
@@ -162,11 +249,22 @@ export async function runLiveSample(
           worktree: sess.worktree,
           title: `${issue.id}: ${issue.title}`,
           headSha: sess.headSha,
+          workIdentity,
+          sampleIndex,
         },
-        opts.gateRunner ?? realGhGateRunner(),
+        opts.gateRunner ?? realGhGateRunner(
+          config.intake?.backend === 'github'
+            ? config.intake.repository
+            : undefined,
+        ),
         log,
         opts.beforeCreatePr,
+        opts.beforePush,
       );
+      await opts.afterProjectRevision?.({
+        pr: store.getPR(pr.id)!,
+        headSha: revision.headSha,
+      });
     }
     // Persist the actual runtime provider separately from its model/routing intent. This replaces
     // new PromptRecord writes; legacy promptRecords remain readable but are never dual-written.
@@ -409,14 +507,18 @@ export async function driveIssueLive(
     const pr = store.getPR(winner.prId)!;
     await opts.beforeMerge?.();
     await opts.beforeRelease?.();
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       config,
       pr,
       opts.prNativeRunner ?? realPrNativeGithubRunner(config.gate?.mergeMethod),
       path.resolve(harnessRoot, config.target.repo),
       (opts.perspectives ?? PERSPECTIVES).map((perspective) => perspective.key),
-      { beforeRelease: opts.assertReleasePermit },
+      {
+        beforeRelease: opts.assertReleasePermit,
+        authorizeMerge: opts.authorizeMerge,
+        completeMerge: opts.completeMerge,
+      },
     );
     log(
       `  ⇩ ${issue.id}: revision ${result.headSha?.slice(0, 12) ?? 'unobserved'} `

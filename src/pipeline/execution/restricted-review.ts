@@ -106,6 +106,15 @@ const RESTRICTED_FINDINGS_JSON_SCHEMA = {
               { type: 'null' },
             ],
           },
+          lineageRef: {
+            anyOf: [
+              {
+                type: 'string',
+                pattern: '^finding-origin-v1:[0-9a-f]{64}$',
+              },
+              { type: 'null' },
+            ],
+          },
         },
       },
       maxItems: MAX_REVIEW_FINDINGS,

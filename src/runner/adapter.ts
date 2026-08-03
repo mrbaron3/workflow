@@ -27,12 +27,20 @@ import {
 } from '../pipeline/execution/gate.js';
 import {
   realPrNativeGithubRunner,
+  type AutoMergeOptions,
   type PrNativeGithubRunner,
 } from '../pipeline/execution/pr-native.js';
 import type {
   Lease,
   RunnerJobPayloadV1,
 } from '../control-store/types.js';
+import type { PostgresControlStore } from '../control-store/store.js';
+import type { ReleaseRuntimeConfiguration } from '../evidence/release-projection.js';
+import {
+  projectReleaseMerge,
+  projectReleasePreMerge,
+  projectReleaseProgress,
+} from '../evidence/release-projection.js';
 import type { PR } from '../domain/schema.js';
 import {
   realPlanningHumanReviewGitHub,
@@ -71,6 +79,8 @@ export interface AgentOpsAdapterInput {
   workspace: PreparedRunnerWorkspace;
   fence: RunnerLeaseFence;
   provider: 'codex' | 'claude';
+  controlStore?: PostgresControlStore;
+  releaseRuntime?: ReleaseRuntimeConfiguration | null;
   log: (message: string) => void;
 }
 
@@ -279,6 +289,9 @@ function guardedGateRunner(
   delegate: GhGateRunner,
 ): GhGateRunner {
   return {
+    preflightPr(cwd, args) {
+      return delegate.preflightPr(cwd, args);
+    },
     pushBranch(worktree, branch) {
       fence.consume('push');
       delegate.pushBranch(worktree, branch);
@@ -314,6 +327,20 @@ function guardedPrNativeRunner(
       assertPullRequest(prNumber);
       return delegate.viewRevision(cwd, prNumber);
     },
+    ...(delegate.observeRelease
+      ? {
+          observeRelease(cwd, repository, issueNumber, prNumber, expectedHead) {
+            assertPullRequest(prNumber);
+            return delegate.observeRelease!(
+              cwd,
+              repository,
+              issueNumber,
+              prNumber,
+              expectedHead,
+            );
+          },
+        }
+      : {}),
     merge(cwd, prNumber, expectedHeadSha) {
       assertPullRequest(prNumber);
       fence.consume('merge');
@@ -469,6 +496,26 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
     const store = new Store(input.workspace.statePath);
     if (!Store.isInitialized(input.workspace.statePath)) store.save();
     const config = runnerConfig(input);
+    const releaseId = input.lease.job.releaseId ?? null;
+    const release = releaseId === null
+      ? null
+      : await input.controlStore?.getRelease(releaseId) ?? null;
+    if (releaseId !== null && !release) {
+      throw new RunnerExecutionError(
+        'internal_failure',
+        `runner release ${releaseId} is unavailable`,
+        false,
+        'release',
+      );
+    }
+    if (release && !input.releaseRuntime) {
+      throw new RunnerExecutionError(
+        'startup_isolation_failure',
+        'release receipt runtime provenance is not configured',
+        false,
+        'release',
+      );
+    }
     const realIssueRunner = (
       this.dependencies.issueRunner ?? realGithubIssueRunner
     )(input.workspace.worktreePath);
@@ -515,6 +562,62 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       await input.fence.arm('release');
       await input.fence.arm('release');
     };
+    const producer = {
+      jobId: input.lease.job.id,
+      attemptId: input.lease.attemptId,
+    };
+    const releaseMergeOptions: AutoMergeOptions | null =
+      release && input.controlStore && input.releaseRuntime
+      ? {
+          authorizeMerge: async ({ pr, revision, snapshot, github }) => {
+            await input.fence.arm('release');
+            input.fence.consume('release');
+            await projectReleasePreMerge({
+              control: input.controlStore!,
+              release,
+              local: store,
+              pr,
+              pullRequest: pr.externalRef!.number,
+              observedPrHead: revision.headSha,
+              githubChecks: github.checks,
+              githubObservedAt: snapshot.createdAt,
+              producer,
+              runtime: input.releaseRuntime!,
+            });
+            await input.fence.arm('merge');
+          },
+          completeMerge: async ({ pr, revision }) => {
+            if (!pr.pr.externalRef || !prNativeRunner.observeRelease) {
+              throw new RunnerExecutionError(
+                'internal_failure',
+                'release receipt mode requires GitHub release observation',
+                false,
+                'release',
+              );
+            }
+            const observation = prNativeRunner.observeRelease(
+              input.workspace.worktreePath,
+              release.repository,
+              release.issueNumber,
+              pr.pr.externalRef.number,
+              revision.headSha,
+            );
+            await input.fence.arm('release');
+            input.fence.consume('release');
+            await projectReleaseMerge(
+              input.controlStore!,
+              release,
+              producer,
+              observation,
+            );
+          },
+          beforeRelease: async () => {
+            await input.fence.arm('release');
+            await input.fence.arm('release');
+            input.fence.consume('release');
+          },
+        }
+      : null;
 
     const developmentTurn = await runGithubDevelopmentTurn(
       store,
@@ -555,7 +658,9 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         // Issue jobs start from a fresh job-scoped store, so there is nothing
         // to reconcile before intake. PR/repository jobs arm permits only
         // immediately before their bounded reconciliation pass.
-        beforeReconcile: input.payload.event.kind === 'issue'
+        beforeReconcile: releaseMergeOptions
+          ? undefined
+          : input.payload.event.kind === 'issue'
           ? async () => {
               if (store.db.prs.some((pr) =>
                 pr.externalRef !== null
@@ -565,21 +670,51 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
               }
             }
           : beforeMergeAndRelease,
-        reconcileOptions: {
+        reconcileOptions: releaseMergeOptions ?? {
           beforeRelease: () => input.fence.consume('release'),
         },
         liveOptions: {
           gateRunner,
           prNativeRunner,
+          releaseIdentity: release?.id ?? null,
           beforeProviderExecution: beforeProvider,
           beforePush: () => input.fence.arm('push'),
           beforeCreatePr: () => input.fence.arm('push'),
-          beforeMerge: () => input.fence.arm('merge'),
-          beforeRelease: async () => {
-            await input.fence.arm('release');
-            await input.fence.arm('release');
-          },
-          assertReleasePermit: () => input.fence.consume('release'),
+          ...(release && input.controlStore
+            ? {
+                afterProjectRevision: async ({ pr }: { pr: PR; headSha: string }) => {
+                  if (!pr.externalRef) {
+                    throw new RunnerExecutionError(
+                      'internal_failure',
+                      'release build projection has no stable GitHub PR identity',
+                      false,
+                      'release',
+                    );
+                  }
+                  await input.fence.arm('release');
+                  input.fence.consume('release');
+                  await input.controlStore!.bindReleasePullRequest({
+                    jobId: input.lease.job.id,
+                    releaseId: release.id,
+                    pullRequest: pr.externalRef.number,
+                  });
+                },
+              }
+            : {}),
+          ...(releaseMergeOptions
+            ? {
+                authorizeMerge: releaseMergeOptions.authorizeMerge,
+                completeMerge: releaseMergeOptions.completeMerge,
+                assertReleasePermit: releaseMergeOptions.beforeRelease,
+              }
+            : {
+                beforeMerge: () => input.fence.arm('merge'),
+                beforeRelease: async () => {
+                  await input.fence.arm('release');
+                  await input.fence.arm('release');
+                },
+                assertReleasePermit: () => input.fence.consume('release'),
+              }),
           graderEnvironment: isolatedGraderEnvironment(
             process.env,
             input.workspace.registrationRoot,
@@ -685,6 +820,29 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         true,
         'provider',
       );
+    }
+    if (
+      release
+      && input.controlStore
+      && input.releaseRuntime
+      && matchingPr.status !== 'merged'
+      && matchingPr.externalRef
+      && matchingPr.headSha
+    ) {
+      await input.fence.arm('release');
+      input.fence.consume('release');
+      await projectReleaseProgress({
+        control: input.controlStore,
+        release,
+        local: store,
+        pr: matchingPr,
+        pullRequest: matchingPr.externalRef.number,
+        observedPrHead: matchingPr.headSha,
+        githubChecks: [],
+        githubObservedAt: new Date().toISOString(),
+        producer,
+        runtime: input.releaseRuntime,
+      });
     }
     if (
       event.kind === 'pull_request'

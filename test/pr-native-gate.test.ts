@@ -24,6 +24,7 @@ import {
   listOpenGithubPullRequests,
   MAX_REVIEW_THREAD_BODY_CHARS,
   MAX_REVIEW_THREAD_REASON_BODY_CHARS,
+  observeGithubRelease,
   observePrRevision,
   parseBlockingReviewThreads,
   reconcileSplitSourceClosures,
@@ -219,6 +220,46 @@ describe('ISSUE-0024/PR-INTENT durable lifecycle invariants', () => {
     })).toThrow();
   });
 
+  it('captures merged head, completed issue, actor, and default-branch reachability', () => {
+    const commands: string[][] = [];
+    const observation = observeGithubRelease(
+      (_command, args) => {
+        commands.push(args);
+        if (args[0] === 'pr') return JSON.stringify({
+          state: 'MERGED',
+          headRefOid: SHA_A,
+          mergeCommit: { oid: SHA_B },
+          mergedBy: { login: 'merge-bot' },
+          mergedAt: '2026-08-01T00:00:00.000Z',
+        });
+        if (args[0] === 'issue') {
+          return JSON.stringify({ state: 'CLOSED', stateReason: 'COMPLETED' });
+        }
+        if (args[0] === 'repo') {
+          return JSON.stringify({ defaultBranchRef: { name: 'main' } });
+        }
+        return JSON.stringify({ status: 'ahead' });
+      },
+      '/repo',
+      'acme/theme',
+      7,
+      8,
+      SHA_A,
+    );
+
+    expect(observation).toMatchObject({
+      pullRequest: 8,
+      expectedHead: SHA_A,
+      observedPrHead: SHA_A,
+      mergeSha: SHA_B,
+      actor: 'merge-bot',
+      issueState: 'CLOSED',
+      issueStateReason: 'COMPLETED',
+      mergeReachableFromDefaultBranch: true,
+    });
+    expect(commands.at(-1)).toContain(`repos/acme/theme/compare/${SHA_B}...main`);
+  });
+
   it('AC-PRLOOP-005 paginates the complete open-PR inventory beyond 100 rows', () => {
     const commandArgs: string[][] = [];
     const pages = [
@@ -362,7 +403,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.getPR(pr.id)).toMatchObject({ currentRevisionId: current.id, headSha: SHA_B });
   });
 
-  it('AC-PRREV-003 AC-PRAUTO-001 refuses merge when a required perspective is missing on the current SHA', () => {
+  it('AC-PRREV-003 AC-PRAUTO-001 refuses merge when a required perspective is missing on the current SHA', async () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     addReview(store, pr, revision.id, SHA_A, 'functionality');
@@ -376,7 +417,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       merge: () => { merges += 1; },
       closeIssue: () => {},
     };
-    const snapshot = autoMergeCurrentRevision(
+    const snapshot = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -448,7 +489,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(snapshot.reasons).toContain('unresolved blocking review thread: PRRT-P1');
   });
 
-  it('AC-PRAUTO-002 AC-PRAUTO-003 merges with the expected current SHA only after all revision gates pass', () => {
+  it('AC-PRAUTO-002 AC-PRAUTO-003 merges with the expected current SHA only after all revision gates pass', async () => {
     const { store, pr } = setup();
     const dependent = store.addIssue(Issue.parse({
       id: 'ISSUE-0002',
@@ -498,7 +539,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -519,7 +560,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(pollable(store, CONFIG).map((issue) => issue.id)).toContain(dependent.id);
   });
 
-  it('AC-PRAUTO-003 keeps a failed merge retryable without releasing lifecycle state', () => {
+  it('AC-PRAUTO-003 keeps a failed merge retryable without releasing lifecycle state', async () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) addReview(store, pr, revision.id, SHA_A, perspective);
@@ -529,9 +570,9 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    expect(() => autoMergeCurrentRevision(
+    await expect(autoMergeCurrentRevision(
       store, CONFIG, pr, runner, '/repo', PERSPECTIVES,
-    )).toThrow('merge temporarily unavailable');
+    )).rejects.toThrow('merge temporarily unavailable');
 
     expect(store.getPR(pr.id)).toMatchObject({ status: 'approved', mergedHeadSha: null });
     expect(store.db.prRevisions.find((row) => row.id === revision.id)).toMatchObject({
@@ -539,12 +580,84 @@ describe('PR revision identity and automatic current-head gate', () => {
       mergeRequestedAt: null,
     });
     expect(store.getIssue(pr.issueId)?.status).not.toBe('released');
-    expect(() => autoMergeCurrentRevision(
+    await expect(autoMergeCurrentRevision(
       store, CONFIG, store.getPR(pr.id)!, runner, '/repo', PERSPECTIVES,
-    )).toThrow('merge temporarily unavailable');
+    )).rejects.toThrow('merge temporarily unavailable');
   });
 
-  it('PR-INTENT reconciles a confirmed merge after restart only when the durable request marker exists', () => {
+  it('awaits durable authorization before merge and durable completion before release', async () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) {
+      addReview(store, pr, revision.id, SHA_A, perspective);
+    }
+    const events: string[] = [];
+    let views = 0;
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => ({
+        ...greenGithub(),
+        state: ++views > 1 ? 'merged' : 'open',
+      }),
+      merge: () => { events.push('github-merge'); },
+      closeIssue: () => {},
+    };
+
+    const result = await autoMergeCurrentRevision(
+      store,
+      CONFIG,
+      pr,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+      {
+        authorizeMerge: async ({ revision: authorized }) => {
+          expect(authorized.headSha).toBe(SHA_A);
+          expect(events).toEqual([]);
+          events.push('durable-intent');
+        },
+        completeMerge: async () => {
+          expect(store.getIssue(pr.issueId)?.status).not.toBe('released');
+          events.push('durable-merge');
+        },
+        beforeRelease: () => { events.push('local-release'); },
+      },
+    );
+
+    expect(result.merged).toBe(true);
+    expect(events).toEqual([
+      'durable-intent',
+      'github-merge',
+      'durable-merge',
+      'local-release',
+    ]);
+  });
+
+  it('fails closed without invoking GitHub merge when durable authorization rejects', async () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) {
+      addReview(store, pr, revision.id, SHA_A, perspective);
+    }
+    let merges = 0;
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => { merges += 1; },
+      closeIssue: () => {},
+    };
+    await expect(autoMergeCurrentRevision(
+      store,
+      CONFIG,
+      pr,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+      { authorizeMerge: async () => { throw new Error('receipt certification failed'); } },
+    )).rejects.toThrow('receipt certification failed');
+    expect(merges).toBe(0);
+    expect(store.getIssue(pr.issueId)?.status).not.toBe('released');
+  });
+
+  it('PR-INTENT reconciles a confirmed merge after restart only when the durable request marker exists', async () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -557,7 +670,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const requested = autoMergeCurrentRevision(
+    const requested = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -570,7 +683,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     githubState = 'merged';
 
     const restarted = new Store(store.root);
-    const reconciled = autoMergeCurrentRevision(
+    const reconciled = await autoMergeCurrentRevision(
       restarted,
       CONFIG,
       restarted.getPR(pr.id)!,
@@ -584,7 +697,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(restarted.getIssue(pr.issueId)?.status).toBe('released');
   });
 
-  it('AC-PRAUTO-001 does not merge while a required check is pending', () => {
+  it('AC-PRAUTO-001 does not merge while a required check is pending', async () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -600,7 +713,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -647,7 +760,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(snapshot.reasons).toContain('mergeability is unknown');
   });
 
-  it('PR-INTENT does not regrant repair budget when polling the same rejected head', () => {
+  it('PR-INTENT does not regrant repair budget when polling the same rejected head', async () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -676,7 +789,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       store.getPR(pr.id)!,
@@ -689,7 +802,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.getIssue(pr.issueId)?.status).toBe('needs-human-review');
   });
 
-  it('PR-INTENT re-evaluates an unchanged changes-requested head when external gate facts recover', () => {
+  it('PR-INTENT re-evaluates an unchanged changes-requested head when external gate facts recover', async () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) addReview(store, pr, revision.id, SHA_A, perspective);
@@ -717,7 +830,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       store.getPR(pr.id)!,
@@ -754,7 +867,7 @@ describe('PR revision identity and automatic current-head gate', () => {
   it.each([
     ['draft', { isDraft: true }, 'pull request is draft'],
     ['unknown mergeability', { mergeability: 'unknown' as const }, 'mergeability is unknown'],
-  ])('PR-INTENT keeps %s in automatic build-approved waiting', (_name, githubPatch, reason) => {
+  ])('PR-INTENT keeps %s in automatic build-approved waiting', async (_name, githubPatch, reason) => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -766,7 +879,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -780,7 +893,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.getIssue(pr.issueId)?.status).toBe('build-approved');
   });
 
-  it('waits for confirmed merged state when GitHub accepts or queues a merge request', () => {
+  it('waits for confirmed merged state when GitHub accepts or queues a merge request', async () => {
     const { store, pr } = setup();
     const revision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -793,7 +906,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -810,7 +923,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.getIssue(pr.issueId)?.status).toBe('build-approved');
     expect(store.db.revisionGateSnapshots).toHaveLength(1);
 
-    const second = autoMergeCurrentRevision(
+    const second = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -823,7 +936,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.db.revisionGateSnapshots).toHaveLength(1);
   });
 
-  it('keeps polling a terminal failed revision without resurrecting it as reviewing', () => {
+  it('keeps polling a terminal failed revision without resurrecting it as reviewing', async () => {
     const { store, pr } = setup();
     const pending = observePrRevision(store, pr, SHA_A);
     const reviewing = store.replacePrRevision(transitionPrRevision(pending, {
@@ -839,7 +952,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -852,7 +965,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.revisionForHead(pr.id, SHA_A)?.status).toBe('failed');
   });
 
-  it('does not convert an externally merged head without an approved snapshot into released', () => {
+  it('does not convert an externally merged head without an approved snapshot into released', async () => {
     const { store, pr } = setup();
     const runner: PrNativeGithubRunner = {
       viewRevision: () => ({
@@ -863,7 +976,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,
@@ -881,7 +994,7 @@ describe('PR revision identity and automatic current-head gate', () => {
     expect(store.db.prRevisions[0]?.status).toBe('failed');
   });
 
-  it('PR-INTENT keeps prior P1 threads blocking until an external reviewer resolves them', () => {
+  it('PR-INTENT keeps prior P1 threads blocking until an external reviewer resolves them', async () => {
     const { store, pr } = setup();
     const oldRevision = observePrRevision(store, pr, SHA_A);
     for (const perspective of PERSPECTIVES) {
@@ -929,7 +1042,7 @@ describe('PR revision identity and automatic current-head gate', () => {
       closeIssue: () => {},
     };
 
-    const result = autoMergeCurrentRevision(
+    const result = await autoMergeCurrentRevision(
       store,
       CONFIG,
       pr,

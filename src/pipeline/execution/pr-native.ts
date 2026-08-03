@@ -30,6 +30,7 @@ export {
   githubCheckStatus,
   listOpenGithubPullRequests,
   MAX_REVIEW_THREAD_BODY_CHARS,
+  observeGithubRelease,
   ReviewThreadsResponse,
   parseBlockingReviewThreads,
   realPrNativeGithubRunner,
@@ -71,6 +72,18 @@ export interface FetchedPullRequestRevision {
   baseSha: string;
 }
 
+export interface GithubReleaseObservation {
+  pullRequest: number;
+  expectedHead: string;
+  observedPrHead: string;
+  mergeSha: string;
+  actor: string;
+  issueState: 'CLOSED';
+  issueStateReason: 'COMPLETED';
+  mergeReachableFromDefaultBranch: true;
+  mergedAt: string;
+}
+
 export interface PrNativeGithubRunner {
   viewRevision(cwd: string, prNumber: number): GithubPrRevisionState;
   merge(cwd: string, prNumber: number, expectedHeadSha: string): void;
@@ -85,6 +98,14 @@ export interface PrNativeGithubRunner {
     baseRefName: string,
   ): FetchedPullRequestRevision;
   pullRequestChangedFiles?(cwd: string, prNumber: number): string[];
+  /** Observe post-merge facts from GitHub without deriving them from local state. */
+  observeRelease?(
+    cwd: string,
+    repository: string,
+    issueNumber: number,
+    prNumber: number,
+    expectedHead: string,
+  ): GithubReleaseObservation;
 }
 
 export interface RevisionGateInput {
@@ -273,7 +294,7 @@ export interface AutoMergeResult {
   reasons: string[];
 }
 
-function finalizeMergedRevision(
+async function finalizeMergedRevision(
   store: Store,
   pr: Extract<PR, { status: 'approved' }>,
   revision: Extract<PrRevision, { status: 'approved' }>,
@@ -281,21 +302,22 @@ function finalizeMergedRevision(
   runner: PrNativeGithubRunner,
   cwd: string,
   options: AutoMergeOptions,
-): AutoMergeResult {
+): Promise<AutoMergeResult> {
   const mergeBinding = bindMergeRevisionToPR(authorization);
   const mergedPr = mergeApprovedPR(pr, mergeBinding);
   return persistMergedRevision(store, mergedPr, revision, runner, cwd, options);
 }
 
-function persistMergedRevision(
+async function persistMergedRevision(
   store: Store,
   mergedPr: ReturnType<typeof mergeApprovedPR>,
   revision: Extract<PrRevision, { status: 'approved' }>,
   runner: PrNativeGithubRunner,
   cwd: string,
   options: AutoMergeOptions,
-): AutoMergeResult {
-  options.beforeRelease?.();
+): Promise<AutoMergeResult> {
+  await options.completeMerge?.({ pr: mergedPr, revision });
+  await options.beforeRelease?.();
   const mergedRevision = store.replacePrRevision(transitionPrRevision(revision, {
     status: 'merged',
     completedAt: nowISO(),
@@ -317,14 +339,14 @@ function persistMergedRevision(
 }
 
 /** Reconcile previously reviewed PRs whose checks/threads may have changed since the last turn. */
-export function reconcilePrNativeGates(
+export async function reconcilePrNativeGates(
   store: Store,
   config: HarnessConfig,
   runner: PrNativeGithubRunner,
   cwd: string,
   requiredPerspectives: string[],
   options: AutoMergeOptions = {},
-): AutoMergeResult[] {
+): Promise<AutoMergeResult[]> {
   if ((config.gate?.backend ?? 'store') !== 'github') return [];
   const candidates = store.db.prs
     .filter((pr) =>
@@ -333,9 +355,10 @@ export function reconcilePrNativeGates(
       const issue = store.getIssue(pr.issueId);
       return issue !== undefined && issue.status !== 'released' && issue.status !== 'closed';
     });
-  const results = candidates.map((pr): AutoMergeResult => {
+  const results: AutoMergeResult[] = [];
+  for (const pr of candidates) {
     try {
-      return autoMergeCurrentRevision(
+      results.push(await autoMergeCurrentRevision(
         store,
         config,
         pr,
@@ -343,18 +366,18 @@ export function reconcilePrNativeGates(
         cwd,
         requiredPerspectives,
         options,
-      );
+      ));
     } catch (error) {
-      return {
+      results.push({
         prId: pr.id,
         revisionId: pr.currentRevisionId,
         headSha: pr.headSha,
         decision: 'error',
         merged: false,
         reasons: [error instanceof Error ? error.message : String(error)],
-      };
+      });
     }
-  });
+  }
   reconcileSplitSourceClosures(store, runner, cwd);
   return results;
 }
@@ -391,7 +414,7 @@ export function reconcileSplitSourceClosures(
  * merge with `--match-head-commit`. A push between evaluation and merge makes
  * the merge command fail rather than consuming stale approval.
  */
-export function autoMergeCurrentRevision(
+export async function autoMergeCurrentRevision(
   store: Store,
   config: HarnessConfig,
   pr: PR,
@@ -399,7 +422,7 @@ export function autoMergeCurrentRevision(
   cwd: string,
   requiredPerspectives: string[],
   options: AutoMergeOptions = {},
-): AutoMergeResult {
+): Promise<AutoMergeResult> {
   const externalRef = pr.externalRef;
   if (!externalRef) throw new Error(`${pr.id} is not projected to GitHub`);
   if (pr.status === 'merged' || pr.status === 'closed') {
@@ -557,6 +580,12 @@ export function autoMergeCurrentRevision(
   // process crashes after GitHub accepts the merge, reconciliation can prove
   // that this head had already passed rather than guessing from `state=merged`.
   store.save();
+  await options.authorizeMerge?.({
+    pr,
+    revision,
+    snapshot,
+    github,
+  });
   runner.merge(cwd, externalRef.number, revision.headSha);
   revision = store.replacePrRevision(transitionPrRevision(revision, {
     status: 'approved', mergeRequestedAt: nowISO(),
@@ -607,5 +636,17 @@ export function autoMergeCurrentRevision(
 
 export interface AutoMergeOptions {
   /** Exact isolated-runner release boundary; absent for non-runner callers. */
-  beforeRelease?: () => void;
+  beforeRelease?: () => void | Promise<void>;
+  /** Persist a durable, current-head authorization before GitHub can merge. */
+  authorizeMerge?: (input: {
+    pr: Extract<PR, { status: 'approved' }>;
+    revision: Extract<PrRevision, { status: 'approved' }>;
+    snapshot: z.infer<typeof ApprovedRevisionGateSnapshot>;
+    github: GithubPrRevisionState;
+  }) => Promise<void>;
+  /** Persist the observed merge before the local issue can become released. */
+  completeMerge?: (input: {
+    pr: ReturnType<typeof mergeApprovedPR>;
+    revision: Extract<PrRevision, { status: 'approved' }>;
+  }) => Promise<void>;
 }

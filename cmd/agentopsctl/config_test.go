@@ -91,6 +91,9 @@ func TestValidateRunnerActualRequiresFullHardenedTopology(t *testing.T) {
 	if err := validateRunnerActual(actual, cfg, lifecycle.ModeActive); err != nil {
 		t.Fatalf("valid runner topology rejected: %v", err)
 	}
+	if err := validateRunnerActual(actual, cfg, lifecycle.ModeDraining); err != nil {
+		t.Fatalf("draining runner lost its active credential boundary: %v", err)
+	}
 	actual.Configuration.CapAdd = []string{"CAP_SYS_ADMIN"}
 	if err := validateRunnerActual(actual, cfg, lifecycle.ModeActive); err == nil {
 		t.Fatal("runner with added capability was accepted")

@@ -274,6 +274,11 @@ integration('PostgreSQL control store', () => {
       '0005_private_monitor_broker.sql',
       '0006_monitor_broker_capability_functions.sql',
       '0007_multi_repository_triage.sql',
+      '0008_release_receipt_outbox.sql',
+      '0009_release_constraint_capabilities.sql',
+      '0010_release_completion_capability.sql',
+      '0011_release_pull_request_binding.sql',
+      '0012_runner_release_review_capabilities.sql',
     ]) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
@@ -281,7 +286,7 @@ integration('PostgreSQL control store', () => {
       );
       fs.writeFileSync(
         path.join(directory, name),
-        name.startsWith('0007_')
+        name.startsWith('0012_')
           ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
           : valid,
       );
@@ -732,6 +737,10 @@ integration('PostgreSQL control store', () => {
       workerId: 'triage-custom-labels',
       readyLabel: 'human-approved',
       claimedLabel: 'automation-owned',
+      authority: {
+        actor: 'product-owner',
+        readyAt: '2026-07-29T00:00:30.000Z',
+      },
       result: {
         schemaVersion: 1,
         status: 'succeeded',
@@ -745,6 +754,7 @@ integration('PostgreSQL control store', () => {
         commentUrl: null,
         appliedLabels: [],
         promotedJobId: null,
+        providerProvenance: null,
         completedAt: '2026-07-29T00:01:00.000Z',
       },
     });

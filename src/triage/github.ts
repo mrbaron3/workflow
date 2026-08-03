@@ -37,6 +37,13 @@ const GitHubComment = z.object({
   html_url: z.string().url(),
   user: z.object({ login: z.string() }).passthrough(),
 }).passthrough();
+const GitHubIssueEvent = z.object({
+  id: z.number().int().positive(),
+  event: z.string(),
+  created_at: z.string().datetime({ offset: true }),
+  actor: z.object({ login: z.string() }).nullable(),
+  label: z.object({ name: z.string() }).nullable().optional(),
+}).passthrough();
 const GitHubRepository = z.object({
   default_branch: z.string().min(1),
 }).passthrough();
@@ -76,6 +83,13 @@ export interface TriageSnapshot {
   actorLogin: string;
   issue: TriageIssue;
   comments: TriageComment[];
+  labelEvents: Array<{
+    id: number;
+    action: 'labeled' | 'unlabeled';
+    label: string;
+    actor: string;
+    createdAt: string;
+  }>;
 }
 
 export interface TriageGitHub {
@@ -225,7 +239,7 @@ export class TypedGhTriageClient implements TriageGitHub {
   ): Promise<TriageSnapshot> {
     const safeRepository = Repository.parse(repository);
     const safeNumber = z.number().int().positive().parse(issueNumber);
-    const [issueRaw, commentsRaw] = await Promise.all([
+    const [issueRaw, commentsRaw, eventsRaw] = await Promise.all([
       this.api(
         [endpoint(safeRepository, `/issues/${safeNumber}`)],
         'issue-read',
@@ -241,6 +255,17 @@ export class TypedGhTriageClient implements TriageGitHub {
         ],
         'comment-read',
       ),
+      this.api(
+        [
+          '--paginate',
+          '--slurp',
+          endpoint(
+            safeRepository,
+            `/issues/${safeNumber}/events?per_page=100`,
+          ),
+        ],
+        'event-read',
+      ),
     ]);
     const issue = parsedJSON(GitHubIssue, issueRaw, 'issue-read');
     const commentPages = parsedJSON(
@@ -251,6 +276,15 @@ export class TypedGhTriageClient implements TriageGitHub {
     const comments = commentPages.flat();
     if (comments.length > 1_000) {
       throw new Error('comment-read exceeded the item limit');
+    }
+    const eventPages = parsedJSON(
+      z.array(z.array(GitHubIssueEvent)).max(10),
+      eventsRaw,
+      'event-read',
+    );
+    const events = eventPages.flat();
+    if (events.length > 1_000) {
+      throw new Error('event-read exceeded the item limit');
     }
     return {
       actorLogin: this.actorLogin,
@@ -272,6 +306,19 @@ export class TypedGhTriageClient implements TriageGitHub {
         url: comment.html_url,
         author: comment.user.login,
       })),
+      labelEvents: events.flatMap((event) => (
+        (event.event === 'labeled' || event.event === 'unlabeled')
+        && event.label?.name
+        && event.actor?.login
+          ? [{
+              id: event.id,
+              action: event.event,
+              label: event.label.name,
+              actor: event.actor.login,
+              createdAt: new Date(event.created_at).toISOString(),
+            }]
+          : []
+      )),
     };
   }
 

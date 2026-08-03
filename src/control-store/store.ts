@@ -6,7 +6,23 @@ import {
   type PoolConfig,
   type QueryResultRow,
 } from 'pg';
+import { z } from 'zod';
 import { assertControlSchema, migrateControlSchema } from './migrations.js';
+import {
+  DurableReleaseReceiptContract,
+  ReleaseArtifactContract,
+  ReleaseMergeIntentReceiptContract,
+  ReleaseMergeReceiptContract,
+  ReleasePolicyContract,
+  assertLiveReleaseReceiptEvidence,
+  releasePreMergeSemanticErrors,
+  type DurableReleaseReceipt,
+  type LiveReleaseReceiptEvidenceV2,
+  type ReleaseArtifact,
+  type ReleaseMergeIntentReceipt,
+  type ReleaseMergeReceipt,
+  type ReleasePolicy,
+} from '../evidence/release-receipt.js';
 import {
   CanonicalRepository,
   EnqueueJobInput,
@@ -19,11 +35,15 @@ import {
   RepositoryBusyError,
   RepositoryRegistrationInput,
   RepositoryRegistrationPatch,
+  ReleaseCertificationError,
+  ReleaseReceiptConflictError,
   RunnerCriticalBoundary,
   RunnerJobFailureV1Contract,
   RunnerJobResultV1Contract,
   StaleRegistrationError,
+  TriageDecisionV1Contract,
   TriageJobResultV1Contract,
+  TriageProviderProvenanceContract,
   type BuildDefect,
   type EnqueueResult,
   type ExecutionGuardVerdict,
@@ -32,9 +52,12 @@ import {
   type MonitorBrokerRequest,
   type MonitorBrokerResponse as MonitorBrokerResponseType,
   type ReconciliationWork,
+  type ReleaseRecord,
+  type ReleaseReceiptOutboxEntry,
   type RepositoryRegistration,
   type RunnerJobFailureV1,
   type RunnerJobResultV1,
+  type TriageDecisionV1,
   type TriageJobResultV1,
   type WebhookClaim,
 } from './types.js';
@@ -65,6 +88,40 @@ interface JobRow extends QueryResultRow {
   status: JobEnvelope['status'];
   last_error: string | null;
   created_at: Date;
+  release_id: string | null;
+}
+
+interface ReleaseRow extends QueryResultRow {
+  id: string;
+  registration_id: string;
+  release_key: string;
+  repository: string;
+  issue_number: string;
+  policy: ReleasePolicy;
+  status: ReleaseRecord['status'];
+  pull_request_number: string | null;
+  final_head: string | null;
+  merge_sha: string | null;
+  merge_actor: string | null;
+  created_at: Date;
+  updated_at: Date;
+  completed_at: Date | null;
+}
+
+interface ReleaseReceiptRow extends QueryResultRow {
+  payload: DurableReleaseReceipt;
+  published_at: Date | null;
+}
+
+interface ReleaseArtifactRow extends QueryResultRow {
+  artifact_key: string;
+  kind: string;
+  uri: string;
+  sha256: string;
+  size_bytes: string;
+  release_id: string;
+  source_head: string;
+  receipt_ids: string[];
 }
 
 interface WebhookDeliveryRow extends QueryResultRow {
@@ -115,6 +172,28 @@ function job(row: JobRow): JobEnvelope {
     payload: row.payload,
     status: row.status,
     createdAt: row.created_at.toISOString(),
+    ...(row.release_id ? { releaseId: row.release_id } : {}),
+  };
+}
+
+function releaseRecord(row: ReleaseRow): ReleaseRecord {
+  return {
+    id: row.id,
+    registrationId: row.registration_id,
+    releaseKey: row.release_key,
+    repository: row.repository,
+    issueNumber: Number(row.issue_number),
+    policy: ReleasePolicyContract.parse(row.policy),
+    status: row.status,
+    pullRequest: row.pull_request_number === null
+      ? null
+      : Number(row.pull_request_number),
+    finalHead: row.final_head,
+    mergeSha: row.merge_sha,
+    mergeActor: row.merge_actor,
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+    completedAt: row.completed_at?.toISOString() ?? null,
   };
 }
 
@@ -161,6 +240,127 @@ async function transaction<T>(
   } finally {
     client.release();
   }
+}
+
+function receiptHead(receipt: DurableReleaseReceipt): string | null {
+  switch (receipt.kind) {
+    case 'build':
+    case 'grade':
+    case 'review':
+      return receipt.head;
+    case 'finding-resolution':
+      return receipt.resolvedOnHead;
+    case 'merge-intent':
+    case 'merge':
+      return receipt.expectedHead;
+    default:
+      return null;
+  }
+}
+
+async function insertReleaseReceipt(
+  client: PoolClient,
+  receipt: DurableReleaseReceipt,
+): Promise<ReleaseReceiptOutboxEntry> {
+  try {
+    const result = await client.query<ReleaseReceiptRow>(
+      `INSERT INTO agentops_control.release_receipt_outbox(
+         receipt_id, release_id, receipt_key, kind, repository,
+         issue_number, head_sha, causes, payload, recorded_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       ON CONFLICT (release_id, receipt_key) DO UPDATE
+         SET receipt_key = EXCLUDED.receipt_key
+       WHERE agentops_control.release_receipt_outbox.receipt_id = EXCLUDED.receipt_id
+         AND agentops_control.release_receipt_outbox.payload = EXCLUDED.payload
+       RETURNING payload, published_at`,
+      [
+        receipt.receiptId,
+        receipt.releaseId,
+        receipt.receiptKey,
+        receipt.kind,
+        receipt.repository,
+        receipt.issueNumber,
+        receiptHead(receipt),
+        receipt.causes,
+        receipt,
+        receipt.recordedAt,
+      ],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      throw new ReleaseReceiptConflictError(
+        `receipt key ${receipt.receiptKey} was reused with different evidence`,
+      );
+    }
+    return {
+      receipt: DurableReleaseReceiptContract.parse(row.payload),
+      publishedAt: row.published_at?.toISOString() ?? null,
+    };
+  } catch (error) {
+    if (
+      error instanceof ReleaseReceiptConflictError
+      || !(error && typeof error === 'object' && 'code' in error)
+      || error.code !== '23505'
+    ) {
+      throw error;
+    }
+    throw new ReleaseReceiptConflictError(
+      `receipt ${receipt.receiptId}/${receipt.receiptKey} conflicts with durable evidence`,
+    );
+  }
+}
+
+async function releaseReceipts(
+  client: PoolClient,
+  releaseId: string,
+  includeMergeIntent: boolean,
+): Promise<ReleaseReceiptOutboxEntry[]> {
+  const result = await client.query<ReleaseReceiptRow>(
+    `SELECT payload, published_at
+       FROM agentops_control.release_receipt_outbox
+      WHERE release_id = $1
+        AND ($2::boolean OR kind <> 'merge-intent')
+      ORDER BY recorded_at, receipt_id`,
+    [releaseId, includeMergeIntent],
+  );
+  return result.rows.map((row) => ({
+    receipt: DurableReleaseReceiptContract.parse(row.payload),
+    publishedAt: row.published_at?.toISOString() ?? null,
+  }));
+}
+
+async function observeReleaseHead(
+  client: PoolClient,
+  input: { releaseId: string; head: string; parentHead: string | null },
+): Promise<number> {
+  const existing = await client.query<{
+    head_epoch: number;
+    parent_head: string | null;
+  }>(
+    `SELECT head_epoch, parent_head
+       FROM agentops_control.release_heads
+      WHERE release_id = $1 AND head_sha = $2`,
+    [input.releaseId, input.head],
+  );
+  if (existing.rows[0]) {
+    if (existing.rows[0].parent_head !== input.parentHead) {
+      throw new ReleaseReceiptConflictError(
+        `release head ${input.head} was reused with a different parent`,
+      );
+    }
+    return existing.rows[0].head_epoch;
+  }
+  const next = await client.query<{ head_epoch: number }>(
+    `INSERT INTO agentops_control.release_heads(
+       release_id, head_sha, head_epoch, parent_head
+     )
+     SELECT $1, $2, COALESCE(max(head_epoch), 0) + 1, $3
+       FROM agentops_control.release_heads
+      WHERE release_id = $1
+     RETURNING head_epoch`,
+    [input.releaseId, input.head, input.parentHead],
+  );
+  return next.rows[0]!.head_epoch;
 }
 
 export interface OpenControlStoreOptions {
@@ -278,6 +478,544 @@ export class PostgresControlStore {
       'SELECT * FROM agentops_control.repository_registrations ORDER BY repository',
     );
     return result.rows.map(registration);
+  }
+
+  /**
+   * Allocate one durable identity for all jobs and retries serving a release.
+   * Reusing the key with identical coordinates is idempotent; changing policy
+   * or target under the same key fails closed.
+   */
+  async createRelease(input: {
+    registrationId: string;
+    registrationVersion: number;
+    releaseKey: string;
+    repository: string;
+    issueNumber: number;
+    policy: ReleasePolicy;
+  }): Promise<{ release: ReleaseRecord; duplicate: boolean }> {
+    const repository = CanonicalRepository.parse(input.repository);
+    const policy = ReleasePolicyContract.parse(input.policy);
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(input.releaseKey)) {
+      throw new Error('releaseKey is invalid');
+    }
+    if (
+      !Number.isInteger(input.issueNumber)
+      || input.issueNumber < 1
+      || input.issueNumber > 2_147_483_647
+    ) {
+      throw new Error('release issueNumber is invalid');
+    }
+    return transaction(this.pool, async (client) => {
+      const registrationResult = await client.query<RegistrationRow>(
+        `SELECT * FROM agentops_control.repository_registrations
+          WHERE id = $1 FOR SHARE`,
+        [input.registrationId],
+      );
+      const current = registrationResult.rows[0];
+      if (
+        !current
+        || !current.enabled
+        || !current.execution_enabled
+        || Number(current.version) !== input.registrationVersion
+        || current.repository !== repository
+      ) {
+        throw new StaleRegistrationError(
+          `release does not match live Registration ${input.registrationId}`,
+        );
+      }
+      await client.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+        [advisoryRequestKey(input.registrationId, `release:${input.releaseKey}`)],
+      );
+      const existing = await client.query<ReleaseRow>(
+        `SELECT * FROM agentops_control.releases
+          WHERE registration_id = $1 AND release_key = $2`,
+        [input.registrationId, input.releaseKey],
+      );
+      if (existing.rows[0]) {
+        const found = releaseRecord(existing.rows[0]);
+        if (
+          found.repository !== repository
+          || found.issueNumber !== input.issueNumber
+          || JSON.stringify(found.policy) !== JSON.stringify(policy)
+        ) {
+          throw new ReleaseReceiptConflictError(
+            `release key ${input.releaseKey} was reused with different coordinates or policy`,
+          );
+        }
+        return { release: found, duplicate: true };
+      }
+      try {
+        const inserted = await client.query<ReleaseRow>(
+          `INSERT INTO agentops_control.releases(
+             id, registration_id, release_key, repository, issue_number, policy
+           ) VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING *`,
+          [
+            randomUUID(),
+            input.registrationId,
+            input.releaseKey,
+            repository,
+            input.issueNumber,
+            policy,
+          ],
+        );
+        return { release: releaseRecord(inserted.rows[0]!), duplicate: false };
+      } catch (error) {
+        if (
+          error && typeof error === 'object' && 'code' in error
+          && error.code === '23505'
+        ) {
+          throw new ReleaseReceiptConflictError(
+            `${repository}#${input.issueNumber} already has an open release`,
+          );
+        }
+        throw error;
+      }
+    });
+  }
+
+  async getRelease(id: string): Promise<ReleaseRecord | null> {
+    const parsedId = z.string().uuid().parse(id);
+    const result = await this.pool.query<ReleaseRow>(
+      'SELECT * FROM agentops_control.releases WHERE id = $1',
+      [parsedId],
+    );
+    return result.rows[0] ? releaseRecord(result.rows[0]) : null;
+  }
+
+  /** Resolve a v2 recovery job back to its durable release identity. */
+  async findReleaseForRunnerEvent(input: {
+    registrationId: string;
+    issueNumber?: number;
+    pullRequest?: number;
+  }): Promise<ReleaseRecord | null> {
+    const coordinates = z.object({
+      registrationId: z.string().uuid(),
+      issueNumber: z.number().int().positive().optional(),
+      pullRequest: z.number().int().positive().optional(),
+    }).strict().refine(
+      (value) => value.issueNumber !== undefined || value.pullRequest !== undefined,
+      'release recovery needs an issue or pull request coordinate',
+    ).parse(input);
+    const result = await this.pool.query<ReleaseRow>(
+      `SELECT * FROM agentops_control.releases
+        WHERE registration_id = $1
+          AND status IN ('collecting', 'merge-authorized')
+          AND ($2::bigint IS NULL OR issue_number = $2)
+          AND ($3::bigint IS NULL OR pull_request_number = $3)
+        ORDER BY created_at DESC
+        LIMIT 2`,
+      [
+        coordinates.registrationId,
+        coordinates.issueNumber ?? null,
+        coordinates.pullRequest ?? null,
+      ],
+    );
+    if (result.rows.length > 1) {
+      throw new ReleaseReceiptConflictError(
+        'runner event matches more than one open release identity',
+      );
+    }
+    return result.rows[0] ? releaseRecord(result.rows[0]) : null;
+  }
+
+  /** Link an independently scheduled job to the stable release identity. */
+  async linkJobToRelease(input: {
+    jobId: string;
+    releaseId: string;
+  }): Promise<void> {
+    await transaction(this.pool, async (client) => {
+      const linked = await client.query<{ id: string }>(
+        `UPDATE agentops_control.jobs job
+            SET release_id = release.id, updated_at = clock_timestamp()
+           FROM agentops_control.releases release
+          WHERE job.id = $1
+            AND release.id = $2
+            AND job.registration_id = release.registration_id
+            AND (job.release_id IS NULL OR job.release_id = release.id)
+          RETURNING job.id`,
+        [input.jobId, input.releaseId],
+      );
+      if (!linked.rows[0]) {
+        throw new ReleaseReceiptConflictError(
+          'job and release must share one Registration and stable identity',
+        );
+      }
+    });
+  }
+
+  /** Persist the stable GitHub PR coordinate before review or recovery splits jobs. */
+  async bindReleasePullRequest(input: {
+    jobId: string;
+    releaseId: string;
+    pullRequest: number;
+  }): Promise<void> {
+    const parsed = z.object({
+      jobId: z.string().uuid(),
+      releaseId: z.string().uuid(),
+      pullRequest: z.number().int().positive().max(2_147_483_647),
+    }).strict().parse(input);
+    const result = await this.pool.query<{ pull_request_number: string }>(
+      `SELECT agentops_control.bind_release_pull_request($1, $2, $3)
+         AS pull_request_number`,
+      [parsed.jobId, parsed.releaseId, parsed.pullRequest],
+    );
+    if (Number(result.rows[0]?.pull_request_number) !== parsed.pullRequest) {
+      throw new ReleaseReceiptConflictError(
+        'release pull request binding did not converge',
+      );
+    }
+  }
+
+  /** Allocate a stable release-scoped epoch for a head, independent of job/retry order. */
+  async observeReleaseHead(input: {
+    releaseId: string;
+    head: string;
+    parentHead: string | null;
+  }): Promise<number> {
+    const parsed = z.object({
+      releaseId: z.string().uuid(),
+      head: z.string().regex(/^[0-9a-f]{40}$/),
+      parentHead: z.string().regex(/^[0-9a-f]{40}$/).nullable(),
+    }).strict().parse(input);
+    return transaction(this.pool, async (client) => {
+      const existing = await client.query<{
+        head_epoch: number;
+        parent_head: string | null;
+      }>(
+        `SELECT head_epoch, parent_head
+           FROM agentops_control.release_heads
+          WHERE release_id = $1 AND head_sha = $2`,
+        [parsed.releaseId, parsed.head],
+      );
+      if (existing.rows[0]) {
+        if (existing.rows[0].parent_head !== parsed.parentHead) {
+          throw new ReleaseReceiptConflictError(
+            'release head was reused with a different parent',
+          );
+        }
+        return Number(existing.rows[0].head_epoch);
+      }
+      const result = await client.query<{ head_epoch: number }>(
+        `SELECT agentops_control.observe_release_head($1, $2, $3) AS head_epoch`,
+        [parsed.releaseId, parsed.head, parsed.parentHead],
+      );
+      if (!result.rows[0]) {
+        throw new ReleaseReceiptConflictError(
+          'release head observation did not converge',
+        );
+      }
+      return Number(result.rows[0].head_epoch);
+    });
+  }
+
+  /** Persist an immutable semantic receipt into the transactional outbox. */
+  async recordReleaseReceipt(input: unknown): Promise<ReleaseReceiptOutboxEntry> {
+    const receipt = DurableReleaseReceiptContract.parse(input);
+    if (receipt.kind === 'merge-intent' || receipt.kind === 'merge') {
+      throw new Error('merge receipts must use the release transition methods');
+    }
+    const result = await this.pool.query<{ payload: unknown }>(
+      `SELECT agentops_control.record_release_receipt($1) AS payload`,
+      [receipt],
+    );
+    return {
+      receipt: DurableReleaseReceiptContract.parse(result.rows[0]?.payload),
+      publishedAt: null,
+    };
+  }
+
+  async listReleaseReceipts(
+    releaseId: string,
+    options: { includeMergeIntent?: boolean } = {},
+  ): Promise<ReleaseReceiptOutboxEntry[]> {
+    return transaction(this.pool, (client) => releaseReceipts(
+      client,
+      z.string().uuid().parse(releaseId),
+      options.includeMergeIntent ?? false,
+    ));
+  }
+
+  /** Bind an artifact to release/head/receipt identities without copying bytes into PostgreSQL. */
+  async recordReleaseArtifact(input: {
+    artifactKey: string;
+    artifact: ReleaseArtifact;
+  }): Promise<ReleaseArtifact> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$/.test(input.artifactKey)) {
+      throw new Error('release artifactKey is invalid');
+    }
+    const artifact = ReleaseArtifactContract.parse(input.artifact);
+    const result = await this.pool.query<{ artifact: unknown }>(
+      `SELECT agentops_control.record_release_artifact($1, $2) AS artifact`,
+      [input.artifactKey, artifact],
+    );
+    return ReleaseArtifactContract.parse(result.rows[0]?.artifact);
+  }
+
+  /** Assemble and independently certify one completed release from durable records only. */
+  async exportReleaseEvidence(releaseId: string): Promise<LiveReleaseReceiptEvidenceV2> {
+    const parsedId = z.string().uuid().parse(releaseId);
+    return transaction(this.pool, async (client) => {
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const selected = await client.query<ReleaseRow>(
+        'SELECT * FROM agentops_control.releases WHERE id = $1',
+        [parsedId],
+      );
+      const row = selected.rows[0];
+      if (!row) throw new Error(`no such release: ${parsedId}`);
+      const release = releaseRecord(row);
+      if (
+        release.status !== 'merged'
+        || release.pullRequest === null
+        || release.finalHead === null
+        || release.mergeSha === null
+        || release.completedAt === null
+      ) {
+        throw new ReleaseCertificationError('only a completed release can be exported');
+      }
+      const entries = await releaseReceipts(client, release.id, true);
+      const receipts = entries.map((entry) => entry.receipt);
+      const one = <K extends DurableReleaseReceipt['kind']>(kind: K) =>
+        receipts.find((receipt) => receipt.kind === kind);
+      const artifacts = await client.query<ReleaseArtifactRow>(
+        `SELECT * FROM agentops_control.release_artifacts
+          WHERE release_id = $1 ORDER BY recorded_at, id`,
+        [release.id],
+      );
+      const evidence: unknown = {
+        schemaVersion: '2.0',
+        release: {
+          id: release.id,
+          repository: release.repository,
+          issueNumber: release.issueNumber,
+          pullRequest: release.pullRequest,
+          finalHead: release.finalHead,
+          mergeSha: release.mergeSha,
+          createdAt: release.createdAt,
+          completedAt: release.completedAt,
+        },
+        policy: release.policy,
+        receipts: {
+          authority: one('authority'),
+          runtime: receipts.filter((receipt) => receipt.kind === 'runtime-provenance'),
+          builds: receipts.filter((receipt) => receipt.kind === 'build'),
+          grades: receipts.filter((receipt) => receipt.kind === 'grade'),
+          reviews: receipts.filter((receipt) => receipt.kind === 'review'),
+          findingResolutions: receipts.filter(
+            (receipt) => receipt.kind === 'finding-resolution',
+          ),
+          mergeIntent: one('merge-intent'),
+          merge: one('merge'),
+          interventions: receipts.filter((receipt) => receipt.kind === 'intervention'),
+        },
+        artifacts: artifacts.rows.map((artifact) => ({
+          kind: artifact.kind,
+          uri: artifact.uri,
+          sha256: artifact.sha256,
+          sizeBytes: Number(artifact.size_bytes),
+          releaseId: artifact.release_id,
+          sourceHead: artifact.source_head,
+          receiptIds: artifact.receipt_ids,
+        })),
+        result: receipts.some((receipt) => receipt.kind === 'intervention')
+          ? 'passed-with-interventions'
+          : 'passed',
+      };
+      assertLiveReleaseReceiptEvidence(evidence);
+      return evidence;
+    });
+  }
+
+  /**
+   * Fail-closed pre-merge gate. The intent receipt and release state commit in
+   * one transaction before the caller may invoke GitHub's merge mutation.
+   */
+  async authorizeReleaseMerge(input: {
+    releaseId: string;
+    intent: ReleaseMergeIntentReceipt;
+  }): Promise<ReleaseRecord> {
+    const intent = ReleaseMergeIntentReceiptContract.parse(input.intent);
+    if (intent.releaseId !== input.releaseId) {
+      throw new ReleaseReceiptConflictError('merge intent releaseId mismatch');
+    }
+    return transaction(this.pool, async (client) => {
+      const selected = await client.query<ReleaseRow>(
+        `SELECT * FROM agentops_control.releases WHERE id = $1`,
+        [input.releaseId],
+      );
+      const row = selected.rows[0];
+      if (!row) throw new Error(`no such release: ${input.releaseId}`);
+      const release = releaseRecord(row);
+      if (
+        release.repository !== intent.repository
+        || release.issueNumber !== intent.issueNumber
+        || intent.expectedHead !== intent.observedPrHead
+      ) {
+        throw new ReleaseReceiptConflictError(
+          'merge intent does not match release coordinates and current head',
+        );
+      }
+      if (Date.parse(intent.recordedAt) < Date.parse(release.createdAt)) {
+        throw new ReleaseReceiptConflictError(
+          'merge intent recordedAt cannot precede release creation',
+        );
+      }
+      if (release.status === 'merged') {
+        throw new ReleaseReceiptConflictError('merged release cannot be re-authorized');
+      }
+      const mixedArtifacts = await client.query<{ present: boolean }>(
+        `SELECT EXISTS(
+           SELECT 1 FROM agentops_control.release_artifacts
+            WHERE release_id = $1 AND source_head <> $2
+         ) AS present`,
+        [release.id, intent.expectedHead],
+      );
+      if (mixedArtifacts.rows[0]?.present === true) {
+        throw new ReleaseCertificationError(
+          'release artifacts contain a source head other than expectedHead',
+        );
+      }
+      const receipts = await releaseReceipts(client, input.releaseId, false);
+      const errors = releasePreMergeSemanticErrors({
+        releaseId: release.id,
+        repository: release.repository,
+        issueNumber: release.issueNumber,
+        pullRequest: intent.pullRequest,
+        expectedHead: intent.expectedHead,
+        policy: release.policy,
+        receipts: receipts.map((entry) => entry.receipt),
+      });
+      if (errors.length > 0) {
+        throw new ReleaseCertificationError(
+          `release merge authorization failed: ${errors.join('; ')}`,
+        );
+      }
+      await client.query(
+        `SELECT agentops_control.authorize_release_merge($1)`,
+        [intent],
+      );
+      const updated = await client.query<ReleaseRow>(
+        `SELECT * FROM agentops_control.releases WHERE id = $1`,
+        [release.id],
+      );
+      if (!updated.rows[0]) {
+        throw new ReleaseReceiptConflictError(
+          'release was already authorized for a different PR or head',
+        );
+      }
+      return releaseRecord(updated.rows[0]);
+    });
+  }
+
+  /**
+   * Idempotently converge recovery on the merge GitHub already reports. A
+   * completed release never transitions back to failed because a cleanup job
+   * or receipt publisher is retried later.
+   */
+  async completeReleaseMerge(input: {
+    releaseId: string;
+    receipt: ReleaseMergeReceipt;
+  }): Promise<ReleaseRecord> {
+    const receipt = ReleaseMergeReceiptContract.parse(input.receipt);
+    if (receipt.releaseId !== input.releaseId) {
+      throw new ReleaseReceiptConflictError('merge receipt releaseId mismatch');
+    }
+    return transaction(this.pool, async (client) => {
+      const selected = await client.query<ReleaseRow>(
+        `SELECT * FROM agentops_control.releases WHERE id = $1`,
+        [input.releaseId],
+      );
+      const row = selected.rows[0];
+      if (!row) throw new Error(`no such release: ${input.releaseId}`);
+      const release = releaseRecord(row);
+      if (
+        release.repository !== receipt.repository
+        || release.issueNumber !== receipt.issueNumber
+      ) {
+        throw new ReleaseReceiptConflictError('merge receipt coordinates mismatch');
+      }
+      const intentResult = await client.query<ReleaseReceiptRow>(
+        `SELECT payload, published_at
+           FROM agentops_control.release_receipt_outbox
+          WHERE release_id = $1 AND kind = 'merge-intent'`,
+        [release.id],
+      );
+      const intent = intentResult.rows[0]
+        ? ReleaseMergeIntentReceiptContract.parse(intentResult.rows[0].payload)
+        : null;
+      if (
+        !intent
+        || intent.pullRequest !== receipt.pullRequest
+        || intent.expectedHead !== receipt.expectedHead
+        || intent.observedPrHead !== receipt.observedPrHead
+        || !receipt.causes.includes(intent.receiptId)
+      ) {
+        throw new ReleaseCertificationError(
+          'merge receipt is not caused by its matching durable merge intent',
+        );
+      }
+      if (release.status === 'merged') {
+        if (
+          release.pullRequest !== receipt.pullRequest
+          || release.finalHead !== receipt.expectedHead
+          || receipt.observedPrHead !== receipt.expectedHead
+          || release.mergeSha !== receipt.mergeSha
+          || release.mergeActor !== receipt.actor
+        ) {
+          throw new ReleaseReceiptConflictError(
+            'completed release conflicts with observed GitHub merge',
+          );
+        }
+        const existingMerge = await client.query<{ present: boolean }>(
+          `SELECT EXISTS(
+             SELECT 1 FROM agentops_control.release_receipt_outbox
+              WHERE release_id = $1 AND kind = 'merge'
+           ) AS present`,
+          [release.id],
+        );
+        if (existingMerge.rows[0]?.present !== true) {
+          throw new ReleaseCertificationError(
+            'merged release is missing its durable merge receipt',
+          );
+        }
+        return release;
+      }
+      if (
+        release.status !== 'merge-authorized'
+        || release.pullRequest !== receipt.pullRequest
+        || release.finalHead !== receipt.expectedHead
+        || receipt.observedPrHead !== receipt.expectedHead
+      ) {
+        throw new ReleaseCertificationError(
+          'GitHub merge has no matching durable expected-head authorization',
+        );
+      }
+      await client.query(
+        `SELECT agentops_control.complete_release_merge($1)`,
+        [receipt],
+      );
+      const updated = await client.query<ReleaseRow>(
+        `SELECT * FROM agentops_control.releases WHERE id = $1`,
+        [release.id],
+      );
+      if (!updated.rows[0]) {
+        throw new ReleaseReceiptConflictError('release merge raced with another result');
+      }
+      return releaseRecord(updated.rows[0]);
+    });
+  }
+
+  async markReleaseReceiptPublished(receiptId: string): Promise<void> {
+    const result = await this.pool.query(
+      `UPDATE agentops_control.release_receipt_outbox
+          SET published_at = COALESCE(published_at, clock_timestamp())
+        WHERE receipt_id = $1`,
+      [z.string().uuid().parse(receiptId)],
+    );
+    if ((result.rowCount ?? 0) !== 1) {
+      throw new Error(`no such release receipt: ${receiptId}`);
+    }
   }
 
   async saveMonitorCursor(input: {
@@ -1392,6 +2130,16 @@ export class PostgresControlStore {
     result: TriageJobResultV1;
     readyLabel: string;
     claimedLabel: string;
+    authority: {
+      actor: string;
+      readyAt: string;
+      triage?: {
+        sourceDigest: string;
+        decision: TriageDecisionV1;
+        completedAt: string;
+        providerProvenance: NonNullable<TriageJobResultV1['providerProvenance']>;
+      };
+    };
   }): Promise<string> {
     const result = TriageJobResultV1Contract.parse(input.result);
     if (
@@ -1408,9 +2156,23 @@ export class PostgresControlStore {
     if (readyLabel === claimedLabel) {
       throw new Error('ready and claimed labels must be distinct');
     }
-    const promoted = await this.pool.query<{ job_id: string | null }>(
-      `SELECT agentops_control.promote_triage_job($1, $2, $3, $4, $5) AS job_id`,
-      [input.token, input.workerId, result, readyLabel, claimedLabel],
+    const authority = z.object({
+      actor: z.string().trim().min(1).max(128),
+      readyAt: z.string().datetime({ offset: true }),
+      triage: z.object({
+        sourceDigest: z.string().regex(/^[0-9a-f]{64}$/),
+        decision: TriageDecisionV1Contract,
+        completedAt: z.string().datetime({ offset: true }),
+        providerProvenance: TriageProviderProvenanceContract,
+      }).strict().optional(),
+    }).strict().parse(input.authority);
+    const promoted = await this.pool.query<{
+      job_id: string | null;
+      release_id: string | null;
+    }>(
+      `SELECT job_id, release_id
+         FROM agentops_control.promote_triage_release($1, $2, $3, $4, $5, $6)`,
+      [input.token, input.workerId, result, readyLabel, claimedLabel, authority],
     );
     const jobId = promoted.rows[0]?.job_id;
     if (!jobId) {
@@ -1544,7 +2306,7 @@ export class PostgresControlStore {
     failure: RunnerJobFailureV1;
     retryDelayMs: number;
     maxAttempts: number;
-  }): Promise<'queued' | 'failed' | 'rejected'> {
+  }): Promise<'queued' | 'failed' | 'rejected' | 'succeeded'> {
     const failure = RunnerJobFailureV1Contract.parse(input.failure);
     if (!Number.isInteger(input.retryDelayMs) || input.retryDelayMs < 0) {
       throw new Error('retryDelayMs must be a non-negative integer');
@@ -1560,12 +2322,15 @@ export class PostgresControlStore {
         job_id: string;
         registration_id: string;
         registration_version: string;
+        release_id: string | null;
+        repository: string;
         current_version: string | null;
         enabled: boolean | null;
         execution_enabled: boolean | null;
       }>(
         `SELECT l.id AS lease_id, l.attempt_id, a.attempt_number,
                 j.id AS job_id, j.registration_id, j.registration_version,
+                j.release_id, r.repository,
                 r.version AS current_version, r.enabled, r.execution_enabled
            FROM agentops_control.job_leases l
            JOIN agentops_control.job_attempts a ON a.id = l.attempt_id
@@ -1584,15 +2349,33 @@ export class PostgresControlStore {
       if (!row) {
         throw new LeaseRejectedError('lease is absent, inactive, or not owned by worker');
       }
+      const durableRelease = row.release_id
+        ? await client.query<{
+            status: ReleaseRecord['status'];
+            final_head: string | null;
+            pull_request_number: string | null;
+          }>(
+            `SELECT status, final_head, pull_request_number
+               FROM agentops_control.lock_release_completion_state($1, $2)`,
+            [row.job_id, row.release_id],
+          )
+        : null;
+      const mergedRelease = durableRelease?.rows[0]?.status === 'merged'
+        ? durableRelease.rows[0]
+        : null;
       const registrationCurrent =
         row.enabled === true
         && row.execution_enabled === true
         && row.current_version === row.registration_version;
       const requeue =
+        mergedRelease === null
+        &&
         failure.retryable
         && row.attempt_number < input.maxAttempts
         && registrationCurrent;
-      const finalStatus = requeue
+      const finalStatus = mergedRelease
+        ? 'succeeded'
+        : requeue
         ? 'queued'
         : registrationCurrent
           ? 'failed'
@@ -1605,11 +2388,33 @@ export class PostgresControlStore {
       );
       await client.query(
         `UPDATE agentops_control.job_attempts
-            SET status = 'failed', finished_at = clock_timestamp(),
-                error = $2, failure = $3
+            SET status = $2, finished_at = clock_timestamp(),
+                error = $3, failure = $4
           WHERE id = $1`,
-        [row.attempt_id, failure.message, failure],
+        [
+          row.attempt_id,
+          mergedRelease ? 'succeeded' : 'failed',
+          mergedRelease ? null : failure.message,
+          mergedRelease ? null : failure,
+        ],
       );
+      const convergedResult = mergedRelease
+        ? RunnerJobResultV1Contract.parse({
+            schemaVersion: 1,
+            status: 'succeeded',
+            jobId: row.job_id,
+            attemptNumber: row.attempt_number,
+            repository: row.repository,
+            outcome: 'completed',
+            humanReview: null,
+            headSha: mergedRelease.final_head,
+            pullRequestNumber: mergedRelease.pull_request_number === null
+              ? null
+              : Number(mergedRelease.pull_request_number),
+            artifacts: [],
+            completedAt: new Date().toISOString(),
+          })
+        : null;
       await client.query(
         `UPDATE agentops_control.jobs
             SET status = $2,
@@ -1619,14 +2424,16 @@ export class PostgresControlStore {
                 finished_at = CASE WHEN $2 = 'queued' THEN NULL ELSE clock_timestamp() END,
                 updated_at = clock_timestamp(),
                 last_error = $4,
-                result = NULL,
-                failure = CASE WHEN $2 = 'queued' THEN NULL ELSE $5::jsonb END
+                result = $5,
+                failure = CASE WHEN $2 IN ('queued', 'succeeded')
+                  THEN NULL ELSE $6::jsonb END
           WHERE id = $1`,
         [
           row.job_id,
           finalStatus,
           input.retryDelayMs,
-          failure.message,
+          mergedRelease ? null : failure.message,
+          convergedResult,
           failure,
         ],
       );
@@ -1636,7 +2443,11 @@ export class PostgresControlStore {
          ) VALUES ('runner', $1, $2, $3, $4, $5)`,
         [
           input.workerId,
-          requeue ? 'runner.attempt.retry_scheduled' : 'runner.attempt.failed',
+          mergedRelease
+            ? 'runner.attempt.cleanup_ignored_after_merge'
+            : requeue
+              ? 'runner.attempt.retry_scheduled'
+              : 'runner.attempt.failed',
           row.registration_id,
           row.job_id,
           {
@@ -1645,6 +2456,8 @@ export class PostgresControlStore {
             finalStatus,
             registrationCurrent,
             retryDelayMs: requeue ? input.retryDelayMs : null,
+            releaseId: row.release_id,
+            releaseMerged: mergedRelease !== null,
           },
         ],
       );

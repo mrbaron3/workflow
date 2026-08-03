@@ -301,6 +301,7 @@ describe('driveIssueLive orchestration ordering', () => {
     let attemptCount = 0;
     let reviewCount = 0;
     const gateRunner: GhGateRunner = {
+      preflightPr: (_cwd, args) => args.existingRef,
       pushBranch() {
         events.push(`push:${attemptCount}`);
       },

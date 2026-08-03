@@ -17,6 +17,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import {
   FindingLineage,
+  FindingLineageRef,
   Severity,
   Verdict,
   type AgentProvider,
@@ -110,6 +111,22 @@ const RawFinding = z.object({
   // Re-review attestation (ISSUE-0009): strictly 'persisted' | 'new' or absent. An invalid
   // value fails the whole parse (→ escalate) — never coerced, never defaulted.
   lineage: FindingLineage.nullable().optional(),
+  lineageRef: FindingLineageRef.nullable().optional(),
+}).superRefine((finding, context) => {
+  if (finding.lineage === 'persisted' && !finding.lineageRef) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['lineageRef'],
+      message: 'persisted finding must reference one prior finding identity',
+    });
+  }
+  if (finding.lineage !== 'persisted' && finding.lineageRef) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['lineageRef'],
+      message: 'only a persisted finding may carry a prior finding identity',
+    });
+  }
 });
 export const PerspectiveFindingsInput = z.object({
   verdict: Verdict,
@@ -141,6 +158,7 @@ export function parsePerspectiveFindings(raw: unknown): PerspectiveResult {
       requiredFix: f.requiredFix,
       // absent stays absent (legacy) — never silently classified either way
       ...(f.lineage ? { lineage: f.lineage } : {}),
+      ...(f.lineageRef ? { lineageRef: f.lineageRef } : {}),
     })),
     scores: ZERO_SCORES,
     overall,
@@ -176,7 +194,9 @@ export function sessionBackedGrader(evalRoot: string): PerspectiveGrader {
 }
 
 /** What a re-review prompt shows of a prior finding — enough to recognise the problem. */
-export type PriorFinding = Pick<Finding, 'criterionId' | 'observed'>;
+export type PriorFinding = Pick<Finding, 'criterionId' | 'observed'> & {
+  lineageRef: string;
+};
 
 export interface ImmutableReviewTarget {
   headSha: string;
@@ -241,10 +261,13 @@ export function perspectivePrompt(
           ``,
           `## Prior findings (this lens, previous attempt)`,
           `This is a re-review after a repair attempt. Your previous review of this lens raised:`,
-          ...priorFindings.map((f) => `- [${f.criterionId}] ${f.observed}`),
+          ...priorFindings.map((f) =>
+            `- [${f.criterionId}] lineageRef=${f.lineageRef}: ${f.observed}`),
           `You MUST attest the lineage of EVERY finding you report:`,
           `- "persisted" — the same problem as one listed above is still present.`,
           `- "new" — a problem you found in this review that is not one of the findings above.`,
+          `For every "persisted" finding, copy that prior finding's lineageRef exactly.`,
+          `For every "new" finding, omit lineageRef.`,
           `Judge by the problem's substance, not by criterion id — a survivor may resurface under`,
           `a different criterionId, and a fresh problem may hit the same one.`,
         ]
@@ -267,7 +290,7 @@ export function perspectivePrompt(
     `{"verdict": "approve" | "request_changes", "score": <0..1>,`,
     ` "findings": [{"criterionId": "...", "severity": "blocker|major|minor",`,
     ...(reReview
-      ? [`   "observed": "...", "expected": "...", "requiredFix": ["..."],`, `   "lineage": "persisted" | "new"}]}`]
+      ? [`   "observed": "...", "expected": "...", "requiredFix": ["..."],`, `   "lineage": "persisted" | "new", "lineageRef": "<prior ref; persisted only>"}]}`]
       : [`   "observed": "...", "expected": "...", "requiredFix": ["..."]}]}`]),
     `Use request_changes only for a concrete blocker or major defect. Minor suggestions may be`,
     `reported with approve and must never be promoted solely because of function length, style,`,

@@ -12,6 +12,10 @@ import {
   type RunnerRuntimeBoundary,
 } from '../runner/security.js';
 import { RunnerExecutionError } from '../runner/errors.js';
+import {
+  ReleaseRuntimeConfigurationContract,
+  releaseRuntimeConfigurationFromEnvironment,
+} from '../evidence/release-projection.js';
 
 const Repository = CanonicalRepository;
 const NamedVolume = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/);
@@ -32,6 +36,7 @@ export const TriageStartupInput = z.object({
   databaseUrl: z.string().url(),
   provider: z.enum(['codex', 'claude']),
   providerAuth: z.enum(['none', 'api-key', 'codex-login']),
+  model: z.string().trim().min(1).max(128).nullable(),
   operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']),
   repositories: z.array(Repository).min(1).max(64)
     .refine((items) => new Set(items).size === items.length),
@@ -44,6 +49,7 @@ export const TriageStartupInput = z.object({
   mounts: z.array(Mount).max(1),
   publishedPorts: z.array(z.number().int().min(1).max(65_535)).max(0),
   outbound: z.array(OutboundDestination).min(2),
+  releaseRuntime: ReleaseRuntimeConfigurationContract.nullable(),
 }).strict().refine(
   (value) => value.heartbeatIntervalMs * 2 < value.leaseDurationMs,
   'triage heartbeat interval must be less than half the lease duration',
@@ -261,6 +267,7 @@ export function loadTriageStartup(
     databaseUrl,
     provider,
     providerAuth,
+    model: env.AGENTOPS_TRIAGE_MODEL?.trim() || null,
     operatingMode,
     repositories: repositories(required(env, 'AGENTOPS_MONITOR_REPOSITORIES')),
     leaseDurationMs: integer(env, 'AGENTOPS_TRIAGE_LEASE_MS', 60_000),
@@ -285,6 +292,7 @@ export function loadTriageStartup(
       'AGENTOPS_TRIAGE_PUBLISHED_PORTS_JSON',
       env.AGENTOPS_TRIAGE_PUBLISHED_PORTS_JSON,
     ),
+    releaseRuntime: releaseRuntimeConfigurationFromEnvironment(env),
     outbound: json(
       'AGENTOPS_TRIAGE_OUTBOUND_JSON',
       env.AGENTOPS_TRIAGE_OUTBOUND_JSON,

@@ -38,6 +38,10 @@ import {
   type GhPrState,
 } from '../src/pipeline/execution/gate.js';
 import { PERSPECTIVES } from '../src/pipeline/panel.js';
+import {
+  projectedWorkIdentity,
+  renderWorkIdentityMarker,
+} from '../src/pipeline/execution/work-identity.js';
 
 const STORE: HarnessConfig = { ...DEFAULT_CONFIG }; // gate absent = store-direct (default)
 const GITHUB: HarnessConfig = { ...DEFAULT_CONFIG, gate: { backend: 'github' } };
@@ -58,7 +62,18 @@ const GATE_WALK: IssueStatus[] = ['ready-for-generation', 'generation-in-progres
 
 /** Seed an issue that has reached the review gate with a github-projected PR + approving panel runs. */
 function seedGatedIssue(store: Store, id: string, prNumber: number | null): PR {
-  store.addIssue(Issue.parse({ id, type: 'harness', title: `${id} title`, area: 'harness', status: 'contract-drafted', assignedAgent: 'mock', contract, createdAt: nowISO(), updatedAt: nowISO() }));
+  store.addIssue(Issue.parse({
+    id,
+    type: 'harness',
+    title: `${id} title`,
+    area: 'harness',
+    status: 'contract-drafted',
+    assignedAgent: 'mock',
+    contract,
+    planningCandidateKey: id.toLowerCase(),
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+  }));
   for (const s of GATE_WALK) store.setStatus(id, s);
   const pr = store.addPR(PR.parse({
     id: store.nextId('PR'), issueId: id, branch: `agent/${id.toLowerCase()}-s0`, baseBranch: 'main', generator: 'mock', attempts: 1, status: 'open',
@@ -118,6 +133,7 @@ function approveSeededPR(store: Store, pr: PR): void {
 function fakeRunner(state: GhPrState, prNumber = 42): { runner: GhGateRunner; calls: { push: number; create: number; view: number } } {
   const calls = { push: 0, create: 0, view: 0 };
   const runner: GhGateRunner = {
+    preflightPr: (_cwd, args) => args.existingRef,
     pushBranch: () => { calls.push++; },
     createPr: (_cwd, args) => { calls.create++; return { provider: 'github', number: prNumber, url: `https://github.com/o/r/pull/${prNumber}#${args.head}` }; },
     viewPr: () => { calls.view++; return state; },
@@ -196,15 +212,24 @@ describe('trusted AgentOps PR repair projection', () => {
 });
 
 describe('realGhGateRunner: stable GitHub PR identity', () => {
+  const identity = projectedWorkIdentity({
+    repository: 'mrbaron3/designflow',
+    issueNumber: 20,
+    intakeKey: 'github:mrbaron3%2Fdesignflow:20',
+    workUnitKey: 'canonical-json',
+    releaseId: 'release-20',
+  }, 0);
   const args = {
     base: 'main',
     head: 'agent/issue-0001-s0',
     title: 'ISSUE-0001: title',
-    body: 'review body',
+    body: `review body\n\n${renderWorkIdentityMarker(identity)}\n\nCloses mrbaron3/designflow#20`,
   };
   const existing = [{
     number: 12,
     url: 'https://github.com/mrbaron3/designflow/pull/12',
+    title: args.title,
+    body: args.body,
     headRefName: args.head,
     baseRefName: args.base,
     isCrossRepository: false,
@@ -222,6 +247,7 @@ describe('realGhGateRunner: stable GitHub PR identity', () => {
 
     expect(ref).toEqual({
       provider: 'github',
+      repository: 'mrbaron3/designflow',
       number: 12,
       url: existing[0]!.url,
     });
@@ -232,8 +258,85 @@ describe('realGhGateRunner: stable GitHub PR identity', () => {
       '--head', args.head,
       '--base', args.base,
       '--limit', '2',
-      '--json', 'number,url,headRefName,baseRefName,isCrossRepository',
+      '--json', 'number,url,title,body,headRefName,baseRefName,isCrossRepository',
     ]);
+  });
+
+  it('discovers a canonical GitHub origin when intake configuration is absent', () => {
+    const localArgs = {
+      base: 'main',
+      head: 'agent/issue-0001-s0',
+      title: 'ISSUE-0001: local title',
+      body: 'local review body without an external issue',
+      existingRef: null,
+    };
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const command: GateCommandRunner = (commandName, commandArgs) => {
+      calls.push({ command: commandName, args: commandArgs });
+      if (commandName === 'git' && commandArgs[0] === 'remote') {
+        return 'git@github.com:Owner/Repository.git\n';
+      }
+      if (commandName === 'gh' && commandArgs[1] === 'list') return '[]';
+      if (commandName === 'git' && commandArgs[0] === 'ls-remote') return '';
+      throw new Error(`unexpected command: ${commandName} ${commandArgs.join(' ')}`);
+    };
+
+    const ref = realGhGateRunner(undefined, command)
+      .preflightPr('/repo', localArgs);
+
+    expect(ref).toBeNull();
+    expect(calls.map(({ command }) => command)).toEqual(['git', 'gh', 'git']);
+    expect(calls[1]!.args.slice(0, 4)).toEqual([
+      'pr', 'list', '--repo', 'owner/repository',
+    ]);
+    expect(calls[2]!.args[2]).toBe('https://github.com/owner/repository.git');
+  });
+
+  it('rejects a non-GitHub origin before querying or mutating a pull request', () => {
+    const calls: string[] = [];
+    const command: GateCommandRunner = (commandName) => {
+      calls.push(commandName);
+      return 'https://example.test/owner/repository.git\n';
+    };
+
+    expect(() => realGhGateRunner(undefined, command).preflightPr('/repo', {
+      base: 'main',
+      head: 'agent/issue-0001-s0',
+      title: 'ISSUE-0001: local title',
+      body: 'local review body',
+      existingRef: null,
+    })).toThrow(/not a canonical GitHub remote/);
+    expect(calls).toEqual(['git']);
+  });
+
+  it('reuses uncorrelated local work only on an exact title and body match', () => {
+    const localArgs = {
+      base: 'main',
+      head: 'agent/issue-0001-s0',
+      title: 'ISSUE-0001: local title',
+      body: 'local review body',
+    };
+    const localPr = [{
+      number: 13,
+      url: 'https://github.com/owner/repository/pull/13',
+      title: localArgs.title,
+      body: localArgs.body,
+      headRefName: localArgs.head,
+      baseRefName: localArgs.base,
+      isCrossRepository: false,
+    }];
+    const command: GateCommandRunner = (commandName, commandArgs) => {
+      if (commandName === 'git') return 'https://github.com/owner/repository.git\n';
+      if (commandArgs[1] === 'list') return JSON.stringify(localPr);
+      throw new Error(`unexpected command: ${commandName} ${commandArgs.join(' ')}`);
+    };
+
+    expect(realGhGateRunner(undefined, command).createPr('/repo', localArgs))
+      .toMatchObject({ repository: 'owner/repository', number: 13 });
+
+    localPr[0]!.body = 'another Store\'s review body';
+    expect(() => realGhGateRunner(undefined, command).createPr('/repo', localArgs))
+      .toThrow(/does not exactly match/);
   });
 
   it('creates a PR when no matching OPEN PR exists, then resolves its exact identity', () => {
@@ -308,6 +411,24 @@ describe('realGhGateRunner: stable GitHub PR identity', () => {
 
     expect(() => realGhGateRunner('mrbaron3/designflow', command)
       .createPr('/repo', args)).toThrow(observedError);
+  });
+
+  it('rejects a PR URL outside the canonical GitHub origin', () => {
+    let createCalls = 0;
+    const command: GateCommandRunner = (_cmd, commandArgs) => {
+      if (commandArgs[1] === 'list') {
+        return JSON.stringify([{
+          ...existing[0],
+          url: 'https://example.test/mrbaron3/designflow/pull/12',
+        }]);
+      }
+      createCalls += 1;
+      return '';
+    };
+
+    expect(() => realGhGateRunner('mrbaron3/designflow', command)
+      .createPr('/repo', args)).toThrow(/non-canonical origin/);
+    expect(createCalls).toBe(0);
   });
 
   it('fails closed instead of choosing among multiple exact OPEN PRs', () => {
@@ -408,11 +529,118 @@ describe('openGate: project an approved build to the gate UI', () => {
 });
 
 describe('projectReviewRevision: PR exists before perspective review', () => {
+  it('rejects an existing PR Issue/release mismatch before every mutation and fence', async () => {
+    const store = tmpStore('review-identity-mismatch');
+    const pr = seedGatedIssue(store, 'ISSUE-1', null);
+    seedIntake(store, 'ISSUE-1', 23);
+    const expectedIdentity = {
+      repository: 'o/r',
+      issueNumber: 23,
+      intakeKey: 'o/r#23',
+      workUnitKey: 'source',
+      releaseId: 'release-23',
+    };
+    const wrongIdentity = projectedWorkIdentity({
+      ...expectedIdentity,
+      issueNumber: 20,
+      intakeKey: 'o/r#20',
+      releaseId: 'release-20',
+    }, 0);
+    const observedCommands: Array<{ command: string; args: string[] }> = [];
+    const command: GateCommandRunner = (commandName, commandArgs) => {
+      observedCommands.push({ command: commandName, args: commandArgs });
+      if (commandName === 'gh' && commandArgs[1] === 'list') {
+        return JSON.stringify([{
+          number: 21,
+          url: 'https://github.com/o/r/pull/21',
+          title: 'ISSUE-1: title',
+          body: `review\n\n${renderWorkIdentityMarker(wrongIdentity)}\n\nCloses o/r#20`,
+          headRefName: pr.branch,
+          baseRefName: 'main',
+          isCrossRepository: false,
+        }]);
+      }
+      throw new Error(`unexpected command: ${commandName} ${commandArgs.join(' ')}`);
+    };
+    let pushFenceCalls = 0;
+    let createFenceCalls = 0;
+
+    await expect(projectReviewRevision(
+      store,
+      GITHUB,
+      {
+        pr,
+        worktree: '/wt',
+        title: 'ISSUE-1: title',
+        headSha: 'a'.repeat(40),
+        workIdentity: expectedIdentity,
+        sampleIndex: 0,
+      },
+      realGhGateRunner('o/r', command),
+      () => {},
+      async () => { createFenceCalls += 1; },
+      async () => { pushFenceCalls += 1; },
+    )).rejects.toThrow(/external Issue\/release identity/);
+
+    expect(observedCommands).toHaveLength(1);
+    expect(observedCommands[0]).toMatchObject({ command: 'gh' });
+    expect(observedCommands[0]!.args.slice(0, 2)).toEqual(['pr', 'list']);
+    expect(pushFenceCalls).toBe(0);
+    expect(createFenceCalls).toBe(0);
+    expect(store.db.prRevisions).toHaveLength(0);
+    expect(store.getPR(pr.id)?.externalRef).toBeNull();
+  });
+
+  it('refuses an ambiguous existing remote branch before force-push', async () => {
+    const store = tmpStore('review-ambiguous-branch');
+    const pr = seedGatedIssue(store, 'ISSUE-1', null);
+    seedIntake(store, 'ISSUE-1', 23);
+    const identity = {
+      repository: 'o/r',
+      issueNumber: 23,
+      intakeKey: 'o/r#23',
+      workUnitKey: 'source',
+      releaseId: 'release-23',
+    };
+    const observedCommands: Array<{ command: string; args: string[] }> = [];
+    const command: GateCommandRunner = (commandName, commandArgs) => {
+      observedCommands.push({ command: commandName, args: commandArgs });
+      if (commandName === 'gh') return '[]';
+      if (commandName === 'git' && commandArgs[0] === 'ls-remote') {
+        return `${'b'.repeat(40)}\trefs/heads/${pr.branch}\n`;
+      }
+      throw new Error(`unexpected command: ${commandName} ${commandArgs.join(' ')}`);
+    };
+    let pushFenceCalls = 0;
+
+    await expect(projectReviewRevision(
+      store,
+      GITHUB,
+      {
+        pr,
+        worktree: '/wt',
+        title: 'ISSUE-1: title',
+        headSha: 'a'.repeat(40),
+        workIdentity: identity,
+        sampleIndex: 0,
+      },
+      realGhGateRunner('o/r', command),
+      () => {},
+      undefined,
+      async () => { pushFenceCalls += 1; },
+    )).rejects.toThrow(/ambiguous existing branch/);
+
+    expect(observedCommands.map((entry) => entry.command)).toEqual(['gh', 'git']);
+    expect(pushFenceCalls).toBe(0);
+    expect(store.db.prRevisions).toHaveLength(0);
+  });
+
   it('fails closed after push when the fresh PR-create fence rejects', async () => {
     const store = tmpStore('review-create-fence');
     const pr = seedGatedIssue(store, 'ISSUE-1', null);
     const calls: string[] = [];
     const runner: GhGateRunner = {
+      preflightPr: (_cwd, args) => args.existingRef,
       pushBranch: () => { calls.push('push'); },
       createPr: () => {
         calls.push('create');
@@ -448,6 +676,7 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     const pushes: string[] = [];
     const bodies: string[] = [];
     const runner: GhGateRunner = {
+      preflightPr: (_cwd, args) => args.existingRef,
       pushBranch: (_worktree, branch) => { pushes.push(branch); },
       createPr: (_cwd, args) => {
         bodies.push(args.body);

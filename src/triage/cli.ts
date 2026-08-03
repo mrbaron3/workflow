@@ -47,7 +47,7 @@ async function main(): Promise<void> {
     config.provider,
     providerEnvironment,
     sourceEnvironment.AGENTOPS_APP_ROOT ?? '/app',
-    sourceEnvironment.AGENTOPS_TRIAGE_MODEL,
+    config.model ?? undefined,
     config.attemptTimeoutMs,
   );
   const service = new TriageRunnerService({
@@ -59,6 +59,30 @@ async function main(): Promise<void> {
     maxAttempts: config.maxAttempts,
     retryBaseMs: config.retryBaseMs,
     attemptTimeoutMs: config.attemptTimeoutMs,
+    providerProvenance: config.releaseRuntime === null
+      ? null
+      : {
+          provider: config.provider,
+          model: config.model
+            ? { kind: 'explicit', name: config.model }
+            : (() => {
+                const selected = config.releaseRuntime.providerDefaults.find(
+                  (entry) => entry.provider === config.provider,
+                );
+                if (!selected) {
+                  throw new Error(
+                    `release runtime lacks ${config.provider} default-model provenance`,
+                  );
+                }
+                return {
+                  kind: 'provider-default' as const,
+                  reference: selected.reference,
+                  resolverDigest: selected.resolverDigest,
+                };
+              })(),
+          consumer: config.releaseRuntime.consumer,
+          environment: config.releaseRuntime.environment,
+        },
   }, {
     store,
     github,

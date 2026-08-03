@@ -21,12 +21,14 @@ type fakeAPIStore struct {
 	createResult    Registration
 	createDuplicate bool
 	createError     error
+	created         CreateRegistration
 	projections     []RegistrationProjection
 	projectionError error
 	retryError      error
 	updateError     error
 	updateDuplicate bool
 	updated         Registration
+	updatedPatch    RegistrationPatch
 	deliveryStatus  DeliveryStatus
 	deliveryError   error
 	auditEvents     []string
@@ -47,6 +49,7 @@ func (store *fakeAPIStore) CreateRegistration(
 	_, _ string,
 ) (Registration, bool, error) {
 	store.creates++
+	store.created = input
 	if store.createError != nil {
 		return store.createResult, store.createDuplicate, store.createError
 	}
@@ -57,14 +60,15 @@ func (store *fakeAPIStore) CreateRegistration(
 }
 
 func (store *fakeAPIStore) UpdateRegistrationCommand(
-	context.Context,
-	string,
-	int64,
-	RegistrationPatch,
-	string,
-	string,
-	string,
+	_ context.Context,
+	_ string,
+	_ int64,
+	patch RegistrationPatch,
+	_ string,
+	_ string,
+	_ string,
 ) (Registration, bool, error) {
+	store.updatedPatch = patch
 	return store.updated, store.updateDuplicate, store.updateError
 }
 
@@ -170,6 +174,53 @@ func TestControlAPIRequiresAuthorizationAndOptimisticContractHeaders(t *testing.
 		if !bytes.Contains(response.Body.Bytes(), []byte(field)) {
 			t.Fatalf("create outcome missing %s: %s", field, response.Body)
 		}
+	}
+}
+
+func TestRegistrationCommandsCarryStrictReleaseEvidenceConfiguration(t *testing.T) {
+	configuration := `{"releaseEvidence":{"authority":"ai-triage-required",` +
+		`"requiredGateSignals":[{"source":"repository-grader","name":"api_test"}],` +
+		`"requiredReviewPerspectives":["functionality","security"],` +
+		`"minimumHeadEpochs":1}}`
+	store := &fakeAPIStore{}
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/v1/registrations",
+		bytes.NewBufferString(`{"repository":"owner/repo","configuration":`+configuration+`}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer control-token")
+	request.Header.Set("Idempotency-Key", "registration-with-release-evidence")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated ||
+		!bytes.Equal(store.created.Configuration, []byte(configuration)) {
+		t.Fatalf("configured create status=%d configuration=%s body=%s", response.Code, store.created.Configuration, response.Body)
+	}
+
+	store.updated = Registration{ID: testRegistrationID, Version: 2}
+	request = httptest.NewRequest(
+		http.MethodPatch,
+		"/v1/registrations/"+testRegistrationID,
+		bytes.NewBufferString(`{"configuration":`+configuration+`}`),
+	)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Bearer control-token")
+	request.Header.Set("If-Match", `"1"`)
+	request.Header.Set("Idempotency-Key", "registration-release-evidence-update")
+	response = httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		!bytes.Equal(store.updatedPatch.Configuration, []byte(configuration)) {
+		t.Fatalf("configured patch status=%d configuration=%s body=%s", response.Code, store.updatedPatch.Configuration, response.Body)
+	}
+
+	unsupported := `{"releaseEvidence":{"authority":"human-ready-allowed",` +
+		`"requiredGateSignals":[{"source":"github-check","name":"test"}],` +
+		`"requiredReviewPerspectives":["security","performance"],` +
+		`"minimumHeadEpochs":1}}`
+	if validJSONObject(json.RawMessage(unsupported)) {
+		t.Fatal("unsupported review perspective passed the control contract")
 	}
 }
 

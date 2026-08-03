@@ -27,8 +27,22 @@ import {
 import type { HarnessConfig } from '../../config.js';
 import { Store } from '../../store/store.js';
 import { recordHumanDecision, type HumanDecision } from './loop.js';
-import { runCommand as run } from './command.js';
+import {
+  runCommand as run,
+  type RunCommandOptions,
+} from './command.js';
 import { observePrRevision } from './pr-native.js';
+import {
+  canonicalGithubRepository,
+  parsePullRequestClosingTarget,
+  parseWorkIdentityMarker,
+  projectedWorkIdentity,
+  renderWorkIdentityMarker,
+  sameProjectedWorkIdentity,
+  samePullRequestClosingTarget,
+  type ExternalWorkIdentity,
+  type ProjectedWorkIdentity,
+} from './work-identity.js';
 
 /** A GitHub PR's lifecycle state, normalised from `gh pr view --json state`. */
 export type GhPrState = 'open' | 'merged' | 'closed';
@@ -37,7 +51,15 @@ export type GateCommandRunner = (
   cmd: string,
   args: string[],
   cwd: string,
+  options?: RunCommandOptions,
 ) => string;
+
+export interface CreatePullRequestArgs {
+  base: string;
+  head: string;
+  title: string;
+  body: string;
+}
 
 /**
  * The pure heart of the gate: a polled PR state → the human decision it stands for (ADR-0006 G1).
@@ -57,10 +79,18 @@ export function prStateToDecision(state: GhPrState): HumanDecision | null {
 
 /** The git/`gh` side effects the gate needs, behind an interface so tests inject a fake. */
 export interface GhGateRunner {
+  /**
+   * Read-only identity check before the first push. An existing branch without
+   * an exact repository/Issue/release/body-correlated PR is ambiguous.
+   */
+  preflightPr(
+    cwd: string,
+    args: CreatePullRequestArgs & { existingRef: PrExternalRef | null },
+  ): PrExternalRef | null;
   /** Push `branch` (checked out in `worktree`) to the remote so a PR can target it. */
   pushBranch(worktree: string, branch: string): void;
   /** Ensure an open PR from `head` into `base`; return its number + url. */
-  createPr(cwd: string, args: { base: string; head: string; title: string; body: string }): PrExternalRef;
+  createPr(cwd: string, args: CreatePullRequestArgs): PrExternalRef;
   /** The current lifecycle state of PR `number`. `cwd` is any checkout of the target repo. */
   viewPr(cwd: string, prNumber: number): GhPrState;
 }
@@ -156,6 +186,9 @@ export interface OpenGateInput {
 
 export interface ProjectReviewRevisionInput extends OpenGateInput {
   headSha: string;
+  /** External mutation identity. null/absent only for local sandbox work. */
+  workIdentity?: ExternalWorkIdentity | null;
+  sampleIndex?: number;
 }
 
 /**
@@ -169,6 +202,7 @@ export function projectReviewRevision(
   runner: GhGateRunner,
   log: (m: string) => void = () => {},
   beforeCreatePr?: () => Promise<void>,
+  beforePush?: () => Promise<void>,
 ) {
   return projectReviewRevisionAsync(
     store,
@@ -177,6 +211,7 @@ export function projectReviewRevision(
     runner,
     log,
     beforeCreatePr,
+    beforePush,
   );
 }
 
@@ -187,28 +222,59 @@ async function projectReviewRevisionAsync(
   runner: GhGateRunner,
   log: (m: string) => void,
   beforeCreatePr?: () => Promise<void>,
+  beforePush?: () => Promise<void>,
 ) {
   let projectedPr = store.getPR(input.pr.id) ?? input.pr;
-  const revision = observePrRevision(store, projectedPr, input.headSha);
-  if ((config.gate?.backend ?? 'store') !== 'github') return revision;
+  if ((config.gate?.backend ?? 'store') !== 'github') {
+    return observePrRevision(store, projectedPr, input.headSha);
+  }
 
+  const base = config.gate?.baseBranch ?? config.baseBranch;
+  const projectedIdentity = input.workIdentity
+    ? projectedWorkIdentity(input.workIdentity, input.sampleIndex ?? 0)
+    : null;
+  const body = renderReviewPrBody(store, input.pr.issueId, projectedIdentity);
+  const preflight = runner.preflightPr(input.worktree, {
+    base,
+    head: input.pr.branch,
+    title: input.title,
+    body,
+    existingRef: projectedPr.externalRef,
+  });
+  if (projectedPr.externalRef && !preflight) {
+    throw new Error(
+      `existing PR #${projectedPr.externalRef.number} did not pass projection identity preflight`,
+    );
+  }
+
+  const revision = observePrRevision(store, projectedPr, input.headSha);
+  await beforePush?.();
   runner.pushBranch(input.worktree, input.pr.branch);
   projectedPr = store.getPR(input.pr.id) ?? projectedPr;
   if (!projectedPr.externalRef) {
-    await beforeCreatePr?.();
-    const base = config.gate?.baseBranch ?? config.baseBranch;
-    const ref = PrExternalRef.parse(runner.createPr(input.worktree, {
-      base,
-      head: input.pr.branch,
-      title: input.title,
-      body: renderReviewPrBody(store, input.pr.issueId),
+    let resolvedRef = preflight;
+    if (!resolvedRef) {
+      await beforeCreatePr?.();
+      resolvedRef = PrExternalRef.parse(runner.createPr(input.worktree, {
+        base,
+        head: input.pr.branch,
+        title: input.title,
+        body,
+      }));
+    }
+    const parsedRef = PrExternalRef.parse(resolvedRef);
+    projectedPr = store.replacePR(updatePR(requireMutablePR(projectedPr), { externalRef: parsedRef }));
+    log(
+      `  ⇪ ${input.pr.issueId}: ${preflight ? 'reused' : 'opened'} review PR `
+      + `${parsedRef.url} @ ${input.headSha.slice(0, 12)}`,
+    );
+  } else if (preflight) {
+    projectedPr = store.replacePR(updatePR(requireMutablePR(projectedPr), {
+      externalRef: PrExternalRef.parse(preflight),
     }));
-    projectedPr = store.replacePR(updatePR(requireMutablePR(projectedPr), { externalRef: ref }));
-    log(`  ⇪ ${input.pr.issueId}: opened review PR ${ref.url} @ ${input.headSha.slice(0, 12)}`);
-  } else {
     log(
       `  ⇪ ${input.pr.issueId}: pushed repair revision `
-      + `${input.headSha.slice(0, 12)} to PR #${projectedPr.externalRef!.number}`,
+      + `${input.headSha.slice(0, 12)} to PR #${preflight.number}`,
     );
   }
   store.replacePR(updatePR(requireMutablePR(projectedPr), {
@@ -237,8 +303,18 @@ export function openGate(
 
   const base = config.gate?.baseBranch ?? config.baseBranch;
   const body = renderGatePrBody(store, input.pr.issueId);
+  const preflight = runner.preflightPr(input.worktree, {
+    base,
+    head: input.pr.branch,
+    title: input.title,
+    body,
+    existingRef: null,
+  });
   runner.pushBranch(input.worktree, input.pr.branch);
-  const ref = PrExternalRef.parse(runner.createPr(input.worktree, { base, head: input.pr.branch, title: input.title, body }));
+  const ref = PrExternalRef.parse(preflight ?? runner.createPr(
+    input.worktree,
+    { base, head: input.pr.branch, title: input.title, body },
+  ));
   store.replacePR(updatePR(requireMutablePR(currentPr), { externalRef: ref }));
   store.save();
   log(`  ⇪ ${input.pr.issueId}: opened gate PR ${ref.url}`);
@@ -309,6 +385,33 @@ export function pollGate(
  * while sibling work remains. The qualified form also survives a gate repo that differs from the
  * intake repo.
  */
+function storeProjectedWorkIdentity(
+  store: Store,
+  issueId: string,
+  sampleIndex: number,
+): ProjectedWorkIdentity | null {
+  const source = store.db.intakeRecords.find((record) =>
+    record.storeIssueIds.includes(issueId));
+  if (!source) return null;
+  const issue = store.getIssue(issueId);
+  if (!issue) throw new Error(`No issue: ${issueId}`);
+  const workUnitKey = source.storeIssueIds.length === 1
+    ? 'source'
+    : issue.planningCandidateKey;
+  if (!workUnitKey) {
+    throw new Error(
+      `${issueId} is one of multiple external work units but has no stable planning candidate key`,
+    );
+  }
+  return projectedWorkIdentity({
+    repository: source.snapshot.repository,
+    issueNumber: source.snapshot.number,
+    intakeKey: source.intakeKey,
+    workUnitKey,
+    releaseId: null,
+  }, sampleIndex);
+}
+
 export function renderGatePrBody(store: Store, issueId: string): string {
   const runs = latestAttemptRuns(store.runsForIssue(issueId));
   const lines = [
@@ -324,20 +427,55 @@ export function renderGatePrBody(store: Store, issueId: string): string {
   }
   const source = store.db.intakeRecords.find((rec) => rec.storeIssueIds.includes(issueId));
   if (source) {
+    const identity = storeProjectedWorkIdentity(
+      store,
+      issueId,
+      runs[0]?.sampleIndex ?? 0,
+    );
+    if (!identity) throw new Error(`${issueId} has no external work identity`);
     const relation = source.storeIssueIds.length === 1 ? 'Closes' : 'Refs';
-    lines.push(``, `${relation} ${source.snapshot.repository}#${source.snapshot.number}`);
+    lines.push(
+      ``,
+      renderWorkIdentityMarker(identity),
+      ``,
+      `${relation} ${source.snapshot.repository}#${source.snapshot.number}`,
+    );
   }
   return lines.join('\n');
 }
 
 /** Initial body for a PR created before its first perspective review. */
-export function renderReviewPrBody(store: Store, issueId: string): string {
+export function renderReviewPrBody(
+  store: Store,
+  issueId: string,
+  identity: ProjectedWorkIdentity | null = null,
+): string {
   const lines = [
     `このPRはAgentOpsのcurrent-headレビュー・修正ループで処理されます。`,
     `各head SHAについて全必須観点・checks・未解決blocking threadを再評価し、`,
     `ゲート通過時だけexpected SHA付きで自動mergeします。`,
   ];
   const source = store.db.intakeRecords.find((record) => record.storeIssueIds.includes(issueId));
+  const effectiveIdentity = identity
+    ?? storeProjectedWorkIdentity(store, issueId, 0);
+  if (effectiveIdentity) {
+    if (!source) {
+      throw new Error(`${issueId} has external work identity but no Source Issue projection`);
+    }
+    const issue = store.getIssue(issueId);
+    const expectedWorkUnitKey = source.storeIssueIds.length === 1
+      ? 'source'
+      : issue?.planningCandidateKey;
+    if (
+      canonicalGithubRepository(source.snapshot.repository) !== effectiveIdentity.repository
+      || source.snapshot.number !== effectiveIdentity.issueNumber
+      || source.intakeKey !== effectiveIdentity.intakeKey
+      || expectedWorkUnitKey !== effectiveIdentity.workUnitKey
+    ) {
+      throw new Error(`${issueId} external work identity does not match its Source Issue`);
+    }
+    lines.push('', renderWorkIdentityMarker(effectiveIdentity));
+  }
   if (source) {
     const relation = source.storeIssueIds.length === 1 ? 'Closes' : 'Refs';
     lines.push('', `${relation} ${source.snapshot.repository}#${source.snapshot.number}`);
@@ -357,17 +495,121 @@ function latestAttemptRuns(runs: EvalRun[]): EvalRun[] {
 interface OpenPullRequest {
   number: number;
   url: string;
+  title: string;
+  body: string;
   headRefName: string;
   baseRefName: string;
   isCrossRepository: boolean;
+}
+
+function repositoryFromPullRequestUrl(url: string): string {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`GitHub pull request returned an invalid URL: ${url}`);
+  }
+  if (parsed.protocol !== 'https:' || parsed.hostname.toLowerCase() !== 'github.com') {
+    throw new Error(`GitHub pull request URL has a non-canonical origin: ${url}`);
+  }
+  const parts = parsed.pathname.split('/').filter(Boolean);
+  if (parts.length < 4 || parts[2] !== 'pull') {
+    throw new Error(`GitHub pull request URL has no canonical repository: ${url}`);
+  }
+  return canonicalGithubRepository(`${parts[0]}/${parts[1]}`);
+}
+
+function assertExpectedPrSemantics(repository: string, body: string): void {
+  const identity = parseWorkIdentityMarker(body);
+  if (!identity) {
+    if (parsePullRequestClosingTarget(body)) {
+      throw new Error(
+        'an uncorrelated pull request must not contain an external closing target',
+      );
+    }
+    return;
+  }
+  if (identity.repository !== repository) {
+    throw new Error(
+      `expected PR work repository ${identity.repository} does not match ${repository}`,
+    );
+  }
+  const target = parsePullRequestClosingTarget(body);
+  if (
+    !target
+    || target.repository !== identity.repository
+    || target.issueNumber !== identity.issueNumber
+  ) {
+    throw new Error('expected PR closing target does not match its durable work identity');
+  }
+}
+
+function validateMatchingPullRequest(
+  match: OpenPullRequest,
+  repository: string,
+  expectedTitle: string,
+  expectedBody: string,
+): PrExternalRef {
+  if (repositoryFromPullRequestUrl(match.url) !== repository) {
+    throw new Error(`matching pull request is outside canonical repository ${repository}`);
+  }
+  const expectedIdentity = parseWorkIdentityMarker(expectedBody);
+  const observedIdentity = parseWorkIdentityMarker(match.body);
+  if (!expectedIdentity) {
+    if (
+      observedIdentity
+      || parsePullRequestClosingTarget(expectedBody)
+      || parsePullRequestClosingTarget(match.body)
+      || match.title !== expectedTitle
+      || match.body !== expectedBody
+    ) {
+      throw new Error(
+        `existing PR #${match.number} does not exactly match the expected local work`,
+      );
+    }
+    return {
+      provider: 'github',
+      repository,
+      number: match.number,
+      url: match.url,
+    };
+  }
+  if (
+    !observedIdentity
+    || !sameProjectedWorkIdentity(expectedIdentity, observedIdentity)
+  ) {
+    throw new Error(
+      `existing PR #${match.number} does not match the expected external Issue/release identity`,
+    );
+  }
+  const expectedTarget = parsePullRequestClosingTarget(expectedBody);
+  const observedTarget = parsePullRequestClosingTarget(match.body);
+  if (
+    !expectedTarget
+    || !observedTarget
+    || !samePullRequestClosingTarget(expectedTarget, observedTarget)
+  ) {
+    throw new Error(
+      `existing PR #${match.number} does not match the expected PR closing target`,
+    );
+  }
+  return {
+    provider: 'github',
+    repository,
+    number: match.number,
+    url: match.url,
+  };
 }
 
 function matchingOpenPullRequest(
   command: GateCommandRunner,
   cwd: string,
   repoArgs: string[],
+  repository: string,
   head: string,
   base: string,
+  expectedTitle: string,
+  expectedBody: string,
 ): PrExternalRef | null {
   const output = command('gh', [
     'pr', 'list', ...repoArgs,
@@ -375,7 +617,7 @@ function matchingOpenPullRequest(
     '--head', head,
     '--base', base,
     '--limit', '2',
-    '--json', 'number,url,headRefName,baseRefName,isCrossRepository',
+    '--json', 'number,url,title,body,headRefName,baseRefName,isCrossRepository',
   ], cwd);
   const parsed: unknown = JSON.parse(output);
   if (!Array.isArray(parsed)) {
@@ -389,6 +631,8 @@ function matchingOpenPullRequest(
     if (
       !Number.isInteger(value.number)
       || typeof value.url !== 'string'
+      || typeof value.title !== 'string'
+      || typeof value.body !== 'string'
       || typeof value.headRefName !== 'string'
       || typeof value.baseRefName !== 'string'
       || typeof value.isCrossRepository !== 'boolean'
@@ -408,8 +652,112 @@ function matchingOpenPullRequest(
   }
   const match = matches[0];
   return match
-    ? { provider: 'github', number: match.number, url: match.url }
+    ? validateMatchingPullRequest(
+      match,
+      repository,
+      expectedTitle,
+      expectedBody,
+    )
     : null;
+}
+
+interface GithubTarget {
+  repository: string;
+  remote: string;
+  repoArgs: string[];
+}
+
+/** Resolve only canonical github.com owner/repository remotes. */
+function repositoryFromGitRemoteUrl(remoteUrl: string): string {
+  const value = remoteUrl.trim();
+  if (value.length === 0) {
+    throw new Error('GitHub origin returned an invalid remote URL');
+  }
+
+  const scp = /^git@github\.com:([^/]+)\/(.+)$/.exec(value);
+  if (scp) {
+    const repository = scp[2]!.endsWith('.git')
+      ? scp[2]!.slice(0, -4)
+      : scp[2]!;
+    return canonicalGithubRepository(`${scp[1]}/${repository}`);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`origin is not a canonical GitHub remote: ${value}`);
+  }
+  const supported = (
+    parsed.protocol === 'https:'
+    && parsed.username === ''
+    && parsed.password === ''
+  ) || (
+    parsed.protocol === 'ssh:'
+    && parsed.username === 'git'
+    && parsed.password === ''
+  );
+  if (
+    !supported
+    || parsed.hostname.toLowerCase() !== 'github.com'
+    || parsed.port !== ''
+    || parsed.search !== ''
+    || parsed.hash !== ''
+  ) {
+    throw new Error(`origin is not a canonical GitHub remote: ${value}`);
+  }
+  const parts = parsed.pathname.split('/').filter(Boolean);
+  if (parts.length !== 2) {
+    throw new Error(`origin is not a canonical GitHub repository: ${value}`);
+  }
+  const name = parts[1]!.endsWith('.git')
+    ? parts[1]!.slice(0, -4)
+    : parts[1]!;
+  return canonicalGithubRepository(`${parts[0]}/${name}`);
+}
+
+function githubTarget(
+  command: GateCommandRunner,
+  cwd: string,
+  configuredRepository: string | null,
+): GithubTarget {
+  const repository = configuredRepository ?? repositoryFromGitRemoteUrl(
+    command('git', ['remote', 'get-url', 'origin'], cwd),
+  );
+  return {
+    repository,
+    remote: `https://github.com/${repository}.git`,
+    repoArgs: ['--repo', repository],
+  };
+}
+
+function sameGithubTarget(left: GithubTarget, right: GithubTarget): boolean {
+  return left.repository === right.repository && left.remote === right.remote;
+}
+
+function remoteBranchExists(
+  command: GateCommandRunner,
+  cwd: string,
+  remote: string,
+  branch: string,
+): boolean {
+  const ref = `refs/heads/${branch}`;
+  const output = command(
+    'git',
+    ['ls-remote', '--heads', remote, ref],
+    cwd,
+    { credentials: 'github' },
+  ).trim();
+  if (output === '') return false;
+  const lines = output.split('\n').filter(Boolean);
+  if (
+    lines.length !== 1
+    || !/^[0-9a-f]{40}\trefs\/heads\/.+$/i.test(lines[0]!)
+    || !lines[0]!.endsWith(`\t${ref}`)
+  ) {
+    throw new Error(`git ls-remote returned an ambiguous branch identity for ${branch}`);
+  }
+  return true;
 }
 
 /** The production GhGateRunner: real `git push` + `gh` against the target repo's remote. */
@@ -417,23 +765,104 @@ export function realGhGateRunner(
   repository?: string,
   command: GateCommandRunner = run,
 ): GhGateRunner {
-  const remote = repository
-    ? `https://github.com/${repository}.git`
-    : 'origin';
-  const repoArgs = repository ? ['--repo', repository] : [];
+  const canonicalRepository = repository
+    ? canonicalGithubRepository(repository)
+    : null;
+  const preflightTargets = new Map<string, GithubTarget>();
   return {
-    pushBranch(worktree, branch) {
-      // Push an AgentOps-generated worktree HEAD to its stable remote PR branch.
-      // Repository-discovered heads never reach this credential-bearing adapter.
-      pushGeneratedBranch(worktree, remote, branch);
-    },
-    createPr(cwd, args) {
+    preflightPr(cwd, args) {
+      const target = githubTarget(command, cwd, canonicalRepository);
+      assertExpectedPrSemantics(target.repository, args.body);
+      if (args.existingRef?.repository) {
+        if (
+          canonicalGithubRepository(args.existingRef.repository)
+          !== target.repository
+        ) {
+          throw new Error(
+            `stored PR #${args.existingRef.number} belongs to another repository`,
+          );
+        }
+      }
+      if (
+        args.existingRef
+        && repositoryFromPullRequestUrl(args.existingRef.url)
+          !== target.repository
+      ) {
+        throw new Error(
+          `stored PR #${args.existingRef.number} URL belongs to another repository`,
+        );
+      }
       const existing = matchingOpenPullRequest(
         command,
         cwd,
-        repoArgs,
+        target.repoArgs,
+        target.repository,
         args.head,
         args.base,
+        args.title,
+        args.body,
+      );
+      const branchExists = remoteBranchExists(
+        command,
+        cwd,
+        target.remote,
+        args.head,
+      );
+      if (existing) {
+        if (!branchExists) {
+          throw new Error(
+            `existing PR #${existing.number} has no matching remote branch ${args.head}`,
+          );
+        }
+        if (
+          args.existingRef
+          && args.existingRef.number !== existing.number
+        ) {
+          throw new Error(
+            `stored PR #${args.existingRef.number} does not match existing PR #${existing.number}`,
+          );
+        }
+        preflightTargets.set(cwd, target);
+        return existing;
+      }
+      if (args.existingRef) {
+        throw new Error(
+          `stored PR #${args.existingRef.number} is not the unique open PR for ${args.head}`,
+        );
+      }
+      if (branchExists) {
+        throw new Error(
+          `refusing to push ambiguous existing branch "${args.head}" without an exact correlated open PR`,
+        );
+      }
+      preflightTargets.set(cwd, target);
+      return null;
+    },
+    pushBranch(worktree, branch) {
+      // Push an AgentOps-generated worktree HEAD to its stable remote PR branch.
+      // Repository-discovered heads never reach this credential-bearing adapter.
+      const expected = preflightTargets.get(worktree);
+      if (!expected) {
+        throw new Error('GitHub branch push requires a successful identity preflight');
+      }
+      const observed = githubTarget(command, worktree, canonicalRepository);
+      if (!sameGithubTarget(expected, observed)) {
+        throw new Error('GitHub origin changed after identity preflight');
+      }
+      pushGeneratedBranch(worktree, expected.remote, branch);
+    },
+    createPr(cwd, args) {
+      const target = githubTarget(command, cwd, canonicalRepository);
+      assertExpectedPrSemantics(target.repository, args.body);
+      const existing = matchingOpenPullRequest(
+        command,
+        cwd,
+        target.repoArgs,
+        target.repository,
+        args.head,
+        args.base,
+        args.title,
+        args.body,
       );
       if (existing) return existing;
 
@@ -442,7 +871,7 @@ export function realGhGateRunner(
       try {
         try {
           command('gh', [
-            'pr', 'create', ...repoArgs,
+            'pr', 'create', ...target.repoArgs,
             '--base', args.base, '--head', args.head,
             '--title', args.title, '--body-file', bodyFile,
           ], cwd);
@@ -454,9 +883,12 @@ export function realGhGateRunner(
             raced = matchingOpenPullRequest(
               command,
               cwd,
-              repoArgs,
+              target.repoArgs,
+              target.repository,
               args.head,
               args.base,
+              args.title,
+              args.body,
             );
           } catch {
             throw createError;
@@ -470,9 +902,12 @@ export function realGhGateRunner(
       const created = matchingOpenPullRequest(
         command,
         cwd,
-        repoArgs,
+        target.repoArgs,
+        target.repository,
         args.head,
         args.base,
+        args.title,
+        args.body,
       );
       if (!created) {
         throw new Error(
@@ -482,8 +917,9 @@ export function realGhGateRunner(
       return created;
     },
     viewPr(cwd, prNumber) {
+      const target = githubTarget(command, cwd, canonicalRepository);
       const out = command('gh', [
-        'pr', 'view', String(prNumber), ...repoArgs, '--json', 'state',
+        'pr', 'view', String(prNumber), ...target.repoArgs, '--json', 'state',
       ], cwd);
       const state = String((JSON.parse(out) as { state: string }).state).toLowerCase();
       return state === 'merged' ? 'merged' : state === 'closed' ? 'closed' : 'open';

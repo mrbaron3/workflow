@@ -1,9 +1,11 @@
 package control
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -57,8 +59,8 @@ type Registration struct {
 	IssueMonitorEnabled bool   `json:"issueMonitorEnabled"`
 	PRMonitorEnabled    bool   `json:"prMonitorEnabled"`
 	ExecutionEnabled    bool   `json:"executionEnabled"`
-	// Configuration remains an internal, schema-constrained empty object. The
-	// Control API never accepts it as command input.
+	// Configuration is a strict desired-state contract; arbitrary commands,
+	// credentials, paths, and environment remain unrepresentable.
 	Configuration json.RawMessage `json:"configuration"`
 	Version       int64           `json:"version"`
 	CreatedAt     time.Time       `json:"createdAt"`
@@ -143,8 +145,71 @@ func (patch RegistrationPatch) Validate() error {
 }
 
 func validJSONObject(raw json.RawMessage) bool {
-	var value map[string]json.RawMessage
-	return json.Unmarshal(raw, &value) == nil && value != nil && len(value) == 0
+	supportedReviewPerspectives := map[string]struct{}{
+		"functionality": {},
+		"codeQuality":   {},
+		"testQuality":   {},
+		"ux":            {},
+		"accessibility": {},
+		"security":      {},
+		"type-design":   {},
+	}
+	type gateSignal struct {
+		Source string `json:"source"`
+		Name   string `json:"name"`
+	}
+	type releasePolicy struct {
+		Authority                  string       `json:"authority"`
+		RequiredGateSignals        []gateSignal `json:"requiredGateSignals"`
+		RequiredReviewPerspectives []string     `json:"requiredReviewPerspectives"`
+		MinimumHeadEpochs          int          `json:"minimumHeadEpochs"`
+	}
+	type registrationConfiguration struct {
+		ReleaseEvidence *releasePolicy `json:"releaseEvidence,omitempty"`
+	}
+	var value registrationConfiguration
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&value) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+		return false
+	}
+	policy := value.ReleaseEvidence
+	if policy == nil {
+		return bytes.Equal(bytes.TrimSpace(raw), []byte(`{}`))
+	}
+	if policy.Authority != "human-ready-allowed" &&
+		policy.Authority != "ai-triage-required" {
+		return false
+	}
+	if len(policy.RequiredGateSignals) < 1 || len(policy.RequiredGateSignals) > 64 ||
+		len(policy.RequiredReviewPerspectives) < 2 ||
+		len(policy.RequiredReviewPerspectives) > len(supportedReviewPerspectives) ||
+		policy.MinimumHeadEpochs < 1 || policy.MinimumHeadEpochs > 32 {
+		return false
+	}
+	signals := map[string]struct{}{}
+	for _, signal := range policy.RequiredGateSignals {
+		if (signal.Source != "repository-grader" && signal.Source != "github-check") ||
+			len(signal.Name) < 1 || len(signal.Name) > 128 {
+			return false
+		}
+		key := signal.Source + ":" + signal.Name
+		if _, duplicate := signals[key]; duplicate {
+			return false
+		}
+		signals[key] = struct{}{}
+	}
+	perspectives := map[string]struct{}{}
+	for _, perspective := range policy.RequiredReviewPerspectives {
+		if _, supported := supportedReviewPerspectives[perspective]; !supported {
+			return false
+		}
+		if _, duplicate := perspectives[perspective]; duplicate {
+			return false
+		}
+		perspectives[perspective] = struct{}{}
+	}
+	return true
 }
 
 func (registration Registration) Desired(component string) bool {

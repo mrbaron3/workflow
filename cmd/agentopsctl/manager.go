@@ -1580,6 +1580,10 @@ func (manager *manager) triageSpec(
 		environment["AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON"] =
 			manager.config.TriageContextPaths
 	}
+	if manager.config.TriageModel != "" {
+		environment["AGENTOPS_TRIAGE_MODEL"] = manager.config.TriageModel
+	}
+	manager.config.addReleaseProvenance(environment)
 	if mode == lifecycle.ModeActive && manager.config.Provider == "codex" {
 		if manager.config.usesCodexAuthFileFor(mode) {
 			environment["CODEX_HOME"] = "/run/agentops-credentials/codex"
@@ -1848,6 +1852,7 @@ func (manager *manager) runnerSpec(
 		"NO_PROXY": databaseHost + "," + githubBrokerHost +
 			",127.0.0.1,localhost",
 	}
+	manager.config.addReleaseProvenance(environment)
 	if mode == lifecycle.ModeActive && manager.config.Provider == "codex" {
 		if manager.config.usesCodexAuthFileFor(mode) {
 			environment["CODEX_HOME"] = "/run/agentops-credentials/codex"
@@ -2520,7 +2525,7 @@ func validateTriageActual(
 		"/tmp":           "tmpfs",
 		"/home/agentops": "tmpfs",
 	}
-	if config.usesCodexAuthFileFor(mode) {
+	if config.usesCodexAuthFileFor(workerCredentialMode(mode)) {
 		expectedMounts["/run/agentops-credentials"] = config.TriageCredentialVolume
 	}
 	if !exactMounts(actual, expectedMounts) {
@@ -2553,13 +2558,23 @@ func validateRunnerActual(
 		"/home/agentops": "tmpfs",
 		"/workspace":     config.RunnerVolume,
 	}
-	if config.usesCodexAuthFileFor(mode) {
+	if config.usesCodexAuthFileFor(workerCredentialMode(mode)) {
 		expectedMounts["/run/agentops-credentials"] = config.RunnerCredentialVolume
 	}
 	if !exactMounts(actual, expectedMounts) {
 		return fmt.Errorf("runner mounts do not match the hardened topology")
 	}
 	return nil
+}
+
+// DRAINING retains the already-running ACTIVE workers until their leases and
+// attempts reach zero. Validate those workers against the credential boundary
+// they were started with; no DRAINING worker replacement is performed.
+func workerCredentialMode(mode lifecycle.Mode) lifecycle.Mode {
+	if mode == lifecycle.ModeDraining {
+		return lifecycle.ModeActive
+	}
+	return mode
 }
 
 func validatePostgresActual(

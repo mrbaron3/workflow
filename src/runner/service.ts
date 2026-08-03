@@ -12,6 +12,7 @@ import {
   verifyArtifactReferences,
 } from './artifacts.js';
 import type { AgentOpsRunnerAdapter } from './adapter.js';
+import type { ReleaseRuntimeConfiguration } from '../evidence/release-projection.js';
 import { runnerFailure, RunnerExecutionError } from './errors.js';
 import { RunnerLeaseFence } from './guard.js';
 import {
@@ -32,6 +33,7 @@ export interface RunnerServiceConfig {
   maxAttempts: number;
   retryBaseMs: number;
   attemptTimeoutMs: number;
+  releaseRuntime?: ReleaseRuntimeConfiguration | null;
 }
 
 export interface RunnerServiceDependencies {
@@ -259,6 +261,33 @@ export class IsolatedRunnerService {
           'claim',
         );
       }
+      let effectiveReleaseId = envelope.releaseId ?? null;
+      if (registration.configuration.releaseEvidence && effectiveReleaseId === null) {
+        const recovered = payload.event.kind === 'issue'
+          ? await this.store.findReleaseForRunnerEvent({
+              registrationId: envelope.registrationId,
+              issueNumber: payload.event.number,
+            })
+          : payload.event.kind === 'pull_request'
+            ? await this.store.findReleaseForRunnerEvent({
+                registrationId: envelope.registrationId,
+                pullRequest: payload.event.number,
+              })
+            : null;
+        if (!recovered) {
+          throw new RunnerExecutionError(
+            'unknown_job_contract',
+            'release-evidence Registration job has no durable release identity',
+            false,
+            'claim',
+          );
+        }
+        await this.store.linkJobToRelease({
+          jobId: envelope.id,
+          releaseId: recovered.id,
+        });
+        effectiveReleaseId = recovered.id;
+      }
       verifyArtifactReferences(
         this.config.workspaceRoot,
         envelope.registrationId,
@@ -269,12 +298,20 @@ export class IsolatedRunnerService {
       // authorization used for provider execution.
       await fence.arm('provider');
       prepared = this.workspace.prepare(lease, payload);
+      const executionLease = effectiveReleaseId === null
+        ? lease
+        : {
+            ...lease,
+            job: { ...lease.job, releaseId: effectiveReleaseId },
+          };
       const adapterResult = await this.adapter.execute({
-        lease,
+        lease: executionLease,
         payload,
         workspace: prepared,
         fence,
         provider: this.config.provider,
+        controlStore: this.store,
+        releaseRuntime: this.config.releaseRuntime ?? null,
         log: this.log,
       });
       fence.assertLive('release');
@@ -306,6 +343,43 @@ export class IsolatedRunnerService {
           completedAt: new Date().toISOString(),
         },
       });
+      if (effectiveReleaseId) {
+        const release = await this.store.getRelease(effectiveReleaseId);
+        if (!release) {
+          throw new RunnerExecutionError(
+            'internal_failure',
+            `runner release ${effectiveReleaseId} disappeared before artifact binding`,
+            false,
+            'release',
+          );
+        }
+        if (release.status === 'merged') {
+          if (!adapterResult.headSha || adapterResult.headSha !== release.finalHead) {
+            throw new RunnerExecutionError(
+              'internal_failure',
+              'runner result head does not match the completed release',
+              false,
+              'release',
+            );
+          }
+          const receipts = await this.store.listReleaseReceipts(release.id, {
+            includeMergeIntent: true,
+          });
+          await this.store.recordReleaseArtifact({
+            artifactKey: `runner-result:${lease.job.id}:${lease.attemptId}`,
+            artifact: {
+              kind: 'runner-result',
+              uri: evidence.uri,
+              sha256: evidence.sha256,
+              sizeBytes: evidence.sizeBytes,
+              releaseId: release.id,
+              sourceHead: adapterResult.headSha,
+              receiptIds: receipts.map((entry) => entry.receipt.receiptId),
+            },
+          });
+          await this.store.exportReleaseEvidence(release.id);
+        }
+      }
       const humanReview = adapterResult.humanReview === null
         ? null
         : {
@@ -339,7 +413,20 @@ export class IsolatedRunnerService {
       await this.recordFailure(lease, runnerFailure(error));
     } finally {
       await heartbeat.stop();
-      if (prepared) this.workspace.cleanup(prepared);
+      if (prepared) {
+        try {
+          this.workspace.cleanup(prepared);
+        } catch (error) {
+          // The lease outcome is already durable by this point. Workspace
+          // cleanup is recoverable maintenance and must not turn a confirmed
+          // release (or a recorded terminal failure) into a new job failure.
+          this.log(
+            `runner workspace cleanup failed for ${lease.job.id} attempt `
+            + `${lease.attemptNumber}: `
+            + `${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
     }
   }
 

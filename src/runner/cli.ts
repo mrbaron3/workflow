@@ -41,6 +41,7 @@ async function main(): Promise<void> {
       maxAttempts: config.maxAttempts,
       retryBaseMs: config.retryBaseMs,
       attemptTimeoutMs: config.attemptTimeoutMs,
+      releaseRuntime: config.releaseRuntime,
     },
     {
       store,

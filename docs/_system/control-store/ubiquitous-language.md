@@ -27,7 +27,16 @@
   strict provider出力。ready approvalや任意label／commandを含まない。
 - **LANG-control-store-025 Ready Promotion** — human-owned exact ready labelとlive triage leaseを再検証し、
   development jobへ進めるatomic capability。
+- **LANG-control-store-026 Release Identity** — jobやretryの個数から独立した、一回のreleaseを指すdurable identity。
+- **LANG-control-store-027 Receipt** — release/headへ束縛された一つのsemantic fact。job logや事後推測ではない。
+- **LANG-control-store-028 Authority Route** — human ready単独、またはAI triage decision後のhuman readyという着手権威の経路。
+- **LANG-control-store-029 Gate Signal Source** — 同名でも混同しない`repository-grader`または`github-check`の正本種別。
+- **LANG-control-store-030 Head Epoch** — buildでheadが変わるたびに進むreview単位。jobやattemptの回数ではない。
+- **LANG-control-store-031 Finding Lineage** — findingを挙げたreview/headと、それを解消したbuild/後続headの因果link。
+- **LANG-control-store-032 Release Certificate** — policyを満たすsame-release receiptとartifactだけからcertifierが導出する
+  `passed|passed-with-interventions`の公開証拠。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
-[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)、
+[ADR-0020](../../decisions/ADR-0020-release-receipt-evidence.md)

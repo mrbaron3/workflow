@@ -39,7 +39,20 @@
   provider operationはtotal deadline/page/item/raw-byte上限を持ち、claim/failure persistence障害はexecution serviceから
   隔離する。Issue identityはstrict triage jobへ入り、AIはready approvalを作れない。human exact ready label後だけ、
   live triage leaseの完了とconfigured-label付きdevelopment job enqueueをSECURITY DEFINER capabilityでatomicに行う。
+- **ARCH-control-store-017 Release Identity Boundary** — 一回のreleaseはRegistration内のdurable identityであり、
+  triage/promotion、development、PR reconciliation、review、merge、retry/recovery jobを横断する。job/attemptは
+  producer provenanceであってrelease identityではない。
+- **ARCH-control-store-018 Causal Receipt Outbox** — authority/build/grade/review/finding/runtime/merge/interventionの
+  immutable receiptをtransactional outboxへ保存し、same-release causeとrepository/Issue/head座標をDB制約と
+  certifierで再強制する。runtimeはjobごとに分割でき、head epochは`release_heads`、大きなartifactは
+  `release_artifacts`のURI/digest/receipt linkだけを参照する。
+- **ARCH-control-store-019 Pre-merge Certification** — policyが要求するauthority、gate source、review perspective、
+  head epoch、finding resolution、runtime provenanceをmerge前に独立certifyし、merge intentとauthorizationを
+  atomic commitする。同一expected-head mergeのrecoveryは冪等、未認可または異なるmergeはfail closedである。
+  completed releaseは`evidence:live-release:export`でPostgreSQLだけからv2 certificateへ再構成し、同じsemantic
+  certifierを通過しない出力を公開しない。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
-[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)
+[ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)、
+[ADR-0020](../../decisions/ADR-0020-release-receipt-evidence.md)

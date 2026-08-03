@@ -1,0 +1,452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mrbaron3/workflow/contracts/live-release-receipt.schema.json",
+  "title": "Release receipt evidence v2",
+  "description": "A job-topology-neutral release certificate. Every fact is bound to a durable release identity and explicit receipt causality; job and attempt IDs are optional provenance only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "release", "policy", "receipts", "artifacts", "result"],
+  "properties": {
+    "schemaVersion": { "const": "2.0" },
+    "release": { "$ref": "#/$defs/release" },
+    "policy": { "$ref": "#/$defs/policy" },
+    "receipts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "runtime", "builds", "grades", "reviews", "findingResolutions", "mergeIntent", "merge", "interventions"],
+      "properties": {
+        "authority": { "$ref": "#/$defs/authority" },
+        "runtime": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/runtime" } },
+        "builds": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/build" } },
+        "grades": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/grade" } },
+        "reviews": { "type": "array", "minItems": 2, "maxItems": 512, "items": { "$ref": "#/$defs/review" } },
+        "findingResolutions": { "type": "array", "maxItems": 1024, "items": { "$ref": "#/$defs/findingResolution" } },
+        "mergeIntent": { "$ref": "#/$defs/mergeIntent" },
+        "merge": { "$ref": "#/$defs/merge" },
+        "interventions": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/intervention" } }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": { "$ref": "#/$defs/artifact" }
+    },
+    "result": { "enum": ["passed", "passed-with-interventions"] }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/(?!\\.{1,2}$)[a-z0-9_.-]{1,100}$"
+    },
+    "issueNumber": { "type": "integer", "minimum": 1, "maximum": 2147483647 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "receiptKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "jobId": { "$ref": "#/$defs/uuid" },
+        "attemptId": { "$ref": "#/$defs/uuid" }
+      }
+    },
+    "receiptBase": {
+      "type": "object",
+      "required": ["receiptId", "receiptKey", "releaseId", "repository", "issueNumber", "producer", "causes", "recordedAt"],
+      "properties": {
+        "receiptId": { "$ref": "#/$defs/uuid" },
+        "receiptKey": { "$ref": "#/$defs/receiptKey" },
+        "releaseId": { "$ref": "#/$defs/uuid" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "issueNumber": { "$ref": "#/$defs/issueNumber" },
+        "producer": { "$ref": "#/$defs/producer" },
+        "causes": {
+          "type": "array",
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/uuid" }
+        },
+        "recordedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "humanActor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "login"],
+      "properties": {
+        "type": { "const": "human" },
+        "login": { "$ref": "#/$defs/name" }
+      }
+    },
+    "authority": {
+      "oneOf": [
+        {
+          "allOf": [
+            { "$ref": "#/$defs/receiptBase" },
+            {
+              "type": "object",
+              "required": ["kind", "route", "actor", "readyLabel", "readyAt"],
+              "properties": {
+                "kind": { "const": "authority" },
+                "route": { "const": "human-ready" },
+                "actor": { "$ref": "#/$defs/humanActor" },
+                "readyLabel": { "$ref": "#/$defs/name" },
+                "readyAt": { "$ref": "#/$defs/timestamp" }
+              }
+            }
+          ],
+          "type": "object",
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            { "$ref": "#/$defs/receiptBase" },
+            {
+              "type": "object",
+              "required": ["kind", "route", "actor", "readyLabel", "readyAt", "triageInvocationId", "triageCompletedAt", "sourceDigest", "decision"],
+              "properties": {
+                "kind": { "const": "authority" },
+                "route": { "const": "ai-triage-then-human-ready" },
+                "actor": { "$ref": "#/$defs/humanActor" },
+                "readyLabel": { "$ref": "#/$defs/name" },
+                "readyAt": { "$ref": "#/$defs/timestamp" },
+                "triageInvocationId": { "$ref": "#/$defs/name" },
+                "triageCompletedAt": { "$ref": "#/$defs/timestamp" },
+                "sourceDigest": { "$ref": "#/$defs/sha256" },
+                "decision": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["schemaVersion", "readiness"],
+                  "properties": {
+                    "schemaVersion": { "const": 1 },
+                    "readiness": { "const": "ready_candidate" }
+                  }
+                }
+              }
+            }
+          ],
+          "type": "object",
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "build": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "head", "parentHead", "invocationId", "role"],
+          "properties": {
+            "kind": { "const": "build" },
+            "head": { "$ref": "#/$defs/head" },
+            "parentHead": { "oneOf": [{ "$ref": "#/$defs/head" }, { "type": "null" }] },
+            "invocationId": { "$ref": "#/$defs/name" },
+            "role": { "enum": ["generator", "repair"] }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "gateSignal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "name"],
+      "properties": {
+        "source": { "enum": ["repository-grader", "github-check"] },
+        "name": { "$ref": "#/$defs/name" }
+      }
+    },
+    "grade": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "head", "signal", "status", "detailsDigest"],
+          "properties": {
+            "kind": { "const": "grade" },
+            "head": { "$ref": "#/$defs/head" },
+            "signal": { "$ref": "#/$defs/gateSignal" },
+            "status": { "const": "passed" },
+            "detailsDigest": { "$ref": "#/$defs/digest" }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "review": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "head", "headEpoch", "perspective", "invocationId", "verdict", "findings"],
+          "properties": {
+            "kind": { "const": "review" },
+            "head": { "$ref": "#/$defs/head" },
+            "headEpoch": { "type": "integer", "minimum": 1, "maximum": 1024 },
+            "perspective": { "$ref": "#/$defs/name" },
+            "invocationId": { "$ref": "#/$defs/name" },
+            "verdict": { "enum": ["approved", "findings"] },
+            "findings": {
+              "type": "array",
+              "maxItems": 1024,
+              "uniqueItems": true,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["findingId", "lineage"],
+                "properties": {
+                  "findingId": { "$ref": "#/$defs/name" },
+                  "lineage": { "enum": ["new", "persisted"] }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "findingResolution": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "findingId", "raisedByReviewReceiptId", "raisedOnHead", "resolvedByBuildReceiptId", "resolvedOnHead"],
+          "properties": {
+            "kind": { "const": "finding-resolution" },
+            "findingId": { "$ref": "#/$defs/name" },
+            "raisedByReviewReceiptId": { "$ref": "#/$defs/uuid" },
+            "raisedOnHead": { "$ref": "#/$defs/head" },
+            "resolvedByBuildReceiptId": { "$ref": "#/$defs/uuid" },
+            "resolvedOnHead": { "$ref": "#/$defs/head" }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "modelSelection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "const": "explicit" },
+            "name": { "$ref": "#/$defs/name" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reference", "resolverDigest"],
+          "properties": {
+            "kind": { "const": "provider-default" },
+            "reference": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "resolverDigest": { "$ref": "#/$defs/digest" }
+          }
+        }
+      ]
+    },
+    "runtimeInvocation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["invocationId", "role", "provider", "model"],
+      "properties": {
+        "invocationId": { "$ref": "#/$defs/name" },
+        "role": { "enum": ["triage", "planning", "ui-design", "generator", "repair", "reviewer"] },
+        "provider": { "$ref": "#/$defs/name" },
+        "model": { "$ref": "#/$defs/modelSelection" },
+        "head": { "$ref": "#/$defs/head" }
+      }
+    },
+    "runtime": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "consumer", "environment", "invocations"],
+          "properties": {
+            "kind": { "const": "runtime-provenance" },
+            "consumer": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["repository", "revision"],
+              "properties": {
+                "repository": { "$ref": "#/$defs/repository" },
+                "revision": { "$ref": "#/$defs/head" }
+              }
+            },
+            "environment": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "reference", "digest"],
+              "properties": {
+                "kind": { "enum": ["container", "host", "managed-runner"] },
+                "reference": { "type": "string", "minLength": 1, "maxLength": 512 },
+                "digest": { "$ref": "#/$defs/digest" }
+              }
+            },
+            "invocations": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 512,
+              "items": { "$ref": "#/$defs/runtimeInvocation" }
+            }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "mergeIntent": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "pullRequest", "expectedHead", "observedPrHead"],
+          "properties": {
+            "kind": { "const": "merge-intent" },
+            "pullRequest": { "$ref": "#/$defs/issueNumber" },
+            "expectedHead": { "$ref": "#/$defs/head" },
+            "observedPrHead": { "$ref": "#/$defs/head" }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "merge": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "pullRequest", "expectedHead", "observedPrHead", "mergeSha", "actor", "issueState", "issueStateReason", "mergeReachableFromDefaultBranch", "mergedAt"],
+          "properties": {
+            "kind": { "const": "merge" },
+            "pullRequest": { "$ref": "#/$defs/issueNumber" },
+            "expectedHead": { "$ref": "#/$defs/head" },
+            "observedPrHead": { "$ref": "#/$defs/head" },
+            "mergeSha": { "$ref": "#/$defs/head" },
+            "actor": { "$ref": "#/$defs/name" },
+            "issueState": { "const": "CLOSED" },
+            "issueStateReason": { "const": "COMPLETED" },
+            "mergeReachableFromDefaultBranch": { "const": true },
+            "mergedAt": { "$ref": "#/$defs/timestamp" }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "intervention": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "interventionKind", "reason"],
+          "properties": {
+            "kind": { "const": "intervention" },
+            "interventionKind": {
+              "enum": [
+                "conditional-approval-implementation",
+                "workspace-hand-edit",
+                "repair-brief-hand-edit",
+                "manual-evidence-collection"
+              ]
+            },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "requiredGateSignals", "requiredReviewPerspectives", "minimumHeadEpochs"],
+      "properties": {
+        "authority": { "enum": ["human-ready-allowed", "ai-triage-required"] },
+        "requiredGateSignals": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/gateSignal" }
+        },
+        "requiredReviewPerspectives": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 7,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "functionality",
+              "codeQuality",
+              "testQuality",
+              "ux",
+              "accessibility",
+              "security",
+              "type-design"
+            ]
+          }
+        },
+        "minimumHeadEpochs": { "type": "integer", "minimum": 1, "maximum": 32 }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repository", "issueNumber", "pullRequest", "finalHead", "mergeSha", "createdAt", "completedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/uuid" },
+        "repository": { "$ref": "#/$defs/repository" },
+        "issueNumber": { "$ref": "#/$defs/issueNumber" },
+        "pullRequest": { "$ref": "#/$defs/issueNumber" },
+        "finalHead": { "$ref": "#/$defs/head" },
+        "mergeSha": { "$ref": "#/$defs/head" },
+        "createdAt": { "$ref": "#/$defs/timestamp" },
+        "completedAt": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "uri", "sha256", "sizeBytes", "releaseId", "sourceHead", "receiptIds"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/name" },
+        "uri": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "sizeBytes": { "type": "integer", "minimum": 0 },
+        "releaseId": { "$ref": "#/$defs/uuid" },
+        "sourceHead": { "$ref": "#/$defs/head" },
+        "receiptIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 512,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/uuid" }
+        }
+      }
+    }
+  }
+}

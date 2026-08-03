@@ -239,6 +239,18 @@ async function main(): Promise<void> {
      GRANT UPDATE(updated_at)
        ON agentops_control.repository_registrations TO agentops_runner;
      GRANT SELECT, UPDATE ON agentops_control.jobs TO agentops_runner;
+     GRANT SELECT ON agentops_control.releases TO agentops_runner;
+     GRANT SELECT ON agentops_control.release_heads,
+       agentops_control.release_receipt_outbox,
+       agentops_control.release_artifacts TO agentops_runner;
+     GRANT EXECUTE ON FUNCTION
+       agentops_control.record_release_receipt(jsonb),
+       agentops_control.authorize_release_merge(jsonb),
+       agentops_control.complete_release_merge(jsonb),
+       agentops_control.record_release_artifact(text, jsonb),
+       agentops_control.lock_release_completion_state(uuid, uuid),
+       agentops_control.bind_release_pull_request(uuid, uuid, bigint)
+       TO agentops_runner;
      GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
        agentops_control.job_leases,
        agentops_control.artifact_links TO agentops_runner;
@@ -250,6 +262,31 @@ async function main(): Promise<void> {
     `SELECT json_build_object(
        'jobsUpdate', has_table_privilege(
          'agentops_runner', 'agentops_control.jobs', 'UPDATE'
+       ),
+       'releasesRead', has_table_privilege(
+         'agentops_runner', 'agentops_control.releases', 'SELECT'
+       ),
+       'releasesUpdate', has_table_privilege(
+         'agentops_runner', 'agentops_control.releases', 'UPDATE'
+       ),
+       'receiptInsert', has_table_privilege(
+         'agentops_runner', 'agentops_control.release_receipt_outbox', 'INSERT'
+       ),
+       'recordReceiptCapability', has_function_privilege(
+         'agentops_runner',
+         'agentops_control.record_release_receipt(jsonb)', 'EXECUTE'
+       ),
+       'authorizeMergeCapability', has_function_privilege(
+         'agentops_runner',
+         'agentops_control.authorize_release_merge(jsonb)', 'EXECUTE'
+       ),
+       'releaseCompletionCapability', has_function_privilege(
+         'agentops_runner',
+         'agentops_control.lock_release_completion_state(uuid,uuid)', 'EXECUTE'
+       ),
+       'releasePullRequestBindingCapability', has_function_privilege(
+         'agentops_runner',
+         'agentops_control.bind_release_pull_request(uuid,uuid,bigint)', 'EXECUTE'
        ),
        'registrationExecutionUpdate', has_column_privilege(
          'agentops_runner',
@@ -273,6 +310,13 @@ async function main(): Promise<void> {
   )) as Record<string, boolean>;
   if (
     rolePrivileges.jobsUpdate !== true
+    || rolePrivileges.releasesRead !== true
+    || rolePrivileges.releasesUpdate !== false
+    || rolePrivileges.receiptInsert !== false
+    || rolePrivileges.recordReceiptCapability !== true
+    || rolePrivileges.authorizeMergeCapability !== true
+    || rolePrivileges.releaseCompletionCapability !== true
+    || rolePrivileges.releasePullRequestBindingCapability !== true
     || rolePrivileges.registrationExecutionUpdate !== false
     || rolePrivileges.registrationVersionUpdate !== false
     || rolePrivileges.webhookUpdate !== false

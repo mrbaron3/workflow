@@ -58,6 +58,15 @@ function snapshot(
       isPullRequest: false,
     },
     comments: [],
+    labelEvents: labels.includes(policy.readyLabel)
+      ? [{
+          id: 1,
+          action: 'labeled',
+          label: policy.readyLabel,
+          actor: 'product-owner',
+          createdAt: '2026-07-29T00:00:00.500Z',
+        }]
+      : [],
   };
 }
 
