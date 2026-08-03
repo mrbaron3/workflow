@@ -191,6 +191,12 @@ export interface ProjectReviewRevisionInput extends OpenGateInput {
   sampleIndex?: number;
 }
 
+export interface ReviewPrRenderContext {
+  baseBranch: string;
+  headBranch: string;
+  headSha: string;
+}
+
 /**
  * PR-first projection: push the new build revision before any LLM perspective
  * reviews it. Repair attempts reuse the same external PR and only advance its head.
@@ -233,7 +239,16 @@ async function projectReviewRevisionAsync(
   const projectedIdentity = input.workIdentity
     ? projectedWorkIdentity(input.workIdentity, input.sampleIndex ?? 0)
     : null;
-  const body = renderReviewPrBody(store, input.pr.issueId, projectedIdentity);
+  const body = renderReviewPrBody(
+    store,
+    input.pr.issueId,
+    projectedIdentity,
+    {
+      baseBranch: base,
+      headBranch: input.pr.branch,
+      headSha: input.headSha,
+    },
+  );
   const preflight = runner.preflightPr(input.worktree, {
     base,
     head: input.pr.branch,
@@ -449,12 +464,12 @@ export function renderReviewPrBody(
   store: Store,
   issueId: string,
   identity: ProjectedWorkIdentity | null = null,
+  context: ReviewPrRenderContext | null = null,
 ): string {
-  const lines = [
-    `このPRはAgentOpsのcurrent-headレビュー・修正ループで処理されます。`,
-    `各head SHAについて全必須観点・checks・未解決blocking threadを再評価し、`,
-    `ゲート通過時だけexpected SHA付きで自動mergeします。`,
-  ];
+  const issue = store.getIssue(issueId);
+  if (!issue) throw new Error(`No issue: ${issueId}`);
+  if (!issue.contract) throw new Error(`${issueId} has no accepted contract`);
+  const contract = issue.contract;
   const source = store.db.intakeRecords.find((record) => record.storeIssueIds.includes(issueId));
   const effectiveIdentity = identity
     ?? storeProjectedWorkIdentity(store, issueId, 0);
@@ -474,13 +489,147 @@ export function renderReviewPrBody(
     ) {
       throw new Error(`${issueId} external work identity does not match its Source Issue`);
     }
+  }
+
+  const projectedPr = store.prForIssue(issueId);
+  const revision = context ?? {
+    baseBranch: projectedPr?.baseBranch ?? 'unprojected',
+    headBranch: projectedPr?.branch ?? 'unprojected',
+    headSha: projectedPr?.headSha ?? 'pending',
+  };
+  const includeScope = contract.scope.include.length > 0
+    ? contract.scope.include.map(markdownText).join('<br>')
+    : 'No include glob declared';
+  const excludeScope = contract.scope.exclude.length > 0
+    ? contract.scope.exclude.map(markdownText).join('<br>')
+    : 'No exclude glob declared';
+  const declaredAdrs = explicitAdrReferences([
+    source?.snapshot.body ?? '',
+    ...contract.redLines,
+    ...issue.implementationNotes,
+  ]);
+  const architectureDependencies = issue.dependsOnSystem
+    .filter((dependency) => /^(?:ARCH|DATA|DOM|LANG)-/.test(dependency));
+  const lines = [
+    '## Summary',
+    '',
+    `- **Product goal:** ${markdownText(contract.productGoal)}`,
+    `- **User story:** ${markdownText(contract.userStory)}`,
+    `- **Work unit:** ${markdownText(issue.title)}`,
+    '',
+    'This pull request is managed by the AgentOps current-head review and bounded repair loop.',
+    'Only an exact reviewed head may be merged.',
+    '',
+    '## Architecture baseline',
+    '',
+    '| Boundary | Before | After |',
+    '| --- | --- | --- |',
+    `| Revision | Base branch \`${markdownCode(revision.baseBranch)}\` | Generated branch \`${markdownCode(revision.headBranch)}\` at \`${markdownCode(revision.headSha)}\` |`,
+    `| Declared include scope | Existing repository state | ${includeScope} |`,
+    `| Declared exclusions | Existing repository state | ${excludeScope} |`,
+    '',
+    'Repository-specific architecture counters are not inferred or fabricated.',
+    'Any baseline explicitly required by the frozen Source Issue remains a validation obligation.',
+    '',
+    '## Applicable ADRs',
+    '',
+  ];
+  if (declaredAdrs.length > 0) {
+    lines.push(...declaredAdrs.map((reference) => `- ${markdownText(reference)}`));
+  } else {
+    lines.push('- No explicit ADR identifier was declared in the frozen Source Issue or accepted contract.');
+  }
+  if (architectureDependencies.length > 0) {
+    lines.push(
+      `- Accepted architecture dependencies: ${architectureDependencies.map(markdownText).join(', ')}`,
+    );
+  }
+  if (contract.redLines.length > 0) {
+    lines.push('', 'Contract guardrails:', ...contract.redLines.map((line) => `- ${markdownText(line)}`));
+  }
+  lines.push(
+    '',
+    '## Validation',
+    '',
+    '| Criterion | Severity | Method | Required outcome |',
+    '| --- | --- | --- | --- |',
+    ...contract.acceptanceCriteria.map((criterion) => (
+      `| ${markdownText(criterion.id)} | ${markdownText(criterion.severity)} | `
+      + `${markdownText(criterion.verification.method)} | `
+      + `${criterion.verification.expected.map(markdownText).join('<br>')} |`
+    )),
+    '',
+    'Status at PR creation: **pending current-head validation**.',
+    'AgentOps runs repository graders, required review perspectives, GitHub checks, and blocking-thread reconciliation before merge.',
+    '',
+    '## Rollback',
+    '',
+    '- Default code rollback: revert the merge commit for this pull request.',
+    '- AgentOps does not infer or execute destructive data rollback; repository-specific migration recovery instructions remain authoritative.',
+    '',
+    '## Tracking',
+    '',
+  );
+  if (source) {
+    lines.push(`- Source Issue: ${source.snapshot.repository}#${source.snapshot.number}`);
+  } else {
+    lines.push('- Source Issue: none (local work unit)');
+  }
+  lines.push(
+    `- Work unit key: ${markdownText(effectiveIdentity?.workUnitKey ?? issue.planningCandidateKey ?? issue.id)}`,
+    `- Base branch: \`${markdownCode(revision.baseBranch)}\``,
+    `- Generated head: \`${markdownCode(revision.headSha)}\``,
+  );
+  if (effectiveIdentity?.releaseId) {
+    lines.push(`- Release correlation: \`${markdownCode(effectiveIdentity.releaseId)}\``);
+  }
+  if (effectiveIdentity) {
     lines.push('', renderWorkIdentityMarker(effectiveIdentity));
   }
   if (source) {
     const relation = source.storeIssueIds.length === 1 ? 'Closes' : 'Refs';
     lines.push('', `${relation} ${source.snapshot.repository}#${source.snapshot.number}`);
   }
-  return lines.join('\n');
+  const body = lines.join('\n');
+  if (body.length > 60_000) {
+    throw new Error(`${issueId} generated pull request body exceeds 60000 characters`);
+  }
+  return body;
+}
+
+/** Stable user-facing title. Never expose job-local ISSUE-N identifiers to GitHub. */
+export function renderReviewPrTitle(store: Store, issueId: string): string {
+  const issue = store.getIssue(issueId);
+  if (!issue) throw new Error(`No issue: ${issueId}`);
+  const source = store.db.intakeRecords.find((record) => record.storeIssueIds.includes(issueId));
+  const raw = source?.storeIssueIds.length === 1
+    ? source.snapshot.title
+    : issue.planningCandidateKey
+      ? `[${issue.planningCandidateKey.replace(/\]/g, '-')}] ${issue.title}`
+      : issue.title;
+  const title = raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (title.length === 0 || title.length > 256) {
+    throw new Error(`${issueId} generated pull request title must contain 1..256 characters`);
+  }
+  return title;
+}
+
+function markdownText(value: string): string {
+  const normalized = value.trim().replace(/\s+/g, ' ') || '—';
+  return normalized
+    .replace(/\\/g, '\\\\')
+    .replace(/([`*_[\]<>#])/g, '\\$1')
+    .replace(/\|/g, '\\|');
+}
+
+function markdownCode(value: string): string {
+  return value.replace(/[\r\n`]/g, '-');
+}
+
+function explicitAdrReferences(values: readonly string[]): string[] {
+  return [...new Set(values.flatMap((value) => (
+    value.match(/\bADR[- _]?\d{1,6}\b/gi) ?? []
+  )).map((reference) => reference.toUpperCase().replace(/[ _]/g, '-')))].sort();
 }
 
 /** The EvalRuns of the highest attempt (the build actually at the gate). */

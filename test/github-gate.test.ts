@@ -33,6 +33,7 @@ import {
   realGhGateRunner,
   renderGatePrBody,
   renderReviewPrBody,
+  renderReviewPrTitle,
   type GateCommandRunner,
   type GhGateRunner,
   type GhPrState,
@@ -711,6 +712,12 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     expect(pushes).toEqual([pr.branch, pr.branch]);
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain('current-head');
+    expect(bodies[0]).toContain('## Architecture baseline');
+    expect(bodies[0]).toContain(`Generated branch \`${pr.branch}\` at \`${firstSha}\``);
+    expect(bodies[0]).toContain('## Validation');
+    expect(bodies[0]).toContain('| AC-1 | blocker | unit\\_test | x |');
+    expect(bodies[0]).toContain('## Rollback');
+    expect(bodies[0]).toContain('## Tracking');
     expect(bodies[0]).not.toContain('自動評価パネルはこのビルドを**承認**');
     expect(store.getPR(pr.id)?.externalRef?.number).toBe(8);
     expect(store.getPR(pr.id)?.agentGeneratedHeadSha).toBe(secondSha);
@@ -726,6 +733,74 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
 
     expect(renderReviewPrBody(store, 'ISSUE-1')).toContain('Refs o/r#9');
     expect(renderReviewPrBody(store, 'ISSUE-1')).not.toContain('Closes o/r#9');
+  });
+
+  it('renders the skill-aligned PR format from the accepted contract without fabricating ADRs', () => {
+    const store = tmpStore('review-body-format');
+    const pr = seedGatedIssue(store, 'ISSUE-1', null);
+    seedIntake(store, 'ISSUE-1', 9);
+    const body = renderReviewPrBody(store, 'ISSUE-1', null, {
+      baseBranch: 'epic/9-designflow',
+      headBranch: pr.branch,
+      headSha: 'c'.repeat(40),
+    });
+    const headings = [
+      '## Summary',
+      '## Architecture baseline',
+      '## Applicable ADRs',
+      '## Validation',
+      '## Rollback',
+      '## Tracking',
+    ];
+
+    expect(headings.map((heading) => body.indexOf(heading))).toEqual(
+      [...headings.map((heading) => body.indexOf(heading))].sort((left, right) => left - right),
+    );
+    expect(body).toContain('- **Product goal:** g');
+    expect(body).toContain('No explicit ADR identifier was declared');
+    expect(body).toContain('| AC-1 | blocker | unit\\_test | x |');
+    expect(body).toContain('- Source Issue: o/r#9');
+    expect(body).toContain('Closes o/r#9');
+    expect(body).toContain('agentops-work-identity-v1');
+  });
+
+  it('escapes contract prose, reports only declared ADR identifiers, and bounds the body', () => {
+    const store = tmpStore('review-body-safe-markdown');
+    seedGatedIssue(store, 'ISSUE-1', null);
+    seedIntake(store, 'ISSUE-1', 9);
+    const issue = store.getIssue('ISSUE-1')!;
+    issue.contract!.productGoal = '</table> | injected';
+    issue.contract!.redLines = ['Follow ADR 7 and ADR_0008; never <script>'];
+    store.db.intakeRecords[0]!.snapshot.body = 'Applicable: ADR-0006. Negated lookalike ADROOPS-9.';
+
+    const body = renderReviewPrBody(store, 'ISSUE-1');
+    expect(body).toContain('\\</table\\> \\| injected');
+    expect(body).toContain('- ADR-0006');
+    expect(body).toContain('- ADR-7');
+    expect(body).toContain('- ADR-0008');
+    expect(body).not.toContain('ADROOPS');
+    expect(body).toContain('never \\<script\\>');
+
+    issue.contract!.productGoal = 'x'.repeat(60_001);
+    expect(() => renderReviewPrBody(store, 'ISSUE-1')).toThrow(/exceeds 60000/);
+  });
+
+  it('uses a stable user-facing title instead of a job-local ISSUE identifier', () => {
+    const single = tmpStore('review-title-single');
+    seedGatedIssue(single, 'ISSUE-1', null);
+    seedIntake(single, 'ISSUE-1', 9);
+    single.db.intakeRecords[0]!.snapshot.title = '[DF-002] Immutable revision state';
+    expect(renderReviewPrTitle(single, 'ISSUE-1')).toBe(
+      '[DF-002] Immutable revision state',
+    );
+
+    const split = tmpStore('review-title-split');
+    seedGatedIssue(split, 'ISSUE-1', null);
+    seedGatedIssue(split, 'ISSUE-2', null);
+    seedIntake(split, ['ISSUE-1', 'ISSUE-2'], 9);
+    expect(renderReviewPrTitle(split, 'ISSUE-1')).toBe(
+      '[issue-1] ISSUE-1 title',
+    );
   });
 });
 

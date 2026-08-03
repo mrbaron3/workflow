@@ -38,6 +38,7 @@ import { runBoundedRepairLoop, runBestOfN, applyPanelVerdict, type DriveResult, 
 import {
   projectReviewRevision,
   realGhGateRunner,
+  renderReviewPrTitle,
   type GhGateRunner,
 } from './gate.js';
 import {
@@ -315,7 +316,7 @@ export async function runLiveSample(
         {
           pr,
           worktree: sess.worktree,
-          title: `${issue.id}: ${issue.title}`,
+          title: renderReviewPrTitle(store, issue.id),
           headSha: sess.headSha,
           workIdentity,
           sampleIndex,
