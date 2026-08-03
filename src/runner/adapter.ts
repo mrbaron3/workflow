@@ -289,6 +289,9 @@ function guardedGateRunner(
   delegate: GhGateRunner,
 ): GhGateRunner {
   return {
+    preflightPr(cwd, args) {
+      return delegate.preflightPr(cwd, args);
+    },
     pushBranch(worktree, branch) {
       fence.consume('push');
       delegate.pushBranch(worktree, branch);
@@ -673,6 +676,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         liveOptions: {
           gateRunner,
           prNativeRunner,
+          releaseIdentity: release?.id ?? null,
           beforeProviderExecution: beforeProvider,
           beforePush: () => input.fence.arm('push'),
           beforeCreatePr: () => input.fence.arm('push'),
