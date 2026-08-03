@@ -186,6 +186,8 @@ export interface OpenGateInput {
 
 export interface ProjectReviewRevisionInput extends OpenGateInput {
   headSha: string;
+  /** Committed cumulative diff paths, derived from git rather than provider prose. */
+  changedFiles?: readonly string[];
   /** External mutation identity. null/absent only for local sandbox work. */
   workIdentity?: ExternalWorkIdentity | null;
   sampleIndex?: number;
@@ -195,6 +197,7 @@ export interface ReviewPrRenderContext {
   baseBranch: string;
   headBranch: string;
   headSha: string;
+  changedFiles?: readonly string[];
 }
 
 /**
@@ -247,6 +250,7 @@ async function projectReviewRevisionAsync(
       baseBranch: base,
       headBranch: input.pr.branch,
       headSha: input.headSha,
+      changedFiles: input.changedFiles,
     },
   );
   const preflight = runner.preflightPr(input.worktree, {
@@ -510,12 +514,25 @@ export function renderReviewPrBody(
   ]);
   const architectureDependencies = issue.dependsOnSystem
     .filter((dependency) => /^(?:ARCH|DATA|DOM|LANG)-/.test(dependency));
+  const changedFiles = [...new Set(context?.changedFiles ?? [])].sort();
+  const visibleChangedFiles = changedFiles.slice(0, 100);
   const lines = [
     '## Summary',
     '',
     `- **Product goal:** ${markdownText(contract.productGoal)}`,
     `- **User story:** ${markdownText(contract.userStory)}`,
     `- **Work unit:** ${markdownText(issue.title)}`,
+    '',
+    `Changed files recorded from the committed build: **${changedFiles.length}**`,
+    '',
+    '| Path | Projection |',
+    '| --- | --- |',
+    ...(visibleChangedFiles.length > 0
+      ? visibleChangedFiles.map((file) => `| ${markdownText(file)} | generated revision |`)
+      : ['| — | no changed file was reported |']),
+    ...(changedFiles.length > visibleChangedFiles.length
+      ? [`| … | ${changedFiles.length - visibleChangedFiles.length} additional files; inspect the GitHub diff |`]
+      : []),
     '',
     'This pull request is managed by the AgentOps current-head review and bounded repair loop.',
     'Only an exact reviewed head may be merged.',

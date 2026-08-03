@@ -695,7 +695,13 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     const first = await projectReviewRevision(
       store,
       GITHUB,
-      { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: firstSha },
+      {
+        pr,
+        worktree: '/wt',
+        title: 'ISSUE-1: title',
+        headSha: firstSha,
+        changedFiles: ['src/x.ts'],
+      },
       runner,
     );
     const reviewingFirst = store.replacePrRevision(transitionPrRevision(first, {
@@ -713,6 +719,8 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain('current-head');
     expect(bodies[0]).toContain('## Architecture baseline');
+    expect(bodies[0]).toContain('Changed files recorded from the committed build: **1**');
+    expect(bodies[0]).toContain('| src/x.ts | generated revision |');
     expect(bodies[0]).toContain(`Generated branch \`${pr.branch}\` at \`${firstSha}\``);
     expect(bodies[0]).toContain('## Validation');
     expect(bodies[0]).toContain('| AC-1 | blocker | unit\\_test | x |');
@@ -743,6 +751,7 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
       baseBranch: 'epic/9-designflow',
       headBranch: pr.branch,
       headSha: 'c'.repeat(40),
+      changedFiles: ['src/b.ts', 'src/a|table.ts'],
     });
     const headings = [
       '## Summary',
@@ -757,6 +766,8 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
       [...headings.map((heading) => body.indexOf(heading))].sort((left, right) => left - right),
     );
     expect(body).toContain('- **Product goal:** g');
+    expect(body).toContain('| src/a\\|table.ts | generated revision |');
+    expect(body.indexOf('src/a\\|table.ts')).toBeLessThan(body.indexOf('src/b.ts'));
     expect(body).toContain('No explicit ADR identifier was declared');
     expect(body).toContain('| AC-1 | blocker | unit\\_test | x |');
     expect(body).toContain('- Source Issue: o/r#9');

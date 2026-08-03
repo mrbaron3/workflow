@@ -318,6 +318,7 @@ export async function runLiveSample(
           worktree: sess.worktree,
           title: renderReviewPrTitle(store, issue.id),
           headSha: sess.headSha,
+          changedFiles: sess.changed,
           workIdentity,
           sampleIndex,
         },
