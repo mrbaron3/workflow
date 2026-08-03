@@ -18,6 +18,24 @@ import (
 	lifecyclestore "github.com/mrbaron3/workflow/internal/lifecycle"
 )
 
+func TestExpectedMigrationsMatchControlSchemaVersion(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrations, err := expectedMigrations(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrations) != ControlSchemaVersion {
+		t.Fatalf(
+			"migration count=%d control schema version=%d",
+			len(migrations),
+			ControlSchemaVersion,
+		)
+	}
+}
+
 func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
 	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
 	if databaseURL == "" {
