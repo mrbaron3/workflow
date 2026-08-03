@@ -42,6 +42,7 @@ const contract: IssueContract = {
   acceptanceCriteria: [{ id: 'AC-1', severity: 'blocker', behavior: 'do X', verification: { method: 'unit_test', expected: ['x'] } }],
   redLines: [],
 };
+const LINEAGE_REF = `finding-origin-v1:${'a'.repeat(64)}`;
 
 function tmpDir(name: string): string {
   const dir = path.join(os.tmpdir(), 'agentops-test', `${name}-${process.pid}-${Math.floor(performance.now())}`);
@@ -553,7 +554,7 @@ describe('runPanel with the real session backend', () => {
     writeFindings(evalRoot, 'codeQuality', {
       verdict: 'request_changes',
       findings: [
-        { criterionId: 'AC-1', severity: 'major', observed: 'still duplicated', expected: 'deduplicated', lineage: 'persisted' },
+        { criterionId: 'AC-1', severity: 'major', observed: 'still duplicated', expected: 'deduplicated', lineage: 'persisted', lineageRef: LINEAGE_REF },
         { criterionId: 'AC-1', severity: 'minor', observed: 'unattested note', expected: 'e' }, // legacy: no lineage
       ],
     });
@@ -564,6 +565,7 @@ describe('runPanel with the real session backend', () => {
 
     const run = store.runsForIssue(issueId).find((r) => r.perspective === 'codeQuality')!;
     expect(run.findings.map((f) => f.lineage)).toEqual(['persisted', undefined]); // attested stored; absence stays absent
+    expect(run.findings[0]!.lineageRef).toBe(LINEAGE_REF);
   });
 
   it('escalates when one perspective session left no (or broken) output', () => {

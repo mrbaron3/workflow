@@ -652,6 +652,7 @@ func BootstrapRoles(
 		   agentops_control.release_receipt_outbox,
 		   agentops_control.release_artifacts TO agentops_runner`,
 		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.observe_release_head(uuid, text, text),
 		   agentops_control.record_release_receipt(jsonb),
 		   agentops_control.authorize_release_merge(jsonb),
 		   agentops_control.complete_release_merge(jsonb),

@@ -145,6 +145,15 @@ func (patch RegistrationPatch) Validate() error {
 }
 
 func validJSONObject(raw json.RawMessage) bool {
+	supportedReviewPerspectives := map[string]struct{}{
+		"functionality": {},
+		"codeQuality":   {},
+		"testQuality":   {},
+		"ux":            {},
+		"accessibility": {},
+		"security":      {},
+		"type-design":   {},
+	}
 	type gateSignal struct {
 		Source string `json:"source"`
 		Name   string `json:"name"`
@@ -174,7 +183,7 @@ func validJSONObject(raw json.RawMessage) bool {
 	}
 	if len(policy.RequiredGateSignals) < 1 || len(policy.RequiredGateSignals) > 64 ||
 		len(policy.RequiredReviewPerspectives) < 2 ||
-		len(policy.RequiredReviewPerspectives) > 32 ||
+		len(policy.RequiredReviewPerspectives) > len(supportedReviewPerspectives) ||
 		policy.MinimumHeadEpochs < 1 || policy.MinimumHeadEpochs > 32 {
 		return false
 	}
@@ -192,7 +201,7 @@ func validJSONObject(raw json.RawMessage) bool {
 	}
 	perspectives := map[string]struct{}{}
 	for _, perspective := range policy.RequiredReviewPerspectives {
-		if len(perspective) < 1 || len(perspective) > 128 {
+		if _, supported := supportedReviewPerspectives[perspective]; !supported {
 			return false
 		}
 		if _, duplicate := perspectives[perspective]; duplicate {

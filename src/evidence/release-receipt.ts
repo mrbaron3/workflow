@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { REVIEW_PERSPECTIVE_KEYS } from '../domain/review-perspectives.js';
 import { INTERVENTION_KINDS } from '../domain/schema.js';
 
 const Repository = z.string().regex(
@@ -198,7 +199,9 @@ export const ReleasePolicyContract = z.object({
     source: z.enum(['repository-grader', 'github-check']),
     name: BoundedName,
   }).strict()).min(1).max(64),
-  requiredReviewPerspectives: z.array(BoundedName).min(2).max(32),
+  requiredReviewPerspectives: z.array(z.enum(REVIEW_PERSPECTIVE_KEYS))
+    .min(2)
+    .max(REVIEW_PERSPECTIVE_KEYS.length),
   minimumHeadEpochs: z.number().int().positive().max(32),
 }).strict();
 export type ReleasePolicy = z.infer<typeof ReleasePolicyContract>;

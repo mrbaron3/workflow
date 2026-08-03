@@ -68,7 +68,7 @@ integration('PostgreSQL release receipt outbox', () => {
         { source: 'repository-grader' as const, name: 'contracts' },
         { source: 'github-check' as const, name: 'contracts' },
       ],
-      requiredReviewPerspectives: ['security', 'correctness'],
+      requiredReviewPerspectives: ['security' as const, 'codeQuality' as const],
       minimumHeadEpochs: 1,
     };
     const created = await store.createRelease({
@@ -130,7 +130,7 @@ integration('PostgreSQL release receipt outbox', () => {
     const repositoryGradeId = randomUUID();
     const githubGradeId = randomUUID();
     const securityReviewId = randomUUID();
-    const correctnessReviewId = randomUUID();
+    const codeQualityReviewId = randomUUID();
     const runtimeId = randomUUID();
     const common = (
       receiptId: string,
@@ -192,12 +192,12 @@ integration('PostgreSQL release receipt outbox', () => {
         findings: [],
       },
       {
-        ...common(correctnessReviewId, 'review:1:correctness', at(6), [buildId], jobIds[1]!),
+        ...common(codeQualityReviewId, 'review:1:codeQuality', at(6), [buildId], jobIds[1]!),
         kind: 'review',
         head,
         headEpoch: 1,
-        perspective: 'correctness',
-        invocationId: 'review-correctness',
+        perspective: 'codeQuality',
+        invocationId: 'review-codeQuality',
         verdict: 'approved',
         findings: [],
       },
@@ -225,7 +225,7 @@ integration('PostgreSQL release receipt outbox', () => {
             },
             head,
           },
-          ...['security', 'correctness'].map((perspective) => ({
+          ...['security', 'codeQuality'].map((perspective) => ({
             invocationId: `review-${perspective}`,
             role: 'reviewer' as const,
             provider: 'claude',
@@ -423,7 +423,7 @@ integration('PostgreSQL release receipt outbox', () => {
       policy: {
         authority: 'ai-triage-required',
         requiredGateSignals: [{ source: 'github-check', name: 'test' }],
-        requiredReviewPerspectives: ['security', 'correctness'],
+        requiredReviewPerspectives: ['security', 'codeQuality'],
         minimumHeadEpochs: 1,
       },
     });
@@ -478,7 +478,7 @@ integration('PostgreSQL release receipt outbox', () => {
       policy: {
         authority: 'human-ready-allowed',
         requiredGateSignals: [{ source: 'github-check', name: 'test' }],
-        requiredReviewPerspectives: ['security', 'correctness'],
+        requiredReviewPerspectives: ['security', 'codeQuality'],
         minimumHeadEpochs: 1,
       },
     })).rejects.toBeInstanceOf(ReleaseReceiptConflictError);
@@ -488,7 +488,7 @@ integration('PostgreSQL release receipt outbox', () => {
     const policy = {
       authority: 'human-ready-allowed' as const,
       requiredGateSignals: [{ source: 'github-check' as const, name: 'test' }],
-      requiredReviewPerspectives: ['security', 'correctness'],
+      requiredReviewPerspectives: ['security', 'codeQuality'],
       minimumHeadEpochs: 1,
     };
     const registration = await store.createRegistration({
@@ -595,6 +595,12 @@ integration('PostgreSQL release receipt outbox', () => {
         [promotedJobId, linked.rows[0]!.release_id, 91],
       );
       expect(bound.rows).toEqual([{ pull_request_number: '91' }]);
+      const observed = await runner.query<{ head_epoch: number }>(
+        `SELECT agentops_control.observe_release_head($1, $2, $3)
+           AS head_epoch`,
+        [linked.rows[0]!.release_id, 'a'.repeat(40), null],
+      );
+      expect(observed.rows).toEqual([{ head_epoch: 1 }]);
     } finally {
       await runner.query('RESET ROLE');
       runner.release();
@@ -618,7 +624,7 @@ integration('PostgreSQL release receipt outbox', () => {
     const policy = {
       authority: 'ai-triage-required' as const,
       requiredGateSignals: [{ source: 'github-check' as const, name: 'test' }],
-      requiredReviewPerspectives: ['security', 'correctness'],
+      requiredReviewPerspectives: ['security', 'codeQuality'],
       minimumHeadEpochs: 1,
     };
     const registration = await store.createRegistration({

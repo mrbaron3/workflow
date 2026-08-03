@@ -27,6 +27,7 @@ import type { HarnessConfig } from '../config.js';
 import { Store, nowISO } from '../store/store.js';
 import { gradeBuild, hasBlockingGateFailure } from '../graders/index.js';
 import { hashUnit } from '../util/hash.js';
+import { REVIEW_PERSPECTIVE_KEYS } from '../domain/review-perspectives.js';
 
 /**
  * The 7 review perspectives (LANG-execution-010). `deterministic` lenses are graded by
@@ -38,15 +39,10 @@ export interface PerspectiveSpec {
   key: string;
   deterministic: boolean;
 }
-export const PERSPECTIVES: PerspectiveSpec[] = [
-  { key: 'functionality', deterministic: true },
-  { key: 'codeQuality', deterministic: false },
-  { key: 'testQuality', deterministic: false },
-  { key: 'ux', deterministic: false },
-  { key: 'accessibility', deterministic: false },
-  { key: 'security', deterministic: false },
-  { key: 'type-design', deterministic: false },
-];
+export const PERSPECTIVES: PerspectiveSpec[] = REVIEW_PERSPECTIVE_KEYS.map((key) => ({
+  key,
+  deterministic: key === 'functionality',
+}));
 
 /** What a single perspective grader returns. Validated before it is trusted (AC-PANEL-006). */
 export const PerspectiveResult = z.object({

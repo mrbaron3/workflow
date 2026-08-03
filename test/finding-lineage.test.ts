@@ -12,10 +12,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Store, nowISO } from '../src/store/store.js';
-import { EvalRun, Finding } from '../src/domain/schema.js';
+import { EvalRun, Finding, findingOriginRef } from '../src/domain/schema.js';
 import { analyzeHarness } from '../src/pipeline/analyst.js';
 import { perspectivePrompt, promptForLens, parsePerspectiveFindings } from '../src/pipeline/execution/perspective-session.js';
 import { priorFindingsByLens } from '../src/pipeline/execution/live.js';
+import { projectReleaseFinding } from '../src/evidence/release-projection.js';
 import type { IssueContract } from '../src/domain/schema.js';
 import type { Metrics } from '../src/metrics/metrics.js';
 
@@ -34,6 +35,9 @@ const contract: IssueContract = {
   ],
   redLines: [],
 };
+
+const LINEAGE_REF = `finding-origin-v1:${'a'.repeat(64)}`;
+const SECOND_LINEAGE_REF = `finding-origin-v1:${'b'.repeat(64)}`;
 
 /** Healthy metrics so the threshold rules stay silent; the lineage rule reads the runs. */
 function healthyMetrics(): Metrics {
@@ -54,7 +58,11 @@ function healthyMetrics(): Metrics {
 /** One perspective run; `lineage` per finding rides through EvalRun.parse (or is absent = legacy). */
 function seedRun(
   store: Store, issueId: string, attempt: number, lens: string | null,
-  findings: { criterionId: string; lineage?: 'persisted' | 'new' }[],
+  findings: {
+    criterionId: string;
+    lineage?: 'persisted' | 'new';
+    lineageRef?: string;
+  }[],
   prId = 'PR-1',
 ): void {
   store.addEvalRun(EvalRun.parse({
@@ -63,6 +71,7 @@ function seedRun(
     findings: findings.map((f) => ({
       criterionId: f.criterionId, severity: 'major', expected: 'e', observed: `observed ${f.criterionId}`,
       ...(f.lineage ? { lineage: f.lineage } : {}),
+      ...(f.lineageRef ? { lineageRef: f.lineageRef } : {}),
     })),
     scores: { functionality: 0, codeQuality: 0, testQuality: 0, ux: 0, accessibility: 0 },
     overall: 0.3, cost: {}, createdAt: nowISO(),
@@ -75,8 +84,8 @@ const failedToLand = (s: { title: string; rationale: string }[]) =>
 describe('perspectivePrompt with prior findings (re-review)', () => {
   it('ISSUE-0009/AC-LINEAGE-001 presents each prior finding and demands a persisted/new attestation', () => {
     const prior = [
-      { criterionId: 'AC-Z-1', observed: 'the cap is an untested inline literal' },
-      { criterionId: 'AC-Z-2', observed: 'assertion weakened to pass' },
+      { criterionId: 'AC-Z-1', observed: 'the cap is an untested inline literal', lineageRef: LINEAGE_REF },
+      { criterionId: 'AC-Z-2', observed: 'assertion weakened to pass', lineageRef: SECOND_LINEAGE_REF },
     ];
     const prompt = perspectivePrompt('testQuality', contract, '.agentops/eval/testQuality', prior);
     for (const f of prior) {
@@ -98,8 +107,8 @@ describe('perspectivePrompt with prior findings (re-review)', () => {
 
   it('ISSUE-0009/AC-LINEAGE-001 the handoff seam: a lens absent from the map keeps the attempt-1 prompt; a sibling with priors is re-reviewed', () => {
     const priors = {
-      codeQuality: [{ criterionId: 'AC-Z-1', observed: 'duplicated helper left behind' }],
-      testQuality: [{ criterionId: 'AC-Z-2', observed: 'tautological assertion' }],
+      codeQuality: [{ criterionId: 'AC-Z-1', observed: 'duplicated helper left behind', lineageRef: LINEAGE_REF }],
+      testQuality: [{ criterionId: 'AC-Z-2', observed: 'tautological assertion', lineageRef: SECOND_LINEAGE_REF }],
     };
     // absent from the map — and no map at all (attempt 1) — is byte-identical to the first review
     const first = perspectivePrompt('security', contract, '.agentops/eval/security');
@@ -124,15 +133,22 @@ describe('priorFindingsByLens — the store→re-review selection (pure, like co
     expect(Object.keys(byLens).sort()).toEqual(['codeQuality', 'testQuality']); // no gate key, no PR-2 leak
     expect(byLens['codeQuality']!.map((f) => f.criterionId)).toEqual(['AC-Z-1']); // own lens, own PR only
     expect(byLens['testQuality']!.map((f) => f.criterionId)).toEqual(['AC-Z-2']);
+    expect(byLens['codeQuality']![0]!.lineageRef).toMatch(/^finding-origin-v1:/);
   });
 
   it('ISSUE-0009/AC-LINEAGE-001 attempt-3 selection returns attempt-2 findings, not attempt-1', () => {
     const store = freshStore();
     seedRun(store, 'ISSUE-A', 1, 'codeQuality', [{ criterionId: 'AC-FIRST' }]);
-    seedRun(store, 'ISSUE-A', 2, 'codeQuality', [{ criterionId: 'AC-SECOND', lineage: 'persisted' }]);
+    const firstRef = priorFindingsByLens(store, 'PR-1', 2).codeQuality![0]!.lineageRef;
+    seedRun(store, 'ISSUE-A', 2, 'codeQuality', [{
+      criterionId: 'AC-SECOND',
+      lineage: 'persisted',
+      lineageRef: firstRef,
+    }]);
     const byLens = priorFindingsByLens(store, 'PR-1', 3);
     expect(Object.keys(byLens)).toEqual(['codeQuality']);
     expect(byLens['codeQuality']!.map((f) => f.criterionId)).toEqual(['AC-SECOND']); // the immediately previous attempt
+    expect(byLens.codeQuality![0]!.lineageRef).toBe(firstRef);
   });
 
   it('ISSUE-0009/AC-LINEAGE-001 attempt 1 selects nothing — every lens keeps its first-review prompt', () => {
@@ -147,17 +163,22 @@ describe('lineage through validation into the store (SoT)', () => {
     const parsed = parsePerspectiveFindings({
       verdict: 'request_changes',
       findings: [
-        { criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'persisted' },
+        { criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'persisted', lineageRef: LINEAGE_REF },
         { criterionId: 'AC-Z-2', severity: 'minor', observed: 'o2', expected: 'e2', lineage: 'new' },
       ],
     });
     expect(parsed.findings[0]!.lineage).toBe('persisted');
+    expect(parsed.findings[0]!.lineageRef).toBe(LINEAGE_REF);
     expect(parsed.findings[1]!.lineage).toBe('new');
 
     expect(() => parsePerspectiveFindings({
       verdict: 'request_changes',
       findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'maybe' }],
     })).toThrow(); // an invalid attestation never reaches the store
+    expect(() => parsePerspectiveFindings({
+      verdict: 'request_changes',
+      findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', lineage: 'persisted' }],
+    })).toThrow(/prior finding identity/);
   });
 
   it('ISSUE-0009/AC-LINEAGE-002 a finding without lineage is accepted and stays unclassified (legacy)', () => {
@@ -172,14 +193,74 @@ describe('lineage through validation into the store (SoT)', () => {
   it('ISSUE-0009/AC-LINEAGE-002 lineage survives EvalRun.findings through a store save/load round-trip', () => {
     const store = freshStore();
     seedRun(store, 'ISSUE-A', 2, 'codeQuality', [
-      { criterionId: 'AC-Z-1', lineage: 'persisted' },
+      { criterionId: 'AC-Z-1', lineage: 'persisted', lineageRef: LINEAGE_REF },
       { criterionId: 'AC-Z-2' }, // legacy: no lineage
     ]);
     store.save();
     const reloaded = new Store(store.root); // DB.parse on load — the persisted record is the SoT
     const findings = reloaded.db.evalRuns[0]!.findings;
     expect(findings[0]!.lineage).toBe('persisted');
+    expect(findings[0]!.lineageRef).toBe(LINEAGE_REF);
     expect(findings[1]!.lineage).toBeUndefined();
+  });
+});
+
+describe('durable release finding identity', () => {
+  it('keeps one finding ID when a persisted problem changes criterion and prose', () => {
+    const run = {
+      id: 'EVAL-1',
+      prId: 'PR-1',
+      headSha: '1'.repeat(40),
+      attempt: 1,
+    };
+    const origin = findingOriginRef({
+      runId: run.id,
+      prId: run.prId,
+      headSha: run.headSha,
+      attempt: run.attempt,
+      perspective: 'codeQuality',
+    }, 0);
+    const findingEpochs = new Map<string, number[]>();
+    const first = projectReleaseFinding({
+      perspective: 'codeQuality',
+      finding: Finding.parse({
+        criterionId: 'AC-OLD',
+        severity: 'major',
+        expected: 'old expected text',
+        observed: 'old observed text',
+      }),
+      findingIndex: 0,
+      run,
+      headEpoch: 1,
+      findingEpochs,
+    });
+    const persisted = projectReleaseFinding({
+      perspective: 'codeQuality',
+      finding: Finding.parse({
+        criterionId: 'AC-NEW',
+        severity: 'blocker',
+        expected: 'rewritten expected text',
+        observed: 'rewritten observed text',
+        requiredFix: ['a completely rewritten fix'],
+        lineage: 'persisted',
+        lineageRef: origin,
+      }),
+      findingIndex: 7,
+      run: {
+        id: 'EVAL-2',
+        prId: 'PR-1',
+        headSha: '2'.repeat(40),
+        attempt: 2,
+      },
+      headEpoch: 2,
+      findingEpochs,
+    });
+
+    expect(first).toMatchObject({ lineage: 'new' });
+    expect(persisted).toEqual({
+      findingId: first.findingId,
+      lineage: 'persisted',
+    });
   });
 });
 

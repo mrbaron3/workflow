@@ -214,6 +214,14 @@ func TestRegistrationCommandsCarryStrictReleaseEvidenceConfiguration(t *testing.
 		!bytes.Equal(store.updatedPatch.Configuration, []byte(configuration)) {
 		t.Fatalf("configured patch status=%d configuration=%s body=%s", response.Code, store.updatedPatch.Configuration, response.Body)
 	}
+
+	unsupported := `{"releaseEvidence":{"authority":"human-ready-allowed",` +
+		`"requiredGateSignals":[{"source":"github-check","name":"test"}],` +
+		`"requiredReviewPerspectives":["security","performance"],` +
+		`"minimumHeadEpochs":1}}`
+	if validJSONObject(json.RawMessage(unsupported)) {
+		t.Fatal("unsupported review perspective passed the control contract")
+	}
 }
 
 func TestWebhookPersistsOnlyAfterValidSignatureAndIdentity(t *testing.T) {

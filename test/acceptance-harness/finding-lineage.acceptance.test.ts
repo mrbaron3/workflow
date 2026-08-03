@@ -46,6 +46,7 @@ const contract = {
   ],
   redLines: [],
 };
+const LINEAGE_REF = `finding-origin-v1:${'a'.repeat(64)}`;
 
 /** Healthy metrics so unrelated Analyst rules stay quiet; the lineage rule reads the runs. */
 function healthyMetrics(): Metrics {
@@ -106,7 +107,7 @@ describe('finding lineage — attested, never inferred (ISSUE-0009)', () => {
 
   it('ISSUE-0009/AC-LINEAGE-001 a re-review prompt presents prior findings and demands a persisted/new attestation; attempt 1 is unchanged', () => {
     const prior = [
-      { criterionId: 'AC-Z-1', severity: 'major', observed: 'the cap is an untested inline literal', expected: 'pin it' },
+      { criterionId: 'AC-Z-1', severity: 'major', observed: 'the cap is an untested inline literal', expected: 'pin it', lineageRef: LINEAGE_REF },
     ];
     const prompt = (perspectivePrompt as unknown as (...a: unknown[]) => string)(
       'testQuality', contract, '.agentops/eval/testQuality', prior,
@@ -124,13 +125,14 @@ describe('finding lineage — attested, never inferred (ISSUE-0009)', () => {
     const parsed = parsePerspectiveFindings({
       verdict: 'request_changes',
       findings: [
-        { criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'persisted' },
+        { criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'persisted', lineageRef: LINEAGE_REF },
         { criterionId: 'AC-Z-2', severity: 'minor', observed: 'o2', expected: 'e2', lineage: 'new' },
         { criterionId: 'AC-Z-3', severity: 'minor', observed: 'o3', expected: 'e3' }, // legacy: no lineage
       ],
     });
     const lin = (i: number) => (parsed.findings[i] as { lineage?: string }).lineage;
     expect(lin(0)).toBe('persisted');
+    expect(parsed.findings[0]!.lineageRef).toBe(LINEAGE_REF);
     expect(lin(1)).toBe('new');
     expect(lin(2)).toBeUndefined(); // absent stays absent — never silently classified
 

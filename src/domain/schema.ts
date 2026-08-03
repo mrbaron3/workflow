@@ -27,10 +27,12 @@ import {
   PrRevision,
   RevisionGateSnapshot,
 } from './pr-schema.js';
+import { FindingLineageRef } from './finding-lineage.js';
 export * from './agent-runtime.js';
 export * from './pr-schema.js';
 export * from './revision-gate.js';
 export * from './pr-lifecycle.js';
+export * from './finding-lineage.js';
 
 // --- small vocabularies ----------------------------------------------------
 
@@ -797,6 +799,8 @@ export const Finding = z.object({
   evidence: z.record(z.string()).default({}), // label -> relative path under evidence dir
   requiredFix: z.array(z.string()).default([]),
   lineage: FindingLineage.optional(),
+  /** Stable prior-finding reference, required by new persisted review outputs. */
+  lineageRef: FindingLineageRef.optional(),
 });
 export type Finding = z.infer<typeof Finding>;
 

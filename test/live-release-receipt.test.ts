@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { INTERVENTION_KINDS } from '../src/domain/schema.js';
 import {
   LiveReleaseReceiptEvidenceV2Contract,
+  ReleasePolicyContract,
   liveReleaseReceiptSemanticErrors,
   releasePreMergeSemanticErrors,
 } from '../src/evidence/release-receipt.js';
@@ -65,7 +66,7 @@ function evidence(): any {
         { source: 'repository-grader', name: 'contracts' },
         { source: 'github-check', name: 'contracts' },
       ],
-      requiredReviewPerspectives: ['security', 'correctness'],
+      requiredReviewPerspectives: ['security', 'codeQuality'],
       minimumHeadEpochs: 2,
     },
     receipts: {
@@ -105,14 +106,14 @@ function evidence(): any {
             model: { kind: 'explicit', name: 'gpt-5.6-codex' },
             head: finalHead,
           },
-          ...['security-1', 'correctness-1'].map((invocationId) => ({
+          ...['security-1', 'codeQuality-1'].map((invocationId) => ({
             invocationId,
             role: 'reviewer',
             provider: 'claude',
             model: { kind: 'explicit', name: 'claude-opus' },
             head: firstHead,
           })),
-          ...['security-2', 'correctness-2'].map((invocationId) => ({
+          ...['security-2', 'codeQuality-2'].map((invocationId) => ({
             invocationId,
             role: 'reviewer',
             provider: 'claude',
@@ -174,12 +175,12 @@ function evidence(): any {
           findings: [{ findingId: 'finding-1', lineage: 'new' }],
         },
         {
-          ...base(firstCorrectnessId, 'review:1:correctness', '2026-08-01T00:02:05Z', [build1Id]),
+          ...base(firstCorrectnessId, 'review:1:codeQuality', '2026-08-01T00:02:05Z', [build1Id]),
           kind: 'review',
           head: firstHead,
           headEpoch: 1,
-          perspective: 'correctness',
-          invocationId: 'correctness-1',
+          perspective: 'codeQuality',
+          invocationId: 'codeQuality-1',
           verdict: 'approved',
           findings: [],
         },
@@ -194,12 +195,12 @@ function evidence(): any {
           findings: [],
         },
         {
-          ...base(finalCorrectnessId, 'review:2:correctness', '2026-08-01T00:06:05Z', [build2Id]),
+          ...base(finalCorrectnessId, 'review:2:codeQuality', '2026-08-01T00:06:05Z', [build2Id]),
           kind: 'review',
           head: finalHead,
           headEpoch: 2,
-          perspective: 'correctness',
-          invocationId: 'correctness-2',
+          perspective: 'codeQuality',
+          invocationId: 'codeQuality-2',
           verdict: 'approved',
           findings: [],
         },
@@ -266,6 +267,14 @@ function compiled() {
 }
 
 describe('release receipt evidence v2', () => {
+  it('accepts only review perspectives the production panel can emit', () => {
+    expect(ReleasePolicyContract.safeParse(evidence().policy).success).toBe(true);
+    const unsupported = evidence();
+    unsupported.policy.requiredReviewPerspectives = ['security', 'performance'];
+    expect(ReleasePolicyContract.safeParse(unsupported.policy).success).toBe(false);
+    expect(compiled()(unsupported)).toBe(false);
+  });
+
   it('accepts a release assembled across unrelated job IDs and provider defaults', () => {
     const value = evidence();
     value.receipts.builds[0].producer = {

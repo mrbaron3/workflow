@@ -71,7 +71,7 @@ integration('production release receipt projection', () => {
           { source: 'repository-grader', name: 'contracts' },
           { source: 'github-check', name: 'ci' },
         ],
-        requiredReviewPerspectives: ['security', 'correctness'],
+        requiredReviewPerspectives: ['security', 'codeQuality'],
         minimumHeadEpochs: 1,
       },
     });
@@ -192,7 +192,7 @@ integration('production release receipt projection', () => {
         createdAt: at(perspective ? 4 : 3),
       }));
     invocation('generator-1', 'generator', null);
-    for (const perspective of ['security', 'correctness']) {
+    for (const perspective of ['security', 'codeQuality']) {
       const key = `review-${perspective}`;
       invocation(key, 'reviewer', perspective);
       local.addEvalRun(EvalRun.parse({
@@ -310,6 +310,7 @@ integration('production release receipt projection', () => {
       execute: boolean;
       completion: boolean;
       bindPullRequest: boolean;
+      observeHead: boolean;
     }>(
       `SELECT
          has_table_privilege(
@@ -329,7 +330,11 @@ integration('production release receipt projection', () => {
          has_function_privilege(
            'agentops_runner',
            'agentops_control.bind_release_pull_request(uuid,uuid,bigint)', 'EXECUTE'
-         ) AS "bindPullRequest"`,
+         ) AS "bindPullRequest",
+         has_function_privilege(
+           'agentops_runner',
+           'agentops_control.observe_release_head(uuid,text,text)', 'EXECUTE'
+         ) AS "observeHead"`,
     );
     expect(privileges.rows[0]).toEqual({
       insert: false,
@@ -337,6 +342,7 @@ integration('production release receipt projection', () => {
       execute: true,
       completion: true,
       bindPullRequest: true,
+      observeHead: true,
     });
   });
 });

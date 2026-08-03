@@ -25,6 +25,8 @@ describe('language-neutral control-store contract', () => {
     expect(migrations[3]?.sql).toContain('jobs_require_active_lifecycle');
     expect(migrations[6]?.sql).toContain('promote_triage_job');
     expect(migrations[6]?.sql).toContain('p_allowed_repositories text[]');
+    expect(migrations[11]?.sql).toContain('observe_release_head(uuid, text, text)');
+    expect(migrations[11]?.sql).toContain("'type-design'");
     expect(fs.readFileSync(
       path.join(process.cwd(), 'src', 'control-store', 'store.ts'),
       'utf8',

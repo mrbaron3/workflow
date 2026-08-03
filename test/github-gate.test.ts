@@ -228,6 +228,7 @@ describe('realGhGateRunner: stable GitHub PR identity', () => {
   const existing = [{
     number: 12,
     url: 'https://github.com/mrbaron3/designflow/pull/12',
+    title: args.title,
     body: args.body,
     headRefName: args.head,
     baseRefName: args.base,
@@ -257,8 +258,85 @@ describe('realGhGateRunner: stable GitHub PR identity', () => {
       '--head', args.head,
       '--base', args.base,
       '--limit', '2',
-      '--json', 'number,url,body,headRefName,baseRefName,isCrossRepository',
+      '--json', 'number,url,title,body,headRefName,baseRefName,isCrossRepository',
     ]);
+  });
+
+  it('discovers a canonical GitHub origin when intake configuration is absent', () => {
+    const localArgs = {
+      base: 'main',
+      head: 'agent/issue-0001-s0',
+      title: 'ISSUE-0001: local title',
+      body: 'local review body without an external issue',
+      existingRef: null,
+    };
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const command: GateCommandRunner = (commandName, commandArgs) => {
+      calls.push({ command: commandName, args: commandArgs });
+      if (commandName === 'git' && commandArgs[0] === 'remote') {
+        return 'git@github.com:Owner/Repository.git\n';
+      }
+      if (commandName === 'gh' && commandArgs[1] === 'list') return '[]';
+      if (commandName === 'git' && commandArgs[0] === 'ls-remote') return '';
+      throw new Error(`unexpected command: ${commandName} ${commandArgs.join(' ')}`);
+    };
+
+    const ref = realGhGateRunner(undefined, command)
+      .preflightPr('/repo', localArgs);
+
+    expect(ref).toBeNull();
+    expect(calls.map(({ command }) => command)).toEqual(['git', 'gh', 'git']);
+    expect(calls[1]!.args.slice(0, 4)).toEqual([
+      'pr', 'list', '--repo', 'owner/repository',
+    ]);
+    expect(calls[2]!.args[2]).toBe('https://github.com/owner/repository.git');
+  });
+
+  it('rejects a non-GitHub origin before querying or mutating a pull request', () => {
+    const calls: string[] = [];
+    const command: GateCommandRunner = (commandName) => {
+      calls.push(commandName);
+      return 'https://example.test/owner/repository.git\n';
+    };
+
+    expect(() => realGhGateRunner(undefined, command).preflightPr('/repo', {
+      base: 'main',
+      head: 'agent/issue-0001-s0',
+      title: 'ISSUE-0001: local title',
+      body: 'local review body',
+      existingRef: null,
+    })).toThrow(/not a canonical GitHub remote/);
+    expect(calls).toEqual(['git']);
+  });
+
+  it('reuses uncorrelated local work only on an exact title and body match', () => {
+    const localArgs = {
+      base: 'main',
+      head: 'agent/issue-0001-s0',
+      title: 'ISSUE-0001: local title',
+      body: 'local review body',
+    };
+    const localPr = [{
+      number: 13,
+      url: 'https://github.com/owner/repository/pull/13',
+      title: localArgs.title,
+      body: localArgs.body,
+      headRefName: localArgs.head,
+      baseRefName: localArgs.base,
+      isCrossRepository: false,
+    }];
+    const command: GateCommandRunner = (commandName, commandArgs) => {
+      if (commandName === 'git') return 'https://github.com/owner/repository.git\n';
+      if (commandArgs[1] === 'list') return JSON.stringify(localPr);
+      throw new Error(`unexpected command: ${commandName} ${commandArgs.join(' ')}`);
+    };
+
+    expect(realGhGateRunner(undefined, command).createPr('/repo', localArgs))
+      .toMatchObject({ repository: 'owner/repository', number: 13 });
+
+    localPr[0]!.body = 'another Store\'s review body';
+    expect(() => realGhGateRunner(undefined, command).createPr('/repo', localArgs))
+      .toThrow(/does not exactly match/);
   });
 
   it('creates a PR when no matching OPEN PR exists, then resolves its exact identity', () => {
@@ -475,6 +553,7 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
         return JSON.stringify([{
           number: 21,
           url: 'https://github.com/o/r/pull/21',
+          title: 'ISSUE-1: title',
           body: `review\n\n${renderWorkIdentityMarker(wrongIdentity)}\n\nCloses o/r#20`,
           headRefName: pr.branch,
           baseRefName: 'main',

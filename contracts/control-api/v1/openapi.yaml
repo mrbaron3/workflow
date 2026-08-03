@@ -429,12 +429,17 @@ components:
         requiredReviewPerspectives:
           type: array
           minItems: 2
-          maxItems: 32
+          maxItems: 7
           uniqueItems: true
           items:
-            type: string
-            minLength: 1
-            maxLength: 128
+            enum:
+              - functionality
+              - codeQuality
+              - testQuality
+              - ux
+              - accessibility
+              - security
+              - type-design
         minimumHeadEpochs:
           type: integer
           minimum: 1

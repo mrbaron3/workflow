@@ -278,6 +278,7 @@ integration('PostgreSQL control store', () => {
       '0009_release_constraint_capabilities.sql',
       '0010_release_completion_capability.sql',
       '0011_release_pull_request_binding.sql',
+      '0012_runner_release_review_capabilities.sql',
     ]) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
@@ -285,7 +286,7 @@ integration('PostgreSQL control store', () => {
       );
       fs.writeFileSync(
         path.join(directory, name),
-        name.startsWith('0011_')
+        name.startsWith('0012_')
           ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
           : valid,
       );

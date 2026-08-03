@@ -15,6 +15,7 @@
 
 import path from 'node:path';
 import type { Issue, PR as PRType } from '../../domain/schema.js';
+import { findingOriginRef } from '../../domain/finding-lineage.js';
 import { resolveConcurrentIssueCap, type HarnessConfig } from '../../config.js';
 import type { RepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
@@ -157,7 +158,19 @@ export function priorFindingsByLens(store: Store, prId: string, attempt: number)
   return Object.fromEntries(
     store.db.evalRuns
       .filter((r) => r.prId === prId && r.attempt === attempt - 1 && r.perspective !== null)
-      .map((r) => [r.perspective!, r.findings]),
+      .map((r) => [r.perspective!, r.findings.map((finding, findingIndex) => ({
+        criterionId: finding.criterionId,
+        observed: finding.observed,
+        lineageRef: finding.lineage === 'persisted' && finding.lineageRef
+          ? finding.lineageRef
+          : findingOriginRef({
+              runId: r.id,
+              prId: r.prId,
+              headSha: r.headSha,
+              attempt: r.attempt,
+              perspective: r.perspective!,
+            }, findingIndex),
+      }))]),
   );
 }
 

@@ -163,6 +163,7 @@ describe('stable external work identity', () => {
         return JSON.stringify([{
           number: 44,
           url: 'https://github.com/mrbaron3/forma/pull/44',
+          title: 'ISSUE-0001: retry',
           body: firstBody,
           headRefName: branch,
           baseRefName: 'main',

@@ -2,7 +2,13 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { PostgresControlStore } from '../control-store/store.js';
 import { CanonicalRepository, type ReleaseRecord } from '../control-store/types.js';
-import type { AgentInvocation, PR, RevisionCheck } from '../domain/schema.js';
+import type {
+  AgentInvocation,
+  Finding,
+  PR,
+  RevisionCheck,
+} from '../domain/schema.js';
+import { findingOriginRef } from '../domain/finding-lineage.js';
 import type { GithubReleaseObservation } from '../pipeline/execution/pr-native.js';
 import type { Store } from '../store/store.js';
 import {
@@ -114,15 +120,50 @@ function runtimeRole(
   return null;
 }
 
-function findingId(perspective: string, finding: unknown): string {
-  const semantic = finding && typeof finding === 'object'
-    ? Object.fromEntries(
-        Object.entries(finding).filter(([key]) => key !== 'lineage'),
-      )
-    : finding;
+function findingId(perspective: string, lineageRef: string): string {
   return `finding:${createHash('sha256')
-    .update(JSON.stringify({ perspective, finding: semantic }))
+    .update(JSON.stringify({ perspective, lineageRef }))
     .digest('hex')}`;
+}
+
+export function projectReleaseFinding(input: {
+  perspective: string;
+  finding: Finding;
+  findingIndex: number;
+  run: {
+    id: string;
+    prId: string;
+    headSha: string | null;
+    attempt: number;
+  };
+  headEpoch: number;
+  findingEpochs: Map<string, number[]>;
+}): { findingId: string; lineage: 'persisted' | 'new' } {
+  const { finding } = input;
+  if (finding.lineage === 'persisted' && !finding.lineageRef) {
+    throw new Error('persisted finding has no stable prior finding reference');
+  }
+  if (finding.lineage !== 'persisted' && finding.lineageRef) {
+    throw new Error('new finding must not reuse a prior finding reference');
+  }
+  const lineageRef = finding.lineageRef ?? findingOriginRef({
+    runId: input.run.id,
+    prId: input.run.prId,
+    headSha: input.run.headSha,
+    attempt: input.run.attempt,
+    perspective: input.perspective,
+  }, input.findingIndex);
+  const id = findingId(input.perspective, lineageRef);
+  const epochs = input.findingEpochs.get(id) ?? [];
+  const persisted = epochs.some((candidate) => candidate < input.headEpoch);
+  if (persisted && finding.lineage !== 'persisted') {
+    throw new Error(`finding ${id} lacks persisted lineage on a later head`);
+  }
+  if (!persisted && finding.lineage === 'persisted') {
+    throw new Error(`finding ${id} claims persisted lineage without an earlier receipt`);
+  }
+  input.findingEpochs.set(id, [...epochs, input.headEpoch]);
+  return { findingId: id, lineage: persisted ? 'persisted' : 'new' };
 }
 
 type ReleaseReceiptControl = Pick<PostgresControlStore,
@@ -333,19 +374,15 @@ async function projectReleaseEvidence(
       head: reviewHead,
       parentHead: build.parentHead,
     });
-    const findings = run.findings.map((finding) => {
-      const id = findingId(run.perspective!, finding);
-      const epochs = findingEpochs.get(id) ?? [];
-      const persisted = epochs.some((candidate) => candidate < epoch);
-      if (persisted && finding.lineage !== 'persisted') {
-        throw new Error(`finding ${id} lacks persisted lineage on a later head`);
-      }
-      if (!persisted && finding.lineage === 'persisted') {
-        throw new Error(`finding ${id} claims persisted lineage without an earlier receipt`);
-      }
-      findingEpochs.set(id, [...epochs, epoch]);
-      return { findingId: id, lineage: persisted ? 'persisted' as const : 'new' as const };
-    });
+    const findings = run.findings.map((finding, findingIndex) =>
+      projectReleaseFinding({
+        perspective: run.perspective!,
+        finding,
+        findingIndex,
+        run,
+        headEpoch: epoch,
+        findingEpochs,
+      }));
     if ((run.verdict === 'approve') !== (findings.length === 0)) {
       throw new Error(`review ${run.id} verdict does not agree with its findings`);
     }
