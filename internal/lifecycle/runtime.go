@@ -52,6 +52,10 @@ type stdinRuntimeRunner interface {
 	RunWithStdin(context.Context, []string, io.Reader) CommandResult
 }
 
+type interactiveRuntimeRunner interface {
+	RunInteractive(context.Context, []string) error
+}
+
 type execRuntimeRunner struct {
 	binary string
 }
@@ -74,6 +78,14 @@ func (runner execRuntimeRunner) RunWithStdin(
 	stdin io.Reader,
 ) CommandResult {
 	return runner.run(ctx, args, nil, stdin)
+}
+
+func (runner execRuntimeRunner) RunInteractive(ctx context.Context, args []string) error {
+	process := exec.CommandContext(ctx, runner.binary, args...)
+	process.Stdin = os.Stdin
+	process.Stdout = os.Stdout
+	process.Stderr = os.Stderr
+	return process.Run()
 }
 
 func (runner execRuntimeRunner) run(
@@ -630,6 +642,23 @@ func (runtime *AppleRuntime) Exec(
 ) CommandResult {
 	args := append([]string{"exec", name}, command...)
 	return runtime.runner.Run(ctx, args)
+}
+
+// InteractiveExec attaches the caller's terminal to a bounded command in a
+// managed container. Callers must validate container/workdir identities before
+// crossing this UI boundary.
+func (runtime *AppleRuntime) InteractiveExec(
+	ctx context.Context,
+	name string,
+	workdir string,
+	command ...string,
+) error {
+	args := []string{"exec", "--interactive", "--tty", "--workdir", workdir, name}
+	args = append(args, command...)
+	if runner, ok := runtime.runner.(interactiveRuntimeRunner); ok {
+		return runner.RunInteractive(ctx, args)
+	}
+	return fmt.Errorf("interactive execution is unavailable")
 }
 
 // CopyFileToContainer copies one validated regular file into a running managed

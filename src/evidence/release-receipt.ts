@@ -55,6 +55,16 @@ const AiTriageAuthority = ReceiptBase.extend({
   }).strict(),
 }).strict();
 
+export const ReleaseRequirementsAuthorityReceiptContract = ReceiptBase.extend({
+  kind: z.literal('requirements-authority'),
+  sourceIssueDigest: Sha256,
+  sourceUpdatedAt: Timestamp,
+  capturedAt: Timestamp,
+}).strict();
+export type ReleaseRequirementsAuthorityReceipt = z.infer<
+  typeof ReleaseRequirementsAuthorityReceiptContract
+>;
+
 export const ReleaseAuthorityReceiptContract = z.discriminatedUnion('route', [
   HumanReadyAuthority,
   AiTriageAuthority,
@@ -182,6 +192,7 @@ export type ReleaseInterventionReceipt = z.infer<
 export const DurableReleaseReceiptContract = z.union([
   HumanReadyAuthority,
   AiTriageAuthority,
+  ReleaseRequirementsAuthorityReceiptContract,
   ReleaseBuildReceiptContract,
   ReleaseGradeReceiptContract,
   ReleaseReviewReceiptContract,
@@ -218,7 +229,7 @@ export const ReleaseArtifactContract = z.object({
 export type ReleaseArtifact = z.infer<typeof ReleaseArtifactContract>;
 
 export const LiveReleaseReceiptEvidenceV2Contract = z.object({
-  schemaVersion: z.literal('2.0'),
+  schemaVersion: z.enum(['2.0', '3.0']),
   release: z.object({
     id: Uuid,
     repository: Repository,
@@ -232,6 +243,7 @@ export const LiveReleaseReceiptEvidenceV2Contract = z.object({
   policy: ReleasePolicyContract,
   receipts: z.object({
     authority: ReleaseAuthorityReceiptContract,
+    requirementsAuthority: ReleaseRequirementsAuthorityReceiptContract.optional(),
     runtime: z.array(ReleaseRuntimeReceiptContract).min(1).max(256),
     builds: z.array(ReleaseBuildReceiptContract).min(1).max(256),
     grades: z.array(ReleaseGradeReceiptContract).min(1).max(256),
@@ -243,7 +255,22 @@ export const LiveReleaseReceiptEvidenceV2Contract = z.object({
   }).strict(),
   artifacts: z.array(ReleaseArtifactContract).min(1).max(256),
   result: z.enum(['passed', 'passed-with-interventions']),
-}).strict();
+}).strict().superRefine((value, context) => {
+  if (value.schemaVersion === '3.0' && !value.receipts.requirementsAuthority) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['receipts', 'requirementsAuthority'],
+      message: 'requirementsAuthority is required for release evidence v3',
+    });
+  }
+  if (value.schemaVersion === '2.0' && value.receipts.requirementsAuthority) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['receipts', 'requirementsAuthority'],
+      message: 'requirementsAuthority requires release evidence v3',
+    });
+  }
+});
 export type LiveReleaseReceiptEvidenceV2 = z.infer<
   typeof LiveReleaseReceiptEvidenceV2Contract
 >;
@@ -251,6 +278,9 @@ export type LiveReleaseReceiptEvidenceV2 = z.infer<
 function receiptList(evidence: LiveReleaseReceiptEvidenceV2): DurableReleaseReceipt[] {
   return [
     evidence.receipts.authority,
+    ...(evidence.receipts.requirementsAuthority
+      ? [evidence.receipts.requirementsAuthority]
+      : []),
     ...evidence.receipts.runtime,
     ...evidence.receipts.builds,
     ...evidence.receipts.grades,
@@ -347,6 +377,13 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
   const authority = evidence.receipts.authority;
   if (authority.causes.length !== 0) {
     errors.push('authority receipt must be a causal root');
+  }
+  const requirementsAuthority = evidence.receipts.requirementsAuthority;
+  if (requirementsAuthority && (
+    requirementsAuthority.causes.length !== 1
+    || requirementsAuthority.causes[0] !== authority.receiptId
+  )) {
+    errors.push('requirements authority must be caused only by the human-ready authority');
   }
   if (
     evidence.policy.authority === 'ai-triage-required'
@@ -575,6 +612,7 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
   }
   const requiredIntentCauses = [
     authority.receiptId,
+    ...(requirementsAuthority ? [requirementsAuthority.receiptId] : []),
     ...evidence.receipts.runtime.map((receipt) => receipt.receiptId),
     ...(finalBuild ? [finalBuild.receiptId] : []),
     ...requiredSignals.flatMap((key) => {
@@ -657,11 +695,17 @@ export function releasePreMergeSemanticErrors(input: {
 }): string[] {
   const errors: string[] = [];
   const authority = input.receipts.filter((receipt) => receipt.kind === 'authority');
+  const requirementsAuthority = input.receipts.filter(
+    (receipt) => receipt.kind === 'requirements-authority',
+  );
   const runtime = input.receipts.filter((receipt) => receipt.kind === 'runtime-provenance');
   const builds = input.receipts.filter((receipt) => receipt.kind === 'build');
   const grades = input.receipts.filter((receipt) => receipt.kind === 'grade');
   const reviews = input.receipts.filter((receipt) => receipt.kind === 'review');
   if (authority.length !== 1) errors.push('release needs exactly one authority receipt');
+  if (requirementsAuthority.length !== 1) {
+    errors.push('release needs exactly one frozen requirements authority receipt');
+  }
   if (runtime.length < 1) errors.push('release needs at least one runtime provenance receipt');
   if (
     input.policy.authority === 'ai-triage-required'
@@ -699,7 +743,12 @@ export function releasePreMergeSemanticErrors(input: {
   if (input.receipts.some((receipt) => receipt.kind === 'merge')) {
     errors.push('a collecting release must not already have a merge receipt');
   }
-  if (errors.length > 0 || authority.length !== 1 || runtime.length < 1) {
+  if (
+    errors.length > 0
+    || authority.length !== 1
+    || requirementsAuthority.length !== 1
+    || runtime.length < 1
+  ) {
     return errors;
   }
 
@@ -742,7 +791,7 @@ export function releasePreMergeSemanticErrors(input: {
   };
   const mergedAt = new Date(Date.parse(completedAt) + 1).toISOString();
   const fullErrors = liveReleaseReceiptSemanticErrors({
-    schemaVersion: '2.0',
+    schemaVersion: '3.0',
     release: {
       id: input.releaseId,
       repository: input.repository,
@@ -756,6 +805,7 @@ export function releasePreMergeSemanticErrors(input: {
     policy: input.policy,
     receipts: {
       authority: authority[0],
+      requirementsAuthority: requirementsAuthority[0],
       runtime,
       builds,
       grades,

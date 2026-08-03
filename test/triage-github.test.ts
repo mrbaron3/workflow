@@ -17,6 +17,61 @@ function endpoint(args: readonly string[]): string {
 }
 
 describe('typed GitHub triage boundary', () => {
+  it('preserves complete requirements bytes and fails closed instead of truncating', async () => {
+    const body = 'b'.repeat(70 * 1024);
+    const commentBody = 'c'.repeat(40 * 1024);
+    const run: GhCommand = vi.fn(async (args: readonly string[]) => {
+      const target = endpoint(args);
+      if (target.endsWith('/issues/7')) {
+        return { stdout: JSON.stringify({
+          number: 7,
+          title: 'Complete requirements',
+          body,
+          state: 'open',
+          updated_at: '2026-08-03T00:00:00Z',
+          html_url: 'https://github.com/acme/widgets/issues/7',
+          labels: [],
+          user: { login: 'owner' },
+        }) };
+      }
+      if (target.includes('/issues/7/comments')) {
+        return { stdout: JSON.stringify([[{
+          id: 9,
+          body: commentBody,
+          updated_at: '2026-08-03T00:00:01Z',
+          html_url: 'https://github.com/acme/widgets/issues/7#issuecomment-9',
+          user: { login: 'owner' },
+        }]]) };
+      }
+      if (target.includes('/issues/7/events')) return { stdout: '[[]]' };
+      throw new Error(`unexpected typed endpoint ${target}`);
+    });
+    const client = new TypedGhTriageClient(githubBroker, actorLogin, run);
+    const snapshot = await client.snapshot('acme/widgets', 7);
+    expect(snapshot.issue.body).toBe(body);
+    expect(snapshot.comments[0]?.body).toBe(commentBody);
+
+    const oversized = new TypedGhTriageClient(githubBroker, actorLogin, async (args) => {
+      const target = endpoint(args);
+      if (target.endsWith('/issues/7')) {
+        return { stdout: JSON.stringify({
+          number: 7,
+          title: 'Oversized',
+          body: 'x'.repeat(1_000_001),
+          state: 'open',
+          updated_at: '2026-08-03T00:00:00Z',
+          html_url: 'https://github.com/acme/widgets/issues/7',
+          labels: [],
+          user: { login: 'owner' },
+        }) };
+      }
+      return { stdout: '[[]]' };
+    });
+    await expect(oversized.snapshot('acme/widgets', 7)).rejects.toThrow(
+      /immutable requirements size limit/,
+    );
+  });
+
   it('skips only an explicit 404 for optional context documents', async () => {
     const run: GhCommand = vi.fn(async (args: readonly string[]) => {
       const target = endpoint(args);

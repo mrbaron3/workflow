@@ -14,6 +14,7 @@ import {
   runPanel,
   aggregatePanelVerdict,
   deterministicPerspectiveGrade,
+  PANEL_ESCALATION_PERSPECTIVE,
   PERSPECTIVES,
   type PerspectiveGrader,
 } from '../src/pipeline/panel.js';
@@ -257,8 +258,15 @@ describe('AC-PANEL-006: invalid perspective output escalates, never silently pas
     expect(res.escalated).toBe(true);
     expect(res.verdict).toBe('needs_human');
     expect(store.getIssue(issueId)!.status).toBe('needs-human-review');
-    // the invalid perspective produced no run, and the sample did not become approve
+    // the invalid lens produced no approval, while an explicit revision-bound
+    // escalation marker makes the stop durable for reconciliation.
     expect(store.runsForIssue(issueId).some((r) => r.perspective === 'security')).toBe(false);
+    expect(store.runsForIssue(issueId)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        perspective: PANEL_ESCALATION_PERSPECTIVE,
+        verdict: 'needs_human',
+      }),
+    ]));
     expect(res.verdict).not.toBe('approve');
   });
 });
@@ -283,7 +291,9 @@ describe('AC-PANEL-007: partial-resume does not double-grade', () => {
     runPanel(store, CONFIG, panelInput(issueId, prId, goodArtifact()), { grader, maxGraderRetries: 0 });
 
     const runs = store.runsForIssue(issueId);
-    expect(runs).toHaveLength(PERSPECTIVES.length); // no duplicates
+    expect(runs).toHaveLength(PERSPECTIVES.length + 1); // one durable escalation marker
+    expect(runs.filter((r) => r.perspective === PANEL_ESCALATION_PERSPECTIVE))
+      .toHaveLength(1);
     for (const p of PERSPECTIVES) {
       expect(runs.filter((r) => r.perspective === p.key)).toHaveLength(1); // exactly one per perspective
     }

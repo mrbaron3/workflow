@@ -240,6 +240,9 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 	}
 	for index := range projections {
 		projections[index].Mode = mode
+		if projections[index].DevelopmentProgress == nil {
+			projections[index].DevelopmentProgress = make([]DevelopmentIssueProgress, 0)
+		}
 		if mode != ModeMonitorOnly {
 			continue
 		}

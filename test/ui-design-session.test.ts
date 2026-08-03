@@ -38,6 +38,14 @@ describe('UI design session contract', () => {
     expect(prompt).toContain('artifact:null');
   });
 
+  it('does not turn an unconfigured system view into a product ambiguity', () => {
+    const prompt = buildUiDesignPrompt(intake, candidate, '/evidence/ui-design.json', null);
+    expect(prompt).toContain('No system views are configured');
+    expect(prompt).toContain('MUST NOT be reported as an ambiguity');
+    expect(prompt).toContain('missing product decision');
+    expect(prompt).not.toContain('/evidence/system');
+  });
+
   it('keeps UI authoring liveness finite while allowing long active design analysis', () => {
     expect(Number.isFinite(UI_DESIGN_LIVENESS.activeCapMs)).toBe(true);
     expect(UI_DESIGN_LIVENESS.activeCapMs).toBeGreaterThanOrEqual(90 * 60 * 1000);

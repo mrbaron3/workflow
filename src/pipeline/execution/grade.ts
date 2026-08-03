@@ -20,6 +20,8 @@ import { configuredGraderCommand, type TargetRepoConfig } from '../../config.js'
 import { scopedAcceptEnv } from './accept.js';
 import { prepareIsolatedExecutionResources } from './isolation.js';
 import {
+  cleanupRunnerDependencyMount,
+  prepareRunnerDependencyMount,
   runnerSandboxArgs,
   runnerSandboxRoot,
 } from './runner-sandbox.js';
@@ -57,83 +59,64 @@ export function runGraderCommand(
   }
   const [cmd, ...args] = tokens;
   const registrationRoot = runnerSandboxRoot(options.environment ?? {});
-  const dependencyRoot = registrationRoot
-    ? options.environment?.AGENTOPS_RUNNER_DEPENDENCY_ROOT
-    : undefined;
-  let dependencyMountCreated = false;
-  const dependencyMountTarget = path.join(cwd, 'node_modules');
-  if (dependencyRoot) {
-    if (
-      dependencyRoot !== '/app/node_modules'
-      || !fs.statSync(dependencyRoot).isDirectory()
-    ) {
-      throw new Error('isolated runner dependency root is absent or invalid');
-    }
-    if (fs.existsSync(dependencyMountTarget)) {
-      if (
-        fs.lstatSync(dependencyMountTarget).isSymbolicLink()
-        || !fs.statSync(dependencyMountTarget).isDirectory()
-      ) {
-        throw new Error('runner grader node_modules mount target is unsafe');
-      }
-    } else {
-      fs.mkdirSync(dependencyMountTarget);
-      dependencyMountCreated = true;
-    }
-  }
-  const execution = options.isolated
-    ? prepareIsolatedExecutionResources(cmd!, args, cwd)
-    : registrationRoot
-      ? {
-          command: 'bwrap',
-          args: runnerSandboxArgs(
-            registrationRoot,
-            cwd,
-            cmd!,
-            args,
-            dependencyRoot,
-          ),
-          env: options.environment!,
-          cleanup: () => {
-            if (dependencyMountCreated) {
-              fs.rmSync(dependencyMountTarget, { recursive: true, force: true });
-            }
-          },
-        }
-    : {
-        command: cmd!,
-        args,
-        env: options.environment ?? process.env,
-        cleanup: () => {},
-      };
-  const childEnv = options.isolated
-    ? {
-      ...execution.env,
-      ...Object.fromEntries(Object.entries(env).filter(([name]) =>
-        name === 'ACCEPT_HARNESS' || name === 'AGENTOPS_ACTIVE_ISSUE')),
-    }
-    : { ...execution.env, ...env };
-  const res = spawnSync(execution.command, execution.args, {
+  const dependencyMount = prepareRunnerDependencyMount(
+    options.environment ?? {},
     cwd,
-    encoding: 'utf8',
-    timeout: GRADER_TIMEOUT_MS,
-    maxBuffer: GRADER_MAX_BUFFER_BYTES,
-    env: childEnv,
-  });
-  execution.cleanup();
-  const diagnostic = res.error
-    ? `\nspawn error: ${res.error.message}`
-    : res.signal
-      ? `\nterminated by signal: ${res.signal}`
-      : res.status === null
-        ? '\nprocess exited without a status'
-        : res.status === 0
-          ? ''
-          : `\nexit status: ${res.status}`;
-  return {
-    ok: res.status === 0,
-    output: `${res.stdout ?? ''}\n${res.stderr ?? ''}${diagnostic}`,
-  };
+  );
+  let execution: ReturnType<typeof prepareIsolatedExecutionResources> | null = null;
+  try {
+    execution = options.isolated
+      ? prepareIsolatedExecutionResources(cmd!, args, cwd)
+      : registrationRoot
+        ? {
+            command: 'bwrap',
+            args: runnerSandboxArgs(
+              registrationRoot,
+              cwd,
+              cmd!,
+              args,
+              dependencyMount?.source,
+            ),
+            env: options.environment!,
+            cleanup: () => cleanupRunnerDependencyMount(dependencyMount),
+          }
+      : {
+          command: cmd!,
+          args,
+          env: options.environment ?? process.env,
+          cleanup: () => {},
+        };
+    const childEnv = options.isolated
+      ? {
+        ...execution.env,
+        ...Object.fromEntries(Object.entries(env).filter(([name]) =>
+          name === 'ACCEPT_HARNESS' || name === 'AGENTOPS_ACTIVE_ISSUE')),
+      }
+      : { ...execution.env, ...env };
+    const res = spawnSync(execution.command, execution.args, {
+      cwd,
+      encoding: 'utf8',
+      timeout: GRADER_TIMEOUT_MS,
+      maxBuffer: GRADER_MAX_BUFFER_BYTES,
+      env: childEnv,
+    });
+    const diagnostic = res.error
+      ? `\nspawn error: ${res.error.message}`
+      : res.signal
+        ? `\nterminated by signal: ${res.signal}`
+        : res.status === null
+          ? '\nprocess exited without a status'
+          : res.status === 0
+            ? ''
+            : `\nexit status: ${res.status}`;
+    return {
+      ok: res.status === 0,
+      output: `${res.stdout ?? ''}\n${res.stderr ?? ''}${diagnostic}`,
+    };
+  } finally {
+    if (execution !== null) execution.cleanup();
+    else cleanupRunnerDependencyMount(dependencyMount);
+  }
 }
 
 export interface VitestReport {

@@ -1223,6 +1223,84 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.pool.Exec(ctx,
+		`INSERT INTO agentops_control.development_progress_events(
+		   registration_id, registration_version, job_id, attempt_id,
+		   repository, subject_kind, subject_number, parent_issue_number,
+		   worker_id, event_key,
+		   phase, step, state, next_gate, session_name, worktree_path, branch,
+		   occurred_at
+		 ) VALUES (
+		   $1, $2, $3, $4, $5, 'issue', 13, 1, 'heartbeat-worker',
+		   'generation:source:a1:start', 'generation', 'generator session',
+		   'running', 'repository graders', 'ao-source-s0',
+		   '/workspace/jobs/source/worktree', 'agent/source-s0',
+		   clock_timestamp() - interval '1 minute'
+		 )`,
+		created.ID,
+		created.Version,
+		jobID,
+		attemptID,
+		created.Repository,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.pool.Exec(ctx,
+		`INSERT INTO agentops_control.development_progress_events(
+		   registration_id, registration_version, job_id, attempt_id,
+		   repository, subject_kind, subject_number, parent_issue_number,
+		   worker_id, event_key,
+		   phase, step, state, occurred_at
+		 )
+		 SELECT $1, $2, $3, $4, $5, 'issue', 14, 1, 'heartbeat-worker',
+		        'review:test:' || sequence, 'review',
+		        'review event ' || sequence,
+		        CASE WHEN sequence = 13 THEN 'blocked' ELSE 'running' END,
+		        clock_timestamp() + sequence * interval '1 millisecond'
+		   FROM generate_series(1, 13) sequence`,
+		created.ID,
+		created.Version,
+		jobID,
+		attemptID,
+		created.Repository,
+	); err != nil {
+		t.Fatal(err)
+	}
+	issueNumber := int64(13)
+	progress, err := store.DevelopmentProgress(
+		ctx,
+		created.Repository,
+		&issueNumber,
+		20,
+	)
+	if err != nil || len(progress) != 1 ||
+		progress[0].Phase != "generation" ||
+		progress[0].SessionName == nil ||
+		*progress[0].SessionName != "ao-source-s0" ||
+		progress[0].WorktreePath == nil ||
+		*progress[0].WorktreePath != "/workspace/jobs/source/worktree" ||
+		progress[0].LeaseHeartbeatAt == nil {
+		t.Fatalf("DevelopmentProgress() = %#v, %v", progress, err)
+	}
+	parentIssueNumber := int64(1)
+	parentProgress, err := store.DevelopmentProgress(
+		ctx,
+		created.Repository,
+		&parentIssueNumber,
+		2,
+	)
+	parentSubjects := make(map[int64]bool)
+	for _, event := range parentProgress {
+		if event.SubjectNumber != nil {
+			parentSubjects[*event.SubjectNumber] = true
+		}
+	}
+	if err != nil || len(parentProgress) != 2 ||
+		!parentSubjects[13] || !parentSubjects[14] ||
+		parentProgress[0].ParentIssueNumber == nil ||
+		*parentProgress[0].ParentIssueNumber != 1 {
+		t.Fatalf("parent DevelopmentProgress() = %#v, %v", parentProgress, err)
+	}
 	projections, err = store.Projections(ctx, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -1235,6 +1313,32 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	}
 	executionProjection := createdProjection.Components[ComponentExecution]
 	queueProjection := createdProjection.Components[ComponentQueue]
+	if len(createdProjection.DevelopmentProgress) != 2 {
+		t.Fatalf("development projection = %#v", createdProjection.DevelopmentProgress)
+	}
+	progressByIssue := make(map[int64]DevelopmentIssueProgress)
+	for _, issueProgress := range createdProjection.DevelopmentProgress {
+		progressByIssue[issueProgress.IssueNumber] = issueProgress
+	}
+	runningProgress, runningPresent := progressByIssue[13]
+	blockedProgress, blockedPresent := progressByIssue[14]
+	if !runningPresent || !blockedPresent ||
+		runningProgress.Current.JobID != jobID ||
+		runningProgress.Current.State != "running" ||
+		len(runningProgress.History) != 1 ||
+		runningProgress.Current.LeaseHeartbeatAt == nil ||
+		!runningProgress.LastActivity.Equal(*runningProgress.Current.LeaseHeartbeatAt) ||
+		blockedProgress.Current.EventKey != "review:test:13" ||
+		blockedProgress.Current.State != "blocked" ||
+		len(blockedProgress.History) != 12 ||
+		!blockedProgress.LastActivity.Equal(blockedProgress.Current.OccurredAt) {
+		t.Fatalf("grouped development projection = %#v", createdProjection.DevelopmentProgress)
+	}
+	for _, event := range blockedProgress.History {
+		if event.SubjectNumber == nil || *event.SubjectNumber != 14 {
+			t.Fatalf("Issue 14 history crossed coordinates: %#v", blockedProgress.History)
+		}
+	}
 	if executionProjection.Actual != "running" ||
 		executionProjection.Freshness != "fresh" ||
 		queueProjection.Actual != "leased" ||
@@ -1502,6 +1606,16 @@ func resetAndMigrate(
 		"0005_private_monitor_broker.sql",
 		"0006_monitor_broker_capability_functions.sql",
 		"0007_multi_repository_triage.sql",
+		"0008_release_receipt_outbox.sql",
+		"0009_release_constraint_capabilities.sql",
+		"0010_release_completion_capability.sql",
+		"0011_release_pull_request_binding.sql",
+		"0012_runner_release_review_capabilities.sql",
+		"0013_release_human_review_abandonment.sql",
+		"0014_development_progress.sql",
+		"0015_development_progress_backfill.sql",
+		"0016_reuse_open_release_promotion.sql",
+		"0017_freeze_source_issue_snapshot.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

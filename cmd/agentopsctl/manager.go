@@ -11,10 +11,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mrbaron3/workflow/internal/control"
 	"github.com/mrbaron3/workflow/internal/lifecycle"
 )
 
@@ -542,6 +545,11 @@ type combinedStatus struct {
 	LoopbackOnly         bool                                  `json:"loopbackOnly"`
 }
 
+type progressReport struct {
+	Items      []control.DevelopmentProgressEvent `json:"items"`
+	ObservedAt time.Time                          `json:"observedAt"`
+}
+
 func (manager *manager) Status(ctx context.Context) (combinedStatus, error) {
 	if err := manager.ensureRuntime(ctx); err != nil {
 		return combinedStatus{}, err
@@ -653,6 +661,280 @@ func printStatus(status combinedStatus) {
 	} else if status.PersistedError != nil {
 		fmt.Printf("persisted status: %s\n", *status.PersistedError)
 	}
+}
+
+func (manager *manager) Progress(
+	ctx context.Context,
+	repository string,
+	issueNumber int64,
+	limit int,
+) (progressReport, error) {
+	if err := manager.ensureRuntime(ctx); err != nil {
+		return progressReport{}, err
+	}
+	output, err := manager.admin(ctx, []string{
+		"progress",
+		"--repository", repository,
+		"--issue", strconv.FormatInt(issueNumber, 10),
+		"--limit", strconv.Itoa(limit),
+	}, nil)
+	if err != nil {
+		return progressReport{}, err
+	}
+	var report progressReport
+	if err := json.Unmarshal([]byte(output), &report); err != nil {
+		return progressReport{}, fmt.Errorf("parse development progress: %w", err)
+	}
+	if report.Items == nil {
+		report.Items = make([]control.DevelopmentProgressEvent, 0)
+	}
+	return report, nil
+}
+
+func printProgress(report progressReport, repository string, issueNumber int64) {
+	fmt.Printf("issue: %s#%d\n", repository, issueNumber)
+	if len(report.Items) == 0 {
+		fmt.Println("progress: no durable events")
+		return
+	}
+	children := make(map[int64]control.DevelopmentProgressEvent)
+	for _, event := range report.Items {
+		if event.ParentIssueNumber == nil || *event.ParentIssueNumber != issueNumber ||
+			event.SubjectNumber == nil || *event.SubjectNumber == issueNumber {
+			continue
+		}
+		if _, present := children[*event.SubjectNumber]; !present {
+			children[*event.SubjectNumber] = event
+		}
+	}
+	if len(children) > 0 {
+		childNumbers := make([]int64, 0, len(children))
+		for childNumber := range children {
+			childNumbers = append(childNumbers, childNumber)
+		}
+		sort.Slice(childNumbers, func(left, right int) bool {
+			return childNumbers[left] < childNumbers[right]
+		})
+		fmt.Printf("epic children with durable progress: %d\n", len(childNumbers))
+		for _, childNumber := range childNumbers {
+			event := children[childNumber]
+			fmt.Printf(
+				"  #%d  %-14s %-9s %s\n",
+				childNumber,
+				event.Phase,
+				event.State,
+				event.Step,
+			)
+			if event.WorktreePath != nil {
+				fmt.Printf("       worktree: %s\n", *event.WorktreePath)
+			}
+			if event.Blocker != nil {
+				fmt.Printf("       blocker: %s\n", *event.Blocker)
+			}
+			if event.NextGate != nil {
+				fmt.Printf("       next gate: %s\n", *event.NextGate)
+			}
+		}
+		fmt.Println("latest child activity:")
+	}
+	current := report.Items[0]
+	if current.SubjectNumber != nil && *current.SubjectNumber != issueNumber {
+		fmt.Printf("subject: #%d (child of #%d)\n", *current.SubjectNumber, issueNumber)
+	}
+	state := current.State
+	if current.JobStatus == "failed" || current.JobStatus == "cancelled" ||
+		current.JobStatus == "rejected" {
+		state = "failed"
+	}
+	fmt.Printf("phase: %s\n", current.Phase)
+	fmt.Printf("step: %s\n", current.Step)
+	fmt.Printf("state: %s\n", state)
+	fmt.Printf("since: %s\n", current.OccurredAt.Local().Format(time.RFC3339))
+	lastActivity := current.OccurredAt
+	if current.LeaseHeartbeatAt != nil && current.LeaseHeartbeatAt.After(lastActivity) {
+		lastActivity = *current.LeaseHeartbeatAt
+	}
+	fmt.Printf("last activity: %s\n", lastActivity.Local().Format(time.RFC3339))
+	fmt.Printf("job: %s attempt %d (%s)\n", current.JobID, current.AttemptNumber, current.JobStatus)
+	printProgressValue("worker", &current.WorkerID)
+	printProgressValue("session", current.SessionName)
+	printProgressValue("worktree", current.WorktreePath)
+	printProgressValue("branch", current.Branch)
+	if current.PullRequestNumber != nil {
+		fmt.Printf("pull request: #%d\n", *current.PullRequestNumber)
+	} else {
+		fmt.Println("pull request: —")
+	}
+	printProgressValue("summary", current.Summary)
+	printProgressValue("next gate", current.NextGate)
+	blocker := current.Blocker
+	if blocker == nil {
+		blocker = current.JobLastError
+	}
+	printProgressValue("blocker", blocker)
+	fmt.Println("history:")
+	for index := len(report.Items) - 1; index >= 0; index-- {
+		event := report.Items[index]
+		fmt.Printf(
+			"  %s  #%d %-14s %-9s %s\n",
+			event.OccurredAt.Local().Format("2006-01-02 15:04:05"),
+			progressSubjectNumber(event),
+			event.Phase,
+			event.State,
+			event.Step,
+		)
+	}
+}
+
+func progressSubjectNumber(event control.DevelopmentProgressEvent) int64 {
+	if event.SubjectNumber == nil {
+		return 0
+	}
+	return *event.SubjectNumber
+}
+
+func printProgressValue(label string, value *string) {
+	if value == nil || strings.TrimSpace(*value) == "" {
+		fmt.Printf("%s: —\n", label)
+		return
+	}
+	fmt.Printf("%s: %s\n", label, *value)
+}
+
+var retainedWorktreePath = regexp.MustCompile(
+	`^/workspace/registrations/[0-9a-f-]{36}/jobs/[0-9a-f-]{36}/(?:attempt-[1-9][0-9]*/(?:worktree|harness/\.harness/worktrees/[A-Za-z0-9._-]+)|state/\.harness/worktrees/[A-Za-z0-9._-]+)$`,
+)
+
+// Worktree inspects the exact isolated attempt projected by durable progress.
+// Arguments are passed without a shell; a forged path cannot become a command.
+func (manager *manager) Worktree(
+	ctx context.Context,
+	repository string,
+	issueNumber int64,
+	showDiff bool,
+	openShell bool,
+) error {
+	report, err := manager.Progress(ctx, repository, issueNumber, 50)
+	if err != nil {
+		return err
+	}
+	childIssues := make(map[int64]bool)
+	for _, event := range report.Items {
+		if event.ParentIssueNumber != nil && *event.ParentIssueNumber == issueNumber &&
+			event.SubjectNumber != nil && *event.SubjectNumber != issueNumber {
+			childIssues[*event.SubjectNumber] = true
+		}
+	}
+	if len(childIssues) > 0 {
+		numbers := make([]int64, 0, len(childIssues))
+		for child := range childIssues {
+			numbers = append(numbers, child)
+		}
+		sort.Slice(numbers, func(left, right int) bool { return numbers[left] < numbers[right] })
+		labels := make([]string, 0, len(numbers))
+		for _, number := range numbers {
+			labels = append(labels, fmt.Sprintf("#%d", number))
+		}
+		return fmt.Errorf(
+			"%s#%d is an Epic; choose an explicit child Issue (%s)",
+			repository,
+			issueNumber,
+			strings.Join(labels, ", "),
+		)
+	}
+	worktree := ""
+	selectedIndex := -1
+	var status lifecycle.CommandResult
+	for index, item := range report.Items {
+		if item.WorktreePath == nil {
+			continue
+		}
+		candidate := *item.WorktreePath
+		if !retainedWorktreePath.MatchString(candidate) {
+			return fmt.Errorf("recorded worktree path is outside the runner volume")
+		}
+		candidateStatus := manager.runtime.Exec(
+			ctx,
+			manager.config.RunnerContainer,
+			"git", "-C", candidate, "status", "--short", "--branch",
+		)
+		if candidateStatus.Status != 0 {
+			continue
+		}
+		worktree = candidate
+		selectedIndex = index
+		status = candidateStatus
+		break
+	}
+	if worktree == "" {
+		return fmt.Errorf("no available isolated worktree is recorded for %s#%d", repository, issueNumber)
+	}
+	fmt.Printf("worktree: %s\n", worktree)
+	if selectedIndex > 0 {
+		fmt.Println("preserved: yes (superseded by newer progress)")
+	}
+	fmt.Print(status.Stdout)
+	if !strings.HasSuffix(status.Stdout, "\n") {
+		fmt.Println()
+	}
+	if !showDiff {
+		if !openShell {
+			return nil
+		}
+		return manager.runtime.InteractiveExec(
+			ctx, manager.config.RunnerContainer, worktree, "/bin/sh",
+		)
+	}
+	head := manager.runtime.Exec(
+		ctx,
+		manager.config.RunnerContainer,
+		"git", "-C", worktree, "log", "-1", "--oneline", "--decorate",
+	)
+	if head.Status != 0 {
+		return fmt.Errorf("retained worktree HEAD is unavailable")
+	}
+	fmt.Println("HEAD:")
+	fmt.Print(head.Stdout)
+	if !strings.HasSuffix(head.Stdout, "\n") {
+		fmt.Println()
+	}
+	diff := manager.runtime.Exec(
+		ctx,
+		manager.config.RunnerContainer,
+		"git", "-C", worktree, "diff", "--stat", "--", ".",
+	)
+	if diff.Status != 0 {
+		return fmt.Errorf("retained worktree diff is unavailable")
+	}
+	fmt.Println("working tree diff:")
+	if strings.TrimSpace(diff.Stdout) == "" {
+		fmt.Println("  (clean; implementation may already be committed in HEAD)")
+	} else {
+		fmt.Print(diff.Stdout)
+	}
+	if diff.Stdout != "" && !strings.HasSuffix(diff.Stdout, "\n") {
+		fmt.Println()
+	}
+	commit := manager.runtime.Exec(
+		ctx,
+		manager.config.RunnerContainer,
+		"git", "-C", worktree, "show", "--stat", "--oneline", "--summary",
+		"--no-renames", "HEAD", "--", ".",
+	)
+	if commit.Status != 0 {
+		return fmt.Errorf("retained worktree commit summary is unavailable")
+	}
+	fmt.Println("HEAD commit stat:")
+	fmt.Print(commit.Stdout)
+	if !strings.HasSuffix(commit.Stdout, "\n") {
+		fmt.Println()
+	}
+	if openShell {
+		return manager.runtime.InteractiveExec(
+			ctx, manager.config.RunnerContainer, worktree, "/bin/sh",
+		)
+	}
+	return nil
 }
 
 func (manager *manager) Logs(

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 
 import {
   ProviderModelSelectionContract,
@@ -9,7 +10,7 @@ import {
   type ReleasePolicy,
 } from '../evidence/release-receipt.js';
 
-export const CONTROL_SCHEMA_VERSION = 12;
+export const CONTROL_SCHEMA_VERSION = 17;
 
 const RepositoryOwner = z.string()
   .min(1)
@@ -114,6 +115,93 @@ export const RunnerRepositoryIdentity = z.object({
   name: RepositoryName,
 }).strict();
 export type RunnerRepositoryIdentity = z.infer<typeof RunnerRepositoryIdentity>;
+
+const ReleaseSourceIssueCommentsContract = z.array(z.object({
+  id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  body: z.string().max(100_000),
+  updatedAt: z.string().datetime({ offset: true }),
+  url: z.string().url().max(2_000),
+  author: z.string().min(1).max(128),
+}).strict()).max(1_000).superRefine((comments, context) => {
+  if (comments.reduce((bytes, comment) => bytes + Buffer.byteLength(comment.body), 0) > 500_000) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Source Issue authoritative comments exceed 500000 bytes',
+    });
+  }
+  for (let index = 1; index < comments.length; index += 1) {
+    if (comments[index - 1]!.id >= comments[index]!.id) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [index, 'id'],
+        message: 'Source Issue authoritative comments must have unique ascending IDs',
+      });
+    }
+  }
+});
+
+const ReleaseSourceIssueSnapshotCoreContract = z.object({
+  repository: CanonicalRepository,
+  number: z.number().int().positive().max(2_147_483_647),
+  title: z.string().max(4_096),
+  body: z.string().max(1_000_000),
+  url: z.string().url(),
+  labels: z.array(z.string().max(100)).max(100),
+  comments: ReleaseSourceIssueCommentsContract,
+  state: z.enum(['open', 'closed']),
+  sourceUpdatedAt: z.string().datetime({ offset: true }),
+  capturedAt: z.string().datetime({ offset: true }),
+}).strict();
+export type ReleaseSourceIssueSnapshotCore = z.infer<
+  typeof ReleaseSourceIssueSnapshotCoreContract
+>;
+
+/** Digest the exact requirements-bearing Source Issue bytes frozen at ready promotion. */
+export function releaseSourceIssueSnapshotDigest(
+  input: ReleaseSourceIssueSnapshotCore,
+): string {
+  const source = ReleaseSourceIssueSnapshotCoreContract.parse(input);
+  // Capture metadata is intentionally outside the requirements identity. A
+  // retry may observe a new capture time (or runner-owned label changes) while
+  // the human-attested requirements are byte-for-byte identical. Conversely,
+  // any title/body/URL change produces a new digest and cannot silently reuse
+  // the authority bound to an open release.
+  const fields = [
+    source.repository,
+    String(source.number),
+    source.title,
+    source.body,
+    source.url,
+    ...source.comments.flatMap((comment) => [
+      String(comment.id),
+      comment.body,
+      comment.updatedAt,
+      comment.url,
+      comment.author,
+    ]),
+  ];
+  const canonical = fields.map((value) => (
+    `${Buffer.byteLength(value, 'utf8')}:${value}`
+  )).join('|');
+  return createHash('sha256').update(canonical).digest('hex');
+}
+
+export const ReleaseSourceIssueSnapshotContract =
+  ReleaseSourceIssueSnapshotCoreContract.extend({
+    digest: z.string().regex(/^[0-9a-f]{64}$/),
+  }).strict().superRefine((snapshot, context) => {
+    const { digest, ...source } = snapshot;
+    if (releaseSourceIssueSnapshotDigest(source) !== digest) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['digest'],
+        message: 'Source Issue digest does not match the frozen snapshot',
+      });
+    }
+  });
+export type ReleaseSourceIssueSnapshot = z.infer<
+  typeof ReleaseSourceIssueSnapshotContract
+>;
 
 export const TriageJobPayloadV1Contract = z.object({
   schemaVersion: z.literal(1),
@@ -253,6 +341,8 @@ export const RunnerJobPayloadV1Contract = z.object({
     claimedLabel: GitHubLabelNameContract,
   }).strict(),
   artifacts: z.array(ArtifactReferenceContract).max(64),
+  /** Immutable ready-time requirements snapshot; present on promoted Issue jobs. */
+  sourceIssue: ReleaseSourceIssueSnapshotContract.optional(),
 }).strict().superRefine((payload, context) => {
   const expectedMode = payload.event.kind === 'issue'
     ? 'development_turn'
@@ -262,6 +352,21 @@ export const RunnerJobPayloadV1Contract = z.object({
       code: z.ZodIssueCode.custom,
       path: ['execution', 'mode'],
       message: `${payload.event.kind} event requires ${expectedMode}`,
+    });
+  }
+  if (
+    payload.sourceIssue
+    && (
+      payload.event.kind !== 'issue'
+      || payload.sourceIssue.repository
+        !== `${payload.repository.owner}/${payload.repository.name}`
+      || payload.sourceIssue.number !== payload.event.number
+    )
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['sourceIssue'],
+      message: 'Source Issue snapshot must match the promoted Issue event',
     });
   }
 });
@@ -476,7 +581,7 @@ export interface ReleaseRecord {
   repository: string;
   issueNumber: number;
   policy: ReleasePolicy;
-  status: 'collecting' | 'merge-authorized' | 'merged';
+  status: 'collecting' | 'merge-authorized' | 'merged' | 'abandoned';
   pullRequest: number | null;
   finalHead: string | null;
   mergeSha: string | null;

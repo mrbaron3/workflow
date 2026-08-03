@@ -34,6 +34,8 @@ export function githubIntakeKey(repository: string, issueNumber: number): string
 
 export interface GithubIssueRunner {
   listReadyIssues(repository: string, readyLabel: string): GithubIssueSnapshotType[];
+  /** Read one Source Issue even after its ready label was consumed by a claim. */
+  viewIssue?(repository: string, issueNumber: number): GithubIssueSnapshotType;
   claimIssue(repository: string, issueNumber: number, readyLabel: string, claimedLabel: string): void;
 }
 
@@ -167,6 +169,30 @@ function gh(cwd: string, args: string[]): string {
 
 /** Real GitHub adapter; unit tests use GithubIssueRunner fakes and never access the network. */
 export function realGithubIssueRunner(cwd: string): GithubIssueRunner {
+  const snapshot = (
+    repository: string,
+    issue: {
+      number: number;
+      id: string;
+      title: string;
+      body: string | null;
+      url: string;
+      labels: Array<{ name: string }>;
+      updatedAt: string;
+      state: string;
+    },
+  ): GithubIssueSnapshotType => GithubIssueSnapshot.parse({
+    repository,
+    number: issue.number,
+    externalId: issue.id,
+    title: issue.title,
+    body: issue.body ?? '',
+    url: issue.url,
+    labels: issue.labels.map((label) => label.name),
+    state: issue.state.toLowerCase() === 'closed' ? 'closed' : 'open',
+    sourceUpdatedAt: issue.updatedAt,
+    snapshotAt: nowISO(),
+  });
   return {
     listReadyIssues(repository, readyLabel) {
       const raw = JSON.parse(
@@ -184,18 +210,30 @@ export function realGithubIssueRunner(cwd: string): GithubIssueRunner {
         updatedAt: string;
         state: string;
       }>;
-      return raw.map((issue) => GithubIssueSnapshot.parse({
-        repository,
-        number: issue.number,
-        externalId: issue.id,
-        title: issue.title,
-        body: issue.body ?? '',
-        url: issue.url,
-        labels: issue.labels.map((label) => label.name),
-        state: issue.state.toLowerCase() === 'closed' ? 'closed' : 'open',
-        sourceUpdatedAt: issue.updatedAt,
-        snapshotAt: nowISO(),
-      }));
+      return raw.map((issue) => snapshot(repository, issue));
+    },
+    viewIssue(repository, issueNumber) {
+      const raw = JSON.parse(
+        gh(cwd, [
+          'issue', 'view', String(issueNumber), '--repo', repository,
+          '--json', 'number,id,title,body,url,labels,updatedAt,state',
+        ]),
+      ) as {
+        number: number;
+        id: string;
+        title: string;
+        body: string | null;
+        url: string;
+        labels: Array<{ name: string }>;
+        updatedAt: string;
+        state: string;
+      };
+      if (raw.number !== issueNumber) {
+        throw new Error(
+          `GitHub returned Issue #${raw.number} while reading #${issueNumber}`,
+        );
+      }
+      return snapshot(repository, raw);
     },
     claimIssue(repository, issueNumber, readyLabel, claimedLabel) {
       const viewed = JSON.parse(

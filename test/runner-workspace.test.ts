@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -110,6 +111,17 @@ describe('Registration-rooted runner workspace', () => {
     expect(prepared.statePath).toBe(
       path.join(root, 'registrations', registrationId, 'jobs', jobId, 'state'),
     );
+    expect(prepared.harnessPath).toBe(
+      path.join(
+        root,
+        'registrations',
+        registrationId,
+        'jobs',
+        jobId,
+        'attempt-2',
+        'harness',
+      ),
+    );
     expect(prepared.headSha).toBe(sha);
   });
 
@@ -171,6 +183,199 @@ describe('Registration-rooted runner workspace', () => {
     const prepared = new RunnerWorkspaceManager(root, { PATH: '/usr/bin' }, runner)
       .prepare(lease(), payload());
     expect(prepared.headSha).toBe(sha);
+  });
+
+  it('projects the retained attempt checkout to the exact fetched PR head', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-pr-head-'));
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const prHead = 'c'.repeat(40);
+    const registrationRoot = registrationWorkspacePath(root, registrationId);
+    const prepared = {
+      registrationRoot,
+      repositoryPath: path.join(registrationRoot, 'repository.git'),
+      worktreePath: path.join(registrationRoot, 'jobs', jobId, 'attempt-2', 'worktree'),
+      harnessPath: path.join(registrationRoot, 'jobs', jobId, 'attempt-2', 'harness'),
+      statePath: path.join(registrationRoot, 'jobs', jobId, 'state'),
+      artifactPath: path.join(registrationRoot, 'jobs', jobId, 'attempt-2', 'artifacts'),
+      headSha: sha,
+    };
+    const runner: WorkspaceCommandRunner = (command, args) => {
+      calls.push({ command, args });
+      if (args.includes('rev-parse')) {
+        return { status: 0, stdout: `${prHead}\n`, stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    const manager = new RunnerWorkspaceManager(root, { PATH: '/usr/bin' }, runner);
+
+    manager.projectHead(prepared, prHead);
+
+    expect(calls.some((call) => call.args.join(' ') === [
+      '-C', prepared.worktreePath, 'reset', '--hard', prHead,
+    ].join(' '))).toBe(true);
+    expect(prepared.headSha).toBe(prHead);
+    expect(() => manager.projectHead(prepared, 'refs/heads/main')).toThrow(/invalid/);
+  });
+
+  it('keeps a failed attempt live while preparing an isolated retry of the same job', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-real-retry-'));
+    const source = path.join(root, 'source');
+    const remote = path.join(root, 'remote.git');
+    fs.mkdirSync(source);
+    const git = (args: string[], cwd = root) => {
+      const result = spawnSync('git', args, {
+        cwd,
+        encoding: 'utf8',
+        env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' },
+      });
+      if (result.status !== 0) throw new Error(result.stderr || result.error?.message);
+      return result.stdout.trim();
+    };
+    git(['init', '--initial-branch=main'], source);
+    git(['config', 'user.email', 'runner@example.invalid'], source);
+    git(['config', 'user.name', 'Runner Test'], source);
+    fs.writeFileSync(path.join(source, 'README.md'), 'base\n');
+    git(['add', 'README.md'], source);
+    git(['commit', '-m', 'base'], source);
+    git(['clone', '--bare', source, remote]);
+
+    const expectedUrl = 'https://github.com/mrbaron3/workflow.git';
+    const runner: WorkspaceCommandRunner = (command, args, options) => {
+      const translated = [...args];
+      if (translated[0] === 'clone') translated[2] = remote;
+      const fetchUrl = translated.indexOf(expectedUrl);
+      if (fetchUrl >= 0) translated[fetchUrl] = remote;
+      if (translated.includes('get-url')) {
+        return { status: 0, stdout: `${expectedUrl}\n`, stderr: '' };
+      }
+      const result = spawnSync(command, translated, {
+        cwd: options.cwd,
+        env: { ...process.env, ...options.env, GIT_CONFIG_NOSYSTEM: '1' },
+        encoding: 'utf8',
+      });
+      return {
+        status: result.status,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+        ...(result.error ? { error: result.error.message } : {}),
+      };
+    };
+    const manager = new RunnerWorkspaceManager(root, process.env, runner);
+    const first = manager.prepare(lease(), payload());
+    manager.retain(first, payload());
+    const retryLease = lease();
+    retryLease.attemptNumber = 3;
+    retryLease.attemptId = 'dd837db2-30d7-4788-a56f-00056f5d550e';
+    const retry = manager.prepare(retryLease, payload());
+
+    expect(fs.existsSync(first.worktreePath)).toBe(true);
+    expect(fs.existsSync(retry.worktreePath)).toBe(true);
+    expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], first.worktreePath))
+      .toBe(`runner/${jobId}/attempt-2`);
+    expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], retry.worktreePath))
+      .toBe(`runner/${jobId}/attempt-3`);
+
+    fs.writeFileSync(path.join(first.worktreePath, 'operator-notes.txt'), 'keep me\n');
+    git(['config', 'user.email', 'operator@example.invalid'], retry.worktreePath);
+    git(['config', 'user.name', 'Operator'], retry.worktreePath);
+    fs.writeFileSync(path.join(retry.worktreePath, 'manual-fix.txt'), 'committed fix\n');
+    git(['add', 'manual-fix.txt'], retry.worktreePath);
+    git(['commit', '-m', 'manual retained fix'], retry.worktreePath);
+    manager.retain(retry, payload());
+
+    const succeedingLease = lease();
+    succeedingLease.attemptNumber = 4;
+    succeedingLease.attemptId = 'ed837db2-30d7-4788-a56f-00056f5d550e';
+    const succeeding = manager.prepare(succeedingLease, payload());
+    manager.cleanup(succeeding, payload());
+
+    expect(fs.existsSync(first.worktreePath)).toBe(true);
+    expect(fs.existsSync(retry.worktreePath)).toBe(true);
+    expect(fs.existsSync(succeeding.worktreePath)).toBe(false);
+    expect(fs.readFileSync(path.join(first.worktreePath, 'operator-notes.txt'), 'utf8'))
+      .toBe('keep me\n');
+    expect(git(['log', '-1', '--format=%s'], retry.worktreePath)).toBe('manual retained fix');
+  });
+
+  it('keeps an attempt-scoped generator worktree isolated across retry and later cleanup', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-resolved-gc-'));
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const runner: WorkspaceCommandRunner = (command, args) => {
+      calls.push({ command, args });
+      if (args[0] === 'clone') fs.mkdirSync(String(args.at(-1)), { recursive: true });
+      if (args.includes('add')) {
+        const index = args.indexOf('add');
+        fs.mkdirSync(String(args[index + 4]), { recursive: true });
+      }
+      if (args.includes('rev-parse')) return { status: 0, stdout: `${sha}\n`, stderr: '' };
+      if (args.includes('get-url')) {
+        return { status: 0, stdout: 'https://github.com/mrbaron3/workflow.git\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    const manager = new RunnerWorkspaceManager(root, { PATH: '/usr/bin' }, runner);
+    const retained = manager.prepare(lease(), payload());
+    const retainedArtifact = path.join(retained.artifactPath, 'result.json');
+    fs.writeFileSync(retainedArtifact, '{}\n');
+    const nestedOperatorFile = path.join(
+      retained.harnessPath,
+      '.harness',
+      'worktrees',
+      'ISSUE-0014-s0',
+      'operator-fix.txt',
+    );
+    fs.mkdirSync(path.dirname(nestedOperatorFile), { recursive: true });
+    fs.writeFileSync(nestedOperatorFile, 'manual nested edit\n');
+    manager.retain(retained, payload());
+
+    const retryLease = lease();
+    retryLease.attemptNumber = 3;
+    retryLease.attemptId = 'fd837db2-30d7-4788-a56f-00056f5d550e';
+    const retry = manager.prepare(retryLease, payload());
+    const retryNestedFile = path.join(
+      retry.harnessPath,
+      '.harness',
+      'worktrees',
+      'ISSUE-0014-s0',
+      'retry.txt',
+    );
+    fs.mkdirSync(path.dirname(retryNestedFile), { recursive: true });
+    fs.writeFileSync(retryNestedFile, 'retry edit\n');
+    manager.retain(retry, payload());
+    expect(retry.harnessPath).not.toBe(retained.harnessPath);
+    expect(fs.readFileSync(nestedOperatorFile, 'utf8')).toBe('manual nested edit\n');
+
+    const unrelatedLease = lease();
+    unrelatedLease.job.id = 'fb837db2-30d7-4788-a56f-00056f5d550e';
+    unrelatedLease.attemptNumber = 1;
+    const unrelatedPayload = {
+      ...payload(),
+      event: { kind: 'issue' as const, number: 15, action: 'labeled' as const },
+    };
+    const unrelated = manager.prepare(unrelatedLease, unrelatedPayload);
+    manager.retain(unrelated, unrelatedPayload);
+
+    const succeedingLease = lease();
+    succeedingLease.job.id = 'eb837db2-30d7-4788-a56f-00056f5d550e';
+    succeedingLease.attemptNumber = 1;
+    const succeeding = manager.prepare(succeedingLease, payload());
+    const removesBeforeCleanup = calls.filter((call) => call.args.includes('remove')).length;
+    manager.cleanup(succeeding, payload());
+
+    expect(fs.existsSync(retained.worktreePath)).toBe(true);
+    expect(fs.existsSync(retry.worktreePath)).toBe(true);
+    expect(fs.existsSync(succeeding.worktreePath)).toBe(false);
+    expect(fs.existsSync(unrelated.worktreePath)).toBe(true);
+    expect(fs.existsSync(retainedArtifact)).toBe(true);
+    expect(fs.readFileSync(nestedOperatorFile, 'utf8')).toBe('manual nested edit\n');
+    expect(fs.readFileSync(retryNestedFile, 'utf8')).toBe('retry edit\n');
+    expect(calls.filter((call) => call.args.includes('remove'))).toHaveLength(
+      removesBeforeCleanup + 1,
+    );
+    expect(JSON.parse(fs.readFileSync(
+      path.join(path.dirname(retained.worktreePath), 'workspace.json'),
+      'utf8',
+    ))).toMatchObject({ state: 'retained', eventKind: 'issue', eventNumber: 14 });
   });
 
   it('accepts exact artifact digest/size and rejects tampering or cross-Registration reuse', () => {

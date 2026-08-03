@@ -140,6 +140,78 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
     registrationVersion: registration.version,
     updatedAt: '2026-07-26T00:00:00Z',
   }];
+  const issueEightCurrent = {
+    id: 1,
+    registrationId: registration.id,
+    registrationVersion: registration.version,
+    jobId: '00000000-0000-4000-8000-000000000021',
+    attemptId: '00000000-0000-4000-8000-000000000022',
+    attemptNumber: 1,
+    releaseId: '00000000-0000-4000-8000-000000000023',
+    repository: 'example/browser-control',
+    subjectKind: 'issue',
+    subjectNumber: 8,
+    parentIssueNumber: 1,
+    workerId: 'runner-browser',
+    eventKey: 'generation:source:a1:start',
+    phase: 'generation',
+    step: 'generator session attempt 1/3',
+    state: 'running',
+    summary: 'Implementing in an isolated worktree',
+    nextGate: 'repository graders',
+    blocker: null,
+    sessionName: 'ao-browser-control-source-s0',
+    worktreePath: '/workspace/registrations/browser/jobs/issue-8/attempt-1/worktree',
+    branch: 'agent/browser-control-source-s0',
+    pullRequestNumber: null,
+    occurredAt: '2026-07-26T00:00:00Z',
+    jobStatus: 'leased',
+    jobLastError: null,
+    leaseHeartbeatAt: '2026-07-26T00:00:15Z',
+  };
+  const issueEightPlanning = {
+    ...issueEightCurrent,
+    id: 2,
+    eventKey: 'planning:contract:a1:complete',
+    phase: 'planning',
+    step: 'implementation contract accepted',
+    state: 'succeeded',
+    occurredAt: '2026-07-25T23:59:00Z',
+    leaseHeartbeatAt: null,
+  };
+  const issueNineCurrent = {
+    ...issueEightCurrent,
+    id: 3,
+    jobId: '00000000-0000-4000-8000-000000000031',
+    attemptId: '00000000-0000-4000-8000-000000000032',
+    releaseId: '00000000-0000-4000-8000-000000000033',
+    subjectNumber: 9,
+    eventKey: 'human-review:request-changes:a1:stop',
+    phase: 'human-review',
+    step: 'review findings require a new head',
+    state: 'blocked',
+    summary: 'Waiting for the implementation to address review findings',
+    nextGate: 'new pull request head',
+    blocker: 'blocker finding remains open',
+    branch: 'agent/browser-control-issue-9',
+    pullRequestNumber: 29,
+    occurredAt: '2026-07-26T00:01:00Z',
+    jobStatus: 'succeeded',
+    leaseHeartbeatAt: null,
+  };
+  snapshot.items[0]!.developmentProgress = [{
+    repository: 'example/browser-control',
+    issueNumber: 8,
+    current: issueEightCurrent,
+    history: [issueEightCurrent, issueEightPlanning],
+    lastActivity: '2026-07-26T00:00:15Z',
+  }, {
+    repository: 'example/browser-control',
+    issueNumber: 9,
+    current: issueNineCurrent,
+    history: [issueNineCurrent],
+    lastActivity: '2026-07-26T00:01:00Z',
+  }];
   await page.route('**/v1/registrations?limit=200', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(snapshot) });
   });
@@ -192,6 +264,30 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
     });
   }, { times: 1 });
   await page.getByRole('button', { name: '再取得' }).click();
+  await expect(card.getByRole('region', {
+    name: 'example/browser-control#8 の実装進捗',
+  })).toContainText('generation / generator session attempt 1/3');
+  await expect(card.getByRole('region', {
+    name: 'example/browser-control#8 の実装進捗',
+  })).toContainText('/workspace/registrations/browser/jobs/issue-8/attempt-1/worktree');
+  await expect(card.getByRole('region', {
+    name: 'example/browser-control#8 の実装進捗',
+  })).toContainText('repository graders');
+  await expect(card.getByRole('region', {
+    name: 'example/browser-control#8 の実装進捗',
+  })).toContainText('親 Epic#1');
+  const issueEightProgress = card.getByRole('region', {
+    name: 'example/browser-control#8 の実装進捗',
+  });
+  const issueNineProgress = card.getByRole('region', {
+    name: 'example/browser-control#9 の実装進捗',
+  });
+  await expect(issueEightProgress).toContainText('running');
+  await expect(issueNineProgress).toContainText('human-review / review findings require a new head');
+  await expect(issueNineProgress).toContainText('blocked');
+  await issueEightProgress.getByText('工程履歴 2件', { exact: true }).click();
+  await expect(issueEightProgress.locator('.progress-history li')).toHaveCount(2);
+  await expect(issueEightProgress).not.toContainText('review findings require a new head');
   await expect(page.getByRole('button', { name: /failed 1/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /divergent 1/ })).toBeVisible();
   await expect(page.locator('.card', { hasText: 'example/healthy-queue' })).not.toHaveClass(/anomaly/);
@@ -203,13 +299,13 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await page.getByRole('button', { name: 'さらに読み込む' }).click();
   await expect(page.getByRole('alert')).toContainText('ページsnapshot');
   await expect(card.getByRole('button', { name: '編集' })).toBeEnabled();
-  await card.locator('summary').click();
+  await card.getByText('配送・ジョブ詳細', { exact: true }).click();
   await card.getByRole('button', { name: '確認・再試行' }).click();
   await expect(page.locator('#retry-delivery')).toBeDisabled();
   await page.locator('#delivery-dialog [data-delivery-close]').last().click();
   registration.executionEnabled = true;
   await page.getByRole('button', { name: '再取得' }).click();
-  await card.locator('summary').click();
+  await card.getByText('配送・ジョブ詳細', { exact: true }).click();
   await page.route(new RegExp(`/v1/deliveries/${deliveryId}$`), async (route) => {
     await route.abort('failed');
   }, { times: 1 });
@@ -218,7 +314,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(card.getByRole('button', { name: '編集' })).toBeDisabled();
   await page.reload();
   await expect(page.getByRole('button', { name: 'Registration を追加' })).toBeEnabled();
-  await card.locator('summary').click();
+  await card.getByText('配送・ジョブ詳細', { exact: true }).click();
   await card.getByRole('button', { name: '確認・再試行' }).click();
   await expect(page.locator('#retry-delivery')).toBeFocused();
   await page.locator('#retry-delivery').click();

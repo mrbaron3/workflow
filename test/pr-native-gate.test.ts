@@ -27,7 +27,9 @@ import {
   observeGithubRelease,
   observePrRevision,
   parseBlockingReviewThreads,
+  reconcileExternalEpicClosure,
   reconcileSplitSourceClosures,
+  type GithubRepositoryIssue,
   type PrNativeGithubRunner,
 } from '../src/pipeline/execution/pr-native.js';
 import { Store, nowISO } from '../src/store/store.js';
@@ -165,6 +167,256 @@ function greenGithub(headSha = SHA_A): GithubPrRevisionState {
 
 afterEach(() => {
   while (roots.length > 0) fs.rmSync(roots.pop()!, { recursive: true, force: true });
+});
+
+describe('external epic completion', () => {
+  const parentBody = [
+    'DF-002 -> DF-003',
+    'DF-004 -> DF-005',
+    'DF-006 -> DF-007',
+    'DF-003 + DF-005 -> DF-008',
+    'DF-003 + DF-004 -> DF-009',
+    'DF-009 is future scope and v0 に含めない',
+  ].join('\n');
+  const issues: GithubRepositoryIssue[] = [
+    {
+      number: 1,
+      title: 'Forma v0',
+      body: parentBody,
+      authorLogin: 'owner',
+      subIssueNumbers: [],
+      state: 'open' as const,
+      stateReason: null,
+    },
+    ...['002', '003', '004', '005', '006', '007', '008', '009'].map((key, index) => ({
+      number: index + 2,
+      title: `[DF-${key}] phase`,
+      body: 'Parent: #1',
+      authorLogin: 'owner',
+      subIssueNumbers: [],
+      state: 'closed' as const,
+      stateReason: 'completed' as const,
+    })),
+  ];
+
+  it('keeps the parent open while a required phase is open and excludes future scope', () => {
+    const closes: number[] = [];
+    const inventory = issues.map((issue) => ({ ...issue }));
+    inventory.find((issue) => issue.title.startsWith('[DF-008]'))!.state = 'open';
+    inventory.find((issue) => issue.title.startsWith('[DF-008]'))!.stateReason = null;
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => {},
+      closeIssue: (_cwd, _repository, number) => closes.push(number),
+      listRepositoryIssues: () => inventory,
+    };
+
+    const result = reconcileExternalEpicClosure(
+      runner,
+      '/repo',
+      'acme/theme',
+      { number: 8, body: 'Parent: #1' },
+    );
+
+    expect(result.requiredKeys).not.toContain('DF-009');
+    expect(result.pendingKeys).toEqual(['DF-008']);
+    expect(result.closed).toBe(false);
+    expect(closes).toEqual([]);
+  });
+
+  it('closes the parent exactly when every required linked phase is closed', () => {
+    const closes: string[] = [];
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => {},
+      closeIssue: (_cwd, repository, number) => closes.push(`${repository}#${number}`),
+      listRepositoryIssues: () => issues,
+    };
+
+    const result = reconcileExternalEpicClosure(
+      runner,
+      '/repo',
+      'acme/theme',
+      { number: 8, body: 'Parent: #1' },
+    );
+
+    expect(result.closed).toBe(true);
+    expect(closes).toEqual(['acme/theme#1']);
+  });
+
+  it('does not count NOT_PLANNED as a completed required phase', () => {
+    const inventory = issues.map((issue) => ({ ...issue }));
+    const required = inventory.find((issue) => issue.title.startsWith('[DF-008]'))!;
+    required.state = 'closed';
+    required.stateReason = 'not_planned';
+    const closes: number[] = [];
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => {},
+      closeIssue: (_cwd, _repository, number) => closes.push(number),
+      listRepositoryIssues: () => inventory,
+    };
+
+    const result = reconcileExternalEpicClosure(
+      runner, '/repo', 'acme/theme', { number: 8, body: 'Parent: #1' },
+    );
+
+    expect(result.pendingKeys).toContain('DF-008');
+    expect(result.closed).toBe(false);
+    expect(closes).toEqual([]);
+  });
+
+  it('does not infer an exclusion from mixed dependency prose', () => {
+    const inventory = issues.map((issue) => ({ ...issue }));
+    inventory[0] = {
+      ...inventory[0]!,
+      body: 'DF-003 depends on DF-009 (future scope)',
+    };
+    const result = reconcileExternalEpicClosure(
+      {
+        viewRevision: () => greenGithub(),
+        merge: () => {},
+        closeIssue: () => {},
+        listRepositoryIssues: () => inventory,
+      },
+      '/repo',
+      'acme/theme',
+      { number: 8, body: 'Parent: #1' },
+    );
+    expect(result.requiredKeys).toEqual(['DF-003', 'DF-009']);
+  });
+
+  it('keeps an explicitly negated future-scope phase required', () => {
+    const inventory = issues.map((issue) => ({ ...issue }));
+    inventory[0] = { ...inventory[0]!, body: 'DF-003 is not future scope' };
+    const required = inventory.find((issue) => issue.title.startsWith('[DF-003]'))!;
+    required.state = 'open';
+    required.stateReason = null;
+    const result = reconcileExternalEpicClosure(
+      {
+        viewRevision: () => greenGithub(),
+        merge: () => {},
+        closeIssue: () => { throw new Error('must not close'); },
+        listRepositoryIssues: () => inventory,
+      },
+      '/repo',
+      'acme/theme',
+      { number: 8, body: 'Parent: #1' },
+    );
+    expect(result.requiredKeys).toEqual(['DF-003']);
+    expect(result.pendingKeys).toEqual(['DF-003']);
+  });
+
+  it.each([
+    'DF-003 は将来scopeではない',
+    'DF-003 does not depend on future scope',
+    'DF-003 is not a future scope item',
+  ])('does not treat negated or dependency prose as exclusion: %s', (body) => {
+    const inventory = issues.map((issue) => ({ ...issue }));
+    inventory[0] = { ...inventory[0]!, body };
+    const required = inventory.find((issue) => issue.title.startsWith('[DF-003]'))!;
+    required.state = 'open';
+    required.stateReason = null;
+    const result = reconcileExternalEpicClosure(
+      {
+        viewRevision: () => greenGithub(),
+        merge: () => {},
+        closeIssue: () => { throw new Error('must not close'); },
+        listRepositoryIssues: () => inventory,
+      },
+      '/repo',
+      'acme/theme',
+      { number: 8, body: 'Parent: #1' },
+    );
+    expect(result.requiredKeys).toEqual(['DF-003']);
+    expect(result.pendingKeys).toEqual(['DF-003']);
+  });
+
+  it('rechecks required children immediately before closing the parent', () => {
+    const first = issues.map((issue) => ({ ...issue }));
+    const second = issues.map((issue) => ({ ...issue }));
+    const reopened = second.find((issue) => issue.title.startsWith('[DF-008]'))!;
+    reopened.state = 'open';
+    reopened.stateReason = null;
+    let inventories = 0;
+    let closes = 0;
+    const result = reconcileExternalEpicClosure(
+      {
+        viewRevision: () => greenGithub(),
+        merge: () => {},
+        closeIssue: () => { closes += 1; },
+        listRepositoryIssues: () => inventories++ === 0 ? first : second,
+      },
+      '/repo',
+      'acme/theme',
+      { number: 8, body: 'Parent: #1' },
+    );
+    expect(result.pendingKeys).toEqual(['DF-008']);
+    expect(closes).toBe(0);
+  });
+
+  it('never treats an Issue as its own parent', () => {
+    let inventories = 0;
+    let closes = 0;
+    const result = reconcileExternalEpicClosure(
+      {
+        viewRevision: () => greenGithub(),
+        merge: () => {},
+        closeIssue: () => { closes += 1; },
+        listRepositoryIssues: () => {
+          inventories += 1;
+          return issues;
+        },
+      },
+      '/repo',
+      'acme/theme',
+      { number: 8, body: 'Parent: #8' },
+    );
+    expect(result).toMatchObject({ parentIssueNumber: null, closed: false });
+    expect(inventories).toBe(0);
+    expect(closes).toBe(0);
+  });
+
+  it('rejects a spoof child that is neither a GitHub sub-issue nor parent-authored', () => {
+    const inventory: GithubRepositoryIssue[] = [
+      {
+        number: 1,
+        title: 'Forma v0',
+        body: 'DF-010',
+        authorLogin: 'owner',
+        subIssueNumbers: [],
+        state: 'open',
+        stateReason: null,
+      },
+      {
+        number: 99,
+        title: '[DF-010] spoof',
+        body: 'Parent: #1',
+        authorLogin: 'external-contributor',
+        subIssueNumbers: [],
+        state: 'closed',
+        stateReason: 'completed',
+      },
+    ];
+    let closes = 0;
+    const result = reconcileExternalEpicClosure(
+      {
+        viewRevision: () => greenGithub(),
+        merge: () => {},
+        closeIssue: () => { closes += 1; },
+        listRepositoryIssues: () => inventory,
+      },
+      '/repo',
+      'acme/theme',
+      { number: 8, body: 'Parent: #1' },
+    );
+    expect(result).toMatchObject({
+      requiredKeys: ['DF-010'],
+      closed: false,
+      reason: 'DF-010 must map to exactly one Parent-linked child Issue',
+    });
+    expect(closes).toBe(0);
+  });
 });
 
 describe('ISSUE-0024/PR-INTENT durable lifecycle invariants', () => {

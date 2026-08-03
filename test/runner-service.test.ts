@@ -89,15 +89,19 @@ describe('isolated runner terminal outcomes', () => {
       registrationRoot,
       repositoryPath: path.join(registrationRoot, 'repository.git'),
       worktreePath,
+      harnessPath: path.join(registrationRoot, 'jobs', jobId, 'attempt-1', 'harness'),
       statePath: path.join(registrationRoot, 'jobs', jobId, 'state'),
       artifactPath,
       headSha: 'a'.repeat(40),
     };
     const activeLease = lease();
+    const releaseId = 'eb837db2-30d7-4788-a56f-00056f5d550e';
+    activeLease.job.releaseId = releaseId;
     const finishLease = vi.fn(async (
       _token: string,
       _outcome: unknown,
     ) => {});
+    const finishHumanReviewLease = vi.fn(async () => releaseId);
     const failOrRetryLease = vi.fn(async () => 'queued' as const);
     const linkLeaseArtifact = vi.fn(async () => {});
     const acquireLease = vi.fn()
@@ -118,6 +122,27 @@ describe('isolated runner terminal outcomes', () => {
         createdAt: '2026-07-31T00:00:00.000Z',
         updatedAt: '2026-07-31T00:00:00.000Z',
       })),
+      getRelease: vi.fn(async () => ({
+        id: releaseId,
+        registrationId,
+        releaseKey: 'issue:14:release:1',
+        repository: 'owner/repo',
+        issueNumber: 14,
+        policy: {
+          authority: 'human-ready-allowed',
+          requiredGateSignals: [{ source: 'github-check', name: 'test' }],
+          requiredReviewPerspectives: ['security', 'codeQuality'],
+          minimumHeadEpochs: 1,
+        },
+        status: 'collecting',
+        pullRequest: null,
+        finalHead: null,
+        mergeSha: null,
+        mergeActor: null,
+        createdAt: '2026-07-31T00:00:00.000Z',
+        updatedAt: '2026-07-31T00:00:00.000Z',
+        completedAt: null,
+      })),
       assertExecutionGuard: vi.fn(async () => ({
         ok: true,
         reason: null,
@@ -127,12 +152,15 @@ describe('isolated runner terminal outcomes', () => {
       })),
       linkLeaseArtifact,
       finishLease,
+      finishHumanReviewLease,
       failOrRetryLease,
     } as unknown as PostgresControlStore;
     const cleanup = vi.fn();
+    const retain = vi.fn();
     const workspace = {
       prepare: vi.fn(() => prepared),
       cleanup,
+      retain,
     } as unknown as RunnerWorkspaceManager;
     const reasons = [
       'planning ambiguity: choose a conflict policy',
@@ -178,26 +206,30 @@ describe('isolated runner terminal outcomes', () => {
     await expect(service.runOnce()).resolves.toBe(true);
 
     expect(failOrRetryLease).not.toHaveBeenCalled();
-    expect(finishLease).toHaveBeenCalledTimes(1);
-    expect(finishLease.mock.calls[0]?.[1]).toMatchObject({
-      status: 'succeeded',
-      result: {
+    expect(finishLease).not.toHaveBeenCalled();
+    expect(finishHumanReviewLease).toHaveBeenCalledTimes(1);
+    expect(finishHumanReviewLease).toHaveBeenCalledWith(expect.objectContaining({
+      token: activeLease.token,
+      workerId: activeLease.workerId,
+      result: expect.objectContaining({
         status: 'succeeded',
         outcome: 'needs-human-review',
         headSha: null,
         pullRequestNumber: null,
-        humanReview: {
+        humanReview: expect.objectContaining({
           issueNumber: 14,
           reasonCount: 2,
           classification: 'what-judgment',
           howIntervention: false,
           aiAppliedReadyLabel: false,
           claimedLabelRemoved: true,
-        },
-      },
-    });
+        }),
+      }),
+    }));
     expect(linkLeaseArtifact).toHaveBeenCalledTimes(1);
-    expect(cleanup).toHaveBeenCalledWith(prepared);
+    expect(cleanup).not.toHaveBeenCalled();
+    expect(retain).toHaveBeenCalledWith(prepared, payload());
+    expect(fs.existsSync(worktreePath)).toBe(true);
     const artifact = JSON.parse(fs.readFileSync(
       path.join(artifactPath, 'runner-result.json'),
       'utf8',
@@ -236,13 +268,17 @@ describe('isolated runner terminal outcomes', () => {
       registrationRoot,
       repositoryPath: path.join(registrationRoot, 'repository.git'),
       worktreePath,
+      harnessPath: path.join(registrationRoot, 'jobs', jobId, 'attempt-1', 'harness'),
       statePath: path.join(registrationRoot, 'jobs', jobId, 'state'),
       artifactPath,
       headSha: 'a'.repeat(40),
     };
     const activeLease = lease();
+    const legacyReleaseId = 'eb837db2-30d7-4788-a56f-00056f5d550e';
+    activeLease.job.releaseId = legacyReleaseId;
     const finishLease = vi.fn(async () => {});
     const failOrRetryLease = vi.fn(async () => 'queued' as const);
+    const exportReleaseEvidence = vi.fn(async () => ({ schemaVersion: '2.0' }));
     const log = vi.fn();
     const store = {
       reclaimExpiredLeases: vi.fn(async () => 0),
@@ -266,6 +302,30 @@ describe('isolated runner terminal outcomes', () => {
         jobId,
         leaseExpiresAt: activeLease.expiresAt,
       })),
+      getRelease: vi.fn(async () => ({
+        id: legacyReleaseId,
+        registrationId,
+        releaseKey: 'issue:14:legacy',
+        repository: 'owner/repo',
+        issueNumber: 14,
+        policy: {
+          authority: 'human-ready-allowed',
+          requiredGateSignals: [{ source: 'github-check', name: 'test' }],
+          requiredReviewPerspectives: ['security', 'codeQuality'],
+          minimumHeadEpochs: 1,
+        },
+        status: 'merged',
+        pullRequest: 38,
+        finalHead: prepared.headSha,
+        mergeSha: 'b'.repeat(40),
+        mergeActor: { type: 'human', login: 'merger' },
+        createdAt: '2026-07-30T00:00:00.000Z',
+        updatedAt: '2026-07-31T00:00:00.000Z',
+        completedAt: '2026-07-31T00:00:00.000Z',
+      })),
+      listReleaseReceipts: vi.fn(async () => []),
+      recordReleaseArtifact: vi.fn(async ({ artifact }) => artifact),
+      exportReleaseEvidence,
       linkLeaseArtifact: vi.fn(async () => {}),
       finishLease,
       failOrRetryLease,
@@ -276,6 +336,7 @@ describe('isolated runner terminal outcomes', () => {
     const workspace = {
       prepare: vi.fn(() => prepared),
       cleanup,
+      retain: vi.fn(),
     } as unknown as RunnerWorkspaceManager;
     const adapter: AgentOpsRunnerAdapter = {
       async execute() {
@@ -321,7 +382,8 @@ describe('isolated runner terminal outcomes', () => {
       }),
     }));
     expect(failOrRetryLease).not.toHaveBeenCalled();
-    expect(cleanup).toHaveBeenCalledWith(prepared);
+    expect(exportReleaseEvidence).toHaveBeenCalledWith(legacyReleaseId);
+    expect(cleanup).toHaveBeenCalledWith(prepared, payload());
     expect(log).toHaveBeenCalledWith(expect.stringContaining(
       'runner workspace cleanup failed',
     ));

@@ -7,10 +7,38 @@ import {
   ReleaseCertificationError,
   ReleaseReceiptConflictError,
   migrateControlSchema,
+  releaseSourceIssueSnapshotDigest,
 } from '../src/control-store/index.js';
 import type { DurableReleaseReceipt } from '../src/evidence/release-receipt.js';
 
 vi.setConfig({ testTimeout: 20_000 });
+
+function frozenSourceIssue(
+  repository: string,
+  number: number,
+  at: string,
+  comments: Array<{
+    id: number;
+    body: string;
+    updatedAt: string;
+    url: string;
+    author: string;
+  }> = [],
+) {
+  const source = {
+    repository,
+    number,
+    title: `Issue ${number}`,
+    body: 'Frozen acceptance requirements.',
+    url: `https://github.com/${repository}/issues/${number}`,
+    labels: ['ready'],
+    comments,
+    state: 'open' as const,
+    sourceUpdatedAt: at,
+    capturedAt: at,
+  };
+  return { ...source, digest: releaseSourceIssueSnapshotDigest(source) };
+}
 
 const databaseUrl = process.env.AGENTOPS_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe.sequential : describe.skip;
@@ -126,6 +154,7 @@ integration('PostgreSQL release receipt outbox', () => {
     const head = 'a'.repeat(40);
     const digest = `sha256:${'b'.repeat(64)}`;
     const authorityId = randomUUID();
+    const requirementsAuthorityId = randomUUID();
     const buildId = randomUUID();
     const repositoryGradeId = randomUUID();
     const githubGradeId = randomUUID();
@@ -156,6 +185,19 @@ integration('PostgreSQL release receipt outbox', () => {
         actor: { type: 'human', login: 'maintainer' },
         readyLabel: 'ready',
         readyAt: at(1),
+      },
+      {
+        ...common(
+          requirementsAuthorityId,
+          'requirements-authority',
+          at(1.5),
+          [authorityId],
+          jobIds[0]!,
+        ),
+        kind: 'requirements-authority',
+        sourceIssueDigest: 'f'.repeat(64),
+        sourceUpdatedAt: at(1),
+        capturedAt: at(1.5),
       },
       {
         ...common(buildId, 'build:final', at(2), [authorityId], jobIds[0]!),
@@ -235,7 +277,29 @@ integration('PostgreSQL release receipt outbox', () => {
         ],
       },
     ];
-    for (const receipt of receipts) await store.recordReleaseReceipt(receipt);
+    for (const receipt of receipts) {
+      if (receipt.kind !== 'requirements-authority') {
+        await store.recordReleaseReceipt(receipt);
+        continue;
+      }
+      await pool.query(
+        `INSERT INTO agentops_control.release_receipt_outbox(
+           receipt_id, release_id, receipt_key, kind, repository, issue_number,
+           head_sha, causes, payload, recorded_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9)`,
+        [
+          receipt.receiptId,
+          releaseId,
+          receipt.receiptKey,
+          receipt.kind,
+          repository,
+          7,
+          receipt.causes,
+          receipt,
+          receipt.recordedAt,
+        ],
+      );
+    }
     await expect(store.recordReleaseReceipt(receipts[0])).resolves.toMatchObject({
       receipt: { receiptId: authorityId },
     });
@@ -317,7 +381,7 @@ integration('PostgreSQL release receipt outbox', () => {
       [authorityId],
     )).rejects.toThrow(/immutable/);
     await expect(store.exportReleaseEvidence(releaseId)).resolves.toMatchObject({
-      schemaVersion: '2.0',
+      schemaVersion: '3.0',
       release: { id: releaseId, finalHead: head, mergeSha: 'd'.repeat(40) },
       receipts: {
         mergeIntent: { receiptId: intent.receiptId },
@@ -389,6 +453,7 @@ integration('PostgreSQL release receipt outbox', () => {
     });
     expect(outbox.map((entry) => entry.receipt.kind)).toEqual([
       'authority',
+      'requirements-authority',
       'build',
       'grade',
       'grade',
@@ -446,6 +511,30 @@ integration('PostgreSQL release receipt outbox', () => {
       readyAt: strictAt(1),
     };
     await store.recordReleaseReceipt(authority);
+    const runner = await pool.connect();
+    try {
+      await runner.query('SET ROLE agentops_runner');
+      await expect(runner.query(
+        `SELECT agentops_control.authorize_release_merge($1)`,
+        [{
+          receiptId: randomUUID(),
+          receiptKey: 'merge-intent:direct-without-requirements',
+          releaseId: created.release.id,
+          repository: registration.repository,
+          issueNumber: 8,
+          producer: {},
+          causes: [authority.receiptId],
+          recordedAt: strictAt(2),
+          kind: 'merge-intent',
+          pullRequest: 22,
+          expectedHead: 'e'.repeat(40),
+          observedPrHead: 'e'.repeat(40),
+        }],
+      )).rejects.toThrow(/requirements receipt/);
+    } finally {
+      await runner.query('RESET ROLE');
+      runner.release();
+    }
     await expect(store.recordReleaseReceipt({
       ...authority,
       receiptId: randomUUID(),
@@ -548,7 +637,22 @@ integration('PostgreSQL release receipt outbox', () => {
           result,
           'ready',
           'claimed',
-          { actor: 'product-owner', readyAt: '2026-08-01T00:00:30Z' },
+          {
+            actor: 'product-owner',
+            readyAt: '2026-08-01T00:00:30Z',
+            sourceIssue: frozenSourceIssue(
+              registration.repository,
+              31,
+              '2026-08-01T00:00:29Z',
+              [{
+                id: 101,
+                body: 'Frozen acceptance clarification.',
+                updatedAt: '2026-08-01T00:00:28Z',
+                url: 'https://github.com/sample/promotion-v2/issues/31#issuecomment-101',
+                author: 'product-owner',
+              }],
+            ),
+          },
         ],
       );
       promotedJobId = promoted.rows[0]!.job_id;
@@ -572,6 +676,17 @@ integration('PostgreSQL release receipt outbox', () => {
       expect.objectContaining({ id: queued.job.id, status: 'succeeded' }),
       expect.objectContaining({ id: promotedJobId, status: 'queued' }),
     ]));
+    await expect(store.getReleaseSourceIssue(linked.rows[0]!.release_id))
+      .resolves.toMatchObject({
+        repository: registration.repository,
+        number: 31,
+        body: 'Frozen acceptance requirements.',
+        comments: [expect.objectContaining({
+          id: 101,
+          body: 'Frozen acceptance clarification.',
+        })],
+        digest: expect.stringMatching(/^[0-9a-f]{64}$/),
+      });
     const runner = await pool.connect();
     try {
       await runner.query('SET ROLE agentops_runner');
@@ -618,6 +733,463 @@ integration('PostgreSQL release receipt outbox', () => {
       registrationId: registration.id,
       pullRequest: 91,
     })).resolves.toMatchObject({ id: linked.rows[0]!.release_id });
+    const cleanupLease = await store.acquireLease({
+      workerId: 'runner-direct-human-cleanup',
+      durationMs: 10_000,
+      jobType: 'agentops.runner',
+    });
+    expect(cleanupLease?.job.id).toBe(promotedJobId);
+    await store.finishLease(cleanupLease!.token, { status: 'succeeded' });
+  });
+
+  it('reuses unchanged requirements and rotates release identity when requirements change', async () => {
+    const policy = {
+      authority: 'human-ready-allowed' as const,
+      requiredGateSignals: [{ source: 'github-check' as const, name: 'test' }],
+      requiredReviewPerspectives: ['security' as const, 'codeQuality' as const],
+      minimumHeadEpochs: 1,
+    };
+    let registration = await store.createRegistration({
+      repository: 'sample/open-release-retry',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: { releaseEvidence: policy },
+    });
+    const promote = async (
+      key: string,
+      workerId: string,
+      observedUpdatedAt: string,
+      readyAt: string,
+      completedAt: string,
+      sourceBody?: string,
+    ) => {
+      const queued = await store.enqueueJob({
+        registrationId: registration.id,
+        registrationVersion: registration.version,
+        source: { kind: 'poll', key },
+        idempotencyKey: key,
+        jobType: 'agentops.triage',
+        payload: {
+          schemaVersion: 1,
+          repository: { owner: 'sample', name: 'open-release-retry' },
+          issue: { number: 34, observedUpdatedAt },
+        },
+      });
+      const lease = await store.acquireLease({
+        workerId,
+        durationMs: 10_000,
+        jobType: 'agentops.triage',
+      });
+      const baseSourceIssue = frozenSourceIssue(
+        registration.repository,
+        34,
+        '2026-08-01T00:00:00Z',
+      );
+      const sourceIssue = sourceBody === undefined
+        ? baseSourceIssue
+        : (() => {
+            const { digest: _digest, ...source } = baseSourceIssue;
+            const changed = { ...source, body: sourceBody };
+            return {
+              ...changed,
+              digest: releaseSourceIssueSnapshotDigest(changed),
+            };
+          })();
+      const promotedJobId = await store.promoteTriageLease({
+        token: lease!.token,
+        workerId,
+        readyLabel: 'ready',
+        claimedLabel: 'claimed',
+        authority: {
+          actor: 'product-owner',
+          readyAt,
+          sourceIssue,
+        },
+        result: {
+          schemaVersion: 1,
+          status: 'succeeded',
+          jobId: queued.job.id,
+          attemptNumber: lease!.attemptNumber,
+          repository: registration.repository,
+          issueNumber: 34,
+          outcome: 'promoted',
+          sourceDigest: null,
+          decision: null,
+          commentUrl: null,
+          appliedLabels: [],
+          promotedJobId: null,
+          providerProvenance: null,
+          completedAt,
+        },
+      });
+      return { promotedJobId, triageJobId: queued.job.id };
+    };
+
+    const first = await promote(
+      'issue:34:first',
+      'triage-open-release-first',
+      '2026-08-01T00:00:00Z',
+      '2026-08-01T00:00:30Z',
+      '2026-08-01T00:00:31Z',
+    );
+    const firstRunner = await store.acquireLease({
+      workerId: 'runner-open-release-first',
+      durationMs: 10_000,
+      jobType: 'agentops.runner',
+    });
+    const releaseId = firstRunner!.job.releaseId!;
+    await expect(store.failOrRetryLease({
+      token: firstRunner!.token,
+      workerId: 'runner-open-release-first',
+      failure: {
+        schemaVersion: 1,
+        status: 'failed',
+        code: 'provider_failure',
+        message: 'runner infrastructure interrupted the first attempt',
+        retryable: false,
+        boundary: 'provider',
+        observedAt: '2026-08-01T00:01:00Z',
+      },
+      retryDelayMs: 0,
+      maxAttempts: 1,
+    })).resolves.toBe('failed');
+
+    const configuredPolicy = {
+      authority: 'human-ready-allowed' as const,
+      requiredGateSignals: [
+        { source: 'github-check' as const, name: 'test-v2' },
+      ],
+      requiredReviewPerspectives: [
+        'security' as const,
+        'testQuality' as const,
+      ],
+      minimumHeadEpochs: 2,
+    };
+    registration = await store.updateRegistration(registration.id, {
+      configuration: { releaseEvidence: configuredPolicy },
+    });
+
+    const second = await promote(
+      'issue:34:retry',
+      'triage-open-release-retry',
+      '2026-08-01T00:02:00Z',
+      '2026-08-01T00:02:30Z',
+      '2026-08-01T00:02:31Z',
+    );
+    const linked = await pool.query<{ id: string; release_id: string }>(
+      `SELECT id, release_id
+         FROM agentops_control.jobs
+        WHERE id = ANY($1::uuid[])
+        ORDER BY id`,
+      [[first.triageJobId, second.triageJobId, second.promotedJobId]],
+    );
+    expect(new Set(linked.rows.map((row) => row.release_id)))
+      .toEqual(new Set([releaseId]));
+    const receipts = await store.listReleaseReceipts(releaseId);
+    expect(receipts).toHaveLength(2);
+    expect(receipts.find((entry) => entry.receipt.kind === 'authority')?.receipt).toMatchObject({
+      kind: 'authority',
+      route: 'human-ready',
+    });
+    expect(receipts.find(
+      (entry) => entry.receipt.kind === 'requirements-authority',
+    )?.receipt).toMatchObject({
+      kind: 'requirements-authority',
+    });
+    await expect(store.getRelease(releaseId)).resolves.toMatchObject({
+      policy,
+    });
+    const audit = await pool.query<{ event_type: string; details: Record<string, unknown> }>(
+      `SELECT event_type, details
+         FROM agentops_control.runtime_audit
+        WHERE job_id = $1 AND event_type = 'release.identity.reused'`,
+      [second.triageJobId],
+    );
+    expect(audit.rows).toEqual([expect.objectContaining({
+      event_type: 'release.identity.reused',
+      details: expect.objectContaining({
+        releaseId,
+        configuredPolicyChanged: true,
+        reason: 'retry-open-release',
+      }),
+    })]);
+
+    const cleanup = await store.acquireLease({
+      workerId: 'runner-open-release-retry',
+      durationMs: 10_000,
+      jobType: 'agentops.runner',
+    });
+    expect(cleanup?.job.id).toBe(second.promotedJobId);
+    await store.finishLease(cleanup!.token, { status: 'succeeded' });
+
+    const changedBody = 'Frozen acceptance requirements with a new mandatory constraint.';
+    const third = await promote(
+      'issue:34:requirements-changed',
+      'triage-open-release-changed',
+      '2026-08-01T00:03:00Z',
+      '2026-08-01T00:03:30Z',
+      '2026-08-01T00:03:31Z',
+      changedBody,
+    );
+    const rotated = await pool.query<{ release_id: string }>(
+      `SELECT release_id
+         FROM agentops_control.jobs
+        WHERE id = $1`,
+      [third.promotedJobId],
+    );
+    const rotatedReleaseId = rotated.rows[0]!.release_id;
+    expect(rotatedReleaseId).not.toBe(releaseId);
+    await expect(store.getRelease(releaseId)).resolves.toMatchObject({
+      status: 'abandoned',
+      policy,
+    });
+    await expect(store.getRelease(rotatedReleaseId)).resolves.toMatchObject({
+      status: 'collecting',
+      policy: configuredPolicy,
+    });
+    await expect(store.getReleaseSourceIssue(rotatedReleaseId)).resolves.toMatchObject({
+      body: changedBody,
+    });
+    const rotatedReceipts = await store.listReleaseReceipts(rotatedReleaseId);
+    expect(rotatedReceipts.map((entry) => entry.receipt.kind).sort()).toEqual([
+      'authority',
+      'requirements-authority',
+    ]);
+    const changedAudit = await pool.query<{ details: Record<string, unknown> }>(
+      `SELECT details
+         FROM agentops_control.runtime_audit
+        WHERE event_type = 'release.abandoned.requirements-changed'
+          AND details->>'releaseId' = $1`,
+      [releaseId],
+    );
+    expect(changedAudit.rows).toEqual([expect.objectContaining({
+      details: expect.objectContaining({
+        reason: 'new-human-ready-requirements-authority',
+      }),
+    })]);
+    const rotatedCleanup = await store.acquireLease({
+      workerId: 'runner-open-release-changed',
+      durationMs: 10_000,
+      jobType: 'agentops.runner',
+    });
+    expect(rotatedCleanup?.job.id).toBe(third.promotedJobId);
+    await store.finishLease(rotatedCleanup!.token, { status: 'succeeded' });
+  });
+
+  it('abandons a planning human-review release before a fresh authorization', async () => {
+    const policy = {
+      authority: 'human-ready-allowed' as const,
+      requiredGateSignals: [{ source: 'github-check' as const, name: 'test' }],
+      requiredReviewPerspectives: [
+        'security',
+        'codeQuality',
+      ] as Array<'security' | 'codeQuality'>,
+      minimumHeadEpochs: 1,
+    };
+    const registration = await store.createRegistration({
+      repository: 'sample/human-review-resume',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: { releaseEvidence: policy },
+    });
+    const queued = await store.enqueueJob({
+      registrationId: registration.id,
+      registrationVersion: registration.version,
+      source: { kind: 'poll', key: 'issue:33' },
+      idempotencyKey: 'issue:33',
+      jobType: 'agentops.triage',
+      payload: {
+        schemaVersion: 1,
+        repository: { owner: 'sample', name: 'human-review-resume' },
+        issue: {
+          number: 33,
+          observedUpdatedAt: '2026-08-01T00:00:00Z',
+        },
+      },
+    });
+    const triageLease = await store.acquireLease({
+      workerId: 'triage-human-review-resume',
+      durationMs: 10_000,
+      jobType: 'agentops.triage',
+    });
+    const promotedJobId = await store.promoteTriageLease({
+      token: triageLease!.token,
+      workerId: 'triage-human-review-resume',
+      readyLabel: 'ready',
+      claimedLabel: 'claimed',
+      authority: {
+        actor: 'product-owner',
+        readyAt: '2026-08-01T00:00:30Z',
+        sourceIssue: frozenSourceIssue(
+          registration.repository,
+          33,
+          '2026-08-01T00:00:29Z',
+        ),
+      },
+      result: {
+        schemaVersion: 1,
+        status: 'succeeded',
+        jobId: queued.job.id,
+        attemptNumber: triageLease!.attemptNumber,
+        repository: registration.repository,
+        issueNumber: 33,
+        outcome: 'promoted',
+        sourceDigest: null,
+        decision: null,
+        commentUrl: null,
+        appliedLabels: [],
+        promotedJobId: null,
+        providerProvenance: null,
+        completedAt: '2026-08-01T00:00:31Z',
+      },
+    });
+    const runnerLease = await store.acquireLease({
+      workerId: 'runner-human-review-resume',
+      durationMs: 10_000,
+      jobType: 'agentops.runner',
+    });
+    expect(runnerLease?.job.id).toBe(promotedJobId);
+    const releaseId = runnerLease!.job.releaseId!;
+    const validHumanReviewResult = {
+      schemaVersion: 1 as const,
+      status: 'succeeded' as const,
+      jobId: promotedJobId,
+      attemptNumber: runnerLease!.attemptNumber,
+      repository: registration.repository,
+      outcome: 'needs-human-review' as const,
+      humanReview: {
+        issueNumber: 33,
+        reasonCount: 1,
+        commentUrl:
+          'https://github.com/sample/human-review-resume/issues/33#issuecomment-1',
+        classification: 'what-judgment' as const,
+        howIntervention: false as const,
+        aiAppliedReadyLabel: false as const,
+        claimedLabelRemoved: true as const,
+      },
+      headSha: null,
+      pullRequestNumber: null,
+      artifacts: [],
+      completedAt: '2026-08-01T00:01:00Z',
+    };
+    const invalidResults: Array<{
+      name: string;
+      result: unknown;
+      error: RegExp;
+    }> = [
+      { name: 'SQL NULL', result: null, error: /result is invalid/ },
+      {
+        name: 'missing required headSha',
+        result: { ...validHumanReviewResult, headSha: undefined },
+        error: /result is invalid/,
+      },
+      {
+        name: 'unexpected root key',
+        result: { ...validHumanReviewResult, unexpected: true },
+        error: /result is invalid/,
+      },
+      {
+        name: 'malformed job UUID',
+        result: { ...validHumanReviewResult, jobId: 'not-a-uuid' },
+        error: /result is invalid/,
+      },
+      {
+        name: 'different valid job UUID',
+        result: { ...validHumanReviewResult, jobId: randomUUID() },
+        error: /lease or release is invalid/,
+      },
+      {
+        name: 'null attempt number',
+        result: { ...validHumanReviewResult, attemptNumber: null },
+        error: /result is invalid/,
+      },
+      {
+        name: 'different attempt number',
+        result: {
+          ...validHumanReviewResult,
+          attemptNumber: runnerLease!.attemptNumber + 1,
+        },
+        error: /lease or release is invalid/,
+      },
+      {
+        name: 'non-null head SHA',
+        result: { ...validHumanReviewResult, headSha: 'a'.repeat(40) },
+        error: /result is invalid/,
+      },
+      {
+        name: 'non-null pull request number',
+        result: { ...validHumanReviewResult, pullRequestNumber: 42 },
+        error: /result is invalid/,
+      },
+      {
+        name: 'string reason count',
+        result: {
+          ...validHumanReviewResult,
+          humanReview: {
+            ...validHumanReviewResult.humanReview,
+            reasonCount: '1',
+          },
+        },
+        error: /result is invalid/,
+      },
+      {
+        name: 'missing nested comment URL',
+        result: {
+          ...validHumanReviewResult,
+          humanReview: {
+            ...validHumanReviewResult.humanReview,
+            commentUrl: undefined,
+          },
+        },
+        error: /result is invalid/,
+      },
+      {
+        name: 'unexpected nested key',
+        result: {
+          ...validHumanReviewResult,
+          humanReview: {
+            ...validHumanReviewResult.humanReview,
+            unexpected: true,
+          },
+        },
+        error: /result is invalid/,
+      },
+    ];
+    for (const invalid of invalidResults) {
+      await expect(pool.query(
+        `SELECT agentops_control.complete_runner_human_review($1, $2, $3)`,
+        [runnerLease!.token, 'runner-human-review-resume', invalid.result],
+      ), invalid.name).rejects.toThrow(invalid.error);
+    }
+    await expect(store.finishHumanReviewLease({
+      token: runnerLease!.token,
+      workerId: 'runner-human-review-resume',
+      result: validHumanReviewResult,
+    })).resolves.toBe(releaseId);
+    await expect(store.getRelease(releaseId)).resolves.toMatchObject({
+      status: 'abandoned',
+      pullRequest: null,
+      finalHead: null,
+    });
+    await expect(store.findReleaseForRunnerEvent({
+      registrationId: registration.id,
+      issueNumber: 33,
+    })).resolves.toBeNull();
+    await expect(store.createRelease({
+      registrationId: registration.id,
+      registrationVersion: registration.version,
+      releaseKey: 'issue:33:release:resumed',
+      repository: registration.repository,
+      issueNumber: 33,
+      policy,
+    })).resolves.toMatchObject({
+      duplicate: false,
+      release: { status: 'collecting' },
+    });
   });
 
   it('fails promotion closed until a required pre-ready AI decision is proven', async () => {
@@ -679,6 +1251,11 @@ integration('PostgreSQL release receipt outbox', () => {
       authority: {
         actor: 'product-owner',
         readyAt: '2026-08-01T00:00:30Z',
+        sourceIssue: frozenSourceIssue(
+          registration.repository,
+          32,
+          '2026-08-01T00:00:29Z',
+        ),
       },
       result,
     })).rejects.toThrow(/AI triage receipt is required/);
@@ -722,6 +1299,11 @@ integration('PostgreSQL release receipt outbox', () => {
       authority: {
         actor: 'product-owner',
         readyAt: '2026-08-01T00:00:30Z',
+        sourceIssue: frozenSourceIssue(
+          registration.repository,
+          32,
+          '2026-08-01T00:00:29Z',
+        ),
         triage: {
           sourceDigest: 'f'.repeat(64),
           decision,

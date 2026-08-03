@@ -1,8 +1,10 @@
 import type { PostgresControlStore } from '../control-store/store.js';
 import {
   JobEnvelopeContract,
+  ReleaseSourceIssueSnapshotContract,
   TriageJobPayloadV1Contract,
   TriageJobResultV1Contract,
+  releaseSourceIssueSnapshotDigest,
   type Lease,
   type RunnerJobFailureV1,
   type TriageDecisionV1,
@@ -11,6 +13,7 @@ import {
 } from '../control-store/types.js';
 import { RunnerExecutionError } from '../runner/errors.js';
 import {
+  authoritativeTriageComments,
   hasTriageMarker,
   triageMarker,
   triageSourceDigest,
@@ -22,6 +25,50 @@ import {
   type TriagePolicy,
 } from './policy.js';
 import type { TriageProvider } from './provider.js';
+import {
+  linkedParentIssueNumber,
+  type DevelopmentProgressUpdate,
+} from '../domain/development-progress.js';
+
+export function boundedProgressBlocker(parts: readonly string[]): string {
+  const joined = parts.filter((part) => part.trim() !== '').join('; ');
+  const characters = Array.from(joined);
+  return characters.length <= 1_000
+    ? joined
+    : `${characters.slice(0, 999).join('')}…`;
+}
+
+function releaseSourceIssueCore(
+  repository: string,
+  snapshot: TriageSnapshot,
+  capturedAt: string,
+) {
+  const comments = authoritativeTriageComments(snapshot).map((comment) => ({
+    id: comment.id,
+    body: comment.body,
+    updatedAt: comment.updatedAt,
+    url: comment.url,
+    author: comment.author,
+  }));
+  const sourceUpdatedAt = comments.reduce(
+    (latest, comment) => Date.parse(comment.updatedAt) > Date.parse(latest)
+      ? comment.updatedAt
+      : latest,
+    snapshot.issue.updatedAt,
+  );
+  return {
+    repository,
+    number: snapshot.issue.number,
+    title: snapshot.issue.title,
+    body: snapshot.issue.body,
+    url: snapshot.issue.url,
+    labels: [...snapshot.issue.labels].sort(),
+    comments,
+    state: snapshot.issue.state,
+    sourceUpdatedAt,
+    capturedAt,
+  };
+}
 
 export interface TriageServiceConfig {
   workerId: string;
@@ -63,6 +110,7 @@ interface TriageStore {
     input: Parameters<PostgresControlStore['failOrRetryLease']>[0],
   ): ReturnType<PostgresControlStore['failOrRetryLease']>;
   listen: PostgresControlStore['listen'];
+  recordDevelopmentProgress?: PostgresControlStore['recordDevelopmentProgress'];
 }
 
 export interface TriageServiceDependencies {
@@ -79,6 +127,26 @@ function safeText(value: string): string {
 
 function issueRef(repository: string, issueNumber: number): string {
   return `${repository}#${issueNumber}`;
+}
+
+function assertPromotionEligibility(
+  snapshot: TriageSnapshot,
+  payload: TriageJobPayloadV1,
+  claimedLabel: string,
+): void {
+  if (
+    snapshot.issue.number !== payload.issue.number
+    || Date.parse(snapshot.issue.updatedAt) < Date.parse(payload.issue.observedUpdatedAt)
+    || snapshot.issue.state !== 'open'
+    || snapshot.issue.isPullRequest
+    || snapshot.issue.labels.includes(claimedLabel)
+  ) {
+    throw new RunnerExecutionError(
+      'provider_failure',
+      'GitHub Issue is no longer eligible for ready promotion',
+      false,
+    );
+  }
 }
 
 export function formatTriageComment(
@@ -273,6 +341,7 @@ export class TriageRunnerService {
     repository: string,
     snapshot: TriageSnapshot,
     heartbeat: TriageHeartbeat,
+    reportProgress: (event: DevelopmentProgressUpdate) => Promise<void>,
     triageAuthority?: {
       sourceDigest: string;
       decision: TriageDecisionV1;
@@ -301,6 +370,27 @@ export class TriageRunnerService {
         false,
       );
     }
+    // GitHub's Issue updatedAt is the only content-version boundary exposed by
+    // the snapshot API. Requiring it not to exceed the ready event prevents a
+    // body/title edit made after the human attestation from becoming authority.
+    // A later edit must be followed by a new remove/add ready action.
+    const sourceIssueCore = releaseSourceIssueCore(
+      repository,
+      snapshot,
+      new Date().toISOString(),
+    );
+    if (Date.parse(sourceIssueCore.sourceUpdatedAt) > Date.parse(latestReadyEvent.createdAt)) {
+      throw new RunnerExecutionError(
+        'provider_failure',
+        'Issue content changed after the latest ready event; human must reapply the ready label',
+        false,
+      );
+    }
+    assertPromotionEligibility(
+      snapshot,
+      payload,
+      this.dependencies.policy.claimedLabel,
+    );
     const result = triageResult(lease, payload, repository, {
       outcome: 'promoted',
       sourceDigest: null,
@@ -308,6 +398,19 @@ export class TriageRunnerService {
       commentUrl: null,
       appliedLabels: [],
       promotedJobId: null,
+    });
+    const sourceIssue = ReleaseSourceIssueSnapshotContract.parse({
+      ...sourceIssueCore,
+      digest: releaseSourceIssueSnapshotDigest(sourceIssueCore),
+    });
+    await reportProgress({
+      eventKey: 'triage:ready-authority-frozen',
+      phase: 'intake',
+      step: 'ready authority frozen',
+      state: 'succeeded',
+      summary: `Immutable requirements captured for ${repository}#${payload.issue.number}`,
+      nextGate: 'isolated development runner lease',
+      parentIssueNumber: linkedParentIssueNumber(sourceIssue.body, sourceIssue.number),
     });
     const promotedJobId = await this.dependencies.store.promoteTriageLease({
       token: lease.token,
@@ -318,6 +421,7 @@ export class TriageRunnerService {
       authority: {
         actor: latestReadyEvent.actor,
         readyAt: latestReadyEvent.createdAt,
+        sourceIssue,
         ...(triageAuthority ? { triage: triageAuthority } : {}),
       },
     });
@@ -336,6 +440,20 @@ export class TriageRunnerService {
       this.log,
     );
     heartbeat.start();
+    const reportProgress = async (event: DevelopmentProgressUpdate): Promise<void> => {
+      try {
+        await this.dependencies.store.recordDevelopmentProgress?.({
+          token: lease.token,
+          workerId: this.config.workerId,
+          event,
+        });
+      } catch (error) {
+        this.log(
+          `⚠ durable triage progress failed for ${event.eventKey}: `
+          + `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    };
     try {
       const envelope = JobEnvelopeContract.parse(lease.job);
       if (envelope.jobType !== 'agentops.triage') {
@@ -348,6 +466,14 @@ export class TriageRunnerService {
       const payload = TriageJobPayloadV1Contract.parse(envelope.payload);
       const repository =
         `${payload.repository.owner}/${payload.repository.name}`;
+      await reportProgress({
+        eventKey: 'triage:start',
+        phase: 'intake',
+        step: 'triage Issue requirements',
+        state: 'running',
+        summary: `Evaluating ${repository}#${payload.issue.number}`,
+        nextGate: 'triage decision or human ready authority',
+      });
       const registration = await this.dependencies.store.getRegistration(
         envelope.registrationId,
       );
@@ -379,6 +505,21 @@ export class TriageRunnerService {
           true,
         );
       }
+      const triageParentIssueNumber = linkedParentIssueNumber(
+        snapshot.issue.body,
+        snapshot.issue.number,
+      );
+      // Refresh the idempotent start event after the first authoritative
+      // snapshot so the parent Epic can see even pre-ready triage activity.
+      await reportProgress({
+        eventKey: 'triage:start',
+        phase: 'intake',
+        step: 'triage Issue requirements',
+        state: 'running',
+        summary: `Evaluating ${repository}#${payload.issue.number}`,
+        nextGate: 'triage decision or human ready authority',
+        parentIssueNumber: triageParentIssueNumber,
+      });
       if (
         snapshot.issue.state !== 'open'
         || snapshot.issue.isPullRequest
@@ -404,12 +545,31 @@ export class TriageRunnerService {
           repository,
           payload.issue.number,
         );
+        assertPromotionEligibility(
+          current,
+          payload,
+          this.dependencies.policy.claimedLabel,
+        );
+        const observedRequirements = releaseSourceIssueSnapshotDigest(
+          releaseSourceIssueCore(repository, snapshot, snapshot.issue.updatedAt),
+        );
+        const currentRequirements = releaseSourceIssueSnapshotDigest(
+          releaseSourceIssueCore(repository, current, current.issue.updatedAt),
+        );
+        if (currentRequirements !== observedRequirements) {
+          throw new RunnerExecutionError(
+            'provider_failure',
+            'GitHub Issue requirements changed while ready promotion was being verified',
+            true,
+          );
+        }
         await this.promote(
           lease,
           payload,
           repository,
           current,
           heartbeat,
+          reportProgress,
         );
         return;
       }
@@ -470,6 +630,7 @@ export class TriageRunnerService {
           repository,
           current,
           heartbeat,
+          reportProgress,
           providerProvenance === null
             ? undefined
             : {
@@ -491,6 +652,42 @@ export class TriageRunnerService {
           true,
         );
       }
+
+      await reportProgress(decision.readiness === 'needs_info'
+        ? {
+            eventKey: 'triage:needs-info',
+            phase: 'human-review',
+            step: 'triage needs information',
+            state: 'blocked',
+            summary: decision.summary,
+            blocker: boundedProgressBlocker(
+              decision.missingInformation.length > 0
+                ? decision.missingInformation
+                : decision.rationale,
+            ),
+            nextGate: 'human updates the Issue; apply ready after the missing information is supplied',
+            parentIssueNumber: triageParentIssueNumber,
+          }
+        : decision.readiness === 'blocked'
+          ? {
+              eventKey: 'triage:blocked',
+              phase: 'human-review',
+              step: 'triage blocked',
+              state: 'blocked',
+              summary: decision.summary,
+              blocker: boundedProgressBlocker(decision.rationale),
+              nextGate: 'human resolves the dependency or scope blocker',
+              parentIssueNumber: triageParentIssueNumber,
+            }
+          : {
+              eventKey: 'triage:ready-candidate',
+              phase: 'intake',
+              step: 'triage ready candidate',
+              state: 'waiting',
+              summary: decision.summary,
+              nextGate: 'human applies the ready label',
+              parentIssueNumber: triageParentIssueNumber,
+            });
 
       await heartbeat.assertLive();
       await this.dependencies.github.ensureManagedLabels(

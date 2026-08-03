@@ -4,6 +4,7 @@ import type { ReviewJob, ReviewStatus } from './perspective-session.js';
 import { launchSession, killSession, monitorLiveness } from './tmux.js';
 import { REVIEW_LIVENESS } from './review-liveness.js';
 import { submitPromptWhenSessionReady } from './session-readiness.js';
+import { prepareRunnerDependencyMount } from './runner-sandbox.js';
 
 /** Run one read-only review session in its prepared worktree; returns its status (no git bookkeeping). */
 export async function runReviewSession(
@@ -14,6 +15,7 @@ export async function runReviewSession(
 ): Promise<ReviewStatus> {
   const { provider } = route;
   const session = `ao-eval-${issueKey}-${job.key}`;
+  prepareRunnerDependencyMount(process.env, job.reviewWt);
   log(`  ▸ ${session}: read-only review`);
   // acceptEdits + Bash lets the review run tests and write ONLY its intended evidence without
   // approval stalls. The checkout is a disposable detached snapshot; prompt/findings live in an

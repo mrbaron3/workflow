@@ -648,6 +648,8 @@ func BootstrapRoles(
 		   TO agentops_runner`,
 		`GRANT SELECT, UPDATE ON agentops_control.jobs TO agentops_runner`,
 		`GRANT SELECT ON agentops_control.releases TO agentops_runner`,
+		`GRANT SELECT ON agentops_control.development_progress_events
+		   TO agentops_runner`,
 		`GRANT SELECT ON agentops_control.release_heads,
 		   agentops_control.release_receipt_outbox,
 		   agentops_control.release_artifacts TO agentops_runner`,
@@ -659,6 +661,9 @@ func BootstrapRoles(
 		   agentops_control.record_release_artifact(text, jsonb),
 		   agentops_control.lock_release_completion_state(uuid, uuid),
 		   agentops_control.bind_release_pull_request(uuid, uuid, bigint)
+		   TO agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.record_development_progress(uuid, text, jsonb)
 		   TO agentops_runner`,
 		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
 		   agentops_control.job_leases, agentops_control.artifact_links

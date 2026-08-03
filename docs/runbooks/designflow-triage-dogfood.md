@@ -113,17 +113,31 @@ development runner（別capability、private workspace、ACTIVEだけ）
    mise run active
    ```
 
+   `mise run active`は既に配置済みのimageを再利用する。ローカルのServo修正をdogfood環境へ
+   反映する場合だけ、graceful drainと再buildを行う次の形を使う。
+
+   ```sh
+   mise run active -- --build
+   ```
+
    その他のlifecycle操作も同じ入口に揃えてある。`mise tasks`で一覧できる。
 
    | task | 実体 |
    | --- | --- |
    | `mise run status` | `agentopsctl status`（`-- --json`でJSON） |
+   | `mise run progress -- mrbaron3/forma#1` | 親Epicから子Issueのphase/blocker/next gateを一覧 |
+   | `mise run progress -- mrbaron3/forma#8` | 子Issueの工程履歴、session、branch、PR、worktreeを表示 |
+   | `mise run worktree -- --diff mrbaron3/forma#8` | 明示した子Issueの隔離worktree状態と差分を表示 |
+   | `mise run worktree -- --shell mrbaron3/forma#8` | 明示した子Issueの隔離worktreeへ再開用shellで入る |
    | `mise run monitor` | `agentopsctl start --mode MONITOR_ONLY --build` |
    | `mise run active` | `agentopsctl start --mode ACTIVE` |
    | `mise run drain` | `agentopsctl drain` |
    | `mise run stop` | `agentopsctl stop` |
    | `mise run logs` | `agentopsctl logs`（`-- --component triage --follow`） |
    | `mise run open` | `agentopsctl open` |
+
+   親Epicを`worktree`へ渡すと、任意の子を暗黙選択せず対象子Issueの明示を要求する。
+   保持されたattemptは別pathなので、再試行や別Issueの修正とは干渉しない。
 
 ## 最初に流すIssue
 

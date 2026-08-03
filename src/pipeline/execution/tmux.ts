@@ -159,6 +159,8 @@ export function launchSession(opts: LaunchOpts): void {
     'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
     'CODEX_HOME',
+    'AGENTOPS_RUNNER_REGISTRATION_ROOT',
+    'AGENTOPS_RUNNER_DEPENDENCY_ROOT',
   ]) {
     tmux(['set-environment', '-gu', key]);
   }
@@ -186,6 +188,7 @@ export function launchSession(opts: LaunchOpts): void {
       trustRoots: [...(opts.trustRoots ?? []), ...(trustRoot ? [trustRoot] : [])],
       disposableConfigHome: disposableProviderConfigHome(environment),
     }),
+    opts.additionalDirs,
   );
   const res = tmux([
     'new-window',

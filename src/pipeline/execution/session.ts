@@ -32,6 +32,7 @@ import {
   sampleKey,
   type ExternalWorkIdentity,
 } from './work-identity.js';
+import { prepareRunnerDependencyMount } from './runner-sandbox.js';
 
 export { sampleKey } from './work-identity.js';
 
@@ -141,6 +142,7 @@ export async function runGeneratorSession(
   const sentinelPath = path.join(agentDir, 'done.json');
   fs.rmSync(sentinelPath, { force: true }); // clear any stale sentinel from a prior attempt
 
+  prepareRunnerDependencyMount(process.env, wt);
   log(`  ▸ ${session}: launch in ${path.relative(harnessRoot, wt)}`);
   // Bash is allowed so the agent can run tests/typecheck to check its own work WITHOUT hanging on
   // an approval prompt in this detached session (a grounded run showed it stalls otherwise). The

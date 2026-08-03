@@ -10,6 +10,8 @@
  */
 
 import path from 'node:path';
+import os from 'node:os';
+import { createHash } from 'node:crypto';
 import type { HarnessConfig } from '../../config.js';
 import { resolvedGeneratorProvider } from '../../agents/routing.js';
 import { recordAgentInvocation } from '../../agents/invocation.js';
@@ -23,6 +25,7 @@ import {
   updatePR,
   type Issue as IssueType,
   type IssueContract as IssueContractType,
+  type GithubIssueSnapshot as GithubIssueSnapshotType,
   type PR as PRType,
   type PrRevision,
 } from '../../domain/schema.js';
@@ -47,6 +50,19 @@ import {
   type PrNativeGithubRunner,
 } from './pr-native.js';
 import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
+import type { DevelopmentProgressReporter } from '../../domain/development-progress.js';
+import {
+  canonicalGithubRepository,
+  parsePullRequestClosingTarget,
+} from './work-identity.js';
+
+/** Trusted Source Issue authority resolved through a durable release/PR binding. */
+export interface RepositoryPullRequestIssueAuthority {
+  pullRequestNumber: number;
+  issue: GithubIssueSnapshotType;
+  /** Digest recorded with the immutable ready-time release snapshot. */
+  sourceDigest: string;
+}
 
 export interface RepositoryPullRequestDiscovery {
   pullRequest: GithubOpenPullRequest;
@@ -55,6 +71,8 @@ export interface RepositoryPullRequestDiscovery {
   revision: PrRevision;
   imported: boolean;
   reviewRequired: boolean;
+  /** Requirements bytes are supplied only as inert restricted-review input. */
+  sourceIssueMaterial: string | null;
 }
 
 export interface RepositoryPullRequestReviewResult {
@@ -90,6 +108,14 @@ export interface RepositoryPullRequestReviewOptions {
     graderProfileValid: boolean;
     graderProfileError?: string;
   };
+  /** Durable operator projection for the isolated current-head review. */
+  progress?: DevelopmentProgressReporter;
+  /** Runner-owned state root outside the registered repository checkout. */
+  trustedReviewStateRoot?: string;
+  /** Stable checkout to project after the detached review checkout is removed. */
+  operatorWorktreePath?: string;
+  /** Project the stable checkout to the immutable head fetched by this review. */
+  projectOperatorWorktreeHead?: (headSha: string) => void;
 }
 
 function syntheticContract(pullRequest: GithubOpenPullRequest): IssueContractType {
@@ -126,13 +152,107 @@ function syntheticContract(pullRequest: GithubOpenPullRequest): IssueContractTyp
   });
 }
 
+function sourceIssueContract(
+  pullRequest: GithubOpenPullRequest,
+  authority: RepositoryPullRequestIssueAuthority,
+  repository: string,
+): IssueContractType {
+  const source = authority.issue;
+  const expectedRepository = canonicalGithubRepository(repository);
+  if (
+    authority.pullRequestNumber !== pullRequest.number
+    || canonicalGithubRepository(source.repository) !== expectedRepository
+  ) {
+    throw new Error(
+      `PR #${pullRequest.number} Source Issue authority does not match ${repository}`,
+    );
+  }
+  const closingTarget = parsePullRequestClosingTarget(pullRequest.body);
+  if (
+    !closingTarget
+    || closingTarget.repository !== expectedRepository
+    || closingTarget.issueNumber !== source.number
+  ) {
+    throw new Error(
+      `PR #${pullRequest.number} does not reference its trusted Source Issue `
+      + `${repository}#${source.number}`,
+    );
+  }
+  return IssueContract.parse({
+    productGoal: `Satisfy the frozen Source Issue ${repository}#${source.number}`,
+    userStory: [
+      `As a repository maintainer, I want PR #${pullRequest.number} reviewed against`,
+      `the complete repository-owned Source Issue before its current head can merge.`,
+    ].join(' '),
+    scope: {
+      include: [
+        `All requirements, acceptance criteria, and clarifications in ${source.url}`,
+        'The complete diff at the immutable current head',
+      ],
+      exclude: [
+        'Requirements belonging to explicitly out-of-scope follow-up issues',
+      ],
+    },
+    acceptanceCriteria: [{
+      id: 'SOURCE-ISSUE',
+      severity: 'blocker' as const,
+      behavior: [
+        'Evaluate the implementation against every requirement and acceptance item in the',
+        'separately supplied, inert, ready-time Source Issue snapshot.',
+        `Source: ${source.url}`,
+        `Source updated at: ${source.sourceUpdatedAt}`,
+        `Snapshot digest: ${authority.sourceDigest}`,
+      ].join('\n\n'),
+      verification: {
+        method: 'scope_check' as const,
+        expected: [
+          'the current head satisfies every applicable Source Issue requirement',
+          'configured deterministic graders pass',
+          'every required review perspective approves the current head',
+        ],
+      },
+    }],
+    redLines: [
+      'Do not replace Source Issue requirements with PR-authored title or prose.',
+      'Do not merge evidence produced for another head SHA.',
+      'Do not let an approve verdict mask a blocker or major finding.',
+    ],
+  });
+}
+
+export function sourceIssueReviewMaterial(
+  authority: RepositoryPullRequestIssueAuthority,
+): string {
+  return [
+    '--- BEGIN UNTRUSTED SOURCE ISSUE REQUIREMENTS DATA ---',
+    JSON.stringify({
+      digest: authority.sourceDigest,
+      repository: authority.issue.repository,
+      number: authority.issue.number,
+      title: authority.issue.title,
+      body: authority.issue.body,
+      url: authority.issue.url,
+      sourceUpdatedAt: authority.issue.sourceUpdatedAt,
+      snapshotAt: authority.issue.snapshotAt,
+    }, null, 2),
+    '--- END UNTRUSTED SOURCE ISSUE REQUIREMENTS DATA ---',
+  ].join('\n');
+}
+
 function repositoryFromPullRequest(pullRequest: GithubOpenPullRequest): string {
   const match = new URL(pullRequest.url).pathname.match(/^\/([^/]+)\/([^/]+)\/pull\//);
   if (!match) throw new Error(`cannot identify repository from PR URL: ${pullRequest.url}`);
   return `${match[1]}/${match[2]}`;
 }
 
-function repositoryPrProjection(pullRequest: GithubOpenPullRequest, repository: string) {
+function repositoryPrProjection(
+  pullRequest: GithubOpenPullRequest,
+  repository: string,
+  authority?: RepositoryPullRequestIssueAuthority,
+) {
+  const trustedAuthority = authority?.pullRequestNumber === pullRequest.number
+    ? authority
+    : undefined;
   return {
     externalRef: {
       provider: 'github' as const,
@@ -141,10 +261,18 @@ function repositoryPrProjection(pullRequest: GithubOpenPullRequest, repository: 
       url: pullRequest.url,
     },
     title: `PR #${pullRequest.number}: ${pullRequest.title}`,
-    contract: syntheticContract(pullRequest),
+    contract: trustedAuthority
+      ? sourceIssueContract(pullRequest, trustedAuthority, repository)
+      : syntheticContract(pullRequest),
     implementationNotes: [
       `Repository-discovered GitHub PR: ${pullRequest.url}`,
       `Original head branch: ${pullRequest.headRefName}`,
+      ...(trustedAuthority
+        ? [
+            `Trusted Source Issue: ${trustedAuthority.issue.url}`,
+            `Source Issue updated at: ${trustedAuthority.issue.sourceUpdatedAt}`,
+          ]
+        : []),
     ],
   };
 }
@@ -153,11 +281,13 @@ function createRepositoryReviewIssue(
   store: Store,
   config: HarnessConfig,
   pullRequest: GithubOpenPullRequest,
+  authority?: RepositoryPullRequestIssueAuthority,
 ): IssueType {
   const timestamp = nowISO();
   const projection = repositoryPrProjection(
     pullRequest,
     config.intake?.repository ?? repositoryFromPullRequest(pullRequest),
+    authority,
   );
   return store.addIssue(Issue.parse({
     id: store.nextId('ISSUE'),
@@ -201,6 +331,7 @@ export function discoverRepositoryPullRequests(
   config: HarnessConfig,
   runner: PrNativeGithubRunner,
   cwd: string,
+  authority?: RepositoryPullRequestIssueAuthority,
 ): RepositoryPullRequestDiscovery[] {
   if (!runner.listOpenPullRequests) return [];
   const baseBranch = config.gate?.baseBranch ?? config.baseBranch;
@@ -213,7 +344,7 @@ export function discoverRepositoryPullRequests(
 
   for (const pullRequest of pullRequests) {
     const repository = configuredRepository ?? repositoryFromPullRequest(pullRequest);
-    const projection = repositoryPrProjection(pullRequest, repository);
+    const projection = repositoryPrProjection(pullRequest, repository, authority);
     let pr = store.db.prs.find(
       (candidate) => candidate.externalRef?.provider === 'github'
         && candidate.externalRef.number === pullRequest.number
@@ -227,7 +358,12 @@ export function discoverRepositoryPullRequests(
     );
     let imported = false;
     if (!pr) {
-      const issue = createRepositoryReviewIssue(store, config, pullRequest);
+      const issue = createRepositoryReviewIssue(
+        store,
+        config,
+        pullRequest,
+        authority,
+      );
       const timestamp = nowISO();
       const created = store.addPR(PR.parse({
         id: store.nextId('PR'),
@@ -274,6 +410,9 @@ export function discoverRepositoryPullRequests(
       revision,
       imported,
       reviewRequired: !currentRevisionAttempted(store, pr, revision),
+      sourceIssueMaterial: authority?.pullRequestNumber === pullRequest.number
+        ? sourceIssueReviewMaterial(authority)
+        : null,
     });
   }
 
@@ -358,11 +497,28 @@ export async function reviewRepositoryPullRequest(
       `PR #${pullRequest.number} fetched head does not match revision ${revision.headSha}`,
     );
   }
+  options.projectOperatorWorktreeHead?.(revision.headSha);
   const issueKey = `repository-pr-${pullRequest.number}-r${revision.ordinal}`;
   const worktree = path.join(harnessRoot, '.harness', 'worktrees', issueKey);
+  const trustedReviewStateRoot = options.trustedReviewStateRoot ?? path.join(
+    os.tmpdir(),
+    'agentops-trusted-review-state',
+    createHash('sha256').update(path.resolve(harnessRoot)).digest('hex'),
+  );
   createDetachedWorktree(repo, revision.headSha, worktree);
 
   try {
+    await options.progress?.({
+      eventKey: `review:repository-pr:${pullRequest.number}:r${revision.ordinal}:start`,
+      phase: 'review',
+      step: `review PR #${pullRequest.number} current head`,
+      state: 'running',
+      summary: `Reviewing ${revision.headSha.slice(0, 12)} in an isolated worktree`,
+      nextGate: 'all required perspectives and repository graders approve',
+      worktreePath: options.operatorWorktreePath ?? worktree,
+      branch: pullRequest.headRefName,
+      pullRequestNumber: pullRequest.number,
+    });
     enterRepositoryPrEvaluation(store, issue);
     const attempt = attemptForRevision(store, pr, revision);
     const reviewingPR = store.replacePR(updatePR(requireMutablePR(pr), {
@@ -408,6 +564,10 @@ export async function reviewRepositoryPullRequest(
           designAuthority: issue.designAuthority,
           designReview: issue.designReview,
           untrusted: true,
+          trustedStateRoot: trustedReviewStateRoot,
+          ...(discovery.sourceIssueMaterial
+            ? { sourceIssueMaterial: discovery.sourceIssueMaterial }
+            : {}),
           surrogateOracleMismatchCount: surrogateOracleMismatchRevisions(
             store.db.revisionGateSnapshots,
             pr.id,
@@ -504,6 +664,38 @@ export async function reviewRepositoryPullRequest(
       `  ✓ ${pr.id}: repository PR #${pullRequest.number} `
       + `${revision.headSha.slice(0, 12)} reviewed → ${panel.verdict}`,
     );
+    const blockingFindings = panel.runs.flatMap((run) =>
+      run.findings
+        .filter((finding) =>
+          finding.severity === 'blocker' || finding.severity === 'major')
+        .map((finding) => [
+          `${run.perspective ?? 'gate'} ${finding.severity}`,
+          finding.observed,
+        ].join(': ')));
+    const missingPerspectives = perspectives
+      .filter((perspective) =>
+        !perspective.deterministic
+        && !panel.perspectives.includes(perspective.key))
+      .map((perspective) => `missing review: ${perspective.key}`);
+    const reviewBlocker = [...blockingFindings, ...missingPerspectives]
+      .join('; ')
+      .slice(0, 1000);
+    await options.progress?.({
+      eventKey: `review:repository-pr:${pullRequest.number}:r${revision.ordinal}:result`,
+      phase: panel.verdict === 'approve' ? 'review' : 'human-review',
+      step: `review PR #${pullRequest.number} current head`,
+      state: panel.verdict === 'approve' ? 'succeeded' : 'blocked',
+      summary: `Current-head review verdict: ${panel.verdict}`,
+      nextGate: panel.verdict === 'approve'
+        ? 'GitHub merge gates'
+        : 'a new pull request head addresses the findings',
+      blocker: panel.verdict === 'approve'
+        ? null
+        : reviewBlocker || `current-head review verdict is ${panel.verdict}`,
+      worktreePath: options.operatorWorktreePath ?? worktree,
+      branch: pullRequest.headRefName,
+      pullRequestNumber: pullRequest.number,
+    });
     return {
       prId: pr.id,
       revisionId: revision.id,

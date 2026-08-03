@@ -286,12 +286,21 @@ export class TypedGhTriageClient implements TriageGitHub {
     if (events.length > 1_000) {
       throw new Error('event-read exceeded the item limit');
     }
+    const issueBody = issue.body ?? '';
+    if (issue.title.length > 4_096 || issueBody.length > 1_000_000) {
+      throw new Error('issue-read exceeds the immutable requirements size limit');
+    }
+    for (const comment of comments) {
+      if ((comment.body ?? '').length > 100_000) {
+        throw new Error('comment-read exceeds the immutable requirements size limit');
+      }
+    }
     return {
       actorLogin: this.actorLogin,
       issue: {
         number: issue.number,
-        title: issue.title.slice(0, 2_000),
-        body: (issue.body ?? '').slice(0, 64 * 1024),
+        title: issue.title,
+        body: issueBody,
         state: issue.state,
         updatedAt: new Date(issue.updated_at).toISOString(),
         url: issue.html_url,
@@ -301,7 +310,7 @@ export class TypedGhTriageClient implements TriageGitHub {
       },
       comments: comments.map((comment) => ({
         id: comment.id,
-        body: (comment.body ?? '').slice(0, 32 * 1024),
+        body: comment.body ?? '',
         updatedAt: new Date(comment.updated_at).toISOString(),
         url: comment.html_url,
         author: comment.user.login,
@@ -533,13 +542,12 @@ export function triageSourceDigest(
   policy: TriagePolicy,
 ): string {
   const managed = new Set(managedTriageLabels(policy));
-  const comments = snapshot.comments
-    .filter((comment) =>
-      comment.author !== snapshot.actorLogin || markerDigest(comment.body) === null)
+  const comments = authoritativeTriageComments(snapshot)
     .map((comment) => ({
       id: comment.id,
       body: comment.body,
       updatedAt: comment.updatedAt,
+      url: comment.url,
       author: comment.author,
     }));
   const source = {
@@ -557,6 +565,16 @@ export function triageSourceDigest(
     comments,
   };
   return createHash('sha256').update(JSON.stringify(source)).digest('hex');
+}
+
+export function authoritativeTriageComments(
+  snapshot: TriageSnapshot,
+): TriageComment[] {
+  return snapshot.comments
+    .filter((comment) =>
+      comment.author !== snapshot.actorLogin || markerDigest(comment.body) === null)
+    .sort((left, right) => left.id - right.id)
+    .map((comment) => ({ ...comment }));
 }
 
 export function hasTriageMarker(

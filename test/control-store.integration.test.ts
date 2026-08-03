@@ -14,7 +14,9 @@ import {
   OperatingModeError,
   PostgresControlStore,
   RepositoryBusyError,
+  releaseSourceIssueSnapshotDigest,
   assertControlSchema,
+  loadControlMigrations,
   migrateControlSchema,
 } from '../src/control-store/index.js';
 import type { AgentOpsRunnerAdapter } from '../src/runner/adapter.js';
@@ -31,6 +33,22 @@ import {
 // above the lock timeout in reset() so a genuine lock wait fails naming itself
 // rather than as an expired test.
 vi.setConfig({ testTimeout: 20_000 });
+
+function frozenSourceIssue(repository: string, number: number, at: string) {
+  const source = {
+    repository,
+    number,
+    title: `Issue ${number}`,
+    body: 'Frozen acceptance requirements.',
+    url: `https://github.com/${repository}/issues/${number}`,
+    labels: ['ready'],
+    comments: [],
+    state: 'open' as const,
+    sourceUpdatedAt: at,
+    capturedAt: at,
+  };
+  return { ...source, digest: releaseSourceIssueSnapshotDigest(source) };
+}
 
 const databaseUrl = process.env.AGENTOPS_TEST_DATABASE_URL;
 const integration = databaseUrl ? describe.sequential : describe.skip;
@@ -254,6 +272,96 @@ integration('PostgreSQL control store', () => {
     await expect(migrateControlSchema(pool)).rejects.toThrow(/partial control schema/);
   });
 
+  it('upgrades the exact deployed version-16 schema without rewriting history', async () => {
+    await reset();
+    const migrations = loadControlMigrations();
+    expect(migrations.slice(12, 16).map(({ version, checksum }) => ({ version, checksum })))
+      .toEqual([
+        { version: 13, checksum: 'c58e1668adf5eebf799af04b646b61aea6479f6ed6a419179ea938ec0f3af407' },
+        { version: 14, checksum: 'e964d77251c3afbbf3729fcc627bfc25a3443859d0802529c542a59880d18407' },
+        { version: 15, checksum: 'bc6016b0147bc37601b72d43125fdcaec9393699b511182e877038dc36b871f7' },
+        { version: 16, checksum: 'e15d92b05cf16371f0c3f870876dc6e788a37df454f4d2e310c6e904f5afcb8d' },
+      ]);
+    await pool.query('CREATE SCHEMA agentops_control');
+    await pool.query(`
+      CREATE TABLE agentops_control.schema_migrations (
+        version integer PRIMARY KEY CHECK (version > 0),
+        name text NOT NULL UNIQUE,
+        checksum text NOT NULL CHECK (checksum ~ '^[0-9a-f]{64}$'),
+        installed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+      )
+    `);
+    for (const migration of migrations.slice(0, 16)) {
+      await pool.query(migration.sql);
+      await pool.query(
+        `INSERT INTO agentops_control.schema_migrations(version, name, checksum)
+         VALUES ($1, $2, $3)`,
+        [migration.version, migration.name, migration.checksum],
+      );
+    }
+    const legacyRegistrationId = randomUUID();
+    const legacyJobId = randomUUID();
+    const legacyAttemptId = randomUUID();
+    await pool.query(
+      `UPDATE agentops_control.lifecycle_state
+          SET mode = 'ACTIVE', generation = generation + 1,
+              updated_at = clock_timestamp()
+        WHERE singleton`,
+    );
+    await pool.query(
+      `INSERT INTO agentops_control.repository_registrations(
+         id, repository, configuration
+       ) VALUES ($1, 'sample/legacy-needs-info', '{}'::jsonb)`,
+      [legacyRegistrationId],
+    );
+    await pool.query(
+      `INSERT INTO agentops_control.jobs(
+         id, registration_id, registration_version, source_kind, source_key,
+         idempotency_key, job_type, payload, status, result, finished_at
+       ) VALUES (
+         $1, $2, 1, 'poll', 'legacy-needs-info', 'legacy-needs-info',
+         'agentops.triage', $3, 'succeeded', $4, clock_timestamp()
+       )`,
+      [
+        legacyJobId,
+        legacyRegistrationId,
+        {
+          schemaVersion: 1,
+          repository: { owner: 'sample', name: 'legacy-needs-info' },
+          issue: { number: 9, observedUpdatedAt: '2026-08-01T00:00:00Z' },
+        },
+        {
+          decision: {
+            readiness: 'needs_info',
+            summary: 'Legacy issue needs detail.',
+            missingInformation: Array.from({ length: 16 }, () => '不足'.repeat(250)),
+          },
+        },
+      ],
+    );
+    await pool.query(
+      `INSERT INTO agentops_control.job_attempts(
+         id, job_id, attempt_number, worker_id, status, finished_at
+       ) VALUES ($1, $2, 1, 'legacy-triage', 'succeeded', clock_timestamp())`,
+      [legacyAttemptId, legacyJobId],
+    );
+
+    await expect(migrateControlSchema(pool)).resolves.toBe(17);
+    await expect(assertControlSchema(pool)).resolves.toBeUndefined();
+    const installed = await pool.query<{ version: number }>(
+      `SELECT max(version)::integer AS version
+         FROM agentops_control.schema_migrations`,
+    );
+    expect(installed.rows[0]?.version).toBe(17);
+    const backfilled = await pool.query<{ blocker_length: number }>(
+      `SELECT length(blocker)::integer AS blocker_length
+         FROM agentops_control.development_progress_events
+        WHERE job_id = $1 AND event_key = 'migration:triage-result'`,
+      [legacyJobId],
+    );
+    expect(backfilled.rows).toEqual([{ blocker_length: 1000 }]);
+  });
+
   it('fails closed when the database connection is unavailable', async () => {
     await expect(PostgresControlStore.open({
       connectionString: 'postgresql://postgres:unused@127.0.0.1:1/agentops',
@@ -279,6 +387,11 @@ integration('PostgreSQL control store', () => {
       '0010_release_completion_capability.sql',
       '0011_release_pull_request_binding.sql',
       '0012_runner_release_review_capabilities.sql',
+      '0013_release_human_review_abandonment.sql',
+      '0014_development_progress.sql',
+      '0015_development_progress_backfill.sql',
+      '0016_reuse_open_release_promotion.sql',
+      '0017_freeze_source_issue_snapshot.sql',
     ]) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
@@ -286,7 +399,7 @@ integration('PostgreSQL control store', () => {
       );
       fs.writeFileSync(
         path.join(directory, name),
-        name.startsWith('0012_')
+        name.startsWith('0016_')
           ? `${valid}\nTHIS IS DELIBERATELY INVALID SQL;\n`
           : valid,
       );
@@ -740,6 +853,11 @@ integration('PostgreSQL control store', () => {
       authority: {
         actor: 'product-owner',
         readyAt: '2026-07-29T00:00:30.000Z',
+        sourceIssue: frozenSourceIssue(
+          repo.repository,
+          27,
+          '2026-07-29T00:00:29.000Z',
+        ),
       },
       result: {
         schemaVersion: 1,
@@ -1111,6 +1229,193 @@ integration('PostgreSQL control store', () => {
       size_bytes: '1234',
     });
     await store.finishLease(second!.token, { status: 'succeeded' });
+  });
+
+  it('records idempotent Issue progress only for the live runner lease', async () => {
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_roles WHERE rolname = 'agentops_runner'
+        ) THEN
+          CREATE ROLE agentops_runner NOLOGIN;
+        END IF;
+      END $$
+    `);
+    const store = await migratedStore();
+    await pool.query(
+      'GRANT USAGE ON SCHEMA agentops_control TO agentops_runner',
+    );
+    const registered = await registration(store, '-progress');
+    await enqueueRunner(store, registered.id, registered.version, '-progress');
+    const lease = await store.acquireLease({
+      workerId: 'progress-runner',
+      durationMs: 30_000,
+      jobType: 'agentops.runner',
+    });
+    expect(lease).not.toBeNull();
+
+    const firstId = await store.recordDevelopmentProgress({
+      token: lease!.token,
+      workerId: lease!.workerId,
+      event: {
+        eventKey: 'generation:source:a1:start',
+        phase: 'generation',
+        step: 'generator session attempt 1/3',
+        state: 'running',
+        summary: 'Implementing in an isolated worktree',
+        nextGate: 'repository graders',
+        sessionName: 'ao-progress-source-s0',
+        worktreePath: '/workspace/registrations/repo/jobs/job/attempt-1/worktree',
+        branch: 'agent/progress-source-s0',
+        parentIssueNumber: 1,
+      },
+    });
+    const refreshedId = await store.recordDevelopmentProgress({
+      token: lease!.token,
+      workerId: lease!.workerId,
+      event: {
+        eventKey: 'generation:source:a1:start',
+        phase: 'generation',
+        step: 'generator session attempt 1/3',
+        state: 'running',
+        summary: 'Generator is still active in its isolated worktree',
+        nextGate: 'repository graders',
+        sessionName: 'ao-progress-source-s0',
+        worktreePath: '/workspace/registrations/repo/jobs/job/attempt-1/worktree',
+        branch: 'agent/progress-source-s0',
+        parentIssueNumber: 1,
+      },
+    });
+    expect(refreshedId).toBe(firstId);
+
+    const runner = await pool.connect();
+    try {
+      await runner.query('SET ROLE agentops_runner');
+      await expect(runner.query(
+        'SELECT count(*) FROM agentops_control.development_progress_events',
+      )).rejects.toMatchObject({ code: '42501' });
+      const capability = await runner.query<{ id: string }>(
+        `SELECT agentops_control.record_development_progress($1, $2, $3)
+           AS id`,
+        [
+          lease!.token,
+          lease!.workerId,
+          {
+            eventKey: 'generation:source:a1:start',
+            phase: 'generation',
+            step: 'generator session attempt 1/3',
+            state: 'running',
+            summary: 'Runner capability updated progress without table SELECT',
+            nextGate: 'repository graders',
+            sessionName: 'ao-progress-source-s0',
+            worktreePath:
+              '/workspace/registrations/repo/jobs/job/attempt-1/worktree',
+            branch: 'agent/progress-source-s0',
+            parentIssueNumber: 1,
+          },
+        ],
+      );
+      expect(capability.rows).toEqual([{ id: String(firstId) }]);
+    } finally {
+      await runner.query('RESET ROLE');
+      runner.release();
+    }
+
+    const durable = await pool.query<{
+      repository: string;
+      subject_kind: string;
+      subject_number: string;
+      worker_id: string;
+      summary: string;
+      parent_issue_number: string;
+      count: string;
+    }>(
+      `SELECT max(repository) AS repository,
+              max(subject_kind) AS subject_kind,
+              max(subject_number)::text AS subject_number,
+              max(worker_id) AS worker_id,
+              max(summary) AS summary,
+              max(parent_issue_number)::text AS parent_issue_number,
+              count(*)::text AS count
+         FROM agentops_control.development_progress_events
+        WHERE job_id = $1`,
+      [lease!.job.id],
+    );
+    expect(durable.rows[0]).toMatchObject({
+      repository: registered.repository,
+      subject_kind: 'issue',
+      subject_number: '14',
+      worker_id: lease!.workerId,
+      summary: 'Runner capability updated progress without table SELECT',
+      parent_issue_number: '1',
+      count: '1',
+    });
+
+    await store.finishLease(lease!.token, {
+      status: 'failed',
+      error: 'synthetic terminal failure',
+    });
+    await expect(store.recordDevelopmentProgress({
+      token: lease!.token,
+      workerId: lease!.workerId,
+      event: {
+        eventKey: 'failed:late',
+        phase: 'failed',
+        step: 'late report',
+        state: 'failed',
+      },
+    })).rejects.toThrow(/lease identity is invalid/);
+  });
+
+  it('backfills terminal pre-progress runner jobs with their blocker', async () => {
+    const store = await migratedStore();
+    const registered = await registration(store, '-progress-backfill');
+    await enqueueRunner(
+      store,
+      registered.id,
+      registered.version,
+      '-progress-backfill',
+    );
+    const lease = await store.acquireLease({
+      workerId: 'legacy-progress-runner',
+      durationMs: 30_000,
+      jobType: 'agentops.runner',
+    });
+    expect(lease).not.toBeNull();
+    await store.finishLease(lease!.token, {
+      status: 'failed',
+      error: 'required checks are still pending',
+    });
+    const migration = fs.readFileSync(
+      path.join(
+        process.cwd(),
+        'db',
+        'control-store',
+        'migrations',
+        '0015_development_progress_backfill.sql',
+      ),
+      'utf8',
+    );
+    await pool.query(migration);
+    const progress = await pool.query<{
+      phase: string;
+      state: string;
+      blocker: string | null;
+      subject_number: string;
+      event_key: string;
+    }>(
+      `SELECT phase, state, blocker, subject_number::text, event_key
+         FROM agentops_control.development_progress_events
+        WHERE job_id = $1`,
+      [lease!.job.id],
+    );
+    expect(progress.rows).toEqual([{
+      phase: 'failed',
+      state: 'failed',
+      blocker: 'required checks are still pending',
+      subject_number: '14',
+      event_key: 'migration:terminal-job',
+    }]);
   });
 
   it('rejects an expired leased job after its registration changes', async () => {

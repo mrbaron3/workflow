@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AgentOps Registration Control API
-  version: 1.1.0
+  version: 1.2.0
   description: >-
     mrbaron3/workflow#15 のloopback dashboardとPostgreSQL Registration駆動Control API。
     human-approved workflow-ciso05-dashboard-r02 /
@@ -483,6 +483,7 @@ components:
         - activeJobRegistrationVersion
         - lastJobFailure
         - recentDeliveryFailures
+        - developmentProgress
       properties:
         registration:
           $ref: "#/components/schemas/Registration"
@@ -556,6 +557,168 @@ components:
           maxItems: 20
           items:
             $ref: "#/components/schemas/DeliveryFailure"
+        developmentProgress:
+          type: array
+          items:
+            $ref: "#/components/schemas/DevelopmentIssueProgress"
+    DevelopmentIssueProgress:
+      type: object
+      additionalProperties: false
+      required:
+        - repository
+        - issueNumber
+        - current
+        - history
+        - lastActivity
+      properties:
+        repository:
+          type: string
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$"
+        issueNumber:
+          type: integer
+          minimum: 1
+        current:
+          $ref: "#/components/schemas/DevelopmentProgressEvent"
+        history:
+          description: Newest-first events for this Issue coordinate, including current.
+          type: array
+          minItems: 1
+          maxItems: 12
+          items:
+            $ref: "#/components/schemas/DevelopmentProgressEvent"
+        lastActivity:
+          description: Later of the durable event time and any active lease heartbeat.
+          type: string
+          format: date-time
+    DevelopmentProgressEvent:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - registrationId
+        - registrationVersion
+        - jobId
+        - attemptId
+        - attemptNumber
+        - releaseId
+        - repository
+        - subjectKind
+        - subjectNumber
+        - parentIssueNumber
+        - workerId
+        - eventKey
+        - phase
+        - step
+        - state
+        - summary
+        - nextGate
+        - blocker
+        - sessionName
+        - worktreePath
+        - branch
+        - pullRequestNumber
+        - occurredAt
+        - jobStatus
+        - jobLastError
+        - leaseHeartbeatAt
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        registrationId:
+          type: string
+          format: uuid
+        registrationVersion:
+          type: integer
+          minimum: 1
+        jobId:
+          type: string
+          format: uuid
+        attemptId:
+          type: string
+          format: uuid
+        attemptNumber:
+          type: integer
+          minimum: 1
+        releaseId:
+          type: [string, "null"]
+          format: uuid
+        repository:
+          type: string
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$"
+        subjectKind:
+          enum: [issue, pull_request, repository]
+        subjectNumber:
+          type: [integer, "null"]
+          minimum: 1
+        parentIssueNumber:
+          description: Immutable body-linked parent Epic Issue, when present at ready time.
+          type: [integer, "null"]
+          minimum: 1
+        workerId:
+          type: string
+          minLength: 1
+        eventKey:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: "^[a-z0-9][a-z0-9:._/-]*$"
+        phase:
+          enum:
+            - intake
+            - planning
+            - design
+            - generation
+            - validation
+            - review
+            - pull-request
+            - merge
+            - human-review
+            - completed
+            - failed
+        step:
+          type: string
+          minLength: 1
+          maxLength: 160
+        state:
+          enum: [pending, running, waiting, blocked, succeeded, failed]
+        summary:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 1000
+        nextGate:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 500
+        blocker:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 1000
+        sessionName:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 250
+        worktreePath:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 2000
+        branch:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 500
+        pullRequestNumber:
+          type: [integer, "null"]
+          minimum: 1
+        occurredAt:
+          type: string
+          format: date-time
+        jobStatus:
+          enum: [queued, leased, succeeded, failed, cancelled, rejected]
+        jobLastError:
+          type: [string, "null"]
+        leaseHeartbeatAt:
+          type: [string, "null"]
+          format: date-time
     OperatingMode:
       type: string
       enum:

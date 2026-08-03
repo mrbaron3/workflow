@@ -59,11 +59,23 @@ const defaultRunner: WorkspaceCommandRunner = (command, args, options) => {
 
 const Uuid = z.string().uuid();
 const JobId = z.string().uuid();
+const WorkspaceManifest = z.object({
+  schemaVersion: z.literal(2),
+  repository: z.string().regex(/^[^/]+\/[^/]+$/),
+  eventKind: z.enum(['issue', 'pull_request', 'repository']),
+  eventNumber: z.number().int().positive().nullable(),
+  eventIdentity: z.string().min(1).max(512).nullable(),
+  headSha: z.string().regex(/^[0-9a-f]{40,64}$/),
+  state: z.enum(['active', 'retained', 'cleaned']),
+});
 
 export interface PreparedRunnerWorkspace {
   registrationRoot: string;
   repositoryPath: string;
   worktreePath: string;
+  /** Attempt-scoped provider/evidence/worktree root; never shared by retries. */
+  harnessPath: string;
+  /** Logical-job durable Store only; providers never receive this as cwd. */
   statePath: string;
   artifactPath: string;
   headSha: string;
@@ -202,6 +214,7 @@ export class RunnerWorkspaceManager {
       ),
     );
     const worktreePath = path.join(jobRoot, 'worktree');
+    const harnessPath = path.join(jobRoot, 'harness');
     // Existing AgentOps evaluation JSON remains durable for this logical job
     // across retry attempts, but can never expose another job's queue/PR state.
     const statePath = assertInside(
@@ -296,7 +309,10 @@ export class RunnerWorkspaceManager {
     runBestEffort(
       this.run,
       'git',
-      ['-C', repositoryPath, 'branch', '-D', `runner/${lease.job.id}`],
+      [
+        '-C', repositoryPath, 'branch', '-D',
+        `runner/${lease.job.id}/attempt-${lease.attemptNumber}`,
+      ],
       registrationRoot,
       this.env,
     );
@@ -310,7 +326,7 @@ export class RunnerWorkspaceManager {
         'add',
         '--force',
         '-B',
-        `runner/${lease.job.id}`,
+        `runner/${lease.job.id}/attempt-${lease.attemptNumber}`,
         worktreePath,
         headSha,
       ],
@@ -318,36 +334,255 @@ export class RunnerWorkspaceManager {
       this.env,
     );
     fs.mkdirSync(statePath, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(harnessPath, { recursive: true, mode: 0o700 });
     fs.mkdirSync(artifactPath, { recursive: true, mode: 0o700 });
-    return {
+    const workspace = {
       registrationRoot,
       repositoryPath,
       worktreePath,
+      harnessPath,
       statePath,
       artifactPath,
       headSha,
     };
+    this.writeManifest(workspace, payload, 'active');
+    return workspace;
   }
 
-  cleanup(workspace: PreparedRunnerWorkspace): void {
-    try {
-      runChecked(
+  private manifestPath(workspace: PreparedRunnerWorkspace): string {
+    return assertInside(
+      workspace.registrationRoot,
+      path.join(path.dirname(workspace.worktreePath), 'workspace.json'),
+    );
+  }
+
+  private writeManifest(
+    workspace: PreparedRunnerWorkspace,
+    payload: RunnerJobPayloadV1,
+    state: 'active' | 'retained' | 'cleaned',
+  ): void {
+    const manifest = WorkspaceManifest.parse({
+      schemaVersion: 2,
+      repository: `${payload.repository.owner}/${payload.repository.name}`,
+      eventKind: payload.event.kind,
+      eventNumber: payload.event.kind === 'issue' || payload.event.kind === 'pull_request'
+        ? payload.event.number
+        : null,
+      eventIdentity: payload.event.kind === 'repository' ? payload.event.identity : null,
+      headSha: workspace.headSha,
+      state,
+    });
+    fs.writeFileSync(
+      this.manifestPath(workspace),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+  }
+
+  retain(workspace: PreparedRunnerWorkspace, payload: RunnerJobPayloadV1): void {
+    this.writeManifest(workspace, payload, 'retained');
+  }
+
+  /**
+   * Move the durable operator checkout to an already-fetched immutable PR head.
+   * The runner/job branch remains private to this attempt, so this never moves a
+   * repository branch or another retained worktree.
+   */
+  projectHead(workspace: PreparedRunnerWorkspace, expectedHead: string): void {
+    if (!/^[0-9a-f]{40,64}$/.test(expectedHead)) {
+      throw new RunnerExecutionError(
+        'workspace_failure',
+        `operator worktree head is invalid: ${expectedHead}`,
+        false,
+      );
+    }
+    const resolved = runChecked(
+      this.run,
+      'git',
+      ['-C', workspace.repositoryPath, 'rev-parse', '--verify', `${expectedHead}^{commit}`],
+      workspace.registrationRoot,
+      this.env,
+    );
+    if (resolved !== expectedHead) {
+      throw new RunnerExecutionError(
+        'workspace_failure',
+        `operator worktree head did not resolve exactly: ${expectedHead}`,
+        false,
+      );
+    }
+    runChecked(
+      this.run,
+      'git',
+      ['-C', workspace.worktreePath, 'reset', '--hard', expectedHead],
+      workspace.registrationRoot,
+      this.env,
+    );
+    const observed = runChecked(
+      this.run,
+      'git',
+      ['-C', workspace.worktreePath, 'rev-parse', 'HEAD'],
+      workspace.registrationRoot,
+      this.env,
+    );
+    if (observed !== expectedHead) {
+      throw new RunnerExecutionError(
+        'workspace_failure',
+        `operator worktree projection is stale: ${observed}`,
+        false,
+      );
+    }
+    workspace.headSha = observed;
+  }
+
+  cleanup(workspace: PreparedRunnerWorkspace, payload: RunnerJobPayloadV1): void {
+    const jobsRoot = assertInside(
+      workspace.registrationRoot,
+      path.dirname(path.dirname(workspace.statePath)),
+    );
+    const repository = `${payload.repository.owner}/${payload.repository.name}`;
+    const eventNumber = payload.event.kind === 'issue' || payload.event.kind === 'pull_request'
+      ? payload.event.number
+      : null;
+    const eventIdentity = payload.event.kind === 'repository' ? payload.event.identity : null;
+    const eventKind = payload.event.kind;
+    const jobRoots = fs.existsSync(jobsRoot)
+      ? fs.readdirSync(jobsRoot, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory() && JobId.safeParse(entry.name).success)
+        .map((entry) => assertInside(jobsRoot, path.join(jobsRoot, entry.name)))
+      : [];
+
+    for (const jobRoot of jobRoots) {
+      let matchedJob = false;
+      let preservedWorktree = false;
+      let matchedRetainedHistory = false;
+      for (const entry of fs.readdirSync(jobRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !/^attempt-[1-9][0-9]*$/.test(entry.name)) continue;
+        const attemptRoot = assertInside(jobRoot, path.join(jobRoot, entry.name));
+        const worktreePath = assertInside(attemptRoot, path.join(attemptRoot, 'worktree'));
+        const isCurrent = worktreePath === workspace.worktreePath;
+        const manifestPath = assertInside(
+          workspace.registrationRoot,
+          path.join(attemptRoot, 'workspace.json'),
+        );
+        let manifest: z.infer<typeof WorkspaceManifest> | null = null;
+        if (fs.existsSync(manifestPath) && fs.lstatSync(manifestPath).isFile()) {
+          try {
+            manifest = WorkspaceManifest.parse(JSON.parse(fs.readFileSync(manifestPath, 'utf8')));
+          } catch {
+            // Unknown metadata is never authority to delete an operator checkout.
+          }
+        }
+        const sameRetainedEvent = manifest?.state === 'retained'
+          && manifest.repository === repository
+          && manifest.eventKind === eventKind
+          && manifest.eventNumber === eventNumber
+          && manifest.eventIdentity === eventIdentity;
+        let shouldClean = isCurrent;
+        if (sameRetainedEvent) {
+          matchedJob = true;
+          if (!isCurrent) matchedRetainedHistory = true;
+          const status = this.run(
+            'git',
+            ['-C', worktreePath, 'status', '--porcelain', '--untracked-files=all'],
+            { cwd: workspace.registrationRoot, env: this.env },
+          );
+          const head = this.run(
+            'git',
+            ['-C', worktreePath, 'rev-parse', 'HEAD'],
+            { cwd: workspace.registrationRoot, env: this.env },
+          );
+          shouldClean = !status.error
+            && status.status === 0
+            && status.stdout.trim() === ''
+            && !head.error
+            && head.status === 0
+            && head.stdout.trim() === manifest!.headSha;
+          const retainedHarnessWorktrees = assertInside(
+            attemptRoot,
+            path.join(attemptRoot, 'harness', '.harness', 'worktrees'),
+          );
+          if (
+            fs.existsSync(retainedHarnessWorktrees)
+            && fs.readdirSync(retainedHarnessWorktrees).length > 0
+          ) {
+            shouldClean = false;
+          }
+        }
+        if (!isCurrent && !sameRetainedEvent) continue;
+        matchedJob = true;
+        if (!shouldClean) {
+          preservedWorktree = true;
+          continue;
+        }
+        runBestEffort(
+          this.run,
+          'git',
+          ['-C', workspace.repositoryPath, 'worktree', 'remove', '--force', worktreePath],
+          workspace.registrationRoot,
+          this.env,
+        );
+        fs.rmSync(worktreePath, { recursive: true, force: true });
+        fs.rmSync(assertInside(attemptRoot, path.join(attemptRoot, 'harness')), {
+          recursive: true,
+          force: true,
+        });
+        runBestEffort(
+          this.run,
+          'git',
+          [
+            '-C', workspace.repositoryPath, 'branch', '-D',
+            `runner/${path.basename(jobRoot)}/${entry.name}`,
+          ],
+          workspace.registrationRoot,
+          this.env,
+        );
+        const cleaned = WorkspaceManifest.parse({
+          ...(manifest ?? {
+            schemaVersion: 2,
+            repository,
+            eventKind,
+            eventNumber,
+            eventIdentity,
+            headSha: workspace.headSha,
+          }),
+          state: 'cleaned',
+        });
+        fs.writeFileSync(manifestPath, `${JSON.stringify(cleaned, null, 2)}\n`, {
+          encoding: 'utf8',
+          mode: 0o600,
+        });
+      }
+      if (!matchedJob || preservedWorktree) continue;
+      const legacyNestedWorktrees = assertInside(
+        jobRoot,
+        path.join(jobRoot, 'state', '.harness', 'worktrees'),
+      );
+      // A retained generator checkout is an operator-facing resume surface.
+      // Its original head is owned by the generator state, not this outer
+      // manager, so the only fail-safe automatic policy is to preserve it.
+      // Current successful jobs were never exposed and remain collectible.
+      if (
+        matchedRetainedHistory
+        && fs.existsSync(legacyNestedWorktrees)
+        && fs.readdirSync(legacyNestedWorktrees).length > 0
+      ) continue;
+      fs.rmSync(assertInside(jobRoot, path.join(jobRoot, 'state')), {
+        recursive: true,
+        force: true,
+      });
+      runBestEffort(
         this.run,
         'git',
-        [
-          '-C',
-          workspace.repositoryPath,
-          'worktree',
-          'remove',
-          '--force',
-          workspace.worktreePath,
-        ],
+        // Remove the pre-isolation branch name as upgrade garbage too.
+        ['-C', workspace.repositoryPath, 'branch', '-D', `runner/${path.basename(jobRoot)}`],
         workspace.registrationRoot,
         this.env,
       );
-    } catch {
-      // Attempt artifacts remain durable; prune on the next deterministic prepare.
     }
-    fs.rmSync(workspace.worktreePath, { recursive: true, force: true });
+    this.run(
+      'git',
+      ['-C', workspace.repositoryPath, 'worktree', 'prune'],
+      { cwd: workspace.registrationRoot, env: this.env },
+    );
   }
 }

@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/mrbaron3/workflow/internal/control"
 	"github.com/mrbaron3/workflow/internal/lifecycle"
 )
 
@@ -111,6 +113,46 @@ func run(args []string) error {
 		}
 		printStatus(status)
 		return nil
+	case "progress":
+		flags := flag.NewFlagSet("progress", flag.ContinueOnError)
+		asJSON := flags.Bool("json", false, "emit machine-readable JSON")
+		limit := flags.Int("limit", 50, "maximum events")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 1 || *limit < 1 || *limit > 200 {
+			return usageError()
+		}
+		repository, issueNumber, err := parseProgressTarget(flags.Arg(0))
+		if err != nil {
+			return err
+		}
+		report, err := manager.Progress(ctx, repository, issueNumber, *limit)
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(report)
+		}
+		printProgress(report, repository, issueNumber)
+		return nil
+	case "worktree":
+		flags := flag.NewFlagSet("worktree", flag.ContinueOnError)
+		showDiff := flags.Bool("diff", false, "also show the retained worktree diff")
+		openShell := flags.Bool("shell", false, "open an interactive shell in the retained worktree")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 1 {
+			return usageError()
+		}
+		repository, issueNumber, err := parseProgressTarget(flags.Arg(0))
+		if err != nil {
+			return err
+		}
+		return manager.Worktree(ctx, repository, issueNumber, *showDiff, *openShell)
 	case "logs":
 		flags := flag.NewFlagSet("logs", flag.ContinueOnError)
 		component := flags.String(
@@ -153,8 +195,22 @@ func commandID(operation, provided string) string {
 	)
 }
 
+func parseProgressTarget(value string) (string, int64, error) {
+	repository, rawIssue, present := strings.Cut(strings.TrimSpace(value), "#")
+	repository = strings.ToLower(strings.TrimSpace(repository))
+	if !present || strings.Contains(rawIssue, "#") ||
+		!control.ValidRepositoryIdentity(repository) {
+		return "", 0, fmt.Errorf("progress target must be canonical owner/name#issue")
+	}
+	issue, err := strconv.ParseInt(strings.TrimSpace(rawIssue), 10, 64)
+	if err != nil || issue < 1 {
+		return "", 0, fmt.Errorf("progress target must include a positive Issue number")
+	}
+	return repository, issue, nil
+}
+
 func usageError() error {
 	return fmt.Errorf(
-		"usage: agentopsctl start|drain|stop|rotate-postgres-admin|status|logs|open (use -h after a command)",
+		"usage: agentopsctl start|drain|stop|rotate-postgres-admin|status|progress|worktree|logs|open (use -h after a command)",
 	)
 }

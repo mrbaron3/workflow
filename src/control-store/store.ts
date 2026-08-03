@@ -9,6 +9,10 @@ import {
 import { z } from 'zod';
 import { assertControlSchema, migrateControlSchema } from './migrations.js';
 import {
+  DevelopmentProgressUpdate,
+  type DevelopmentProgressUpdate as DevelopmentProgressUpdateType,
+} from '../domain/development-progress.js';
+import {
   DurableReleaseReceiptContract,
   ReleaseArtifactContract,
   ReleaseMergeIntentReceiptContract,
@@ -35,9 +39,11 @@ import {
   RepositoryBusyError,
   RepositoryRegistrationInput,
   RepositoryRegistrationPatch,
+  ReleaseSourceIssueSnapshotContract,
   ReleaseCertificationError,
   ReleaseReceiptConflictError,
   RunnerCriticalBoundary,
+  RunnerJobPayloadV1Contract,
   RunnerJobFailureV1Contract,
   RunnerJobResultV1Contract,
   StaleRegistrationError,
@@ -53,6 +59,7 @@ import {
   type MonitorBrokerResponse as MonitorBrokerResponseType,
   type ReconciliationWork,
   type ReleaseRecord,
+  type ReleaseSourceIssueSnapshot,
   type ReleaseReceiptOutboxEntry,
   type RepositoryRegistration,
   type RunnerJobFailureV1,
@@ -584,16 +591,50 @@ export class PostgresControlStore {
     return result.rows[0] ? releaseRecord(result.rows[0]) : null;
   }
 
+  /** Resolve the immutable ready-time Source Issue attached to this release's promoted job. */
+  async getReleaseSourceIssue(
+    releaseId: string,
+  ): Promise<ReleaseSourceIssueSnapshot | null> {
+    const parsedId = z.string().uuid().parse(releaseId);
+    const result = await this.pool.query<{ payload: unknown }>(
+      `SELECT payload
+         FROM agentops_control.jobs
+        WHERE release_id = $1
+          AND job_type = 'agentops.runner'
+          AND payload ? 'sourceIssue'
+        ORDER BY created_at, id`,
+      [parsedId],
+    );
+    const snapshots = result.rows.map((row) => {
+      const payload = RunnerJobPayloadV1Contract.parse(row.payload);
+      if (!payload.sourceIssue) {
+        throw new ReleaseReceiptConflictError(
+          `release ${parsedId} has a malformed Source Issue binding`,
+        );
+      }
+      return payload.sourceIssue;
+    });
+    if (snapshots.length === 0) return null;
+    if (snapshots.some((snapshot) => snapshot.digest !== snapshots[0]!.digest)) {
+      throw new ReleaseReceiptConflictError(
+        `release ${parsedId} has conflicting Source Issue snapshots`,
+      );
+    }
+    return snapshots[0]!;
+  }
+
   /** Resolve a v2 recovery job back to its durable release identity. */
   async findReleaseForRunnerEvent(input: {
     registrationId: string;
     issueNumber?: number;
     pullRequest?: number;
+    includeMerged?: boolean;
   }): Promise<ReleaseRecord | null> {
     const coordinates = z.object({
       registrationId: z.string().uuid(),
       issueNumber: z.number().int().positive().optional(),
       pullRequest: z.number().int().positive().optional(),
+      includeMerged: z.boolean().optional(),
     }).strict().refine(
       (value) => value.issueNumber !== undefined || value.pullRequest !== undefined,
       'release recovery needs an issue or pull request coordinate',
@@ -601,7 +642,10 @@ export class PostgresControlStore {
     const result = await this.pool.query<ReleaseRow>(
       `SELECT * FROM agentops_control.releases
         WHERE registration_id = $1
-          AND status IN ('collecting', 'merge-authorized')
+          AND (
+            status IN ('collecting', 'merge-authorized')
+            OR ($4::boolean AND status = 'merged')
+          )
           AND ($2::bigint IS NULL OR issue_number = $2)
           AND ($3::bigint IS NULL OR pull_request_number = $3)
         ORDER BY created_at DESC
@@ -610,11 +654,12 @@ export class PostgresControlStore {
         coordinates.registrationId,
         coordinates.issueNumber ?? null,
         coordinates.pullRequest ?? null,
+        coordinates.includeMerged ?? false,
       ],
     );
     if (result.rows.length > 1) {
       throw new ReleaseReceiptConflictError(
-        'runner event matches more than one open release identity',
+        'runner event matches more than one release identity',
       );
     }
     return result.rows[0] ? releaseRecord(result.rows[0]) : null;
@@ -778,13 +823,17 @@ export class PostgresControlStore {
       const receipts = entries.map((entry) => entry.receipt);
       const one = <K extends DurableReleaseReceipt['kind']>(kind: K) =>
         receipts.find((receipt) => receipt.kind === kind);
+      const requirementsAuthority = one('requirements-authority');
       const artifacts = await client.query<ReleaseArtifactRow>(
         `SELECT * FROM agentops_control.release_artifacts
           WHERE release_id = $1 ORDER BY recorded_at, id`,
         [release.id],
       );
       const evidence: unknown = {
-        schemaVersion: '2.0',
+        // Merged releases from before schema 17 are immutable historical v2
+        // evidence. Export them without inventing a requirements authority;
+        // every new release is required by the DB boundary to export as v3.
+        schemaVersion: requirementsAuthority ? '3.0' : '2.0',
         release: {
           id: release.id,
           repository: release.repository,
@@ -798,6 +847,7 @@ export class PostgresControlStore {
         policy: release.policy,
         receipts: {
           authority: one('authority'),
+          ...(requirementsAuthority ? { requirementsAuthority } : {}),
           runtime: receipts.filter((receipt) => receipt.kind === 'runtime-provenance'),
           builds: receipts.filter((receipt) => receipt.kind === 'build'),
           grades: receipts.filter((receipt) => receipt.kind === 'grade'),
@@ -1839,6 +1889,29 @@ export class PostgresControlStore {
     return result.rows[0].expires_at.toISOString();
   }
 
+  /**
+   * Publish one idempotent operator-facing phase transition. The database
+   * derives every ownership coordinate from the still-live runner lease.
+   */
+  async recordDevelopmentProgress(input: {
+    token: string;
+    workerId: string;
+    event: DevelopmentProgressUpdateType;
+  }): Promise<number> {
+    if (!input.workerId.trim()) throw new Error('workerId is required');
+    const event = DevelopmentProgressUpdate.parse(input.event);
+    const result = await this.pool.query<{ progress_id: string }>(
+      `SELECT agentops_control.record_development_progress($1, $2, $3)
+         AS progress_id`,
+      [input.token, input.workerId, event],
+    );
+    const progressId = Number(result.rows[0]?.progress_id);
+    if (!Number.isSafeInteger(progressId) || progressId < 1) {
+      throw new Error('development progress insert returned no identity');
+    }
+    return progressId;
+  }
+
   async reclaimExpiredLeases(
     maxAttempts = 3,
     options: { jobType?: string; retryBaseMs?: number } = {},
@@ -2049,6 +2122,33 @@ export class PostgresControlStore {
     });
   }
 
+  /**
+   * Atomically finish a successful planning WHAT stop and retire its release
+   * identity. A later human-ready event must receive fresh authority evidence.
+   */
+  async finishHumanReviewLease(input: {
+    token: string;
+    workerId: string;
+    result: RunnerJobResultV1;
+  }): Promise<string> {
+    const result = RunnerJobResultV1Contract.parse(input.result);
+    if (result.outcome !== 'needs-human-review') {
+      throw new Error('finishHumanReviewLease requires needs-human-review');
+    }
+    const completed = await this.pool.query<{ release_id: string }>(
+      `SELECT agentops_control.complete_runner_human_review($1, $2, $3)
+        AS release_id`,
+      [input.token, input.workerId, result],
+    );
+    const releaseId = completed.rows[0]?.release_id;
+    if (!releaseId) {
+      throw new LeaseRejectedError(
+        'runner human-review completion did not return a release identity',
+      );
+    }
+    return z.string().uuid().parse(releaseId);
+  }
+
   async finishTriageLease(input: {
     token: string;
     workerId: string;
@@ -2133,6 +2233,7 @@ export class PostgresControlStore {
     authority: {
       actor: string;
       readyAt: string;
+      sourceIssue: ReleaseSourceIssueSnapshot;
       triage?: {
         sourceDigest: string;
         decision: TriageDecisionV1;
@@ -2159,6 +2260,7 @@ export class PostgresControlStore {
     const authority = z.object({
       actor: z.string().trim().min(1).max(128),
       readyAt: z.string().datetime({ offset: true }),
+      sourceIssue: ReleaseSourceIssueSnapshotContract,
       triage: z.object({
         sourceDigest: z.string().regex(/^[0-9a-f]{64}$/),
         decision: TriageDecisionV1Contract,
