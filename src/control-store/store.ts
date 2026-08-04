@@ -713,6 +713,26 @@ export class PostgresControlStore {
     }
   }
 
+  /** Atomically bind the single PR preserved when v17 abandoned a legacy release. */
+  async recoverRequirementsUpgradePullRequest(input: {
+    jobId: string;
+    releaseId: string;
+  }): Promise<number | null> {
+    const parsed = z.object({
+      jobId: z.string().uuid(),
+      releaseId: z.string().uuid(),
+    }).strict().parse(input);
+    const result = await this.pool.query<{ pull_request_number: string | null }>(
+      `SELECT agentops_control.recover_requirements_upgrade_pull_request($1, $2)
+         AS pull_request_number`,
+      [parsed.jobId, parsed.releaseId],
+    );
+    const pullRequest = result.rows[0]?.pull_request_number;
+    return pullRequest === null || pullRequest === undefined
+      ? null
+      : Number(pullRequest);
+  }
+
   /** Allocate a stable release-scoped epoch for a head, independent of job/retry order. */
   async observeReleaseHead(input: {
     releaseId: string;

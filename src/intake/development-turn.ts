@@ -9,6 +9,7 @@ import {
   type DesignRequest,
   type EnrichmentCandidate,
   type IntakeRecord,
+  type InvocationOutcome,
 } from '../domain/schema.js';
 import { recordAgentInvocation } from '../agents/invocation.js';
 import { resolveAgentRoute, type AgentRoute } from '../agents/routing.js';
@@ -148,6 +149,19 @@ export interface GithubDevelopmentTurnResult {
 export interface GithubTurnRegistrationOverrides {
   readyLabel?: string;
   baseBranch?: string;
+}
+
+/** A planner transport/runtime failure is retryable infrastructure, not missing human WHAT. */
+export class PlanningProviderInvocationError extends Error {
+  override readonly name = 'PlanningProviderInvocationError';
+
+  constructor(
+    readonly outcome: InvocationOutcome,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
 }
 
 /**
@@ -322,8 +336,20 @@ export async function runGithubDevelopmentTurn(
     });
     const uiDesigns: Record<string, UiDesignAttempt> = {};
     const planningOutput = PlanningEnrichmentOutput.safeParse(result.output);
+    if (invocation.outcome !== 'completed') {
+      throw new PlanningProviderInvocationError(
+        invocation.outcome,
+        `planning provider ${result.provider}/${result.model ?? 'default'} ended with ${invocation.outcome}`,
+      );
+    }
+    if (!planningOutput.success) {
+      throw new PlanningProviderInvocationError(
+        'failed',
+        `planning provider returned invalid structured output: ${planningOutput.error.message}`,
+      );
+    }
     const configuredDesignProviders = config.intake?.designProviders ?? {};
-    if (invocation.outcome === 'completed' && planningOutput.success) {
+    {
       let selectedUiDesignRoute: AgentRoute | null = null;
       for (const candidate of planningOutput.data.candidates.filter(requiresUiDesign)) {
         // The retained session is an adapter, not an implicit fallback. A malformed, missing,
