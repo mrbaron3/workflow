@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/mrbaron3/workflow/contracts/live-release-receipt.schema.json",
-  "title": "Release receipt evidence v2",
+  "title": "Release receipt evidence v2/v3",
   "description": "A job-topology-neutral release certificate. Every fact is bound to a durable release identity and explicit receipt causality; job and attempt IDs are optional provenance only.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "release", "policy", "receipts", "artifacts", "result"],
   "properties": {
-    "schemaVersion": { "const": "2.0" },
+    "schemaVersion": { "enum": ["2.0", "3.0"] },
     "release": { "$ref": "#/$defs/release" },
     "policy": { "$ref": "#/$defs/policy" },
     "receipts": {
@@ -16,6 +16,7 @@
       "required": ["authority", "runtime", "builds", "grades", "reviews", "findingResolutions", "mergeIntent", "merge", "interventions"],
       "properties": {
         "authority": { "$ref": "#/$defs/authority" },
+        "requirementsAuthority": { "$ref": "#/$defs/requirementsAuthority" },
         "runtime": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/runtime" } },
         "builds": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/build" } },
         "grades": { "type": "array", "minItems": 1, "maxItems": 256, "items": { "$ref": "#/$defs/grade" } },
@@ -34,6 +35,33 @@
     },
     "result": { "enum": ["passed", "passed-with-interventions"] }
   },
+  "allOf": [
+    {
+      "if": { "properties": { "schemaVersion": { "const": "3.0" } } },
+      "then": {
+        "properties": {
+          "receipts": {
+            "type": "object",
+            "properties": { "requirementsAuthority": {} },
+            "required": ["requirementsAuthority"]
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "receipts": {
+            "type": "object",
+            "properties": { "requirementsAuthority": {} },
+            "not": {
+              "type": "object",
+              "properties": { "requirementsAuthority": {} },
+              "required": ["requirementsAuthority"]
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "uuid": {
       "type": "string",
@@ -145,6 +173,23 @@
           "unevaluatedProperties": false
         }
       ]
+    },
+    "requirementsAuthority": {
+      "allOf": [
+        { "$ref": "#/$defs/receiptBase" },
+        {
+          "type": "object",
+          "required": ["kind", "sourceIssueDigest", "sourceUpdatedAt", "capturedAt"],
+          "properties": {
+            "kind": { "const": "requirements-authority" },
+            "sourceIssueDigest": { "$ref": "#/$defs/sha256" },
+            "sourceUpdatedAt": { "$ref": "#/$defs/timestamp" },
+            "capturedAt": { "$ref": "#/$defs/timestamp" }
+          }
+        }
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "build": {
       "allOf": [

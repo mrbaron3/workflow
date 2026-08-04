@@ -14,17 +14,22 @@
  */
 
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { Issue, PR as PRType } from '../../domain/schema.js';
 import { findingOriginRef } from '../../domain/finding-lineage.js';
 import { resolveConcurrentIssueCap, type HarnessConfig } from '../../config.js';
 import type { RepairBrief } from '../../domain/artifact.js';
 import { Store, nowISO } from '../../store/store.js';
-import { PR, TurnRecord } from '../../domain/schema.js';
+import { IssueContract, PR, TurnRecord } from '../../domain/schema.js';
 import { recordAgentInvocation } from '../../agents/invocation.js';
 import { resolveAgentRoute, resolvedGeneratorProvider } from '../../agents/routing.js';
 import { pollable, blockedByDependencies, formatBlockedLine } from './guard.js';
 import { mapPool } from './pool.js';
-import { runGeneratorSession } from './session.js';
+import {
+  generatorSessionName,
+  generatorWorktreePath,
+  runGeneratorSession,
+} from './session.js';
 import {
   canonicalGithubRepository,
   sampleKey,
@@ -37,6 +42,7 @@ import { runBoundedRepairLoop, runBestOfN, applyPanelVerdict, type DriveResult, 
 import {
   projectReviewRevision,
   realGhGateRunner,
+  renderReviewPrTitle,
   type GhGateRunner,
 } from './gate.js';
 import {
@@ -48,6 +54,7 @@ import {
 import { improveTick } from '../improve.js';
 import type { RegressReportRunner } from '../regression.js';
 import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
+import type { DevelopmentProgressReporter } from '../../domain/development-progress.js';
 
 export interface LiveOptions {
   /** Which lenses to convene (default: all 7). Reduce it for a cheap smoke. */
@@ -68,6 +75,20 @@ export interface LiveOptions {
   regressReport?: RegressReportRunner;
   /** Test/embedding seam for the Perspective fan-out. */
   perspectiveSessions?: typeof runPerspectiveSessions;
+  /** Runner-owned review evidence root outside registered repository bytes. */
+  trustedReviewStateRoot?: string;
+  /** Stable operator checkout retained when repository-head review stops. */
+  operatorWorktreePath?: string;
+  /** Move that checkout to the exact fetched PR head before review starts. */
+  projectOperatorWorktreeHead?: (headSha: string) => void;
+  /** Frozen ready-time Source Issue supplied only as inert reviewer data. */
+  sourceIssueMaterial?: string;
+  /** Trusted binding that makes the full frozen Issue a mandatory review AC. */
+  sourceIssueReviewCriterion?: {
+    url: string;
+    digest: string;
+    sourceUpdatedAt: string;
+  };
   /** Isolated-runner lease/Registration fence immediately before provider execution. */
   beforeProviderExecution?: () => Promise<void>;
   /** Isolated-runner lease/Registration fence immediately before a generated head is pushed. */
@@ -102,6 +123,17 @@ export interface LiveOptions {
    * dependency exclusion are observable — while the real path stays byte-for-byte the same.
    */
   driveIssue?: (issue: Issue) => Promise<DriveResult>;
+  /** Structured, durable progress reporter shared by CLI and Dashboard. */
+  progress?: DevelopmentProgressReporter;
+}
+
+function progressKeyPart(value: string): string {
+  const normalized = value.toLowerCase()
+    .replace(/[^a-z0-9._/-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'work';
+  if (normalized.length <= 96) return normalized;
+  const digest = createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+  return `${normalized.slice(0, 72)}-${digest}`;
 }
 
 /**
@@ -186,6 +218,32 @@ export async function runLiveSample(
   log: (m: string) => void,
 ): Promise<SampleOutcome> {
   const contract = issue.contract!;
+  const reviewContract = opts.sourceIssueReviewCriterion
+    && !contract.acceptanceCriteria.some((criterion) => criterion.id === 'SOURCE-ISSUE')
+    ? IssueContract.parse({
+        ...contract,
+        acceptanceCriteria: [
+          ...contract.acceptanceCriteria,
+          {
+            id: 'SOURCE-ISSUE',
+            severity: 'blocker',
+            behavior: [
+              'Evaluate the implementation against every declarative requirement and acceptance item',
+              'in the separately supplied inert, frozen ready-time Source Issue snapshot.',
+              `Source: ${opts.sourceIssueReviewCriterion.url}`,
+              `Source updated at: ${opts.sourceIssueReviewCriterion.sourceUpdatedAt}`,
+              `Snapshot digest: ${opts.sourceIssueReviewCriterion.digest}`,
+            ].join('\n'),
+            verification: {
+              method: 'scope_check',
+              expected: [
+                'the immutable current head satisfies every applicable frozen Source Issue requirement',
+              ],
+            },
+          },
+        ],
+      })
+    : contract;
   const target = config.target!;
   const perspectives = opts.perspectives ?? PERSPECTIVES;
   const workIdentity = externalWorkIdentityFor(
@@ -220,10 +278,27 @@ export async function runLiveSample(
     ? returnedPr
     : store.db.prs.find((candidate) => candidate.id === returnedPr.id)!;
   let worktree: string | null = null; // the last completed attempt's checkout = the build at the gate
+  const progressWork = progressKeyPart(issueKey);
+  // Reported before the session exists, so the coordinates come from the module
+  // that creates them rather than from a second copy of the layout rule.
+  const expectedSession = generatorSessionName(issueKey);
+  const expectedWorktree = generatorWorktreePath(harnessRoot, issueKey);
 
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree
     log(`▶ ${issue.id} s${sampleIndex}: generator session (attempt ${attempt}/${maxAttempts})`);
+    await opts.progress?.({
+      eventKey: `generation:${progressWork}:a${attempt}:start`,
+      phase: 'generation',
+      step: `generator session attempt ${attempt}/${maxAttempts}`,
+      state: 'running',
+      summary: repairBrief ? 'Applying review feedback in the isolated worktree' : 'Implementing the accepted contract',
+      nextGate: 'generated revision projected to a pull request',
+      sessionName: expectedSession,
+      worktreePath: expectedWorktree,
+      branch: pr.branch,
+      pullRequestNumber: pr.externalRef?.number ?? null,
+    });
     await opts.beforeProviderExecution?.();
     const sess = await (opts.generatorSession ?? runGeneratorSession)(
       config,
@@ -247,8 +322,9 @@ export async function runLiveSample(
         {
           pr,
           worktree: sess.worktree,
-          title: `${issue.id}: ${issue.title}`,
+          title: renderReviewPrTitle(store, issue.id),
           headSha: sess.headSha,
+          changedFiles: sess.changed,
           workIdentity,
           sampleIndex,
         },
@@ -278,21 +354,66 @@ export async function runLiveSample(
     });
     if (sess.outcome !== 'completed') {
       log(`  ⚠ ${issue.id} s${sampleIndex}: generator ${sess.outcome} — escalating, session kept alive`);
+      await opts.progress?.({
+        eventKey: `generation:${progressWork}:a${attempt}:blocked`,
+        phase: 'human-review',
+        step: `generator session ${sess.outcome}`,
+        state: 'blocked',
+        blocker: `generator session ${sess.outcome}; the isolated session and worktree were retained`,
+        nextGate: 'human inspects or resumes the retained session',
+        sessionName: sess.session,
+        worktreePath: sess.worktree,
+        branch: sess.branch,
+        pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
+      });
       return { stuck: true };
     }
     if (!sess.headSha || !revision) {
       log(`  ⚠ ${issue.id} s${sampleIndex}: no committed build revision — escalating`);
+      await opts.progress?.({
+        eventKey: `generation:${progressWork}:a${attempt}:no-revision`,
+        phase: 'human-review',
+        step: 'generated revision missing',
+        state: 'blocked',
+        blocker: 'generator completed without a committed revision',
+        nextGate: 'human inspects the retained worktree',
+        sessionName: sess.session,
+        worktreePath: sess.worktree,
+        branch: sess.branch,
+      });
       return { stuck: true };
     }
     worktree = sess.worktree;
+    await opts.progress?.({
+      eventKey: `pull-request:${progressWork}:a${attempt}:projected`,
+      phase: 'pull-request',
+      step: 'generated revision projected',
+      state: 'succeeded',
+      summary: `Revision ${sess.headSha.slice(0, 12)} is available for validation`,
+      nextGate: 'repository graders',
+      worktreePath: sess.worktree,
+      branch: sess.branch,
+      pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
+    });
     if (manageIssueStatus) {
       store.setStatus(issue.id, 'ready-for-evaluation');
       store.setStatus(issue.id, 'evaluation-in-progress');
     }
 
     // 2. ground the checkout with real graders (real tsc/vitest)
+    await opts.progress?.({
+      eventKey: `validation:${progressWork}:a${attempt}:start`,
+      phase: 'validation',
+      step: 'repository graders',
+      state: 'running',
+      summary: 'Running configured typecheck and test commands in the isolated worktree',
+      nextGate: 'review panel',
+      worktreePath: sess.worktree,
+      branch: sess.branch,
+      pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
+    });
     const artifact = (opts.groundBuild ?? groundArtifact)({
-      contract,
+      contract: reviewContract,
       target,
       worktree: sess.worktree,
       branch: sess.branch,
@@ -310,18 +431,36 @@ export async function runLiveSample(
       store.db.revisionGateSnapshots,
       pr.id,
     ).length;
+    await opts.progress?.({
+      eventKey: `review:${progressWork}:a${attempt}:start`,
+      phase: 'review',
+      step: 'perspective review panel',
+      state: 'running',
+      summary: `${perspectives.length} independent review perspective(s) evaluating the current revision`,
+      nextGate: 'panel verdict',
+      worktreePath: sess.worktree,
+      branch: sess.branch,
+      pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
+    });
     await opts.beforeProviderExecution?.();
     const panelSessions = await (opts.perspectiveSessions ?? runPerspectiveSessions)(
       config,
       {
         worktree: sess.worktree,
-        contract,
+        contract: reviewContract,
         perspectives,
         issueKey,
         repo: path.resolve(harnessRoot, target.repo),
         buildRef: sess.headSha,
         baseRef: target.baseRef,
         priorFindings,
+        ...(opts.sourceIssueMaterial ? { untrusted: true } : {}),
+        ...(opts.trustedReviewStateRoot
+          ? { trustedStateRoot: opts.trustedReviewStateRoot }
+          : {}),
+        ...(opts.sourceIssueMaterial
+          ? { sourceIssueMaterial: opts.sourceIssueMaterial }
+          : {}),
         uiDesign: issue.uiDesign,
         designAuthority: issue.designAuthority,
         designReview: issue.designReview,
@@ -345,7 +484,7 @@ export async function runLiveSample(
     const panel = runPanel(
       store, config,
       {
-        issueId: issue.id, prId: pr.id, contract, artifact, sampleIndex, attempt,
+        issueId: issue.id, prId: pr.id, contract: reviewContract, artifact, sampleIndex, attempt,
         agent: sess.provider,
         invocationKeys,
         revisionId: revision.id,
@@ -354,6 +493,19 @@ export async function runLiveSample(
       },
       { perspectives, grader: sessionBackedGrader(panelSessions.evalRoot) },
     );
+    await opts.progress?.({
+      eventKey: `review:${progressWork}:a${attempt}:verdict`,
+      phase: 'review',
+      step: `panel verdict: ${panel.verdict}`,
+      state: panel.verdict === 'approve' ? 'succeeded' : 'waiting',
+      summary: panel.verdict === 'approve'
+        ? 'Current revision passed the review panel'
+        : 'Current revision requires another bounded repair attempt',
+      nextGate: panel.verdict === 'approve' ? 'merge gates' : 'generator repair session',
+      worktreePath: sess.worktree,
+      branch: sess.branch,
+      pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
+    });
     return { panel };
   }, {
     log,
@@ -361,6 +513,22 @@ export async function runLiveSample(
     startAttempt,
     initialRepairBrief: opts.resumePr ? revisionGateRepairBrief(store, pr) : null,
   });
+
+  if (loop.status === 'needs-human-review' && worktree) {
+    await opts.progress?.({
+      eventKey: `human-review:${progressWork}:review-stop`,
+      phase: 'human-review',
+      step: 'current-head review requires human attention',
+      state: 'blocked',
+      blocker: loop.escalated
+        ? 'one or more required reviewer results were missing or invalid'
+        : 'bounded repair attempts did not satisfy every required review perspective',
+      nextGate: 'inspect or resume the retained isolated worktree; a new PR head triggers re-review',
+      worktreePath: worktree,
+      branch: pr.branch,
+      pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
+    });
+  }
 
   return { ...loop, sampleIndex, prId: pr.id, approved: loop.verdict === 'approve', worktree };
 }
@@ -505,6 +673,17 @@ export async function driveIssueLive(
   // consume only current-head evidence and use an expected-SHA merge.
   if (winner?.worktree && (config.gate?.backend ?? 'store') === 'github') {
     const pr = store.getPR(winner.prId)!;
+    await opts.progress?.({
+      eventKey: `merge:${progressKeyPart(issue.id)}:start`,
+      phase: 'merge',
+      step: 'current-head merge gates',
+      state: 'running',
+      summary: 'Checking required reviews, checks, threads, and expected head SHA',
+      nextGate: 'GitHub merge confirmation',
+      worktreePath: winner.worktree,
+      branch: pr.branch,
+      pullRequestNumber: pr.externalRef?.number ?? null,
+    });
     await opts.beforeMerge?.();
     await opts.beforeRelease?.();
     const result = await autoMergeCurrentRevision(
@@ -524,6 +703,18 @@ export async function driveIssueLive(
       `  ⇩ ${issue.id}: revision ${result.headSha?.slice(0, 12) ?? 'unobserved'} `
       + `→ ${result.decision}${result.reasons.length ? ` (${result.reasons.join('; ')})` : ''}`,
     );
+    await opts.progress?.({
+      eventKey: `merge:${progressKeyPart(issue.id)}:${result.decision}`,
+      phase: result.merged ? 'completed' : 'merge',
+      step: result.merged ? 'pull request merged' : `merge gate: ${result.decision}`,
+      state: result.merged ? 'succeeded' : result.decision === 'pending' ? 'waiting' : 'blocked',
+      summary: result.merged ? 'Implementation released' : result.reasons.join('; '),
+      nextGate: result.merged ? null : 'next GitHub pull request reconciliation',
+      blocker: result.merged || result.decision === 'pending' ? null : result.reasons.join('; '),
+      worktreePath: winner.worktree,
+      branch: pr.branch,
+      pullRequestNumber: pr.externalRef?.number ?? null,
+    });
   }
 
   const status = store.getIssue(issue.id)!.status;

@@ -13,9 +13,19 @@ import (
 )
 
 type managerRuntimeRunner struct {
-	results      []lifecycle.CommandResult
-	args         [][]string
-	environments []map[string]string
+	results          []lifecycle.CommandResult
+	args             [][]string
+	environments     []map[string]string
+	interactive      [][]string
+	interactiveError error
+}
+
+func (runner *managerRuntimeRunner) RunInteractive(
+	_ context.Context,
+	args []string,
+) error {
+	runner.interactive = append(runner.interactive, append([]string(nil), args...))
+	return runner.interactiveError
 }
 
 func (runner *managerRuntimeRunner) RunWithEnvironment(

@@ -290,6 +290,54 @@ type RegistrationProjection struct {
 	ActiveJobRegistrationVersion *int64                         `json:"activeJobRegistrationVersion"`
 	LastJobFailure               *JobFailureProjection          `json:"lastJobFailure"`
 	RecentDeliveryFailures       []DeliveryFailureProjection    `json:"recentDeliveryFailures"`
+	DevelopmentProgress          []DevelopmentIssueProgress     `json:"developmentProgress"`
+	// True when the registration has more Issues with durable progress than
+	// the card shows, so the operator knows to reach for `agentopsctl progress`.
+	DevelopmentProgressTruncated bool `json:"developmentProgressTruncated"`
+}
+
+// DevelopmentIssueProgress groups a current Issue state with history from the
+// same Issue coordinate. LastActivity is computed from durable events and the
+// active lease heartbeat so a quiet but healthy runner remains observable.
+type DevelopmentIssueProgress struct {
+	Repository   string                     `json:"repository"`
+	IssueNumber  int64                      `json:"issueNumber"`
+	Current      DevelopmentProgressEvent   `json:"current"`
+	History      []DevelopmentProgressEvent `json:"history"`
+	LastActivity time.Time                  `json:"lastActivity"`
+}
+
+// DevelopmentProgressEvent is the durable operator view of one Issue phase
+// transition. Worktree/session coordinates are intentionally first-class: the
+// operator can verify isolation without scraping runner logs.
+type DevelopmentProgressEvent struct {
+	ID                  int64      `json:"id"`
+	RegistrationID      string     `json:"registrationId"`
+	RegistrationVersion int64      `json:"registrationVersion"`
+	JobID               string     `json:"jobId"`
+	AttemptID           string     `json:"attemptId"`
+	AttemptNumber       int        `json:"attemptNumber"`
+	ReleaseID           *string    `json:"releaseId"`
+	Repository          string     `json:"repository"`
+	SubjectKind         string     `json:"subjectKind"`
+	SubjectNumber       *int64     `json:"subjectNumber"`
+	ParentIssueNumber   *int64     `json:"parentIssueNumber"`
+	WorkerID            string     `json:"workerId"`
+	EventKey            string     `json:"eventKey"`
+	Phase               string     `json:"phase"`
+	Step                string     `json:"step"`
+	State               string     `json:"state"`
+	Summary             *string    `json:"summary"`
+	NextGate            *string    `json:"nextGate"`
+	Blocker             *string    `json:"blocker"`
+	SessionName         *string    `json:"sessionName"`
+	WorktreePath        *string    `json:"worktreePath"`
+	Branch              *string    `json:"branch"`
+	PullRequestNumber   *int64     `json:"pullRequestNumber"`
+	OccurredAt          time.Time  `json:"occurredAt"`
+	JobStatus           string     `json:"jobStatus"`
+	JobLastError        *string    `json:"jobLastError"`
+	LeaseHeartbeatAt    *time.Time `json:"leaseHeartbeatAt"`
 }
 
 type CommandFence struct {

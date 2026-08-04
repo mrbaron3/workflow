@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   FindingLineage,
@@ -33,7 +34,11 @@ import { changedFiles, createDetachedWorktree, removeWorktree } from './worktree
 import type { LivenessOutcome } from './tmux.js';
 import { resolveAgentRoute, type AgentRoute } from '../../agents/routing.js';
 import { mapPool } from './pool.js';
-import { runRestrictedReviewSession, staticUntrustedReviewMaterial } from './restricted-review.js';
+import {
+  restrictedReviewUserMaterial,
+  runRestrictedReviewSession,
+  staticUntrustedReviewMaterial,
+} from './restricted-review.js';
 import { runReviewSession } from './review-session-runner.js';
 import {
   MAX_REVIEW_CRITERION_ID_CHARS,
@@ -46,11 +51,15 @@ import { renderAuthoritativeDesignContext } from '../../designflow/authority.js'
 export { REVIEW_LIVENESS } from './review-liveness.js';
 export {
   appendRestrictedReviewOutput,
+  RESTRICTED_REVIEW_TERMINATION_GRACE_MS,
+  runRestrictedReviewSession,
   MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
   STATIC_REVIEW_DIFF_CONTEXT_LINES,
   prepareRestrictedReviewExecution,
+  RESTRICTED_REVIEW_API_KEY_OPT_IN,
   restrictedPerspectivePrompt,
   restrictedReviewLaunch,
+  restrictedReviewUserMaterial,
   staticUntrustedReviewMaterial,
 } from './restricted-review.js';
 export {
@@ -143,8 +152,24 @@ const ZERO_SCORES = { functionality: 0, codeQuality: 0, testQuality: 0, ux: 0, a
  * anything malformed (missing verdict, bad severity, wrong shape) so the caller escalates
  * rather than trusting a broken review (AC-PANEL-006). `raw` is the parsed JSON object.
  */
-export function parsePerspectiveFindings(raw: unknown): PerspectiveResult {
+export function parsePerspectiveFindings(
+  raw: unknown,
+  allowedPriorLineageRefs?: readonly string[],
+): PerspectiveResult {
   const input = PerspectiveFindingsInput.parse(raw); // throws on invalid
+  if (allowedPriorLineageRefs !== undefined) {
+    const allowed = new Set(allowedPriorLineageRefs);
+    for (const finding of input.findings) {
+      if (
+        finding.lineage === 'persisted'
+        && (!finding.lineageRef || !allowed.has(finding.lineageRef))
+      ) {
+        throw new Error(
+          `persisted finding ${finding.criterionId} does not reference supplied prior evidence`,
+        );
+      }
+    }
+  }
   const overall = input.score ?? (input.verdict === 'approve' ? 1 : 0.3);
   return PerspectiveResult.parse({
     verdict: input.verdict,
@@ -168,6 +193,58 @@ export function parsePerspectiveFindings(raw: unknown): PerspectiveResult {
 /** Where the panel reads a collected perspective verdict under the central eval root. */
 export function findingsPath(evalRoot: string, perspective: string): string {
   return path.join(evalRoot, perspective, 'findings.json');
+}
+
+function reviewPathKey(...parts: readonly string[]): string {
+  return createHash('sha256').update(parts.join('\0')).digest('hex');
+}
+
+function requireTrustedDirectory(directory: string): string {
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const stat = fs.lstatSync(directory);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`review state root is not a trusted directory: ${directory}`);
+  }
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  if (uid !== null && stat.uid !== uid) {
+    throw new Error(`review state root is not owned by the current user: ${directory}`);
+  }
+  fs.chmodSync(directory, 0o700);
+  const secured = fs.lstatSync(directory);
+  if ((secured.mode & 0o077) !== 0) {
+    throw new Error(`review state root permissions are not private: ${directory}`);
+  }
+  return fs.realpathSync(directory);
+}
+
+/**
+ * Create the panel collection root outside the checkout being reviewed. A repository PR may
+ * commit any path below its checkout, including `.agentops/eval/**`; none of those bytes may be
+ * considered reviewer evidence. The per-target directory is removed before every fan-out so a
+ * missing/stuck reviewer can only fail closed through the missing-file grader path.
+ */
+export function createCleanReviewEvalRoot(
+  worktree: string,
+  issueKey: string,
+  buildRef: string,
+  trustedStateRoot?: string,
+): { evalRoot: string; harnessStateRoot: string } {
+  const realWorktree = fs.realpathSync(worktree);
+  const harnessStateRoot = requireTrustedDirectory(
+    trustedStateRoot ?? path.resolve(realWorktree, '..', '..'),
+  );
+  const relative = path.relative(realWorktree, harnessStateRoot);
+  if (relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))) {
+    throw new Error('review state root must be outside the reviewed worktree');
+  }
+  const evalBase = requireTrustedDirectory(path.join(harnessStateRoot, 'review-eval'));
+  const evalRoot = path.join(
+    evalBase,
+    reviewPathKey(realWorktree, issueKey, buildRef),
+  );
+  fs.rmSync(evalRoot, { recursive: true, force: true });
+  fs.mkdirSync(evalRoot, { recursive: true, mode: 0o700 });
+  return { evalRoot, harnessStateRoot };
 }
 
 /**
@@ -267,7 +344,7 @@ export function perspectivePrompt(
           `- "persisted" — the same problem as one listed above is still present.`,
           `- "new" — a problem you found in this review that is not one of the findings above.`,
           `For every "persisted" finding, copy that prior finding's lineageRef exactly.`,
-          `For every "new" finding, omit lineageRef.`,
+          `For every "new" finding, set lineageRef to null.`,
           `Judge by the problem's substance, not by criterion id — a survivor may resurface under`,
           `a different criterionId, and a fresh problem may hit the same one.`,
         ]
@@ -328,7 +405,7 @@ export function promptForLens(
 }
 
 export interface PerspectiveSessionsInput {
-  /** The generator's worktree — the collection point for findings (central evalRoot). */
+  /** The generator's worktree — used only to derive a trusted sibling state root. */
   worktree: string;
   contract: IssueContract;
   perspectives: PerspectiveSpec[];
@@ -344,6 +421,10 @@ export interface PerspectiveSessionsInput {
    * static diff in a no-tool process instead of filesystem/tool access.
    */
   untrusted?: boolean;
+  /** Frozen Source Issue bytes, passed beside the diff only in the low-trust user channel. */
+  sourceIssueMaterial?: string;
+  /** Explicit runner-owned state directory outside every untrusted checkout. */
+  trustedStateRoot?: string;
   /** Re-review (attempt > 1): each lens's findings from the previous attempt, keyed by lens.
    *  Absent/empty per lens = first review, that lens's prompt is unchanged (ISSUE-0009). */
   priorFindings?: Record<string, readonly PriorFinding[]>;
@@ -430,8 +511,10 @@ export interface ReviewJob {
   prompt: string;
   sentinel: string; // findings.json in the review evidence sidecar, outside reviewWt
   restricted?: boolean;
-  /** Frozen repository diff passed only through the provider's low-trust user-input channel. */
+  /** Dynamic brief + Source Issue + frozen diff, only in the low-trust user-input channel. */
   untrustedMaterial?: string;
+  /** Exact prior identities this lens may attest as persisted. */
+  priorLineageRefs?: string[];
 }
 /** A review's recorded liveness verdict, preserved as-is (never collapsed) so late collection
  *  can tell the operator which failure mode — stuck or timeout — the review actually had. */
@@ -489,14 +572,14 @@ export function reviewJobPaths(
   issueKey: string,
   perspective: string,
 ): ReviewJob {
+  const identity = reviewPathKey(issueKey, perspective);
   const evidenceDir = path.join(
     evidenceRoot,
-    `issue-${encodeURIComponent(issueKey)}`,
-    `perspective-${encodeURIComponent(perspective)}`,
+    `review-${identity}`,
   );
   return {
     key: perspective,
-    reviewWt: path.join(reviewRoot, `${issueKey}-${perspective}`),
+    reviewWt: path.join(reviewRoot, identity),
     prompt: path.join(evidenceDir, 'PROMPT.md'),
     sentinel: path.join(evidenceDir, 'findings.json'),
   };
@@ -527,14 +610,27 @@ export function preparePerspectiveSessionJobs(
       const evidenceDir = path.dirname(job.sentinel);
       fs.rmSync(evidenceDir, { recursive: true, force: true });
       fs.mkdirSync(evidenceDir, { recursive: true });
+      const dynamicPrompt = perspectiveSessionPrompt(
+        input,
+        perspective.key,
+        evidenceDir,
+      );
+      job.priorLineageRefs = (input.priorFindings?.[perspective.key] ?? [])
+        .map((finding) => finding.lineageRef);
       if (input.untrusted) {
+        if (restrictedMaterial === null) {
+          throw new Error('restricted reviewer requires immutable repository material');
+        }
         fs.mkdirSync(job.reviewWt, { recursive: true });
         job.restricted = true;
-        job.untrustedMaterial = restrictedMaterial ?? undefined;
+        job.untrustedMaterial = restrictedReviewUserMaterial(
+          dynamicPrompt,
+          restrictedMaterial,
+        );
       }
       fs.writeFileSync(
         job.prompt,
-        perspectiveSessionPrompt(input, perspective.key, evidenceDir),
+        dynamicPrompt,
         'utf8',
       );
       return job;
@@ -565,6 +661,15 @@ export function collectFindings(
   const environmentChanges: Record<string, string[]> = {};
   jobs.forEach((job, i) => {
     if (!fs.existsSync(job.sentinel)) return; // nothing to collect, even late
+    try {
+      parsePerspectiveFindings(
+        JSON.parse(fs.readFileSync(job.sentinel, 'utf8')),
+        job.priorLineageRefs ?? [],
+      );
+    } catch (error) {
+      log(`  ⚠ ${job.key}: invalid reviewer evidence — ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    }
     const edited = job.restricted
       ? { environmentArtifacts: [], sourceChanges: [] }
       : partitionReviewChanges(changed(job.reviewWt));
@@ -604,15 +709,22 @@ export async function runPerspectiveSessions(
   input: PerspectiveSessionsInput,
   log: (m: string) => void = () => {},
 ): Promise<PerspectiveSessionsResult> {
-  const evalRoot = path.join(input.worktree, '.agentops', 'eval'); // central collection point
-  const harnessStateRoot = path.resolve(input.worktree, '..', '..');
+  const { evalRoot, harnessStateRoot } = createCleanReviewEvalRoot(
+    input.worktree,
+    input.issueKey,
+    input.buildRef,
+    input.trustedStateRoot,
+  );
   const reviewRoot = path.join(harnessStateRoot, 'review-worktrees');
   const evidenceRoot = path.join(harnessStateRoot, 'review-evidence');
   const lenses = input.perspectives.filter((p) => !p.deterministic); // functionality is graded by code
   const maxConcurrent = resolvePanelMaxConcurrent(config);
   log(`  panel: ${lenses.length} live lenses, maxConcurrent=${maxConcurrent}`);
   const restrictedMaterial = input.untrusted
-    ? staticUntrustedReviewMaterial(input.repo, input.baseRef ?? 'main', input.buildRef)
+    ? [
+        ...(input.sourceIssueMaterial ? [input.sourceIssueMaterial] : []),
+        staticUntrustedReviewMaterial(input.repo, input.baseRef ?? 'main', input.buildRef),
+      ].join('\n\n')
     : null;
 
   // phase 1 (sequential): one isolated detached checkout of the build per review + its prompt
@@ -627,7 +739,13 @@ export async function runPerspectiveSessions(
   const routes = Object.fromEntries(jobs.map((job) => [job.key, resolveAgentRoute(config, 'reviewer', job.key)]));
   const statuses = await mapPool(jobs, maxConcurrent, (job) =>
     job.restricted
-      ? runRestrictedReviewSession(input.issueKey, job, log, routes[job.key]!, parsePerspectiveFindings)
+      ? runRestrictedReviewSession(
+          input.issueKey,
+          job,
+          log,
+          routes[job.key]!,
+          (raw) => parsePerspectiveFindings(raw, job.priorLineageRefs ?? []),
+        )
       : runReviewSession(input.issueKey, job, log, routes[job.key]!));
 
   // phase 3 (sequential): collect findings — by sentinel existence at collection time, so a

@@ -4,6 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  cleanupRunnerDependencyMount,
+  prepareRunnerDependencyMount,
+  prepareRunnerDependencyMountTarget,
   runnerSandboxArgs,
   runnerSandboxRoot,
   sandboxedShellCommand,
@@ -12,12 +15,14 @@ import { providerSessionEnvironment } from '../src/pipeline/execution/tmux.js';
 
 const registrationRoot =
   '/workspace/registrations/ca3126a8-b83f-4698-90af-462523880c20';
+const activeWorktree =
+  `${registrationRoot}/jobs/db837db2-30d7-4788-a56f-00056f5d550e/attempt-1/worktree`;
 
 describe('runner subprocess filesystem sandbox', () => {
   it('hides sibling Registrations and retains only the active Registration', () => {
     const args = runnerSandboxArgs(
       registrationRoot,
-      `${registrationRoot}/jobs/db837db2-30d7-4788-a56f-00056f5d550e/attempt-1/worktree`,
+      activeWorktree,
       'npm',
       ['test'],
       '/app/node_modules',
@@ -29,6 +34,15 @@ describe('runner subprocess filesystem sandbox', () => {
     expect(args).toContain('--dev');
     expect(args).toContain('/run');
     expect(args).toContain(registrationRoot);
+    expect(args.some((arg, index) => (
+      arg === '--bind'
+      && args[index + 1] === registrationRoot
+      && args[index + 2] === registrationRoot
+    ))).toBe(false);
+    expect(args).toEqual(expect.arrayContaining([
+      '--bind', activeWorktree, activeWorktree,
+    ]));
+    expect(args).toEqual(expect.arrayContaining(['--tmpfs', '/home']));
     expect(args).toContain('/app/node_modules');
     expect(args).toContain(
       `${registrationRoot}/jobs/db837db2-30d7-4788-a56f-00056f5d550e/attempt-1/worktree/node_modules`,
@@ -41,9 +55,17 @@ describe('runner subprocess filesystem sandbox', () => {
       && process.env.AGENTOPS_RUNNER_PROCESS_SANDBOX === 'bubblewrap-v1',
   )('PR-INTENT hides the live provider credential volume inside the actual sandbox', () => {
     const liveRoot = runnerSandboxRoot(process.env)!;
+    const liveWorktree = path.join(
+      liveRoot,
+      'jobs',
+      'db837db2-30d7-4788-a56f-00056f5d550e',
+      'attempt-1',
+      'worktree',
+    );
+    fs.mkdirSync(liveWorktree, { recursive: true });
     const result = spawnSync('bwrap', runnerSandboxArgs(
       liveRoot,
-      liveRoot,
+      liveWorktree,
       '/bin/sh',
       [
         '-c',
@@ -91,7 +113,7 @@ describe('runner subprocess filesystem sandbox', () => {
       fs.writeFileSync(path.join(home, 'auth.json'), '{}');
       const withHome = runnerSandboxArgs(
         registrationRoot,
-        registrationRoot,
+        activeWorktree,
         'codex',
         [],
         undefined,
@@ -102,7 +124,7 @@ describe('runner subprocess filesystem sandbox', () => {
       expect(withHome).toContain(path.join(home, 'auth.json'));
       const withoutHome = runnerSandboxArgs(
         registrationRoot,
-        registrationRoot,
+        activeWorktree,
         'codex',
         [],
       );
@@ -113,24 +135,123 @@ describe('runner subprocess filesystem sandbox', () => {
     }
   });
 
+  it('binds only an explicit same-job evidence sidecar and rejects another job', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-sidecar-'));
+    const liveRegistration = path.join(
+      root,
+      'workspace',
+      'registrations',
+      'ca3126a8-b83f-4698-90af-462523880c20',
+    );
+    const cwd = path.join(
+      liveRegistration,
+      'jobs',
+      'db837db2-30d7-4788-a56f-00056f5d550e',
+      'attempt-1',
+      'harness',
+      '.harness',
+      'review-worktrees',
+      'security',
+    );
+    const sidecar = path.join(
+      liveRegistration,
+      'jobs',
+      'db837db2-30d7-4788-a56f-00056f5d550e',
+      'attempt-1',
+      'harness',
+      '.harness',
+      'review-evidence',
+      'security',
+    );
+    const foreign = path.join(
+      liveRegistration,
+      'jobs',
+      'eb837db2-30d7-4788-a56f-00056f5d550e',
+      'attempt-1',
+      'evidence',
+    );
+    fs.mkdirSync(cwd, { recursive: true });
+    fs.mkdirSync(sidecar, { recursive: true });
+    fs.mkdirSync(foreign, { recursive: true });
+    try {
+      const args = runnerSandboxArgs(
+        liveRegistration,
+        cwd,
+        'codex',
+        [],
+        undefined,
+        undefined,
+        [sidecar],
+      );
+      expect(args).toEqual(expect.arrayContaining(['--bind', sidecar, sidecar]));
+      expect(args.join(' ')).not.toContain(foreign);
+      expect(() => runnerSandboxArgs(
+        liveRegistration,
+        cwd,
+        'codex',
+        [],
+        undefined,
+        undefined,
+        [foreign],
+      )).toThrow(/escapes the active job/);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('derives the credential home from CODEX_HOME only under /run/agentops-credentials', () => {
     const base = {
       AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
       AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
+      AGENTOPS_RUNNER_DEPENDENCY_ROOT: '/app/node_modules',
     };
     const inside = sandboxedShellCommand(
       { ...base, CODEX_HOME: '/run/agentops-credentials/codex' },
-      registrationRoot,
+      activeWorktree,
       'codex',
     );
     expect(inside).toContain("'/run/agentops-credentials/codex'");
+    expect(inside).toContain("'/app/node_modules'");
+    expect(inside).toContain(`'${activeWorktree}/node_modules'`);
     for (const rejected of ['/etc', '/run/agentops-credentials/../x', 'relative/path']) {
       const command = sandboxedShellCommand(
         { ...base, CODEX_HOME: rejected },
-        registrationRoot,
+        activeWorktree,
         'codex',
       );
       expect(command).not.toContain(rejected);
+    }
+  });
+
+  it('rejects dependency mount preparation outside the active Registration', () => {
+    expect(() => prepareRunnerDependencyMount({
+      AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
+      AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
+      AGENTOPS_RUNNER_DEPENDENCY_ROOT: '/app/node_modules',
+    }, '/workspace/registrations/other')).toThrow(
+      /escapes Registration sandbox/,
+    );
+  });
+
+  it('quarantines and exactly restores an untrusted node_modules symlink', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-dependency-target-'));
+    const target = path.join(root, 'node_modules');
+    try {
+      fs.symlinkSync('/app/node_modules', target);
+      const mount = prepareRunnerDependencyMountTarget(
+        '/app/node_modules',
+        target,
+      );
+      expect(fs.lstatSync(target).isDirectory()).toBe(true);
+      expect(mount).toMatchObject({
+        created: true,
+        replacedSymlinkTarget: '/app/node_modules',
+      });
+      cleanupRunnerDependencyMount(mount);
+      expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(target)).toBe('/app/node_modules');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 
@@ -138,7 +259,8 @@ describe('runner subprocess filesystem sandbox', () => {
     const command = sandboxedShellCommand({
       AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
       AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
-    }, `${registrationRoot}/jobs/db837db2-30d7-4788-a56f-00056f5d550e`, "printf '%s' ok");
+      AGENTOPS_RUNNER_DEPENDENCY_ROOT: '/app/node_modules',
+    }, activeWorktree, "printf '%s' ok");
     expect(command).toContain("'bwrap'");
     expect(command).toContain(`'${registrationRoot}'`);
     expect(command).toContain(`'printf '\\''%s'\\'' ok'`);
@@ -156,6 +278,7 @@ describe('runner subprocess filesystem sandbox', () => {
       SSH_AUTH_SOCK: '/tmp/agent.sock',
       AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
       AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
+      AGENTOPS_RUNNER_DEPENDENCY_ROOT: '/app/node_modules',
     };
     try {
       expect(providerSessionEnvironment()).toEqual({
@@ -163,6 +286,7 @@ describe('runner subprocess filesystem sandbox', () => {
         OPENAI_API_KEY: 'provider-secret',
         AGENTOPS_RUNNER_PROCESS_SANDBOX: 'bubblewrap-v1',
         AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
+        AGENTOPS_RUNNER_DEPENDENCY_ROOT: '/app/node_modules',
         SHELL: '/bin/sh',
       });
     } finally {

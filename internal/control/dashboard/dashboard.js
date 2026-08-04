@@ -198,6 +198,48 @@
       </dl>
     </section>`;
   }
+  function developmentProgress(item) {
+    const issues = Array.isArray(item.developmentProgress) ? item.developmentProgress : [];
+    if (issues.length === 0) {
+      return `<section class="development-progress progress-empty" aria-label="実装進捗">
+        <div><p class="component-name">実装進捗</p><strong>永続イベントはまだありません</strong></div>
+        <p class="quiet">runner が次の工程へ遷移すると、Issue単位の状態がここに表示されます。</p>
+      </section>`;
+    }
+    return `<div class="development-progress-list">${issues.map((issue) => {
+      const current = issue.current;
+      const events = Array.isArray(issue.history) ? issue.history : [];
+      const failedJob = ['failed', 'cancelled', 'rejected'].includes(current.jobStatus);
+      const visibleState = failedJob ? 'failed' : current.state;
+      const subject = `${issue.repository}#${Number(issue.issueNumber)}`;
+      const history = [...events].reverse().map((event) =>
+        `<li><time>${formatTime(event.occurredAt)}</time><span>${escapeHTML(event.phase)}</span><strong>${escapeHTML(event.state)}</strong><span>${escapeHTML(event.step)}</span></li>`
+      ).join('');
+      return `<section class="development-progress" aria-label="${escapeHTML(subject)} の実装進捗">
+        <header class="progress-head">
+          <div><p class="component-name">実装進捗 · ${escapeHTML(subject)}</p>
+            <strong>${escapeHTML(current.phase)} / ${escapeHTML(current.step)}</strong></div>
+          <span class="badge ${visibleState === 'failed' || visibleState === 'blocked' ? 'bad' : visibleState === 'waiting' ? 'warn' : ''}">${escapeHTML(visibleState)}</span>
+        </header>
+        <dl class="progress-grid">
+          <dt>最終活動</dt><dd>${formatTime(issue.lastActivity)}</dd>
+          <dt>次の gate</dt><dd>${escapeHTML(current.nextGate || '—')}</dd>
+          <dt>blocker</dt><dd>${escapeHTML(current.blocker || current.jobLastError || '—')}</dd>
+          <dt>branch</dt><dd>${escapeHTML(current.branch || '—')}</dd>
+          <dt>親 Epic</dt><dd>${current.parentIssueNumber ? `#${Number(current.parentIssueNumber)}` : '—'}</dd>
+          <dt>PR</dt><dd>${current.pullRequestNumber ? `#${Number(current.pullRequestNumber)}` : '—'}</dd>
+          <dt>owner</dt><dd>${escapeHTML(current.workerId)} · attempt ${Number(current.attemptNumber)}</dd>
+          <dt>session</dt><dd>${escapeHTML(current.sessionName || '—')}</dd>
+          <dt>worktree</dt><dd><code>${escapeHTML(current.worktreePath || '—')}</code></dd>
+        </dl>
+        <details class="progress-history"><summary>工程履歴 ${events.length}件</summary><ol>${history}</ol></details>
+      </section>`;
+    }).join('')}${item.developmentProgressTruncated
+      ? `<section class="development-progress progress-truncated" aria-label="実装進捗の省略">
+        <p class="quiet">直近 ${issues.length} Issue のみ表示しています。全件は <code>agentopsctl progress</code> で読めます。</p>
+      </section>`
+      : ''}</div>`;
+  }
   function card(item) {
     const r = item.registration;
     const components = ['issue_monitor', 'pr_monitor', 'forwarder', 'execution', 'queue']
@@ -218,6 +260,7 @@
           <button class="danger" type="button" data-disable="${escapeHTML(r.id)}" ${r.enabled && state.connected ? '' : 'disabled'}>無効化</button>
         </div>
       </header>
+      ${developmentProgress(item)}
       <div class="components">${components}</div>
       <details class="details">
         <summary>配送・ジョブ詳細</summary>

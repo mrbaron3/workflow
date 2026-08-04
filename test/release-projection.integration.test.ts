@@ -121,6 +121,38 @@ integration('production release receipt projection', () => {
       readyLabel: 'ready',
       readyAt: at(1),
     });
+    const requirementsReceiptId = randomUUID();
+    const requirementsReceipt = {
+      receiptId: requirementsReceiptId,
+      receiptKey: 'requirements-authority',
+      releaseId: created.release.id,
+      repository: registration.repository,
+      issueNumber: 41,
+      producer: { jobId: queued.job.id, attemptId: lease!.attemptId },
+      causes: [authorityId],
+      recordedAt: at(2),
+      kind: 'requirements-authority',
+      sourceIssueDigest: 'f'.repeat(64),
+      sourceUpdatedAt: at(1),
+      capturedAt: at(2),
+    };
+    await pool.query(
+      `INSERT INTO agentops_control.release_receipt_outbox(
+         receipt_id, release_id, receipt_key, kind, repository, issue_number,
+         head_sha, causes, payload, recorded_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8, $9)`,
+      [
+        requirementsReceiptId,
+        created.release.id,
+        requirementsReceipt.receiptKey,
+        requirementsReceipt.kind,
+        registration.repository,
+        41,
+        [authorityId],
+        requirementsReceipt,
+        at(2),
+      ],
+    );
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'release-projection-'));
     roots.push(root);
@@ -277,6 +309,19 @@ integration('production release receipt projection', () => {
       mergeReachableFromDefaultBranch: true,
       mergedAt: at(8),
     });
+    await expect(control.findReleaseForRunnerEvent({
+      registrationId: registration.id,
+      pullRequest: 51,
+    })).resolves.toBeNull();
+    await expect(control.findReleaseForRunnerEvent({
+      registrationId: registration.id,
+      pullRequest: 51,
+      includeMerged: true,
+    })).resolves.toMatchObject({
+      id: created.release.id,
+      status: 'merged',
+      finalHead: head,
+    });
     const receipts = await control.listReleaseReceipts(created.release.id, {
       includeMergeIntent: true,
     });
@@ -294,7 +339,7 @@ integration('production release receipt projection', () => {
     });
     const evidence = await control.exportReleaseEvidence(created.release.id);
     expect(evidence).toMatchObject({
-      schemaVersion: '2.0',
+      schemaVersion: '3.0',
       release: { id: created.release.id, finalHead: head, mergeSha },
       result: 'passed',
     });

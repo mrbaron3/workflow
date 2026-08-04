@@ -352,9 +352,43 @@ export function realPrNativeGithubRunner(
     },
     closeIssue(cwd, repository, issueNumber) {
       run('gh', [
-        'issue', 'close', String(issueNumber), '--repo', repository, '--comment',
-        'すべての分割work unitが自動レビュー・merge済みのためcloseします。',
+        'issue', 'close', String(issueNumber), '--repo', repository,
+        '--reason', 'completed', '--comment',
+        'すべての必須work unitが自動レビュー・merge済みのためcloseします。',
       ], cwd);
+    },
+    listRepositoryIssues(cwd, targetRepository) {
+      if (repository && repository !== targetRepository) {
+        throw new Error(
+          `Issue inventory repository ${targetRepository} does not match scoped ${repository}`,
+        );
+      }
+      const raw = JSON.parse(run('gh', [
+        'issue', 'list', '--repo', targetRepository, '--state', 'all',
+        '--limit', '1000', '--json',
+        'number,title,body,author,subIssues,state,stateReason',
+      ], cwd)) as Array<{
+        number: number;
+        title: string;
+        body: string | null;
+        author: { login: string } | null;
+        subIssues: { nodes: Array<{ number: number }> };
+        state: string;
+        stateReason: string | null;
+      }>;
+      return raw.map((issue) => ({
+        number: issue.number,
+        title: issue.title,
+        body: issue.body ?? '',
+        authorLogin: issue.author?.login ?? '',
+        subIssueNumbers: issue.subIssues.nodes.map((child) => child.number),
+        state: issue.state.toLowerCase() === 'closed' ? 'closed' : 'open',
+        stateReason: issue.stateReason?.toLowerCase() === 'completed'
+          ? 'completed'
+          : issue.stateReason?.toLowerCase() === 'not_planned'
+            ? 'not_planned'
+            : null,
+      }));
     },
   };
 }

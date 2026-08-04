@@ -11,6 +11,23 @@ import type { TriagePolicy } from './policy.js';
 import { managedTriageLabels } from './policy.js';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Ceilings for the bytes that become immutable requirements authority. They are
+ * the frozen-snapshot contract's own limits: exceeding one is a human-fixable
+ * Issue-shape problem, not a transport fault, so it never retries.
+ */
+export const MAX_TRIAGE_TITLE_CHARS = 4_096;
+export const MAX_TRIAGE_BODY_CHARS = 1_000_000;
+export const MAX_TRIAGE_COMMENT_CHARS = 100_000;
+
+/** An Issue whose requirements bytes exceed what can be frozen verbatim. */
+export class TriageSourceTooLargeError extends Error {
+  constructor(readonly detail: string) {
+    super(`Source Issue exceeds the immutable requirements size limit: ${detail}`);
+    this.name = 'TriageSourceTooLargeError';
+  }
+}
 const Repository = CanonicalRepository;
 const GitHubLabel = z.union([
   z.string(),
@@ -286,12 +303,35 @@ export class TypedGhTriageClient implements TriageGitHub {
     if (events.length > 1_000) {
       throw new Error('event-read exceeded the item limit');
     }
+    const issueBody = issue.body ?? '';
+    // Requirements are never silently truncated, so an oversized Issue is a
+    // human-actionable stop rather than an opaque failure. The concrete limit
+    // travels with the error so the operator is told what to shorten.
+    if (issue.title.length > MAX_TRIAGE_TITLE_CHARS) {
+      throw new TriageSourceTooLargeError(
+        `Issue title is ${issue.title.length} characters; the limit is ${MAX_TRIAGE_TITLE_CHARS}`,
+      );
+    }
+    if (issueBody.length > MAX_TRIAGE_BODY_CHARS) {
+      throw new TriageSourceTooLargeError(
+        `Issue body is ${issueBody.length} characters; the limit is ${MAX_TRIAGE_BODY_CHARS}`,
+      );
+    }
+    for (const comment of comments) {
+      const commentBody = comment.body ?? '';
+      if (commentBody.length > MAX_TRIAGE_COMMENT_CHARS) {
+        throw new TriageSourceTooLargeError(
+          `Comment ${comment.id} is ${commentBody.length} characters; `
+          + `the limit is ${MAX_TRIAGE_COMMENT_CHARS}`,
+        );
+      }
+    }
     return {
       actorLogin: this.actorLogin,
       issue: {
         number: issue.number,
-        title: issue.title.slice(0, 2_000),
-        body: (issue.body ?? '').slice(0, 64 * 1024),
+        title: issue.title,
+        body: issueBody,
         state: issue.state,
         updatedAt: new Date(issue.updated_at).toISOString(),
         url: issue.html_url,
@@ -301,7 +341,7 @@ export class TypedGhTriageClient implements TriageGitHub {
       },
       comments: comments.map((comment) => ({
         id: comment.id,
-        body: (comment.body ?? '').slice(0, 32 * 1024),
+        body: comment.body ?? '',
         updatedAt: new Date(comment.updated_at).toISOString(),
         url: comment.html_url,
         author: comment.user.login,
@@ -533,13 +573,12 @@ export function triageSourceDigest(
   policy: TriagePolicy,
 ): string {
   const managed = new Set(managedTriageLabels(policy));
-  const comments = snapshot.comments
-    .filter((comment) =>
-      comment.author !== snapshot.actorLogin || markerDigest(comment.body) === null)
+  const comments = authoritativeTriageComments(snapshot)
     .map((comment) => ({
       id: comment.id,
       body: comment.body,
       updatedAt: comment.updatedAt,
+      url: comment.url,
       author: comment.author,
     }));
   const source = {
@@ -557,6 +596,16 @@ export function triageSourceDigest(
     comments,
   };
   return createHash('sha256').update(JSON.stringify(source)).digest('hex');
+}
+
+export function authoritativeTriageComments(
+  snapshot: TriageSnapshot,
+): TriageComment[] {
+  return snapshot.comments
+    .filter((comment) =>
+      comment.author !== snapshot.actorLogin || markerDigest(comment.body) === null)
+    .sort((left, right) => left.id - right.id)
+    .map((comment) => ({ ...comment }));
 }
 
 export function hasTriageMarker(

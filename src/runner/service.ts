@@ -6,6 +6,7 @@ import {
   RunnerJobResultV1Contract,
   type Lease,
   type RunnerJobFailureV1,
+  type RunnerJobPayloadV1,
 } from '../control-store/types.js';
 import {
   persistJsonArtifact,
@@ -220,6 +221,8 @@ export class IsolatedRunnerService {
       this.config.attemptTimeoutMs,
     );
     let prepared: PreparedRunnerWorkspace | null = null;
+    let payload: RunnerJobPayloadV1 | null = null;
+    let retainWorkspace = false;
     heartbeat.start();
     try {
       const envelopeParsed = JobEnvelopeContract.safeParse(lease.job);
@@ -246,7 +249,7 @@ export class IsolatedRunnerService {
           false,
         );
       }
-      const payload = payloadParsed.data;
+      payload = payloadParsed.data;
       const repository = `${payload.repository.owner}/${payload.repository.name}`;
       const registration = await this.store.getRegistration(envelope.registrationId);
       if (
@@ -272,6 +275,7 @@ export class IsolatedRunnerService {
             ? await this.store.findReleaseForRunnerEvent({
                 registrationId: envelope.registrationId,
                 pullRequest: payload.event.number,
+                includeMerged: true,
               })
             : null;
         if (!recovered) {
@@ -312,8 +316,13 @@ export class IsolatedRunnerService {
         provider: this.config.provider,
         controlStore: this.store,
         releaseRuntime: this.config.releaseRuntime ?? null,
+        projectWorkspaceHead: (headSha) => {
+          this.workspace.projectHead(prepared!, headSha);
+        },
         log: this.log,
       });
+      retainWorkspace = adapterResult.outcome === 'needs-human-review'
+        || adapterResult.retainWorkspace === true;
       fence.assertLive('release');
       const evidence = await persistJsonArtifact({
         store: this.store,
@@ -404,18 +413,44 @@ export class IsolatedRunnerService {
         artifacts: [evidence],
         completedAt: new Date().toISOString(),
       });
-      await this.store.finishLease(lease.token, { status: 'succeeded', result });
+      if (result.outcome === 'needs-human-review' && effectiveReleaseId) {
+        await this.store.finishHumanReviewLease({
+          token: lease.token,
+          workerId: this.config.workerId,
+          result,
+        });
+      } else {
+        await this.store.finishLease(lease.token, { status: 'succeeded', result });
+      }
       this.log(
         `runner completed ${lease.job.id} attempt ${lease.attemptNumber} `
         + `with ${result.outcome} at ${result.headSha ?? 'no-head'}`,
       );
     } catch (error) {
+      // A failed isolated attempt is evidence a human/operator may need to
+      // inspect before retry. Each attempt has its own path, so retaining it
+      // cannot interfere with a later repair worktree.
+      retainWorkspace = prepared !== null;
       await this.recordFailure(lease, runnerFailure(error));
     } finally {
       await heartbeat.stop();
-      if (prepared) {
+      if (prepared && retainWorkspace) {
         try {
-          this.workspace.cleanup(prepared);
+          this.workspace.retain(prepared, payload!);
+        } catch (error) {
+          this.log(
+            `runner workspace retention marker failed for ${lease.job.id} attempt `
+            + `${lease.attemptNumber}: `
+            + `${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        this.log(
+          `runner retained isolated worktree for ${lease.job.id} attempt `
+          + `${lease.attemptNumber}: ${prepared.worktreePath}`,
+        );
+      } else if (prepared) {
+        try {
+          this.workspace.cleanup(prepared, payload!);
         } catch (error) {
           // The lease outcome is already durable by this point. Workspace
           // cleanup is recoverable maintenance and must not turn a confirmed

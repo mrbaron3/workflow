@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	ControlSchemaVersion = 12
+	ControlSchemaVersion = 17
 	migrationLockKey     = int64(0x4349534f02)
 )
 
@@ -1864,6 +1864,133 @@ func (store *Store) AppendAudit(
 	return unavailable(err)
 }
 
+const (
+	// Per-card orientation bounds. The full history stays queryable through
+	// `agentopsctl progress`, which is paged by its own explicit --limit.
+	developmentProgressIssueLimit   = 20
+	developmentProgressHistoryLimit = 12
+)
+
+const developmentProgressSelect = `SELECT
+       progress.id, progress.registration_id, progress.registration_version,
+       progress.job_id, progress.attempt_id, attempt.attempt_number,
+       progress.release_id, progress.repository, progress.subject_kind,
+       progress.subject_number, progress.parent_issue_number,
+       progress.worker_id, progress.event_key,
+       progress.phase, progress.step, progress.state, progress.summary,
+       progress.next_gate, progress.blocker, progress.session_name,
+       progress.worktree_path, progress.branch, progress.pull_request_number,
+       progress.occurred_at, job.status, job.last_error, lease.heartbeat_at
+  FROM agentops_control.development_progress_events progress
+  JOIN agentops_control.jobs job ON job.id = progress.job_id
+  JOIN agentops_control.job_attempts attempt ON attempt.id = progress.attempt_id
+  LEFT JOIN agentops_control.job_leases lease
+    ON lease.attempt_id = progress.attempt_id AND lease.status = 'active'`
+
+func scanDevelopmentProgress(row rowScanner) (DevelopmentProgressEvent, error) {
+	var event DevelopmentProgressEvent
+	err := row.Scan(
+		&event.ID,
+		&event.RegistrationID,
+		&event.RegistrationVersion,
+		&event.JobID,
+		&event.AttemptID,
+		&event.AttemptNumber,
+		&event.ReleaseID,
+		&event.Repository,
+		&event.SubjectKind,
+		&event.SubjectNumber,
+		&event.ParentIssueNumber,
+		&event.WorkerID,
+		&event.EventKey,
+		&event.Phase,
+		&event.Step,
+		&event.State,
+		&event.Summary,
+		&event.NextGate,
+		&event.Blocker,
+		&event.SessionName,
+		&event.WorktreePath,
+		&event.Branch,
+		&event.PullRequestNumber,
+		&event.OccurredAt,
+		&event.JobStatus,
+		&event.JobLastError,
+		&event.LeaseHeartbeatAt,
+	)
+	return event, err
+}
+
+func developmentProgressActivity(event DevelopmentProgressEvent) time.Time {
+	activity := event.OccurredAt
+	if event.LeaseHeartbeatAt != nil && event.LeaseHeartbeatAt.After(activity) {
+		activity = *event.LeaseHeartbeatAt
+	}
+	return activity
+}
+
+// DevelopmentProgress returns newest-first durable progress. An absent Issue
+// filter lists recent work across the repository for operator orientation.
+func (store *Store) DevelopmentProgress(
+	ctx context.Context,
+	repository string,
+	issueNumber *int64,
+	limit int,
+) ([]DevelopmentProgressEvent, error) {
+	repository = strings.ToLower(strings.TrimSpace(repository))
+	if !safeRepositoryIdentity(repository) {
+		return nil, fmt.Errorf("%w: invalid repository", ErrConflict)
+	}
+	if issueNumber != nil && *issueNumber < 1 {
+		return nil, fmt.Errorf("%w: invalid issue number", ErrConflict)
+	}
+	if limit < 1 || limit > 200 {
+		return nil, fmt.Errorf("%w: invalid progress limit", ErrConflict)
+	}
+	rows, err := store.pool.Query(ctx, `
+	WITH ranked_progress AS (
+	  SELECT progress.id, progress.occurred_at,
+	         row_number() OVER (
+	           PARTITION BY progress.subject_kind, progress.subject_number
+	           ORDER BY progress.occurred_at DESC, progress.id DESC
+	         ) AS subject_history_position
+	    FROM agentops_control.development_progress_events progress
+	   WHERE progress.repository = $1
+	     AND ($2::bigint IS NULL OR (
+	       progress.subject_kind = 'issue'
+	       AND (
+	         progress.subject_number = $2
+	         OR progress.parent_issue_number = $2
+	       )
+	     ))
+	), selected_progress AS (
+	  SELECT id
+	    FROM ranked_progress
+	   ORDER BY subject_history_position, occurred_at DESC, id DESC
+	   LIMIT $3
+	)
+	`+developmentProgressSelect+`
+	 JOIN selected_progress selected ON selected.id = progress.id
+	 ORDER BY progress.occurred_at DESC, progress.id DESC
+`, repository, issueNumber, limit)
+	if err != nil {
+		return nil, unavailable(err)
+	}
+	defer rows.Close()
+	events := make([]DevelopmentProgressEvent, 0)
+	for rows.Next() {
+		event, err := scanDevelopmentProgress(rows)
+		if err != nil {
+			return nil, unavailable(err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, unavailable(err)
+	}
+	return events, nil
+}
+
 func (store *Store) Projections(
 	ctx context.Context,
 	_ time.Duration,
@@ -1939,6 +2066,7 @@ func (store *Store) Projections(
 			Components:             make(map[string]ComponentProjection),
 			LastPoll:               map[string]*time.Time{"issue": nil, "pull_request": nil},
 			RecentDeliveryFailures: make([]DeliveryFailureProjection, 0),
+			DevelopmentProgress:    make([]DevelopmentIssueProgress, 0),
 		}
 		for _, component := range []string{
 			ComponentIssueMonitor,
@@ -2260,6 +2388,95 @@ func (store *Store) Projections(
 		failureRows.Close()
 		if err := failureRows.Err(); err != nil {
 			return nil, unavailable(err)
+		}
+		// One registration can accumulate unboundedly many Issues. The card is
+		// an orientation surface, not an archive: keep the most recently active
+		// Issues only and let `agentopsctl progress` serve the full history.
+		// One extra Issue is requested purely to report truncation truthfully.
+		progressRows, err := transaction.Query(ctx, `
+			WITH recent_issues AS (
+			  SELECT progress.subject_number,
+			         max(progress.occurred_at) AS last_occurred_at
+			    FROM agentops_control.development_progress_events progress
+			   WHERE progress.registration_id = $1
+			     AND progress.subject_kind = 'issue'
+			     AND progress.subject_number IS NOT NULL
+			   GROUP BY progress.subject_number
+			   ORDER BY last_occurred_at DESC, progress.subject_number DESC
+			   LIMIT $2
+			), ranked_progress AS (
+			  SELECT progress.id,
+			         row_number() OVER (
+			           PARTITION BY progress.subject_number
+			           ORDER BY progress.occurred_at DESC, progress.id DESC
+			         ) AS history_position
+			    FROM agentops_control.development_progress_events progress
+			    JOIN recent_issues
+			      ON recent_issues.subject_number = progress.subject_number
+			   WHERE progress.registration_id = $1
+			     AND progress.subject_kind = 'issue'
+			), selected_progress AS (
+			  SELECT id FROM ranked_progress WHERE history_position <= $3
+			)
+			`+developmentProgressSelect+`
+			 JOIN selected_progress selected ON selected.id = progress.id
+			 ORDER BY progress.subject_number, progress.occurred_at DESC, progress.id DESC`,
+			registration.ID,
+			developmentProgressIssueLimit+1,
+			developmentProgressHistoryLimit,
+		)
+		if err != nil {
+			return nil, unavailable(err)
+		}
+		issueIndexes := make(map[int64]int)
+		for progressRows.Next() {
+			event, err := scanDevelopmentProgress(progressRows)
+			if err != nil {
+				progressRows.Close()
+				return nil, unavailable(err)
+			}
+			if event.SubjectNumber == nil {
+				progressRows.Close()
+				return nil, unavailable(errors.New("issue progress has no issue number"))
+			}
+			issueNumber := *event.SubjectNumber
+			index, present := issueIndexes[issueNumber]
+			if !present {
+				index = len(projection.DevelopmentProgress)
+				issueIndexes[issueNumber] = index
+				projection.DevelopmentProgress = append(
+					projection.DevelopmentProgress,
+					DevelopmentIssueProgress{
+						Repository:   event.Repository,
+						IssueNumber:  issueNumber,
+						Current:      event,
+						History:      make([]DevelopmentProgressEvent, 0, developmentProgressHistoryLimit),
+						LastActivity: developmentProgressActivity(event),
+					},
+				)
+			}
+			issueProgress := &projection.DevelopmentProgress[index]
+			issueProgress.History = append(issueProgress.History, event)
+			if activity := developmentProgressActivity(event); activity.After(issueProgress.LastActivity) {
+				issueProgress.LastActivity = activity
+			}
+		}
+		progressRows.Close()
+		if err := progressRows.Err(); err != nil {
+			return nil, unavailable(err)
+		}
+		sort.SliceStable(projection.DevelopmentProgress, func(i, j int) bool {
+			left := projection.DevelopmentProgress[i]
+			right := projection.DevelopmentProgress[j]
+			if !left.LastActivity.Equal(right.LastActivity) {
+				return left.LastActivity.After(right.LastActivity)
+			}
+			return left.IssueNumber < right.IssueNumber
+		})
+		if len(projection.DevelopmentProgress) > developmentProgressIssueLimit {
+			projection.DevelopmentProgress =
+				projection.DevelopmentProgress[:developmentProgressIssueLimit]
+			projection.DevelopmentProgressTruncated = true
 		}
 		projections = append(projections, projection)
 	}

@@ -69,6 +69,20 @@ input { width: 100%; min-height: 44px; padding: .65rem .75rem; color: var(--ink)
 .component dl { display: grid; grid-template-columns: auto 1fr; gap: .3rem .5rem; margin: 0; font-size: .75rem; }
 .component dt { color: var(--muted); }
 .component dd { margin: 0; overflow-wrap: anywhere; }
+.development-progress { padding: 1rem 1.1rem; border-top: 1px solid var(--line); background: #f9fbfc; }
+.progress-empty { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.progress-empty p { margin-bottom: 0; }
+.progress-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.progress-head p { margin-bottom: .25rem; }
+.progress-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); gap: .35rem .65rem; margin: .8rem 0 0; font-size: .82rem; }
+.progress-grid dt { color: var(--muted); }
+.progress-grid dd { margin: 0; overflow-wrap: anywhere; }
+.progress-history { margin-top: .75rem; }
+.progress-history summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 700; }
+.progress-history ol { display: grid; gap: .3rem; padding-left: 1.3rem; }
+.progress-history li { display: grid; grid-template-columns: minmax(8rem, auto) minmax(5rem, auto) minmax(5rem, auto) 1fr; gap: .5rem; align-items: baseline; }
+.progress-history time { color: var(--muted); }
+.progress-truncated p { margin-bottom: 0; }
 .details { padding: .9rem 1.1rem; border-top: 1px solid var(--line); }
 .details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 700; }
 .details-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; margin-top: .8rem; font-size: .85rem; }
@@ -103,6 +117,9 @@ fieldset { display: grid; gap: .65rem; border: 1px solid var(--line); border-rad
   .filters { grid-template-columns: 1fr; }
   .components, .details-grid { grid-template-columns: 1fr; }
   .component { border-right: 0; }
+  .progress-empty, .progress-head { align-items: stretch; flex-direction: column; }
+  .progress-grid { grid-template-columns: max-content minmax(0, 1fr); }
+  .progress-history li { grid-template-columns: 1fr; gap: .1rem; }
   button { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {

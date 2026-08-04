@@ -22,6 +22,7 @@ import {
   type RevisionGateSnapshot as RevisionGateSnapshotType,
 } from '../../domain/schema.js';
 import { Store, nowISO } from '../../store/store.js';
+import { linkedParentIssueNumber } from '../../domain/development-progress.js';
 export {
   BLOCKING_REVIEW_COMMENT,
   GhPrListResponse,
@@ -88,6 +89,11 @@ export interface PrNativeGithubRunner {
   viewRevision(cwd: string, prNumber: number): GithubPrRevisionState;
   merge(cwd: string, prNumber: number, expectedHeadSha: string): void;
   closeIssue(cwd: string, repository: string, issueNumber: number): void;
+  /** Optional deterministic epic reconciliation inventory. */
+  listRepositoryIssues?(
+    cwd: string,
+    repository: string,
+  ): GithubRepositoryIssue[];
   /** Optional on test doubles; the production runner enables repository-wide discovery. */
   listOpenPullRequests?(cwd: string, baseBranch: string): GithubOpenPullRequest[];
   fetchPullRequestHead?(
@@ -106,6 +112,182 @@ export interface PrNativeGithubRunner {
     prNumber: number,
     expectedHead: string,
   ): GithubReleaseObservation;
+}
+
+export interface GithubRepositoryIssue {
+  number: number;
+  title: string;
+  body: string;
+  authorLogin: string;
+  subIssueNumbers: number[];
+  state: 'open' | 'closed';
+  stateReason: 'completed' | 'not_planned' | null;
+}
+
+export interface ExternalEpicClosureResult {
+  parentIssueNumber: number | null;
+  requiredKeys: string[];
+  pendingKeys: string[];
+  closed: boolean;
+  reason: string | null;
+}
+
+function issuePhaseKey(title: string): string | null {
+  return title.match(/\[(DF-[0-9]{3})\]/i)?.[1]?.toUpperCase() ?? null;
+}
+
+function explicitlyExcludedPhaseKeys(body: string): Set<string> {
+  const excluded = new Set<string>();
+  for (const line of body.split(/\r?\n/)) {
+    const keys = [...line.matchAll(/\bDF-[0-9]{3}\b/gi)].map((match) => ({
+      key: match[0].toUpperCase(),
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+    }));
+    // Exclusion is authority-bearing. Accept only an affirmative, single-key
+    // declaration; prose that compares phases or says "not future scope"
+    // remains required and therefore fails closed.
+    if (keys.length !== 1) continue;
+    const declaration = `${line.slice(0, keys[0]!.start)} ${line.slice(keys[0]!.end)}`
+      .trim()
+      .replace(/^[-:：=→>\s]+/, '')
+      .trim();
+    const explicitEnglish = /^(?:is\s+)?future[ -]*scope(?:\s+(?:and|[,;]).*)?\.?$/i
+      .test(declaration)
+      || /^(?:is\s+)?out[ -]of[ -]scope(?:\s+.*)?\.?$/i.test(declaration);
+    const explicitJapanese = /将来\s*scope/i.test(declaration)
+      && /(?:含めない|対象外)/.test(declaration)
+      && !/(?:ではない|でない|じゃない|ではなく)/.test(declaration);
+    const explicitVersionExclusion = /^(?:v0|今回|現行).*(?:含めない|対象外)$/i
+      .test(declaration);
+    if (explicitEnglish || explicitJapanese || explicitVersionExclusion) {
+      excluded.add(keys[0]!.key);
+    }
+  }
+  return excluded;
+}
+
+/**
+ * Close a body-linked external epic only when every explicitly named v0 phase
+ * is closed. Lines that mark a phase as future/out-of-scope remove that phase
+ * from the required set. Missing or duplicate phase mappings fail closed.
+ */
+export function reconcileExternalEpicClosure(
+  runner: PrNativeGithubRunner,
+  cwd: string,
+  repository: string,
+  sourceIssue: { number: number; body: string },
+): ExternalEpicClosureResult {
+  const parentNumber = linkedParentIssueNumber(sourceIssue.body, sourceIssue.number);
+  if (parentNumber === null) {
+    return {
+      parentIssueNumber: null,
+      requiredKeys: [],
+      pendingKeys: [],
+      closed: false,
+      reason: 'Source Issue has no Parent marker',
+    };
+  }
+  if (!runner.listRepositoryIssues) {
+    return {
+      parentIssueNumber: parentNumber,
+      requiredKeys: [],
+      pendingKeys: [],
+      closed: false,
+      reason: 'GitHub Issue inventory is unavailable',
+    };
+  }
+  const evaluate = (issues: GithubRepositoryIssue[]): ExternalEpicClosureResult => {
+    const parent = issues.find((issue) => issue.number === parentNumber);
+    if (!parent) {
+      return {
+        parentIssueNumber: parentNumber,
+        requiredKeys: [],
+        pendingKeys: [],
+        closed: false,
+        reason: 'Parent Issue is missing',
+      };
+    }
+    if (parent.state === 'closed') {
+      return {
+        parentIssueNumber: parentNumber,
+        requiredKeys: [],
+        pendingKeys: [],
+        closed: parent.stateReason === 'completed',
+        reason: parent.stateReason === 'completed'
+          ? null
+          : 'Parent Issue is closed without completion',
+      };
+    }
+    const allKeys = new Set(
+      [...parent.body.matchAll(/\bDF-[0-9]{3}\b/gi)]
+        .map((match) => match[0].toUpperCase()),
+    );
+    const excluded = explicitlyExcludedPhaseKeys(parent.body);
+    const requiredKeys = [...allKeys].filter((key) => !excluded.has(key)).sort();
+    if (requiredKeys.length === 0) {
+      return {
+        parentIssueNumber: parentNumber,
+        requiredKeys,
+        pendingKeys: [],
+        closed: false,
+        reason: 'Parent Issue has no explicit required phase keys',
+      };
+    }
+    const explicitSubIssues = new Set(parent.subIssueNumbers);
+    const children = issues.filter((issue) => (
+      linkedParentIssueNumber(issue.body, issue.number) === parentNumber
+      && (
+        explicitSubIssues.size > 0
+          ? explicitSubIssues.has(issue.number)
+          : parent.authorLogin !== '' && issue.authorLogin === parent.authorLogin
+      )
+    ));
+    const pendingKeys: string[] = [];
+    for (const key of requiredKeys) {
+      const matches = children.filter((issue) => issuePhaseKey(issue.title) === key);
+      if (matches.length !== 1) {
+        return {
+          parentIssueNumber: parentNumber,
+          requiredKeys,
+          pendingKeys,
+          closed: false,
+          reason: `${key} must map to exactly one Parent-linked child Issue`,
+        };
+      }
+      if (
+        matches[0]!.state !== 'closed'
+        || matches[0]!.stateReason !== 'completed'
+      ) pendingKeys.push(key);
+    }
+    return {
+      parentIssueNumber: parentNumber,
+      requiredKeys,
+      pendingKeys,
+      closed: false,
+      reason: pendingKeys.length > 0 ? 'Required epic phases remain open' : null,
+    };
+  };
+  const initial = evaluate(runner.listRepositoryIssues(cwd, repository));
+  if (initial.closed || initial.reason !== null) return initial;
+  // Re-read immediately before mutation so a child reopened during the first
+  // inventory cannot leave only the parent closed.
+  const refreshed = evaluate(runner.listRepositoryIssues(cwd, repository));
+  if (refreshed.closed || refreshed.reason !== null) return refreshed;
+  if (refreshed.requiredKeys.join('\0') !== initial.requiredKeys.join('\0')) {
+    return {
+      ...refreshed,
+      reason: 'Parent required phase inventory changed before close',
+    };
+  }
+  runner.closeIssue(cwd, repository, parentNumber);
+  return {
+    parentIssueNumber: parentNumber,
+    requiredKeys: refreshed.requiredKeys,
+    pendingKeys: [],
+    closed: true,
+    reason: null,
+  };
 }
 
 export interface RevisionGateInput {

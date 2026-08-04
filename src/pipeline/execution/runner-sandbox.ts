@@ -8,6 +8,53 @@ export const RUNNER_SANDBOX_MARKER = 'AGENTOPS_RUNNER_PROCESS_SANDBOX';
 export const RUNNER_SANDBOX_ROOT = 'AGENTOPS_RUNNER_REGISTRATION_ROOT';
 export const RUNNER_DEPENDENCY_ROOT = 'AGENTOPS_RUNNER_DEPENDENCY_ROOT';
 
+/**
+ * The only dependency root an isolated runner may bind. It is baked into the
+ * runner image, so it is a fixed identity rather than configuration: accepting
+ * any other path would let a compromised environment point graders and
+ * providers at attacker-supplied modules.
+ */
+export const RUNNER_DEPENDENCY_PATH = '/app/node_modules';
+
+export interface RunnerDependencyMount {
+  source: string;
+  target: string;
+  created: boolean;
+  replacedSymlinkTarget: string | null;
+}
+
+/** Prepare one already-scoped disposable target without following symlinks. */
+export function prepareRunnerDependencyMountTarget(
+  source: string,
+  target: string,
+): RunnerDependencyMount {
+  let created = false;
+  let replacedSymlinkTarget: string | null = null;
+  let targetStat: fs.Stats | null = null;
+  try {
+    targetStat = fs.lstatSync(target);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  if (targetStat !== null) {
+    if (targetStat.isSymbolicLink()) {
+      // Never let bwrap resolve an untrusted checkout symlink as its mount
+      // target. Quarantine it in the disposable worktree, create a real mount
+      // point, then restore the exact link after the subprocess exits.
+      replacedSymlinkTarget = fs.readlinkSync(target);
+      fs.unlinkSync(target);
+      fs.mkdirSync(target);
+      created = true;
+    } else if (!targetStat.isDirectory()) {
+      throw new Error('runner grader node_modules mount target is unsafe');
+    }
+  } else {
+    fs.mkdirSync(target);
+    created = true;
+  }
+  return { source, target, created, replacedSymlinkTarget };
+}
+
 export function runnerSandboxRoot(env: NodeJS.ProcessEnv): string | null {
   if (env[RUNNER_SANDBOX_MARKER] !== 'bubblewrap-v1') return null;
   const root = env[RUNNER_SANDBOX_ROOT] ?? '';
@@ -15,6 +62,43 @@ export function runnerSandboxRoot(env: NodeJS.ProcessEnv): string | null {
     throw new Error('isolated runner registration sandbox root is absent or invalid');
   }
   return root;
+}
+
+/** Prepare the runner-pinned toolchain bind target before provider/grader use. */
+export function prepareRunnerDependencyMount(
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): RunnerDependencyMount | null {
+  const registrationRoot = runnerSandboxRoot(env);
+  if (!registrationRoot) return null;
+  const resolvedCwd = path.resolve(cwd);
+  if (
+    resolvedCwd !== registrationRoot
+    && !resolvedCwd.startsWith(`${registrationRoot}${path.sep}`)
+  ) {
+    throw new Error(`runner subprocess cwd escapes Registration sandbox: ${cwd}`);
+  }
+  const dependencyRoot = env[RUNNER_DEPENDENCY_ROOT];
+  if (
+    dependencyRoot !== RUNNER_DEPENDENCY_PATH
+    || !fs.existsSync(dependencyRoot)
+    || !fs.statSync(dependencyRoot).isDirectory()
+  ) {
+    throw new Error('isolated runner dependency root is absent or invalid');
+  }
+  const target = path.join(resolvedCwd, 'node_modules');
+  return prepareRunnerDependencyMountTarget(dependencyRoot, target);
+}
+
+/** Restore only mount targets created or quarantined by the runner itself. */
+export function cleanupRunnerDependencyMount(
+  mount: RunnerDependencyMount | null,
+): void {
+  if (!mount?.created) return;
+  fs.rmSync(mount.target, { recursive: true, force: true });
+  if (mount.replacedSymlinkTarget !== null) {
+    fs.symlinkSync(mount.replacedSymlinkTarget, mount.target);
+  }
 }
 
 /**
@@ -29,16 +113,50 @@ export function runnerSandboxArgs(
   args: readonly string[],
   dependencyRoot?: string,
   providerCredentialHome?: string,
+  additionalDirs: readonly string[] = [],
 ): string[] {
   const resolvedCwd = path.resolve(cwd);
   if (
-    resolvedCwd !== registrationRoot
-    && !resolvedCwd.startsWith(`${registrationRoot}${path.sep}`)
+    !resolvedCwd.startsWith(`${registrationRoot}${path.sep}`)
   ) {
     throw new Error(`runner subprocess cwd escapes Registration sandbox: ${cwd}`);
   }
+  const relativeCwd = path.relative(registrationRoot, resolvedCwd);
+  const relativeSegments = relativeCwd.split(path.sep);
+  if (
+    relativeSegments[0] !== 'jobs'
+    || !/^[0-9a-f-]{36}$/i.test(relativeSegments[1] ?? '')
+    || relativeSegments.length < 3
+  ) {
+    throw new Error('runner subprocess cwd is not scoped to one job workspace');
+  }
   const repositoryMetadata = path.join(registrationRoot, 'repository.git');
   const worktreeMetadata = path.join(resolvedCwd, '.git');
+  const jobRoot = path.join(registrationRoot, 'jobs', relativeSegments[1]!);
+  const realJobRoot = additionalDirs.length > 0 ? fs.realpathSync(jobRoot) : '';
+  const resolvedAdditionalDirs = [...new Set(additionalDirs.map((directory) => {
+    const resolved = path.resolve(directory);
+    const real = fs.existsSync(resolved) ? fs.realpathSync(resolved) : '';
+    if (
+      !resolved.startsWith(`${jobRoot}${path.sep}`)
+      || !fs.existsSync(resolved)
+      || !fs.statSync(resolved).isDirectory()
+      || fs.lstatSync(resolved).isSymbolicLink()
+      || !real.startsWith(`${realJobRoot}${path.sep}`)
+    ) {
+      throw new Error(`runner additional directory escapes the active job: ${directory}`);
+    }
+    return resolved;
+  }))];
+  const mountDirectories = new Set<string>();
+  for (const target of [resolvedCwd, ...resolvedAdditionalDirs]) {
+    const segments = path.relative(registrationRoot, target).split(path.sep);
+    let mountDirectory = registrationRoot;
+    for (const segment of segments) {
+      mountDirectory = path.join(mountDirectory, segment);
+      mountDirectories.add(mountDirectory);
+    }
+  }
   return [
     '--die-with-parent',
     '--new-session',
@@ -69,10 +187,14 @@ export function runnerSandboxArgs(
     '--tmpfs', '/workspace',
     '--dir', '/workspace/registrations',
     '--dir', registrationRoot,
-    '--bind', registrationRoot, registrationRoot,
+    ...[...mountDirectories].flatMap((directory) => ['--dir', directory]),
     ...(fs.existsSync(repositoryMetadata)
-      ? ['--ro-bind', repositoryMetadata, repositoryMetadata]
+      ? ['--dir', repositoryMetadata, '--ro-bind', repositoryMetadata, repositoryMetadata]
       : []),
+    '--bind', resolvedCwd, resolvedCwd,
+    ...resolvedAdditionalDirs.flatMap((directory) => [
+      '--bind', directory, directory,
+    ]),
     ...(fs.existsSync(worktreeMetadata)
       ? ['--ro-bind', worktreeMetadata, worktreeMetadata]
       : []),
@@ -80,7 +202,8 @@ export function runnerSandboxArgs(
       ? ['--ro-bind', dependencyRoot, path.join(resolvedCwd, 'node_modules')]
       : []),
     '--tmpfs', '/tmp',
-    '--bind', '/home/agentops', '/home/agentops',
+    '--tmpfs', '/home',
+    '--dir', '/home/agentops',
     '--chdir', resolvedCwd,
     '--',
     command,
@@ -112,12 +235,17 @@ export function sandboxedShellCommand(
   env: NodeJS.ProcessEnv,
   cwd: string,
   command: string,
+  additionalDirs: readonly string[] = [],
 ): string {
   const registrationRoot = runnerSandboxRoot(env);
   if (!registrationRoot) return command;
   // This path launches trusted provider sessions only (tmux windows); graders
   // call runnerSandboxArgs directly and never receive a credential home.
   const providerCredentialHome = disposableProviderConfigHome(env);
+  const dependencyRoot = env[RUNNER_DEPENDENCY_ROOT];
+  if (dependencyRoot !== undefined && dependencyRoot !== RUNNER_DEPENDENCY_PATH) {
+    throw new Error('isolated runner dependency root is absent or invalid');
+  }
   return [
     'bwrap',
     ...runnerSandboxArgs(
@@ -125,8 +253,9 @@ export function sandboxedShellCommand(
       cwd,
       '/bin/sh',
       ['-lc', command],
-      undefined,
+      dependencyRoot,
       providerCredentialHome,
+      additionalDirs,
     ),
   ].map(shellQuote).join(' ');
 }

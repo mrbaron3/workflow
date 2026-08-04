@@ -32,7 +32,9 @@ import {
   pushGeneratedBranch,
   realGhGateRunner,
   renderGatePrBody,
+  MAX_REVIEW_PR_BODY_CHARS,
   renderReviewPrBody,
+  renderReviewPrTitle,
   type GateCommandRunner,
   type GhGateRunner,
   type GhPrState,
@@ -694,7 +696,13 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     const first = await projectReviewRevision(
       store,
       GITHUB,
-      { pr, worktree: '/wt', title: 'ISSUE-1: title', headSha: firstSha },
+      {
+        pr,
+        worktree: '/wt',
+        title: 'ISSUE-1: title',
+        headSha: firstSha,
+        changedFiles: ['src/x.ts'],
+      },
       runner,
     );
     const reviewingFirst = store.replacePrRevision(transitionPrRevision(first, {
@@ -711,6 +719,14 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     expect(pushes).toEqual([pr.branch, pr.branch]);
     expect(bodies).toHaveLength(1);
     expect(bodies[0]).toContain('current-head');
+    expect(bodies[0]).toContain('## Architecture baseline');
+    expect(bodies[0]).toContain('Changed files recorded from the committed build: **1**');
+    expect(bodies[0]).toContain('| src/x.ts | generated revision |');
+    expect(bodies[0]).toContain(`Generated branch \`${pr.branch}\` at \`${firstSha}\``);
+    expect(bodies[0]).toContain('## Validation');
+    expect(bodies[0]).toContain('| AC-1 | blocker | unit\\_test | x |');
+    expect(bodies[0]).toContain('## Rollback');
+    expect(bodies[0]).toContain('## Tracking');
     expect(bodies[0]).not.toContain('自動評価パネルはこのビルドを**承認**');
     expect(store.getPR(pr.id)?.externalRef?.number).toBe(8);
     expect(store.getPR(pr.id)?.agentGeneratedHeadSha).toBe(secondSha);
@@ -726,6 +742,107 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
 
     expect(renderReviewPrBody(store, 'ISSUE-1')).toContain('Refs o/r#9');
     expect(renderReviewPrBody(store, 'ISSUE-1')).not.toContain('Closes o/r#9');
+  });
+
+  it('renders the skill-aligned PR format from the accepted contract without fabricating ADRs', () => {
+    const store = tmpStore('review-body-format');
+    const pr = seedGatedIssue(store, 'ISSUE-1', null);
+    seedIntake(store, 'ISSUE-1', 9);
+    const body = renderReviewPrBody(store, 'ISSUE-1', null, {
+      baseBranch: 'epic/9-designflow',
+      headBranch: pr.branch,
+      headSha: 'c'.repeat(40),
+      changedFiles: ['src/b.ts', 'src/a|table.ts'],
+    });
+    const headings = [
+      '## Summary',
+      '## Architecture baseline',
+      '## Applicable ADRs',
+      '## Validation',
+      '## Rollback',
+      '## Tracking',
+    ];
+
+    expect(headings.map((heading) => body.indexOf(heading))).toEqual(
+      [...headings.map((heading) => body.indexOf(heading))].sort((left, right) => left - right),
+    );
+    expect(body).toContain('- **Product goal:** g');
+    expect(body).toContain('| src/a\\|table.ts | generated revision |');
+    expect(body.indexOf('src/a\\|table.ts')).toBeLessThan(body.indexOf('src/b.ts'));
+    expect(body).toContain('No explicit ADR identifier was declared');
+    expect(body).toContain('| AC-1 | blocker | unit\\_test | x |');
+    expect(body).toContain('- Source Issue: o/r#9');
+    expect(body).toContain('Closes o/r#9');
+    expect(body).toContain('agentops-work-identity-v1');
+  });
+
+  it('escapes contract prose, reports only declared ADR identifiers, and bounds the body', () => {
+    const store = tmpStore('review-body-safe-markdown');
+    seedGatedIssue(store, 'ISSUE-1', null);
+    seedIntake(store, 'ISSUE-1', 9);
+    const issue = store.getIssue('ISSUE-1')!;
+    issue.contract!.productGoal = '</table> | injected';
+    issue.contract!.redLines = ['Follow ADR 7 and ADR_0008; never <script>'];
+    store.db.intakeRecords[0]!.snapshot.body = 'Applicable: ADR-0006. Negated lookalike ADROOPS-9.';
+
+    const body = renderReviewPrBody(store, 'ISSUE-1');
+    expect(body).toContain('\\</table\\> \\| injected');
+    expect(body).toContain('- ADR-0006');
+    expect(body).toContain('- ADR-7');
+    expect(body).toContain('- ADR-0008');
+    expect(body).not.toContain('ADROOPS');
+    expect(body).toContain('never \\<script\\>');
+
+    // An oversized contract truncates rather than failing the PR projection, and
+    // the load-bearing tail — tracking coordinates and the closing keyword —
+    // survives intact so the PR still binds to its Source Issue.
+    issue.contract!.productGoal = 'x'.repeat(60_001);
+    const bounded = renderReviewPrBody(store, 'ISSUE-1');
+    expect(bounded.length).toBeLessThanOrEqual(MAX_REVIEW_PR_BODY_CHARS);
+    expect(bounded).toContain('Body truncated to fit');
+    expect(bounded).toContain('## Tracking');
+    expect(bounded).toContain('Closes o/r#9');
+  });
+
+  it('shrinks the generated tables before it truncates descriptive prose', () => {
+    const store = tmpStore('review-body-table-shrink');
+    seedGatedIssue(store, 'ISSUE-1', null);
+    seedIntake(store, 'ISSUE-1', 9);
+    const changedFiles = Array.from(
+      { length: 400 },
+      (_, index) => `src/generated/module-${index}/${'segment/'.repeat(20)}index.ts`,
+    );
+
+    const body = renderReviewPrBody(store, 'ISSUE-1', null, {
+      baseBranch: 'main',
+      headBranch: 'agent/issue-1',
+      headSha: 'a'.repeat(40),
+      changedFiles,
+    });
+
+    expect(body.length).toBeLessThanOrEqual(MAX_REVIEW_PR_BODY_CHARS);
+    expect(body).toContain('Changed files recorded from the committed build: **400**');
+    expect(body).toContain('additional files; inspect the GitHub diff');
+    expect(body).not.toContain('Body truncated to fit');
+    expect(body).toContain('Closes o/r#9');
+  });
+
+  it('uses a stable user-facing title instead of a job-local ISSUE identifier', () => {
+    const single = tmpStore('review-title-single');
+    seedGatedIssue(single, 'ISSUE-1', null);
+    seedIntake(single, 'ISSUE-1', 9);
+    single.db.intakeRecords[0]!.snapshot.title = '[DF-002] Immutable revision state';
+    expect(renderReviewPrTitle(single, 'ISSUE-1')).toBe(
+      '[DF-002] Immutable revision state',
+    );
+
+    const split = tmpStore('review-title-split');
+    seedGatedIssue(split, 'ISSUE-1', null);
+    seedGatedIssue(split, 'ISSUE-2', null);
+    seedIntake(split, ['ISSUE-1', 'ISSUE-2'], 9);
+    expect(renderReviewPrTitle(split, 'ISSUE-1')).toBe(
+      '[issue-1] ISSUE-1 title',
+    );
   });
 });
 

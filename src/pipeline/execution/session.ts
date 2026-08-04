@@ -32,8 +32,25 @@ import {
   sampleKey,
   type ExternalWorkIdentity,
 } from './work-identity.js';
+import {
+  cleanupRunnerDependencyMount,
+  prepareRunnerDependencyMount,
+} from './runner-sandbox.js';
 
 export { sampleKey } from './work-identity.js';
+
+/**
+ * Where a generator session's checkout and tmux window live, owned here so a
+ * caller reporting progress before the session starts cannot drift from the
+ * path this module actually creates.
+ */
+export function generatorWorktreePath(harnessRoot: string, key: string): string {
+  return path.join(harnessRoot, '.harness', 'worktrees', key);
+}
+
+export function generatorSessionName(key: string): string {
+  return `ao-${key}`;
+}
 
 export interface GeneratorSessionInput {
   issue: Issue;
@@ -106,10 +123,10 @@ export async function runGeneratorSession(
   const baseRef = target.baseRef ?? 'HEAD';
   const key = sampleKey(input.issue.id, input.sampleIndex, input.workIdentity);
   const branch = `agent/${key}`;
-  const session = `ao-${key}`;
+  const session = generatorSessionName(key);
   const route = resolveAgentRoute(config, 'generator');
   const provider = route.provider;
-  const wt = path.join(harnessRoot, '.harness', 'worktrees', key);
+  const wt = generatorWorktreePath(harnessRoot, key);
 
   // Reuse only a repair worktree that still matches the durable current PR head.
   // A daemon restart may leave an older AgentOps worktree behind; reusing it
@@ -141,6 +158,7 @@ export async function runGeneratorSession(
   const sentinelPath = path.join(agentDir, 'done.json');
   fs.rmSync(sentinelPath, { force: true }); // clear any stale sentinel from a prior attempt
 
+  const dependencyMount = prepareRunnerDependencyMount(process.env, wt);
   log(`  ▸ ${session}: launch in ${path.relative(harnessRoot, wt)}`);
   // Bash is allowed so the agent can run tests/typecheck to check its own work WITHOUT hanging on
   // an approval prompt in this detached session (a grounded run showed it stalls otherwise). The
@@ -169,10 +187,16 @@ export async function runGeneratorSession(
   // so a human can attach and take over (ARCH-execution-014). Never a silent kill.
   let committed = false;
   if (outcome === 'completed') {
+    killSession(session);
+    // Restore the checkout before anything reads or commits it. The mount point
+    // may have replaced a repository-owned `node_modules` symlink; committing
+    // while it is quarantined would record that removal as generated work.
+    // A kept-alive session still needs its dependencies, so a stuck attempt
+    // keeps the mount and is restored when its retained worktree is reclaimed.
+    cleanupRunnerDependencyMount(dependencyMount);
     // Commit the edits into a single build commit (amended across repair attempts) so the branch
     // is pushable (the gate) and each read-only review can check out the exact build in isolation.
     committed = commitBuild(wt, `${input.issue.id} s${input.sampleIndex} attempt ${input.attempt}`);
-    killSession(session);
     log(`  ▸ ${session}: completed (sentinel)${committed ? ', build committed' : ', no changes to commit'}`);
   } else {
     log(`  ⚠ ${session}: ${outcome.toUpperCase()} — session kept alive; inspect: tmux attach -t ${session}`);

@@ -11,6 +11,7 @@ import {
 
 const releaseId = '10000000-0000-4000-8000-000000000000';
 const authorityId = '20000000-0000-4000-8000-000000000000';
+const requirementsAuthorityId = '20000000-0000-4000-8000-000000000001';
 const runtimeId = '30000000-0000-4000-8000-000000000000';
 const build1Id = '40000000-0000-4000-8000-000000000001';
 const build2Id = '40000000-0000-4000-8000-000000000002';
@@ -49,7 +50,7 @@ function base(
 
 function evidence(): any {
   return {
-    schemaVersion: '2.0',
+    schemaVersion: '3.0',
     release: {
       id: releaseId,
       repository: 'mrbaron3/designflow',
@@ -77,6 +78,18 @@ function evidence(): any {
         actor: { type: 'human', login: 'maintainer' },
         readyLabel: 'ready',
         readyAt: '2026-08-01T00:00:05Z',
+      },
+      requirementsAuthority: {
+        ...base(
+          requirementsAuthorityId,
+          'requirements-authority',
+          '2026-08-01T00:00:11Z',
+          [authorityId],
+        ),
+        kind: 'requirements-authority',
+        sourceIssueDigest: 'f'.repeat(64),
+        sourceUpdatedAt: '2026-08-01T00:00:05Z',
+        capturedAt: '2026-08-01T00:00:06Z',
       },
       runtime: [{
         ...base(runtimeId, 'runtime:release', '2026-08-01T00:07:00Z', [authorityId]),
@@ -217,6 +230,7 @@ function evidence(): any {
       mergeIntent: {
         ...base(mergeIntentId, 'merge-intent:12', '2026-08-01T00:07:30Z', [
           authorityId,
+          requirementsAuthorityId,
           runtimeId,
           build2Id,
           repositoryGradeId,
@@ -287,6 +301,24 @@ describe('release receipt evidence v2', () => {
     const validate = compiled();
     expect(validate(value), JSON.stringify(validate.errors)).toBe(true);
     expect(liveReleaseReceiptSemanticErrors(value)).toEqual([]);
+  });
+
+  it('continues to validate immutable legacy v2 evidence without requirements authority', () => {
+    const current = evidence();
+    const { requirementsAuthority, ...legacyReceipts } = current.receipts;
+    void requirementsAuthority;
+    legacyReceipts.mergeIntent.causes = legacyReceipts.mergeIntent.causes
+      .filter((cause: string) => cause !== requirementsAuthorityId);
+    const legacy = {
+      ...current,
+      schemaVersion: '2.0' as const,
+      receipts: legacyReceipts,
+    };
+
+    expect(LiveReleaseReceiptEvidenceV2Contract.parse(legacy)).toEqual(legacy);
+    const validate = compiled();
+    expect(validate(legacy), JSON.stringify(validate.errors)).toBe(true);
+    expect(liveReleaseReceiptSemanticErrors(legacy)).toEqual([]);
   });
 
   it('accepts runtime provenance emitted by separate release jobs', () => {
@@ -459,6 +491,7 @@ describe('release receipt evidence v2', () => {
     const value = LiveReleaseReceiptEvidenceV2Contract.parse(evidence());
     const receipts = [
       value.receipts.authority,
+      value.receipts.requirementsAuthority!,
       ...value.receipts.runtime,
       ...value.receipts.builds,
       ...value.receipts.grades,

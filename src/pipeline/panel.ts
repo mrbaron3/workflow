@@ -43,6 +43,7 @@ export const PERSPECTIVES: PerspectiveSpec[] = REVIEW_PERSPECTIVE_KEYS.map((key)
   key,
   deterministic: key === 'functionality',
 }));
+export const PANEL_ESCALATION_PERSPECTIVE = 'panel-escalation';
 
 /** What a single perspective grader returns. Validated before it is trusted (AC-PANEL-006). */
 export const PerspectiveResult = z.object({
@@ -255,10 +256,42 @@ export function runPanel(store: Store, config: HarnessConfig, input: PanelInput,
   }
 
   if (escalated) {
+    let escalationRun = existing.find((run) =>
+      run.perspective === PANEL_ESCALATION_PERSPECTIVE
+      && run.verdict === 'needs_human');
+    if (!escalationRun) {
+      escalationRun = persistRun(store, config, input, PANEL_ESCALATION_PERSPECTIVE, {
+        verdict: 'needs_human',
+        findings: [lensFinding(
+          'PANEL-OUTPUT',
+          'blocker',
+          'every required reviewer returns one schema-valid result',
+          'one or more required reviewer results were missing or invalid after retry',
+          'Inspect the retained reviewer evidence/session and authorize a new head for re-review.',
+        )],
+        scores: {
+          functionality: 0,
+          codeQuality: 0,
+          testQuality: 0,
+          ux: 0,
+          accessibility: 0,
+        },
+        overall: 0,
+      }, base.hardGates, area);
+    }
     if (store.getIssue(input.issueId)?.status !== 'needs-human-review') {
       store.setStatus(input.issueId, 'needs-human-review');
     }
-    return { verdict: 'needs_human', runs: graded.filter((r) => !existing.includes(r)), gateFailed: false, escalated: true, perspectives: graded.map((r) => r.perspective!).filter(Boolean) };
+    return {
+      verdict: 'needs_human',
+      runs: [
+        ...graded.filter((r) => !existing.includes(r)),
+        ...(existing.includes(escalationRun) ? [] : [escalationRun]),
+      ],
+      gateFailed: false,
+      escalated: true,
+      perspectives: graded.map((r) => r.perspective!).filter(Boolean),
+    };
   }
 
   const verdict = aggregatePanelVerdict(graded);

@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG, type HarnessConfig } from '../src/config.js';
 import {
   AgentInvocation,
   EvalRun,
+  GithubIssueSnapshot,
   Issue,
   PR,
   PrRevision,
@@ -16,6 +17,7 @@ import {
   transitionPrRevision,
 } from '../src/domain/schema.js';
 import { runGithubDevelopmentTurn } from '../src/intake/development-turn.js';
+import { groundArtifact } from '../src/pipeline/execution/grade.js';
 import {
   attemptForRevision,
   discoverRepositoryPullRequests,
@@ -1094,6 +1096,98 @@ describe('repository-wide pull request discovery', () => {
     expect(criterion.behavior).toContain('immutable current head');
     expect(criterion.verification.expected.join('\n')).not.toContain('PR title');
     expect(criterion.verification.expected.join('\n')).toContain('repository-owned requirements');
+  });
+
+  it('SOURCE-ISSUE reviews a release-owned PR against the complete trusted Issue snapshot', () => {
+    const env = setup();
+    env.pulls[0]!.body = 'AgentOps managed body\n\nCloses acme/theme#8';
+    const sourceBody = [
+      '## Acceptance',
+      '- the public schema uses `status`',
+      '- all transition tests pass',
+    ].join('\n');
+    const discovery = discoverRepositoryPullRequests(
+      env.store,
+      env.config,
+      env.runner,
+      env.root,
+      {
+        pullRequestNumber: 9,
+        sourceDigest: 'd'.repeat(64),
+        issue: GithubIssueSnapshot.parse({
+          repository: 'acme/theme',
+          number: 8,
+          externalId: 'I_source',
+          title: 'Immutable state contract',
+          body: sourceBody,
+          url: 'https://github.com/acme/theme/issues/8',
+          labels: ['agent-claimed'],
+          state: 'open',
+          sourceUpdatedAt: '2026-08-03T08:00:00.000Z',
+          snapshotAt: '2026-08-03T08:01:00.000Z',
+        }),
+      },
+    )[0]!;
+    const contract = discovery.issue.contract!;
+
+    expect(contract.productGoal).toContain('acme/theme#8');
+    expect(contract.acceptanceCriteria[0]).toMatchObject({
+      id: 'SOURCE-ISSUE',
+      severity: 'blocker',
+    });
+    expect(contract.acceptanceCriteria[0]!.behavior).not.toContain(sourceBody);
+    expect(contract.acceptanceCriteria[0]!.behavior).toContain('d'.repeat(64));
+    expect(discovery.sourceIssueMaterial).toContain('public schema uses `status`');
+    expect(discovery.sourceIssueMaterial).toContain('all transition tests pass');
+    expect(discovery.sourceIssueMaterial).toContain(
+      'UNTRUSTED SOURCE ISSUE REQUIREMENTS DATA',
+    );
+    expect(contract.acceptanceCriteria[0]!.behavior).not.toContain(env.pulls[0]!.title);
+    expect(discovery.issue.implementationNotes).toContain(
+      'Trusted Source Issue: https://github.com/acme/theme/issues/8',
+    );
+    // `scope` is a file-glob boundary for the deterministic grader. Requirement
+    // prose here would make every changed path a scope violation, so the
+    // blocking SOURCE-ISSUE scope_check could never pass and no reviewed head
+    // could reach merge. A discovered PR declares no path restriction.
+    expect(contract.scope).toEqual({ include: [], exclude: [] });
+    expect(
+      groundArtifact({
+        contract,
+        target: env.config.target!,
+        worktree: env.root,
+        branch: 'feature/state-contract',
+        changed: ['src/state.ts', 'test/state.test.ts'],
+      }).scopeViolations,
+    ).toEqual([]);
+  });
+
+  it('SOURCE-ISSUE fails closed when a PR no longer references its release Issue', () => {
+    const env = setup();
+    env.pulls[0]!.body = 'Closes acme/theme#99';
+
+    expect(() => discoverRepositoryPullRequests(
+      env.store,
+      env.config,
+      env.runner,
+      env.root,
+      {
+        pullRequestNumber: 9,
+        sourceDigest: 'e'.repeat(64),
+        issue: GithubIssueSnapshot.parse({
+          repository: 'acme/theme',
+          number: 8,
+          externalId: 'I_source',
+          title: 'Immutable state contract',
+          body: 'Authoritative acceptance criteria',
+          url: 'https://github.com/acme/theme/issues/8',
+          labels: [],
+          state: 'open',
+          sourceUpdatedAt: '2026-08-03T08:00:00.000Z',
+          snapshotAt: '2026-08-03T08:01:00.000Z',
+        }),
+      },
+    )).toThrow(/does not reference its trusted Source Issue/);
   });
 
   it('AC-PRLOOP-005 does not auto-manage a fork head because the repair branch is not writable in the target repository', () => {

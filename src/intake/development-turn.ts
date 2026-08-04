@@ -55,7 +55,9 @@ import {
   reviewRepositoryPullRequest,
   type RepositoryPullRequestReviewer,
   type RepositoryPullRequestReviewOptions,
+  type RepositoryPullRequestIssueAuthority,
 } from '../pipeline/execution/repository-pr.js';
+import type { DevelopmentProgressReporter } from '../domain/development-progress.js';
 
 export interface PlanningRunnerInput {
   intake: IntakeRecord;
@@ -124,6 +126,8 @@ export interface GithubDevelopmentTurnDeps {
   repositoryPullRequestReviewer?: RepositoryPullRequestReviewer;
   repositoryGraderProfileEvidence?:
     RepositoryPullRequestReviewOptions['graderProfileEvidence'];
+  /** Trusted current Source Issue bound to one release-owned PR. */
+  repositoryPullRequestIssueAuthority?: RepositoryPullRequestIssueAuthority;
   /** A scoped issue job must not import unrelated repository PRs. */
   discoverPullRequests?: boolean;
   /** Isolated-runner hooks; ordinary CLI callers leave these absent. */
@@ -131,6 +135,8 @@ export interface GithubDevelopmentTurnDeps {
   beforeIssueClaim?: () => Promise<void>;
   beforeReconcile?: () => Promise<void>;
   reconcileOptions?: AutoMergeOptions;
+  /** Durable operator projection; runtime logs are intentionally not parsed. */
+  progress?: DevelopmentProgressReporter;
 }
 
 export interface GithubDevelopmentTurnResult {
@@ -200,6 +206,7 @@ export async function runGithubDevelopmentTurn(
           config,
           prNativeRunner,
           targetRoot,
+          deps.repositoryPullRequestIssueAuthority,
         );
     const review = deps.repositoryPullRequestReviewer
       ?? ((discovery) => reviewRepositoryPullRequest(
@@ -220,9 +227,22 @@ export async function runGithubDevelopmentTurn(
           ...(deps.liveOptions?.beforeProviderExecution
             ? { beforeProviderExecution: deps.liveOptions.beforeProviderExecution }
             : {}),
+          ...(deps.liveOptions?.trustedReviewStateRoot
+            ? { trustedReviewStateRoot: deps.liveOptions.trustedReviewStateRoot }
+            : {}),
+          ...(deps.liveOptions?.operatorWorktreePath
+            ? { operatorWorktreePath: deps.liveOptions.operatorWorktreePath }
+            : {}),
+          ...(deps.liveOptions?.projectOperatorWorktreeHead
+            ? {
+                projectOperatorWorktreeHead:
+                  deps.liveOptions.projectOperatorWorktreeHead,
+              }
+            : {}),
           ...(deps.repositoryGraderProfileEvidence
             ? { graderProfileEvidence: deps.repositoryGraderProfileEvidence }
             : {}),
+          ...(deps.progress ? { progress: deps.progress } : {}),
         },
       ));
     for (const discovery of discoveries) {
@@ -272,6 +292,14 @@ export async function runGithubDevelopmentTurn(
   for (const intake of pending) {
     intake.status = 'planning';
     store.save();
+    await deps.progress?.({
+      eventKey: 'planning:start',
+      phase: 'planning',
+      step: 'planning session',
+      state: 'running',
+      summary: `Planning GitHub Issue #${intake.snapshot.number}`,
+      nextGate: 'planning contract accepted',
+    });
     const result = await planningRunner({ intake, route });
     const routeMismatch = result.provider !== route.provider
       || (route.model !== null && result.model !== route.model);
@@ -337,6 +365,34 @@ export async function runGithubDevelopmentTurn(
       uiDesigns,
     });
     enrichmentIds.push(enrichment.id);
+    if (enrichment.status === 'accepted') {
+      await deps.progress?.({
+        eventKey: 'planning:accepted',
+        phase: 'planning',
+        step: 'planning contract accepted',
+        state: 'succeeded',
+        summary: `${enrichment.issueIds.length} implementation work unit(s) ready`,
+        nextGate: 'generator session',
+      });
+    } else if (enrichment.status === 'awaiting-design') {
+      await deps.progress?.({
+        eventKey: 'design:waiting',
+        phase: 'design',
+        step: 'design authority',
+        state: 'waiting',
+        summary: 'Planning requires an approved design resolution',
+        nextGate: 'design decision approved',
+      });
+    } else {
+      await deps.progress?.({
+        eventKey: 'planning:human-review',
+        phase: 'human-review',
+        step: 'planning clarification required',
+        state: 'blocked',
+        blocker: enrichment.reasons.join('; ') || 'planning enrichment was rejected',
+        nextGate: 'human updates the Issue and reapplies the ready label',
+      });
+    }
   }
 
   // Design-pending records are durable resume state. Never rerun planning and never allocate
@@ -360,6 +416,14 @@ export async function runGithubDevelopmentTurn(
     for (const enrichment of awaitingDesign) {
       const intake = store.intakeByKey(enrichment.intakeKey);
       if (!intake) throw new Error(`No intake record: ${enrichment.intakeKey}`);
+      await deps.progress?.({
+        eventKey: 'design:start',
+        phase: 'design',
+        step: 'design resolution',
+        state: 'running',
+        summary: `Resolving design for GitHub Issue #${intake.snapshot.number}`,
+        nextGate: 'design decision approved',
+      });
       if (!deps.designflowResolver || consumer === null) {
         const rejected = rejectDesignPlanningResolution(
           store,
@@ -368,6 +432,14 @@ export async function runGithubDevelopmentTurn(
         );
         if (!enrichmentIds.includes(rejected.id)) enrichmentIds.push(rejected.id);
         log(`⚠ Designflow provider unavailable for ${enrichment.intakeKey}`);
+        await deps.progress?.({
+          eventKey: 'design:blocked',
+          phase: 'human-review',
+          step: 'design provider unavailable',
+          state: 'blocked',
+          blocker: 'selected Designflow provider is unavailable',
+          nextGate: 'configure a design provider or revise the Issue',
+        });
         continue;
       }
       const resolutions: ApprovedDesignResolution[] = [];
@@ -439,6 +511,23 @@ export async function runGithubDevelopmentTurn(
         { systemDir },
       );
       if (!enrichmentIds.includes(finalized.id)) enrichmentIds.push(finalized.id);
+      await deps.progress?.(finalized.status === 'accepted'
+        ? {
+            eventKey: 'design:accepted',
+            phase: 'design',
+            step: 'design resolution accepted',
+            state: 'succeeded',
+            summary: `${finalized.issueIds.length} implementation work unit(s) ready`,
+            nextGate: 'generator session',
+          }
+        : {
+            eventKey: 'design:human-review',
+            phase: 'human-review',
+            step: 'design decision required',
+            state: 'blocked',
+            blocker: finalized.reasons.join('; ') || 'design resolution was not approved',
+            nextGate: 'human design decision',
+          });
     }
   }
 

@@ -73,6 +73,43 @@ func runAdministrativeCommand(args []string) error {
 			"rotated":   true,
 			"requestId": *requestID,
 		})
+	case "progress":
+		flags := flag.NewFlagSet("progress", flag.ContinueOnError)
+		repository := flags.String("repository", "", "canonical owner/name")
+		issue := flags.Int64("issue", 0, "GitHub Issue number")
+		limit := flags.Int("limit", 50, "maximum events")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		canonical := strings.ToLower(strings.TrimSpace(*repository))
+		if flags.NArg() != 0 || !control.ValidRepositoryIdentity(canonical) ||
+			*issue < 0 || *limit < 1 || *limit > 200 {
+			return fmt.Errorf(
+				"usage: agentops-control progress --repository owner/name [--issue N] [--limit 1..200]",
+			)
+		}
+		store, err := control.OpenStore(ctx, databaseURL, root)
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		var issueNumber *int64
+		if *issue > 0 {
+			issueNumber = issue
+		}
+		events, err := store.DevelopmentProgress(
+			ctx,
+			canonical,
+			issueNumber,
+			*limit,
+		)
+		if err != nil {
+			return err
+		}
+		return writeJSON(map[string]any{
+			"items":      events,
+			"observedAt": time.Now().UTC(),
+		})
 	case "lifecycle":
 		return runLifecycleCommand(ctx, databaseURL, args[1:])
 	default:

@@ -4,6 +4,10 @@ import type { ReviewJob, ReviewStatus } from './perspective-session.js';
 import { launchSession, killSession, monitorLiveness } from './tmux.js';
 import { REVIEW_LIVENESS } from './review-liveness.js';
 import { submitPromptWhenSessionReady } from './session-readiness.js';
+import {
+  cleanupRunnerDependencyMount,
+  prepareRunnerDependencyMount,
+} from './runner-sandbox.js';
 
 /** Run one read-only review session in its prepared worktree; returns its status (no git bookkeeping). */
 export async function runReviewSession(
@@ -14,6 +18,7 @@ export async function runReviewSession(
 ): Promise<ReviewStatus> {
   const { provider } = route;
   const session = `ao-eval-${issueKey}-${job.key}`;
+  const dependencyMount = prepareRunnerDependencyMount(process.env, job.reviewWt);
   log(`  ▸ ${session}: read-only review`);
   // acceptEdits + Bash lets the review run tests and write ONLY its intended evidence without
   // approval stalls. The checkout is a disposable detached snapshot; prompt/findings live in an
@@ -48,6 +53,10 @@ export async function runReviewSession(
     return outcome;
   }
   killSession(session);
+  // Restore the checkout before the dirty-checkout guard reads it: a quarantined
+  // `node_modules` symlink would otherwise look like a reviewer-authored deletion.
+  // A kept-alive stuck/timeout session still needs its dependencies and keeps the mount.
+  cleanupRunnerDependencyMount(dependencyMount);
   // The read-only guard (AC-PANEL-008) runs in collectFindings, at collection time, so a
   // late-collected stuck/timeout review passes the SAME dirty-checkout gate as a completed one.
   return 'completed';

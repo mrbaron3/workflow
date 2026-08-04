@@ -11,6 +11,7 @@ import {
 } from '../src/domain/schema.js';
 import { Store } from '../src/store/store.js';
 import { findingsPath } from '../src/pipeline/execution/perspective-session.js';
+import { PANEL_ESCALATION_PERSPECTIVE } from '../src/pipeline/panel.js';
 import type { PostgresControlStore } from '../src/control-store/store.js';
 import type {
   ExecutionGuardVerdict,
@@ -18,8 +19,10 @@ import type {
   RunnerCriticalBoundary,
   RunnerJobPayloadV1,
 } from '../src/control-store/types.js';
+import { releaseSourceIssueSnapshotDigest } from '../src/control-store/types.js';
 import {
   hasDurableCurrentHeadRequestChanges,
+  hasDurableCurrentHeadReviewStop,
   ExistingAgentOpsRunnerAdapter,
   inferRepositoryGraders,
   repositoryGraderProfileEvidence,
@@ -29,6 +32,7 @@ import { RunnerLeaseFence } from '../src/runner/guard.js';
 const roots: string[] = [];
 afterEach(() => {
   delete process.env.AGENTOPS_RUNNER_REGISTRATION_ROOT;
+  delete process.env.AGENTOPS_RUNNER_DEPENDENCY_ROOT;
   while (roots.length > 0) {
     fs.rmSync(roots.pop()!, { recursive: true, force: true });
   }
@@ -185,6 +189,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
     }));
 
     const boundaries: RunnerCriticalBoundary[] = [];
+    const progressEvents: Array<Record<string, unknown>> = [];
     const guardStore = {
       async assertExecutionGuard(
         input: { boundary: RunnerCriticalBoundary },
@@ -197,6 +202,10 @@ describe('existing AgentOps isolated-runner adapter', () => {
           jobId,
           leaseExpiresAt: '2026-07-25T00:10:00.000Z',
         };
+      },
+      async recordDevelopmentProgress(input: { event: Record<string, unknown> }) {
+        progressEvents.push(input.event);
+        return progressEvents.length;
       },
     } as unknown as PostgresControlStore;
     const issue = GithubIssueSnapshot.parse({
@@ -285,6 +294,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
         registrationRoot,
         repositoryPath: path.join(registrationRoot, 'repository.git'),
         worktreePath,
+        harnessPath: path.join(registrationRoot, 'jobs', jobId, 'attempt-1', 'harness'),
         statePath,
         artifactPath,
         headSha: 'a'.repeat(40),
@@ -296,6 +306,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
         60_000,
       ),
       provider: 'codex',
+      controlStore: guardStore,
       log: () => {},
     });
 
@@ -309,6 +320,8 @@ describe('existing AgentOps isolated-runner adapter', () => {
           `planning ambiguity: ${ambiguity}`),
       },
     });
+    expect(process.env.AGENTOPS_RUNNER_DEPENDENCY_ROOT)
+      .toBe('/app/node_modules');
     expect(sideEffects).toEqual([
       'claim',
       'comment:owner/repo#14',
@@ -328,6 +341,23 @@ describe('existing AgentOps isolated-runner adapter', () => {
     expect(persisted.db.planningEnrichments[0]?.status)
       .toBe('needs-human-review');
     expect(persisted.db.prs).toHaveLength(0);
+    expect(progressEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventKey: 'lease-a1:intake:runner-start',
+        phase: 'intake',
+        worktreePath,
+      }),
+      expect.objectContaining({
+        eventKey: 'lease-a1:planning:start',
+        phase: 'planning',
+        state: 'running',
+      }),
+      expect.objectContaining({
+        eventKey: 'lease-a1:human-review:planning',
+        phase: 'human-review',
+        state: 'blocked',
+      }),
+    ]));
   });
 
   it('recognizes a durable current-head request after reconciliation reopens the PR', () => {
@@ -416,6 +446,294 @@ describe('existing AgentOps isolated-runner adapter', () => {
     expect(hasDurableCurrentHeadRequestChanges(store, pr)).toBe(true);
     store.db.evalRuns[0]!.verdict = 'approve';
     expect(hasDurableCurrentHeadRequestChanges(store, pr)).toBe(false);
+    expect(hasDurableCurrentHeadReviewStop(store, pr)).toBe(false);
+    store.replacePrRevision(PrRevision.parse({
+      ...revision,
+      status: 'failed',
+      completedAt: now,
+    }));
+    expect(hasDurableCurrentHeadReviewStop(store, pr)).toBe(false);
+    store.setStatus(issue.id, 'needs-human-review');
+    expect(hasDurableCurrentHeadReviewStop(store, pr)).toBe(false);
+    store.db.evalRuns.push(EvalRun.parse({
+      ...store.db.evalRuns[0]!,
+      id: 'EVAL-PR-38-ESCALATED',
+      perspective: PANEL_ESCALATION_PERSPECTIVE,
+      verdict: 'needs_human',
+    }));
+    expect(hasDurableCurrentHeadReviewStop(store, pr)).toBe(true);
+  });
+
+  it('completes a legacy merged release without mutable epic inference and surfaces the manual gate', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-legacy-merged-'));
+    roots.push(root);
+    const registrationRoot = path.join(root, 'registrations', registrationId);
+    const worktreePath = path.join(registrationRoot, 'jobs', jobId, 'attempt-1', 'worktree');
+    const statePath = path.join(registrationRoot, 'jobs', jobId, 'state');
+    const artifactPath = path.join(registrationRoot, 'jobs', jobId, 'attempt-1', 'artifacts');
+    fs.mkdirSync(worktreePath, { recursive: true });
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(path.join(worktreePath, 'package.json'), JSON.stringify({
+      devDependencies: { typescript: '^5.6.2', vitest: '^3.2.7' },
+    }));
+    const headSha = 'a'.repeat(40);
+    const releaseId = 'eb837db2-30d7-4788-a56f-00056f5d550e';
+    const activeLease = lease();
+    activeLease.job.releaseId = releaseId;
+    const progress: Array<Record<string, unknown>> = [];
+    let issueReads = 0;
+    let epicInventoryReads = 0;
+    const controlStore = {
+      getRelease: async () => ({
+        id: releaseId,
+        registrationId,
+        releaseKey: 'issue:14:legacy',
+        repository: 'owner/repo',
+        issueNumber: 14,
+        policy: {
+          authority: 'human-ready-allowed',
+          requiredGateSignals: [{ source: 'github-check', name: 'test' }],
+          requiredReviewPerspectives: ['security', 'codeQuality'],
+          minimumHeadEpochs: 1,
+        },
+        status: 'merged',
+        pullRequest: 38,
+        finalHead: headSha,
+        mergeSha: 'b'.repeat(40),
+        mergeActor: { type: 'human', login: 'merger' },
+        createdAt: '2026-07-20T00:00:00.000Z',
+        updatedAt: '2026-07-21T00:00:00.000Z',
+        completedAt: '2026-07-21T00:00:00.000Z',
+      }),
+      getReleaseSourceIssue: async () => null,
+      recordDevelopmentProgress: async ({ event }: { event: Record<string, unknown> }) => {
+        progress.push(event);
+        return progress.length;
+      },
+    } as unknown as PostgresControlStore;
+    const guardStore = {
+      assertExecutionGuard: async () => ({
+        ok: true,
+        reason: null,
+        registration: null,
+        jobId,
+        leaseExpiresAt: activeLease.expiresAt,
+      }),
+    } as unknown as PostgresControlStore;
+    const adapter = new ExistingAgentOpsRunnerAdapter({
+      issueRunner: () => ({
+        listReadyIssues: () => {
+          issueReads += 1;
+          return [];
+        },
+        claimIssue: () => { throw new Error('merged release must not reclaim the Issue'); },
+      }),
+      prNativeRunner: () => ({
+        viewRevision: () => { throw new Error('merged release must not be reviewed again'); },
+        merge: () => { throw new Error('merged release must not be merged again'); },
+        closeIssue: () => { throw new Error('legacy source must not close a mutable parent'); },
+        listRepositoryIssues: () => {
+          epicInventoryReads += 1;
+          return [];
+        },
+      }),
+    });
+
+    const result = await adapter.execute({
+      lease: activeLease,
+      payload: payload(),
+      workspace: {
+        registrationRoot,
+        repositoryPath: path.join(registrationRoot, 'repository.git'),
+        worktreePath,
+        harnessPath: path.join(registrationRoot, 'jobs', jobId, 'attempt-1', 'harness'),
+        statePath,
+        artifactPath,
+        headSha,
+      },
+      fence: new RunnerLeaseFence(guardStore, activeLease, activeLease.workerId, 60_000),
+      provider: 'codex',
+      controlStore,
+      releaseRuntime: {
+        consumer: { repository: 'owner/repo', revision: 'c'.repeat(40) },
+        environment: {
+          kind: 'container',
+          reference: 'legacy-test',
+          digest: `sha256:${'d'.repeat(64)}`,
+        },
+        providerDefaults: [],
+      },
+      log: () => {},
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'completed',
+      headSha,
+      pullRequestNumber: 38,
+    });
+    expect(issueReads).toBe(0);
+    expect(epicInventoryReads).toBe(0);
+    expect(progress).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        step: 'parent Issue auto-close skipped',
+        state: 'blocked',
+        worktreePath: null,
+      }),
+      expect.objectContaining({
+        step: 'implementation released',
+        state: 'succeeded',
+        nextGate: expect.stringContaining('human manually reconciles'),
+      }),
+    ]));
+  });
+
+  it('retries frozen-source Epic close for an already merged release', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-frozen-merged-'));
+    roots.push(root);
+    const registrationRoot = path.join(root, 'registrations', registrationId);
+    const attemptRoot = path.join(registrationRoot, 'jobs', jobId, 'attempt-1');
+    const worktreePath = path.join(attemptRoot, 'worktree');
+    const harnessPath = path.join(attemptRoot, 'harness');
+    const statePath = path.join(registrationRoot, 'jobs', jobId, 'state');
+    const artifactPath = path.join(attemptRoot, 'artifacts');
+    fs.mkdirSync(worktreePath, { recursive: true });
+    fs.mkdirSync(harnessPath, { recursive: true });
+    fs.mkdirSync(artifactPath, { recursive: true });
+    fs.writeFileSync(path.join(worktreePath, 'package.json'), JSON.stringify({
+      devDependencies: { typescript: '^5.6.2', vitest: '^3.2.7' },
+    }));
+    const headSha = 'a'.repeat(40);
+    const releaseId = 'eb837db2-30d7-4788-a56f-00056f5d550e';
+    const activeLease = lease();
+    activeLease.job.releaseId = releaseId;
+    const sourceCore = {
+      repository: 'owner/repo',
+      number: 14,
+      title: '[DF-002] phase',
+      body: 'Parent: #1',
+      url: 'https://github.com/owner/repo/issues/14',
+      labels: ['human-approved'],
+      comments: [],
+      state: 'open' as const,
+      sourceUpdatedAt: '2026-07-20T00:00:00.000Z',
+      capturedAt: '2026-07-20T00:00:01.000Z',
+    };
+    const sourceIssue = {
+      ...sourceCore,
+      digest: releaseSourceIssueSnapshotDigest(sourceCore),
+    };
+    const progress: Array<Record<string, unknown>> = [];
+    const closed: number[] = [];
+    let inventories = 0;
+    const controlStore = {
+      getRelease: async () => ({
+        id: releaseId,
+        registrationId,
+        releaseKey: 'issue:14:frozen',
+        repository: 'owner/repo',
+        issueNumber: 14,
+        policy: {
+          authority: 'human-ready-allowed',
+          requiredGateSignals: [{ source: 'github-check', name: 'test' }],
+          requiredReviewPerspectives: ['security', 'codeQuality'],
+          minimumHeadEpochs: 1,
+        },
+        status: 'merged',
+        pullRequest: 38,
+        finalHead: headSha,
+        mergeSha: 'b'.repeat(40),
+        mergeActor: { type: 'human', login: 'merger' },
+        createdAt: '2026-07-20T00:00:00.000Z',
+        updatedAt: '2026-07-21T00:00:00.000Z',
+        completedAt: '2026-07-21T00:00:00.000Z',
+      }),
+      getReleaseSourceIssue: async () => sourceIssue,
+      recordDevelopmentProgress: async ({ event }: { event: Record<string, unknown> }) => {
+        progress.push(event);
+        return progress.length;
+      },
+      assertExecutionGuard: async () => ({
+        ok: true,
+        reason: null,
+        registration: null,
+        jobId,
+        leaseExpiresAt: activeLease.expiresAt,
+      }),
+    } as unknown as PostgresControlStore;
+    const inventory = [
+      {
+        number: 1,
+        title: 'Epic',
+        body: 'DF-002',
+        authorLogin: 'owner',
+        subIssueNumbers: [],
+        state: 'open' as const,
+        stateReason: null,
+      },
+      {
+        number: 14,
+        title: '[DF-002] phase',
+        body: 'Parent: #1',
+        authorLogin: 'owner',
+        subIssueNumbers: [],
+        state: 'closed' as const,
+        stateReason: 'completed' as const,
+      },
+    ];
+    const adapter = new ExistingAgentOpsRunnerAdapter({
+      issueRunner: () => ({
+        listReadyIssues: () => [],
+        claimIssue: () => { throw new Error('merged release must not reclaim'); },
+      }),
+      prNativeRunner: () => ({
+        viewRevision: () => { throw new Error('merged release must not review'); },
+        merge: () => { throw new Error('merged release must not merge'); },
+        closeIssue: (_cwd, _repository, number) => closed.push(number),
+        listRepositoryIssues: () => {
+          inventories += 1;
+          return inventory;
+        },
+      }),
+    });
+
+    const result = await adapter.execute({
+      lease: activeLease,
+      payload: payload(),
+      workspace: {
+        registrationRoot,
+        repositoryPath: path.join(registrationRoot, 'repository.git'),
+        worktreePath,
+        harnessPath,
+        statePath,
+        artifactPath,
+        headSha,
+      },
+      fence: new RunnerLeaseFence(controlStore, activeLease, activeLease.workerId, 60_000),
+      provider: 'codex',
+      controlStore,
+      releaseRuntime: {
+        consumer: { repository: 'owner/repo', revision: 'c'.repeat(40) },
+        environment: {
+          kind: 'container',
+          reference: 'frozen-test',
+          digest: `sha256:${'d'.repeat(64)}`,
+        },
+        providerDefaults: [],
+      },
+      log: () => {},
+    });
+
+    expect(result).toMatchObject({ outcome: 'completed', headSha, pullRequestNumber: 38 });
+    expect(inventories).toBe(2);
+    expect(closed).toEqual([1]);
+    expect(progress).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        step: 'parent Issue #1 closed',
+        state: 'succeeded',
+        parentIssueNumber: 1,
+      }),
+      expect.objectContaining({ step: 'implementation released', state: 'succeeded' }),
+    ]));
   });
 
   it('drives planning, PR-native review, checks, expected-SHA merge, and release through every fence', async () => {
@@ -447,6 +765,34 @@ describe('existing AgentOps isolated-runner adapter', () => {
     }));
 
     const boundaries: RunnerCriticalBoundary[] = [];
+    const headSha = 'a'.repeat(40);
+    const releaseId = 'eb837db2-30d7-4788-a56f-00056f5d550e';
+    const progress: Array<Record<string, unknown>> = [];
+    const sourceCore = {
+      repository: 'owner/repo',
+      number: 14,
+      title: '[DF-002] Add safe path',
+      body: 'Users need the safe path.\n\nParent: #1',
+      url: 'https://github.com/owner/repo/issues/14',
+      labels: ['human-approved'],
+      comments: [],
+      state: 'open' as const,
+      sourceUpdatedAt: '2026-07-25T00:00:00.000Z',
+      capturedAt: '2026-07-25T00:00:01.000Z',
+    };
+    const frozenSourceIssue = {
+      ...sourceCore,
+      digest: releaseSourceIssueSnapshotDigest(sourceCore),
+    };
+    const receipts: Array<Record<string, unknown>> = [{
+      receiptId: 'fb837db2-30d7-4788-a56f-00056f5d550e',
+      receiptKey: 'authority:human-ready',
+      kind: 'authority',
+      recordedAt: '2026-07-25T00:00:02.000Z',
+    }];
+    const authorizationInputs: Array<Record<string, unknown>> = [];
+    const completionInputs: Array<Record<string, unknown>> = [];
+    const pullRequestBindings: Array<Record<string, unknown>> = [];
     const verdict: ExecutionGuardVerdict = {
       ok: true,
       reason: null,
@@ -459,10 +805,56 @@ describe('existing AgentOps isolated-runner adapter', () => {
         boundaries.push(input.boundary);
         return verdict;
       },
+      async getRelease() {
+        return {
+          id: releaseId,
+          registrationId,
+          releaseKey: 'issue:14:normal-close',
+          repository: 'owner/repo',
+          issueNumber: 14,
+          policy: {
+            authority: 'human-ready-allowed',
+            requiredGateSignals: [],
+            requiredReviewPerspectives: [],
+            minimumHeadEpochs: 1,
+          },
+          status: 'collecting',
+          pullRequest: null,
+          finalHead: null,
+          mergeSha: null,
+          mergeActor: null,
+          createdAt: '2026-07-25T00:00:00.000Z',
+          updatedAt: '2026-07-25T00:00:01.000Z',
+          completedAt: null,
+        };
+      },
+      async getReleaseSourceIssue() { return frozenSourceIssue; },
+      async bindReleasePullRequest(input: Record<string, unknown>) {
+        pullRequestBindings.push(input);
+      },
+      async listReleaseReceipts() {
+        return receipts.map((receipt) => ({ receipt }));
+      },
+      async recordReleaseReceipt(receipt: Record<string, unknown>) {
+        if (!receipts.some((entry) => entry.receiptKey === receipt.receiptKey)) {
+          receipts.push(receipt);
+        }
+      },
+      async observeReleaseHead() { return 1; },
+      async authorizeReleaseMerge(input: Record<string, unknown>) {
+        authorizationInputs.push(input);
+        receipts.push(input.intent as Record<string, unknown>);
+      },
+      async completeReleaseMerge(input: Record<string, unknown>) {
+        completionInputs.push(input);
+      },
+      async recordDevelopmentProgress(input: { event: Record<string, unknown> }) {
+        progress.push(input.event);
+        return progress.length;
+      },
     } as unknown as PostgresControlStore;
     const githubSideEffects: string[] = [];
     let githubMerged = false;
-    const headSha = 'a'.repeat(40);
     const issue = GithubIssueSnapshot.parse({
       repository: 'owner/repo',
       number: 14,
@@ -532,7 +924,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
         branch: 'agent/issue-0001-s0',
         summary: 'safe grounded fixture',
         filesChanged: ['src/safe.ts'],
-        satisfied: { 'AC-SAFE-001': true },
+        satisfied: { 'AC-SAFE-001': true, 'SOURCE-ISSUE': true },
         buildPasses: true,
         typecheckPasses: true,
         unitTestsPass: true,
@@ -616,10 +1008,42 @@ describe('existing AgentOps isolated-runner adapter', () => {
         closeIssue: (_cwd, _repository, number) => {
           githubSideEffects.push(`close-issue:${number}`);
         },
+        listRepositoryIssues: () => [
+          {
+            number: 1,
+            title: 'Epic',
+            body: 'DF-002',
+            authorLogin: 'owner',
+            subIssueNumbers: [],
+            state: 'open' as const,
+            stateReason: null,
+          },
+          {
+            number: 14,
+            title: '[DF-002] Add safe path',
+            body: 'Parent: #1',
+            authorLogin: 'owner',
+            subIssueNumbers: [],
+            state: 'closed' as const,
+            stateReason: 'completed' as const,
+          },
+        ],
+        observeRelease: (_cwd, _repository, _issue, pullRequest, expectedHead) => ({
+          pullRequest,
+          expectedHead,
+          observedPrHead: expectedHead,
+          mergeSha: 'b'.repeat(40),
+          actor: 'merger',
+          issueState: 'CLOSED' as const,
+          issueStateReason: 'COMPLETED' as const,
+          mergeReachableFromDefaultBranch: true as const,
+          mergedAt: '2026-07-25T00:10:00.000Z',
+        }),
         listOpenPullRequests: () => [],
       }),
     });
     const activeLease = lease();
+    activeLease.job.releaseId = releaseId;
     const result = await adapter.execute({
       lease: activeLease,
       payload: payload(),
@@ -627,6 +1051,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
         registrationRoot,
         repositoryPath: path.join(registrationRoot, 'repository.git'),
         worktreePath,
+        harnessPath: path.join(registrationRoot, 'jobs', jobId, 'attempt-1', 'harness'),
         statePath,
         artifactPath,
         headSha,
@@ -638,6 +1063,20 @@ describe('existing AgentOps isolated-runner adapter', () => {
         60_000,
       ),
       provider: 'codex',
+      controlStore: guardStore,
+      releaseRuntime: {
+        consumer: { repository: 'owner/repo', revision: 'c'.repeat(40) },
+        environment: {
+          kind: 'container',
+          reference: 'normal-close-test',
+          digest: `sha256:${'d'.repeat(64)}`,
+        },
+        providerDefaults: [{
+          provider: 'codex',
+          reference: 'codex-default-test',
+          resolverDigest: `sha256:${'e'.repeat(64)}`,
+        }],
+      },
       log: () => {},
     });
 
@@ -645,9 +1084,44 @@ describe('existing AgentOps isolated-runner adapter', () => {
       headSha,
       pullRequestNumber: 38,
     });
+    expect(result, JSON.stringify(result)).toMatchObject({ outcome: 'completed' });
     expect(githubSideEffects).toContain('push');
     expect(githubSideEffects).toContain('create-pr');
     expect(githubSideEffects).toContain(`merge:38:${headSha}`);
+    expect(githubSideEffects).toContain('close-issue:1');
+    expect(pullRequestBindings).toContainEqual(expect.objectContaining({
+      releaseId,
+      pullRequest: 38,
+    }));
+    expect(authorizationInputs).toEqual([
+      expect.objectContaining({
+        releaseId,
+        intent: expect.objectContaining({
+          kind: 'merge-intent',
+          pullRequest: 38,
+          expectedHead: headSha,
+          observedPrHead: headSha,
+        }),
+      }),
+    ]);
+    expect(completionInputs).toEqual([
+      expect.objectContaining({
+        releaseId,
+        receipt: expect.objectContaining({
+          kind: 'merge',
+          pullRequest: 38,
+          expectedHead: headSha,
+          observedPrHead: headSha,
+          mergeSha: 'b'.repeat(40),
+        }),
+      }),
+    ]);
+    expect(progress).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        step: 'parent Issue #1 closed',
+        parentIssueNumber: 1,
+      }),
+    ]));
     for (const boundary of ['claim', 'provider', 'push', 'merge', 'release'] as const) {
       expect(boundaries).toContain(boundary);
     }

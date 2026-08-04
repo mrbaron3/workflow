@@ -20,6 +20,7 @@ import { groundArtifact } from '../pipeline/execution/grade.js';
 import {
   runPerspectiveSessions,
 } from '../pipeline/execution/perspective-session.js';
+import { sourceIssueReviewMaterial } from '../pipeline/execution/repository-pr.js';
 import type { LiveOptions } from '../pipeline/execution/live.js';
 import {
   realGhGateRunner,
@@ -27,6 +28,7 @@ import {
 } from '../pipeline/execution/gate.js';
 import {
   realPrNativeGithubRunner,
+  reconcileExternalEpicClosure,
   type AutoMergeOptions,
   type PrNativeGithubRunner,
 } from '../pipeline/execution/pr-native.js';
@@ -41,7 +43,7 @@ import {
   projectReleasePreMerge,
   projectReleaseProgress,
 } from '../evidence/release-projection.js';
-import type { PR } from '../domain/schema.js';
+import { GithubIssueSnapshot, type PR } from '../domain/schema.js';
 import {
   realPlanningHumanReviewGitHub,
   renderPlanningHumanReviewComment,
@@ -51,11 +53,21 @@ import { RunnerExecutionError } from './errors.js';
 import type { RunnerLeaseFence } from './guard.js';
 import { isolatedGraderEnvironment } from './security.js';
 import type { PreparedRunnerWorkspace } from './workspace.js';
+import {
+  linkedParentIssueNumber,
+  type DevelopmentProgressUpdate,
+} from '../domain/development-progress.js';
+import {
+  RUNNER_DEPENDENCY_PATH,
+  RUNNER_DEPENDENCY_ROOT,
+} from '../pipeline/execution/runner-sandbox.js';
 
 interface AgentOpsAdapterResultBase {
   headSha: string | null;
   pullRequestNumber: number | null;
   developmentTurn: GithubDevelopmentTurnResult;
+  /** Keep the isolated attempt checkout available to the operator. */
+  retainWorkspace?: boolean;
 }
 
 export type AgentOpsAdapterResult = AgentOpsAdapterResultBase & (
@@ -81,6 +93,8 @@ export interface AgentOpsAdapterInput {
   provider: 'codex' | 'claude';
   controlStore?: PostgresControlStore;
   releaseRuntime?: ReleaseRuntimeConfiguration | null;
+  /** Projects the retained outer attempt checkout to an immutable fetched head. */
+  projectWorkspaceHead?: (headSha: string) => void;
   log: (message: string) => void;
 }
 
@@ -131,6 +145,26 @@ export function hasDurableCurrentHeadRequestChanges(
     && run.verdict === 'request_changes');
 }
 
+/** A rejected or explicitly escalated current-head review waits for external action. */
+export function hasDurableCurrentHeadReviewStop(
+  store: Store,
+  pr: PR,
+): boolean {
+  if (hasDurableCurrentHeadRequestChanges(store, pr)) return true;
+  if (pr.headSha === null || pr.currentRevisionId === null) return false;
+  const revision = store.revisionForHead(pr.id, pr.headSha);
+  if (!revision || revision.id !== pr.currentRevisionId) return false;
+  // `failed` is also used for externally closed PRs and unverified external
+  // merges. Only a revision-bound panel escalation is a successful review
+  // stop; transport/reconciliation failures must continue into the release
+  // path and fail visibly instead of being acknowledged as completed.
+  return store.db.evalRuns.some((run) =>
+    run.prId === pr.id
+    && run.revisionId === revision.id
+    && run.headSha === revision.headSha
+    && run.verdict === 'needs_human');
+}
+
 function baseBranch(ref: string): string {
   return ref.replace(/^refs\/heads\//, '');
 }
@@ -172,13 +206,15 @@ export function inferRepositoryGraders(
     ...(manifest.devDependencies ?? {}),
   };
   if ('typescript' in dependencies && 'vitest' in dependencies) {
+    const tsc = `node ${RUNNER_DEPENDENCY_PATH}/typescript/bin/tsc`;
+    const vitest = `node ${RUNNER_DEPENDENCY_PATH}/vitest/vitest.mjs run --configLoader runner`;
     return {
-      typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
-      unit_tests: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
+      typecheck: `${tsc} --noEmit`,
+      unit_tests: vitest,
       commands: {
-        build: 'node /app/node_modules/typescript/bin/tsc',
-        typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
-        unit_test: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
+        build: tsc,
+        typecheck: `${tsc} --noEmit`,
+        unit_test: vitest,
       },
     };
   }
@@ -281,6 +317,21 @@ function scopedIssueRunner(
       fence.consume('claim');
       delegate.claimIssue(repository, number, readyLabel, claimedLabel);
     },
+    ...(delegate.viewIssue
+      ? {
+          viewIssue(repository: string, number: number) {
+            if (number !== issueNumber) {
+              throw new RunnerExecutionError(
+                'provider_failure',
+                `runner job cannot read unexpected issue #${number}`,
+                false,
+                'provider',
+              );
+            }
+            return delegate.viewIssue!(repository, number);
+          },
+        }
+      : {}),
   };
 }
 
@@ -308,6 +359,7 @@ function guardedPrNativeRunner(
   fence: RunnerLeaseFence,
   delegate: PrNativeGithubRunner,
   allowedPullRequestNumber?: number,
+  allowedRepository?: string,
 ): PrNativeGithubRunner {
   const assertPullRequest = (number: number): void => {
     if (
@@ -357,6 +409,24 @@ function guardedPrNativeRunner(
               .filter((pullRequest) =>
                 allowedPullRequestNumber === undefined
                 || pullRequest.number === allowedPullRequestNumber);
+          },
+        }
+      : {}),
+    ...(delegate.listRepositoryIssues
+      ? {
+          listRepositoryIssues(cwd, requestedRepository) {
+            if (
+              allowedRepository !== undefined
+              && requestedRepository !== allowedRepository
+            ) {
+              throw new RunnerExecutionError(
+                'provider_failure',
+                `runner job cannot read the Issue inventory of ${requestedRepository}`,
+                false,
+                'provider',
+              );
+            }
+            return delegate.listRepositoryIssues!(cwd, requestedRepository);
           },
         }
       : {}),
@@ -453,7 +523,7 @@ function runnerConfig(input: AgentOpsAdapterInput): HarnessConfig {
       repo: input.workspace.worktreePath,
       baseRef: input.payload.target.baseRef,
       ...(fs.existsSync(systemDir) ? { systemDir } : {}),
-      protectedPaths: ['.git', '.github/workflows'],
+      protectedPaths: ['.git', '.github/workflows', 'node_modules'],
       graders: inferRepositoryGraders(input.workspace.worktreePath),
     },
     gate: {
@@ -493,8 +563,36 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       `${input.payload.repository.owner}/${input.payload.repository.name}`;
     process.env.AGENTOPS_RUNNER_REGISTRATION_ROOT =
       input.workspace.registrationRoot;
+    process.env[RUNNER_DEPENDENCY_ROOT] = RUNNER_DEPENDENCY_PATH;
     const store = new Store(input.workspace.statePath);
     if (!Store.isInitialized(input.workspace.statePath)) store.save();
+    let progressParentIssueNumber: number | null = null;
+    const reportProgress = async (
+      event: DevelopmentProgressUpdate,
+    ): Promise<void> => {
+      if (
+        !input.controlStore
+        || typeof input.controlStore.recordDevelopmentProgress !== 'function'
+      ) return;
+      try {
+        await input.controlStore.recordDevelopmentProgress({
+          token: input.lease.token,
+          workerId: input.lease.workerId,
+          event: {
+            ...event,
+            eventKey: `lease-a${input.lease.attemptNumber}:${event.eventKey}`,
+            parentIssueNumber: progressParentIssueNumber,
+          },
+        });
+      } catch (error) {
+        // Delivery work remains authoritative, but a missing progress event is
+        // loud and queryable as an operational defect instead of being inferred.
+        input.log(
+          `⚠ durable development progress failed for ${event.eventKey}: `
+          + `${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    };
     const config = runnerConfig(input);
     const releaseId = input.lease.job.releaseId ?? null;
     const release = releaseId === null
@@ -516,10 +614,133 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         'release',
       );
     }
+    const recoveryPullRequest = event.kind === 'issue'
+      ? release?.pullRequest ?? null
+      : null;
+    const activePullRequest = event.kind === 'pull_request'
+      ? event.number
+      : recoveryPullRequest;
+    await reportProgress({
+      eventKey: 'intake:runner-start',
+      phase: 'intake',
+      step: 'runner workspace prepared',
+      state: 'running',
+      summary: activePullRequest === null
+        ? `Isolated attempt ${input.lease.attemptNumber} started`
+        : `Reviewing existing PR #${activePullRequest} in an isolated attempt`,
+      nextGate: activePullRequest === null
+        ? 'planning session'
+        : 'current pull request head review',
+      worktreePath: input.workspace.worktreePath,
+      pullRequestNumber: activePullRequest,
+    });
     const realIssueRunner = (
       this.dependencies.issueRunner ?? realGithubIssueRunner
     )(input.workspace.worktreePath);
-    const issueRunner = input.payload.event.kind === 'issue'
+    const sourceIssueAuthority = release
+      ? await (async () => {
+          if (
+            release.repository !== repository
+            || (
+              activePullRequest !== null
+              && release.pullRequest !== null
+              && release.pullRequest !== activePullRequest
+            )
+          ) {
+            throw new RunnerExecutionError(
+              'unknown_job_contract',
+              'release Source Issue authority does not match the active pull request',
+              false,
+              'claim',
+            );
+          }
+          const canonical = await input.controlStore?.getReleaseSourceIssue(release.id)
+            ?? null;
+          if (
+            canonical
+            && input.payload.sourceIssue
+            && canonical.digest !== input.payload.sourceIssue.digest
+          ) {
+            throw new RunnerExecutionError(
+              'artifact_integrity',
+              'runner job Source Issue snapshot conflicts with its release authority',
+              false,
+              'claim',
+            );
+          }
+          const frozen = canonical ?? input.payload.sourceIssue ?? null;
+          if (!frozen) {
+            // A pre-snapshot release may already be irreversibly merged. It is
+            // safe to acknowledge that terminal fact, but never infer a parent
+            // Issue from mutable current text. The terminal branch below makes
+            // the skipped epic reconciliation explicit to the operator.
+            if (release.status === 'merged') return null;
+            await reportProgress({
+              eventKey: 'human-review:missing-source-snapshot',
+              phase: 'human-review',
+              step: 'ready-time Source Issue snapshot required',
+              state: 'blocked',
+              blocker: [
+                'This release predates immutable Source Issue snapshots.',
+                'Mutable current Issue text will not be injected into review authority.',
+              ].join(' '),
+              nextGate: `human removes ${input.payload.execution.claimedLabel}, then reapplies ${input.payload.execution.readyLabel} to attest and freeze current Issue requirements`,
+              worktreePath: input.workspace.worktreePath,
+              pullRequestNumber: activePullRequest,
+            });
+            throw new RunnerExecutionError(
+              'artifact_integrity',
+              `release has no immutable ready-time Source Issue snapshot; human must remove ${input.payload.execution.claimedLabel} and reapply ${input.payload.execution.readyLabel}`,
+              false,
+              'claim',
+            );
+          }
+          if (
+            frozen.repository !== release.repository
+            || frozen.number !== release.issueNumber
+          ) {
+            throw new RunnerExecutionError(
+              'artifact_integrity',
+              'frozen Source Issue snapshot does not match the release authority',
+              false,
+              'claim',
+            );
+          }
+          const authoritativeBody = frozen.comments.length === 0
+            ? frozen.body
+            : [
+                frozen.body,
+                '',
+                '--- Authoritative Issue comments frozen at ready time ---',
+                ...frozen.comments.map((comment) => (
+                  `[comment ${comment.id} by ${comment.author} at ${comment.updatedAt}]\n${comment.body}`
+                )),
+              ].join('\n');
+          return {
+            issue: GithubIssueSnapshot.parse({
+              repository: frozen.repository,
+              number: frozen.number,
+              externalId: `release:${release.id}:issue:${frozen.number}`,
+              title: frozen.title,
+              body: authoritativeBody,
+              url: frozen.url,
+              labels: frozen.labels,
+              state: frozen.state,
+              sourceUpdatedAt: frozen.sourceUpdatedAt,
+              snapshotAt: frozen.capturedAt,
+            }),
+            epicIssue: { number: frozen.number, body: frozen.body },
+            sourceDigest: frozen.digest,
+          };
+        })()
+      : null;
+    progressParentIssueNumber = sourceIssueAuthority === null
+      ? null
+      : linkedParentIssueNumber(
+          sourceIssueAuthority.epicIssue.body,
+          sourceIssueAuthority.epicIssue.number,
+        );
+    const scopedRunner = input.payload.event.kind === 'issue'
       ? scopedIssueRunner(input.fence, realIssueRunner, input.payload.event.number)
       : {
           listReadyIssues: () => [],
@@ -532,7 +753,74 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             );
           },
         };
+    const frozenIssueRunner = event.kind === 'issue' && sourceIssueAuthority
+      ? {
+          ...scopedRunner,
+          listReadyIssues(requestedRepository: string, readyLabel: string) {
+            if (requestedRepository !== repository) {
+              throw new RunnerExecutionError(
+                'provider_failure',
+                `frozen Source Issue cannot be used for ${requestedRepository}`,
+                false,
+                'provider',
+              );
+            }
+            return [GithubIssueSnapshot.parse({
+              ...sourceIssueAuthority.issue,
+              labels: [...new Set([
+                ...sourceIssueAuthority.issue.labels,
+                readyLabel,
+              ])],
+              state: 'open',
+            })];
+          },
+          viewIssue(requestedRepository: string, issueNumber: number) {
+            if (requestedRepository !== repository || issueNumber !== event.number) {
+              throw new RunnerExecutionError(
+                'provider_failure',
+                'frozen Source Issue lookup escaped the runner job scope',
+                false,
+                'provider',
+              );
+            }
+            return sourceIssueAuthority.issue;
+          },
+        }
+      : scopedRunner;
+    if (
+      event.kind === 'issue'
+      && recoveryPullRequest !== null
+      && release?.status !== 'merged'
+    ) {
+      const ready = scopedRunner.listReadyIssues(
+        repository,
+        input.payload.execution.readyLabel,
+      ).some((issue) => issue.number === event.number);
+      if (ready) {
+        await input.fence.arm('claim');
+        scopedRunner.claimIssue(
+          repository,
+          event.number,
+          input.payload.execution.readyLabel,
+          input.payload.execution.claimedLabel,
+        );
+      }
+    }
+    const issueRunner = recoveryPullRequest === null
+      ? frozenIssueRunner
+      : {
+          listReadyIssues: () => [],
+          claimIssue: () => {
+            throw new RunnerExecutionError(
+              'provider_failure',
+              'pull-request recovery cannot enter Issue planning',
+              false,
+              'provider',
+            );
+          },
+        };
     const planningHumanReviewGithub = input.payload.event.kind === 'issue'
+      && recoveryPullRequest === null
       ? guardedPlanningHumanReviewGithub(
           input.fence,
           (
@@ -554,7 +842,8 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       )(input.payload.execution.mergeMethod, repository),
       input.payload.event.kind === 'pull_request'
         ? input.payload.event.number
-        : undefined,
+        : recoveryPullRequest ?? undefined,
+      repository,
     );
     const beforeProvider = (): Promise<void> => input.fence.arm('provider');
     const beforeMergeAndRelease = async (): Promise<void> => {
@@ -619,12 +908,86 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         }
       : null;
 
+    // A merged release may still owe its idempotent parent-epic transition.
+    // Keep terminal recovery inside the adapter so a transient Issue inventory
+    // or close failure is retried instead of being acknowledged before the
+    // external state machine converges.
+    if (
+      release?.status === 'merged'
+      && release.finalHead
+      && release.pullRequest
+      && (event.kind === 'pull_request' || recoveryPullRequest !== null)
+    ) {
+      if (sourceIssueAuthority) {
+        await input.fence.arm('release');
+        const epic = reconcileExternalEpicClosure(
+          prNativeRunner,
+          input.workspace.worktreePath,
+          repository,
+          sourceIssueAuthority.epicIssue,
+        );
+        if (epic.parentIssueNumber !== null) {
+          await reportProgress({
+            eventKey: `epic:${epic.parentIssueNumber}:${epic.closed ? 'closed' : 'waiting'}`,
+            phase: epic.closed ? 'completed' : 'merge',
+            step: epic.closed
+              ? `parent Issue #${epic.parentIssueNumber} closed`
+              : `parent Issue #${epic.parentIssueNumber} completion`,
+            state: epic.closed ? 'succeeded' : 'waiting',
+            summary: epic.closed
+              ? `All required phases complete; parent #${epic.parentIssueNumber} closed`
+              : `Parent #${epic.parentIssueNumber} remains open`,
+            nextGate: epic.closed
+              ? undefined
+              : epic.pendingKeys.length > 0
+                ? `close required phases: ${epic.pendingKeys.join(', ')}`
+                : epic.reason ?? 'reconcile parent Issue structure',
+            worktreePath: input.workspace.worktreePath,
+            pullRequestNumber: release.pullRequest,
+          });
+        }
+      } else {
+        await reportProgress({
+          eventKey: 'epic:legacy-snapshot-unavailable',
+          phase: 'human-review',
+          step: 'parent Issue auto-close skipped',
+          state: 'blocked',
+          summary: 'Release is merged; legacy release has no immutable Source Issue snapshot',
+          blocker: 'Mutable current Issue text cannot authorize a parent Issue transition',
+          nextGate: 'human manually reconciles the parent Issue if this phase belongs to an epic',
+          worktreePath: null,
+          pullRequestNumber: release.pullRequest,
+        });
+      }
+      await reportProgress({
+        eventKey: 'completed:release',
+        phase: 'completed',
+        step: 'implementation released',
+        state: 'succeeded',
+        summary: sourceIssueAuthority
+          ? `Release already merged at ${release.finalHead.slice(0, 12)}`
+          : `Release already merged at ${release.finalHead.slice(0, 12)}; legacy epic reconciliation requires a human`,
+        nextGate: sourceIssueAuthority
+          ? null
+          : 'human manually reconciles the parent Issue if this phase belongs to an epic',
+        worktreePath: null,
+        pullRequestNumber: release.pullRequest,
+      });
+      return {
+        outcome: 'completed',
+        humanReview: null,
+        headSha: release.finalHead,
+        pullRequestNumber: release.pullRequest,
+        developmentTurn: { intake: [], enrichmentIds: [], driveResults: [] },
+      };
+    }
+
     const developmentTurn = await runGithubDevelopmentTurn(
       store,
       config,
       {
         issueRunner,
-        ...(input.payload.event.kind === 'issue'
+        ...(input.payload.event.kind === 'issue' && recoveryPullRequest === null
           ? { beforeIssueClaim: () => input.fence.arm('claim') }
           : {}),
         planningRunner: async ({ intake, route }) => {
@@ -633,7 +996,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             config,
             intake,
             route,
-            input.workspace.statePath,
+            input.workspace.harnessPath,
             input.log,
           );
         },
@@ -644,7 +1007,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             intake,
             candidate,
             route,
-            input.workspace.statePath,
+            input.workspace.harnessPath,
             input.log,
           );
         },
@@ -654,7 +1017,17 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             worktree,
             config.target?.graders ?? {},
           ),
-        discoverPullRequests: input.payload.event.kind !== 'issue',
+        ...(sourceIssueAuthority && activePullRequest !== null
+          ? {
+              repositoryPullRequestIssueAuthority: {
+                pullRequestNumber: activePullRequest,
+                issue: sourceIssueAuthority.issue,
+                sourceDigest: sourceIssueAuthority.sourceDigest,
+              },
+            }
+          : {}),
+        discoverPullRequests:
+          input.payload.event.kind !== 'issue' || recoveryPullRequest !== null,
         // Issue jobs start from a fresh job-scoped store, so there is nothing
         // to reconcile before intake. PR/repository jobs arm permits only
         // immediately before their bounded reconciliation pass.
@@ -673,6 +1046,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         reconcileOptions: releaseMergeOptions ?? {
           beforeRelease: () => input.fence.consume('release'),
         },
+        progress: reportProgress,
         liveOptions: {
           gateRunner,
           prNativeRunner,
@@ -724,6 +1098,32 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
             this.dependencies.generatorSession ?? runGeneratorSession,
           perspectiveSessions:
             this.dependencies.perspectiveSessions ?? runPerspectiveSessions,
+          trustedReviewStateRoot: input.workspace.harnessPath,
+          operatorWorktreePath: input.workspace.worktreePath,
+          projectOperatorWorktreeHead: (headSha: string) => {
+            if (!input.projectWorkspaceHead) {
+              throw new RunnerExecutionError(
+                'workspace_failure',
+                'runner cannot project the operator worktree to the pull request head',
+                false,
+                'provider',
+              );
+            }
+            input.projectWorkspaceHead(headSha);
+          },
+          ...(sourceIssueAuthority
+            ? {
+                sourceIssueMaterial: sourceIssueReviewMaterial({
+                  issue: sourceIssueAuthority.issue,
+                  sourceDigest: sourceIssueAuthority.sourceDigest,
+                }),
+                sourceIssueReviewCriterion: {
+                  url: sourceIssueAuthority.issue.url,
+                  digest: sourceIssueAuthority.sourceDigest,
+                  sourceUpdatedAt: sourceIssueAuthority.issue.sourceUpdatedAt,
+                },
+              }
+            : {}),
           groundBuild: (options) => ({
             ...(this.dependencies.groundBuild ?? groundArtifact)(options),
             ...repositoryGraderProfileEvidence(
@@ -731,9 +1131,10 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
               options.target.graders ?? {},
             ),
           }),
+          progress: reportProgress,
         },
       },
-      input.workspace.statePath,
+      input.workspace.harnessPath,
       input.log,
     );
 
@@ -748,6 +1149,10 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       ? [...store.db.prs].reverse().find(
           (pr) => pr.externalRef?.number === event.number,
         )
+      : recoveryPullRequest !== null
+        ? [...store.db.prs].reverse().find(
+          (pr) => pr.externalRef?.number === recoveryPullRequest,
+        )
       : event.kind === 'issue'
         ? (() => {
           if (!issueIntake) return undefined;
@@ -756,6 +1161,13 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         })()
         : [...store.db.prs].reverse().find((pr) => pr.status === 'merged');
     if (input.payload.event.kind === 'repository' && !matchingPr) {
+      await reportProgress({
+        eventKey: 'completed:repository-reconciliation',
+        phase: 'completed',
+        step: 'repository reconciliation completed',
+        state: 'succeeded',
+        summary: 'No pull request required additional work',
+      });
       return {
         outcome: 'completed',
         humanReview: null,
@@ -801,6 +1213,15 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         event.number,
         input.payload.execution.claimedLabel,
       );
+      await reportProgress({
+        eventKey: 'human-review:planning',
+        phase: 'human-review',
+        step: 'planning clarification required',
+        state: 'blocked',
+        blocker: enrichment.reasons.join('; '),
+        nextGate: 'human updates the Issue and reapplies the ready label',
+        worktreePath: input.workspace.worktreePath,
+      });
       return {
         outcome: 'needs-human-review',
         humanReview: {
@@ -820,6 +1241,20 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         true,
         'provider',
       );
+    }
+    // A current-head request-changes verdict is a successful reconciliation
+    // that must wait for a new GitHub head. It is deliberately checked before
+    // release projection: a rejected revision is not a provider build and must
+    // never be forced through final-head release evidence validation.
+    if (hasDurableCurrentHeadReviewStop(store, matchingPr)) {
+      return {
+        outcome: 'completed',
+        humanReview: null,
+        retainWorkspace: true,
+        headSha: matchingPr.headSha,
+        pullRequestNumber: matchingPr.externalRef?.number ?? null,
+        developmentTurn,
+      };
     }
     if (
       release
@@ -844,19 +1279,18 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         runtime: input.releaseRuntime,
       });
     }
-    if (
-      event.kind === 'pull_request'
-      && hasDurableCurrentHeadRequestChanges(store, matchingPr)
-    ) {
-      return {
-        outcome: 'completed',
-        humanReview: null,
-        headSha: matchingPr.headSha,
-        pullRequestNumber: matchingPr.externalRef?.number ?? null,
-        developmentTurn,
-      };
-    }
     if (matchingPr.status !== 'merged') {
+      await reportProgress({
+        eventKey: `merge:waiting:${matchingPr.externalRef?.number ?? 'unprojected'}`,
+        phase: 'merge',
+        step: 'GitHub merge gates',
+        state: 'waiting',
+        summary: `PR #${matchingPr.externalRef?.number ?? 'unprojected'} is ${matchingPr.status}`,
+        nextGate: 'next pull request reconciliation',
+        worktreePath: input.workspace.worktreePath,
+        branch: matchingPr.branch,
+        pullRequestNumber: matchingPr.externalRef?.number ?? null,
+      });
       throw new RunnerExecutionError(
         'required_checks_failure',
         `PR #${matchingPr.externalRef?.number ?? 'unprojected'} is ${matchingPr.status}; retry reconciliation`,
@@ -864,6 +1298,49 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         'merge',
       );
     }
+    if (sourceIssueAuthority) {
+      // Arm immediately before the only possible parent-Issue mutation. The
+      // deterministic reconciler remains a no-op while any required phase is
+      // open (for Forma #1, DF-009 is explicitly future scope and excluded).
+      await input.fence.arm('release');
+      const epic = reconcileExternalEpicClosure(
+        prNativeRunner,
+        input.workspace.worktreePath,
+        repository,
+        sourceIssueAuthority.epicIssue,
+      );
+      if (epic.parentIssueNumber !== null) {
+        await reportProgress({
+          eventKey: `epic:${epic.parentIssueNumber}:${epic.closed ? 'closed' : 'waiting'}`,
+          phase: epic.closed ? 'completed' : 'merge',
+          step: epic.closed
+            ? `parent Issue #${epic.parentIssueNumber} closed`
+            : `parent Issue #${epic.parentIssueNumber} completion`,
+          state: epic.closed ? 'succeeded' : 'waiting',
+          summary: epic.closed
+            ? `All required phases complete; parent #${epic.parentIssueNumber} closed`
+            : `Parent #${epic.parentIssueNumber} remains open`,
+          nextGate: epic.closed
+            ? undefined
+            : epic.pendingKeys.length > 0
+              ? `close required phases: ${epic.pendingKeys.join(', ')}`
+              : epic.reason ?? 'reconcile parent Issue structure',
+          worktreePath: input.workspace.worktreePath,
+          branch: matchingPr.branch,
+          pullRequestNumber: matchingPr.externalRef?.number ?? null,
+        });
+      }
+    }
+    await reportProgress({
+      eventKey: 'completed:release',
+      phase: 'completed',
+      step: 'implementation released',
+      state: 'succeeded',
+      summary: `PR #${matchingPr.externalRef?.number ?? 'unprojected'} merged`,
+      worktreePath: null,
+      branch: matchingPr.branch,
+      pullRequestNumber: matchingPr.externalRef?.number ?? null,
+    });
     return {
       outcome: 'completed',
       humanReview: null,
