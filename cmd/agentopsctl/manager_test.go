@@ -463,7 +463,7 @@ func TestPostgresSpecRejectsMutableTagImageAndCredentialDrift(t *testing.T) {
 	actual.Configuration.InitProcess.Environment = []string{
 		"POSTGRES_PASSWORD=postgres-password-first-value-0001",
 		"POSTGRES_DB=agentops",
-		"PGDATA=/var/lib/postgresql/data",
+		"PGDATA=/var/lib/postgresql/18/docker",
 	}
 	if err := validateSpecActual(actual, spec); err != nil {
 		t.Fatal(err)
@@ -477,6 +477,78 @@ func TestPostgresSpecRejectsMutableTagImageAndCredentialDrift(t *testing.T) {
 	spec.Environment["POSTGRES_PASSWORD"] = "postgres-password-rotated-value-0002"
 	if err := validateSpecActual(actual, spec); err == nil {
 		t.Fatal("PostgreSQL administrator credential drift was accepted")
+	}
+}
+
+func TestPostgresMajorUpgradeBoundaryPreservesLegacyData(t *testing.T) {
+	actual := &lifecycle.ContainerActual{}
+	actual.Configuration.InitProcess.Environment = []string{
+		"PG_MAJOR=16",
+		"PGDATA=/var/lib/postgresql/data",
+	}
+	if err := validatePostgresMajorBoundary(actual); err == nil ||
+		!strings.Contains(err.Error(), "preserved") {
+		t.Fatalf("legacy PostgreSQL container was accepted: %v", err)
+	}
+	actual.Configuration.InitProcess.Environment = []string{
+		"PG_MAJOR=18",
+		"PGDATA=/var/lib/postgresql/18/docker",
+	}
+	if err := validatePostgresMajorBoundary(actual); err != nil {
+		t.Fatalf("current PostgreSQL container was rejected: %v", err)
+	}
+}
+
+func TestPostgresVolumeLayoutFailsClosedForLegacyOrAmbiguousData(t *testing.T) {
+	for _, output := range []string{
+		"current=\nlegacy=16\n",
+		"current=18\nlegacy=16\n",
+		"current=17\nlegacy=\n",
+		"current=18\n",
+		"unexpected=18\nlegacy=\n",
+		"current=18\ncurrent=18\nlegacy=\n",
+		"current=18-dev\nlegacy=\n",
+	} {
+		if err := validatePostgresVolumeLayout(output); err == nil {
+			t.Fatalf("unsafe volume layout was accepted: %q", output)
+		}
+	}
+	for _, output := range []string{
+		"current=\nlegacy=\n",
+		"current=18\nlegacy=\n",
+	} {
+		if err := validatePostgresVolumeLayout(output); err != nil {
+			t.Fatalf("safe volume layout %q was rejected: %v", output, err)
+		}
+	}
+}
+
+func TestPostgresVolumeProbeIsReadOnlyAndAcceptsAnEmptyVolume(t *testing.T) {
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{{
+		Status: 0,
+		Stdout: "current=\nlegacy=\n",
+	}}}
+	subject := newManager(
+		testManagerConfig(),
+		lifecycle.NewAppleRuntimeForTest(fake),
+	)
+	if err := subject.validatePostgresVolumeLayout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.args) != 1 {
+		t.Fatalf("volume probe commands = %#v", fake.args)
+	}
+	rendered := strings.Join(fake.args[0], " ")
+	for _, expected := range []string{
+		"--rm",
+		"--read-only",
+		"--cap-drop ALL",
+		"--volume agentops-postgres-data:/var/lib/postgresql:ro",
+		"--entrypoint /bin/sh",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("volume probe omitted %q: %s", expected, rendered)
+		}
 	}
 }
 

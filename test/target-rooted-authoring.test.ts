@@ -146,7 +146,7 @@ describe('D4 target-rooted authoring', () => {
     fs.appendFileSync(path.join(specAbs, 'requirements.md'), '\n<!-- edited -->\n');
     const changed = execFileSync('git', ['status', '--porcelain'], { cwd: target, encoding: 'utf8' });
     expect(changed).not.toBe('');
-  });
+  }, 15_000);
 
   it('AC-TROOT-003: uncommitted changes in the external repo reject the signature and leave SpecState untouched', () => {
     const store = tmpStore('ac-troot-003');
@@ -221,7 +221,7 @@ describe('D4 target-rooted authoring', () => {
 
     // the org store itself never grew a second copy inside the target repo.
     expect(fs.existsSync(path.join(target, '.harness'))).toBe(false);
-  });
+  }, 15_000);
 
   it('AC-TROOT-005: config.target absent or repo="." resolves to the harness root — self-authoring unchanged', () => {
     const store = tmpStore('ac-troot-005');

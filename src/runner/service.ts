@@ -85,9 +85,10 @@ class LeaseHeartbeat {
         }
       });
       this.worker.on('error', (error) => {
-        this.fence.markLost(`heartbeat worker crashed: ${error.message}`);
+        const detail = error instanceof Error ? error.message : String(error);
+        this.fence.markLost(`heartbeat worker crashed: ${detail}`);
         this.log(
-          `runner heartbeat worker crashed for lease ${this.lease.id}: ${error.message}`,
+          `runner heartbeat worker crashed for lease ${this.lease.id}: ${detail}`,
         );
       });
       this.worker.on('exit', (code) => {

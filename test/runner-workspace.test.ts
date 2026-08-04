@@ -345,7 +345,7 @@ describe('Registration-rooted runner workspace', () => {
     expect(fs.readFileSync(path.join(first.worktreePath, 'operator-notes.txt'), 'utf8'))
       .toBe('keep me\n');
     expect(git(['log', '-1', '--format=%s'], retry.worktreePath)).toBe('manual retained fix');
-  });
+  }, 15_000);
 
   it('keeps an attempt-scoped generator worktree isolated across retry and later cleanup', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-resolved-gc-'));

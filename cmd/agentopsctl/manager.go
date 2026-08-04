@@ -1361,6 +1361,9 @@ func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
 		if actual.Configuration.Labels["com.mrbaron3.workflow.agentopsctl"] != "v1" {
 			return false, fmt.Errorf("postgres container name is owned by another deployment")
 		}
+		if err := validatePostgresMajorBoundary(actual); err != nil {
+			return false, err
+		}
 		if actual.Status.State == "running" {
 			if err := validatePostgresActual(actual, manager.config); err != nil {
 				return false, err
@@ -1377,11 +1380,113 @@ func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
 			return false, err
 		}
 	}
+	if err := manager.validatePostgresVolumeLayout(ctx); err != nil {
+		return false, err
+	}
 	_, err = manager.runtime.RunContainer(ctx, spec)
 	if err != nil {
 		return false, err
 	}
 	return true, manager.waitPostgres(ctx)
+}
+
+const (
+	managedPostgresMajor   = "18"
+	managedPostgresDataDir = "/var/lib/postgresql/18/docker"
+)
+
+func validatePostgresMajorBoundary(actual *lifecycle.ContainerActual) error {
+	major := ""
+	dataDir := ""
+	for _, entry := range actual.Configuration.InitProcess.Environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "PG_MAJOR":
+			major = value
+		case "PGDATA":
+			dataDir = value
+		}
+	}
+	if (major != "" && major != managedPostgresMajor) ||
+		(dataDir != "" && dataDir != managedPostgresDataDir) {
+		return fmt.Errorf(
+			"PostgreSQL major upgrade to %s is required; the existing data volume is preserved and must be migrated before restart",
+			managedPostgresMajor,
+		)
+	}
+	return nil
+}
+
+func (manager *manager) validatePostgresVolumeLayout(ctx context.Context) error {
+	output, err := manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+		Name:  manager.config.PostgresContainer + "-volume-probe",
+		Role:  "postgres-volume-probe",
+		Image: manager.config.PostgresImage,
+		Mounts: []lifecycle.Mount{{
+			Volume:   manager.config.PostgresVolume,
+			Target:   "/var/lib/postgresql",
+			ReadOnly: true,
+		}},
+		ReadOnly:   true,
+		CapDropAll: true,
+		Entrypoint: "/bin/sh",
+		Command: []string{"-ceu", `
+current=""
+legacy=""
+if [ -f /var/lib/postgresql/18/docker/PG_VERSION ]; then
+  current="$(cat /var/lib/postgresql/18/docker/PG_VERSION)"
+fi
+if [ -f /var/lib/postgresql/data/PG_VERSION ]; then
+  legacy="$(cat /var/lib/postgresql/data/PG_VERSION)"
+fi
+printf 'current=%s\nlegacy=%s\n' "$current" "$legacy"
+`},
+		Remove: true,
+	})
+	if err != nil {
+		return fmt.Errorf("inspect PostgreSQL data volume: %w", err)
+	}
+	return validatePostgresVolumeLayout(output)
+}
+
+func validatePostgresVolumeLayout(output string) error {
+	values := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || (key != "current" && key != "legacy") {
+			return fmt.Errorf("PostgreSQL data-volume probe returned an invalid result")
+		}
+		if _, duplicated := values[key]; duplicated {
+			return fmt.Errorf("PostgreSQL data-volume probe returned a duplicated field")
+		}
+		value = strings.TrimSpace(value)
+		if value != "" && !regexp.MustCompile(`^[0-9]+$`).MatchString(value) {
+			return fmt.Errorf("PostgreSQL data-volume probe returned an invalid major version")
+		}
+		values[key] = value
+	}
+	if _, ok := values["current"]; !ok {
+		return fmt.Errorf("PostgreSQL data-volume probe omitted the current layout")
+	}
+	if _, ok := values["legacy"]; !ok {
+		return fmt.Errorf("PostgreSQL data-volume probe omitted the legacy layout")
+	}
+	if values["legacy"] != "" {
+		return fmt.Errorf(
+			"PostgreSQL %s data was found in the legacy layout; the volume is preserved and must be migrated to PostgreSQL %s before restart",
+			values["legacy"], managedPostgresMajor,
+		)
+	}
+	if values["current"] != "" && values["current"] != managedPostgresMajor {
+		return fmt.Errorf(
+			"PostgreSQL %s data was found in the current layout; expected major %s and refusing to start",
+			values["current"], managedPostgresMajor,
+		)
+	}
+	return nil
 }
 
 func (manager *manager) postgresSpec() lifecycle.ContainerSpec {
@@ -1393,7 +1498,7 @@ func (manager *manager) postgresSpec() lifecycle.ContainerSpec {
 		Environment: map[string]string{
 			"POSTGRES_PASSWORD": manager.config.PostgresPassword,
 			"POSTGRES_DB":       "agentops",
-			"PGDATA":            "/var/lib/postgresql/data",
+			"PGDATA":            managedPostgresDataDir,
 		},
 		Mounts: []lifecycle.Mount{{
 			Volume: manager.config.PostgresVolume,

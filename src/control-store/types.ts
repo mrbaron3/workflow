@@ -86,10 +86,24 @@ export const RepositoryRegistrationInput = z.object({
   }).strict().default({}),
 });
 export type RepositoryRegistrationInput = z.infer<typeof RepositoryRegistrationInput>;
-export const RepositoryRegistrationPatch = RepositoryRegistrationInput
-  .omit({ repository: true })
-  .partial()
-  .refine((patch) => Object.keys(patch).length > 0, 'registration patch is empty');
+// Build the patch schema from the same leaf validators without carrying the
+// create-time defaults into partial updates. Zod 4 applies defaults inside
+// `.partial()`, which would otherwise turn `{ enabled: undefined }` into a
+// full default-valued update and silently re-enable a registration.
+export const RepositoryRegistrationPatch = z.object({
+  enabled: RepositoryRegistrationInput.shape.enabled.removeDefault().optional(),
+  issueMonitorEnabled: RepositoryRegistrationInput.shape.issueMonitorEnabled
+    .removeDefault().optional(),
+  prMonitorEnabled: RepositoryRegistrationInput.shape.prMonitorEnabled
+    .removeDefault().optional(),
+  executionEnabled: RepositoryRegistrationInput.shape.executionEnabled
+    .removeDefault().optional(),
+  configuration: RepositoryRegistrationInput.shape.configuration
+    .removeDefault().optional(),
+}).refine(
+  (patch) => Object.values(patch).some((value) => value !== undefined),
+  'registration patch is empty',
+);
 export type RepositoryRegistrationPatch = z.infer<typeof RepositoryRegistrationPatch>;
 
 export interface RepositoryRegistration extends RepositoryRegistrationInput {
@@ -494,7 +508,7 @@ export const EnqueueJobInput = z.object({
   source: JobSource,
   idempotencyKey: z.string().trim().min(1),
   jobType: z.string().trim().min(1),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   availableAt: z.date().optional(),
 }).superRefine((input, context) => {
   const contract = input.jobType === 'agentops.runner'
@@ -539,7 +553,7 @@ export const JobEnvelopeContract = z.object({
   source: JobSource,
   idempotencyKey: z.string().min(1),
   jobType: z.string().min(1),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   status: z.enum(['queued', 'leased', 'succeeded', 'failed', 'cancelled', 'rejected']),
   createdAt: z.string().datetime(),
   releaseId: z.string().uuid().optional(),

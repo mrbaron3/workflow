@@ -65,7 +65,8 @@ npm run smoke:postgres:apple
 ```
 
 Apple Containerのext4 named volumeには`lost+found`があるため、volumeは`/var/lib/postgresql`へmountし、
-`PGDATA=/var/lib/postgresql/data`を指定する。PostgreSQLとrunnerにhost publishはない。
+PostgreSQL 18 の version-specific layout に合わせて
+`PGDATA=/var/lib/postgresql/18/docker`を指定する。PostgreSQLとrunnerにhost publishはない。
 
 ## Registration-driven Go control（CISO-03）
 

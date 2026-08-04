@@ -325,7 +325,7 @@ export function agentopsTopology(options: AgentopsTopologyOptions): TopologySpec
           POSTGRES_PASSWORD: options.postgresPassword,
           POSTGRES_DB: 'agentops',
           PGPORT: String(postgresPort),
-          PGDATA: '/var/lib/postgresql/data',
+          PGDATA: '/var/lib/postgresql/18/docker',
         },
       },
     ],

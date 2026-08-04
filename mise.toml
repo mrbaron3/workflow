@@ -2,10 +2,10 @@
 #
 # 素で叩くと毎回こうなる:
 #   set -a; . ~/.config/agentops/env; set +a
-#   mise exec go@1.24.0 -- go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build
+#   mise exec go@1.26.5 -- go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build
 # 前置の正体は「operator の env を全部 export する」「Go を固定版で解決する」の 2 つで、
 # どちらも mise が持っている機能なので task へ畳む。ツールは [tools] が解決するので
-# `mise exec go@1.24.0 --` は不要になる。
+# `mise exec go@1.26.5 --` は不要になる。
 #
 # 秘密を含む env ファイルの在処だけは個人差があるので、追跡しない mise.local.toml に置く。
 # mise.local.toml.example をコピーして使う。
@@ -16,7 +16,7 @@
 lockfile = true
 
 [tools]
-go = "1.24.0"
+go = "1.26.5"
 
 # 必要な変数が揃っているかを先に見る。mise.local.toml を置き忘れると全変数が空のまま
 # agentopsctl まで進み、どの層で失敗したのか分かりにくいため、入口で名前を挙げて落とす。

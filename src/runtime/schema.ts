@@ -37,7 +37,7 @@ export type RuntimeRole = z.infer<typeof RuntimeRole>;
 export const LOOPBACK_HOST_IP = '127.0.0.1';
 
 /** The official upstream PostgreSQL image is used verbatim — the postgres role builds no custom image. */
-export const OFFICIAL_POSTGRES_IMAGE = 'postgres:16';
+export const OFFICIAL_POSTGRES_IMAGE = 'postgres:18.4-trixie';
 
 // --- structural contracts --------------------------------------------------
 
@@ -65,7 +65,7 @@ export type ContainerResourceName = z.infer<typeof ContainerResourceName>;
 /**
  * A named persistent volume mounted at a container-absolute path. `volume` is a named-volume id
  * (never a host path — see ContainerResourceName), and `mountPath` is a container-absolute path
- * *inside* the container (e.g. /var/lib/postgresql/data), never a Mac host path.
+ * *inside* the container (e.g. /var/lib/postgresql), never a Mac host path.
  */
 export const VolumeMount = z.object({
   volume: ContainerResourceName,
@@ -97,7 +97,7 @@ export const ContainerSpec = z.object({
   network: ContainerResourceName,
   publish: z.array(PortPublication).default([]),
   volumes: z.array(VolumeMount).default([]),
-  env: z.record(z.string()).default({}),
+  env: z.record(z.string(), z.string()).default({}),
   /** Container-absolute working directory. Absent = the image default. */
   workdir: z.string().optional(),
   /** Override the image entrypoint/command. Absent = the image default. */

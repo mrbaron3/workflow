@@ -341,6 +341,9 @@ describe('multi-repository GitHub webhook forwarders', () => {
     expect(starts[0]!.process.killed).toEqual(['SIGTERM']);
     expect(starts[1]!.registration.events).toEqual(['issues', 'pull_request']);
 
+    expect(() => store.updateRepository(first.id, { enabled: undefined }))
+      .toThrow(/patch must change at least one field/);
+
     store.updateRepository(first.id, { enabled: false });
     supervisor.reconcile();
     expect(starts[1]!.process.killed).toEqual(['SIGTERM']);

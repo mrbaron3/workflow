@@ -11,7 +11,7 @@ const postgres = `agentops-ciso03-pg-${suffix}`;
 const control = `agentops-ciso03-control-${suffix}`;
 const githubStub = `agentops-ciso03-github-${suffix}`;
 const postgresNetwork = `${network},mac=02:42:ac:11:00:02`;
-const githubStubImage = 'node:22-bookworm-slim';
+const githubStubImage = 'node:24.19.0-trixie-slim';
 const controlImage = `agentops-control:ciso03-${suffix}`;
 const controlTestImage = `agentops-control-test:ciso03-${suffix}`;
 const databasePassword = `ciso03-${suffix}`;
@@ -141,8 +141,8 @@ async function main(): Promise<void> {
     '--volume', `${volume}:/var/lib/postgresql`,
     '--env', `POSTGRES_PASSWORD=${databasePassword}`,
     '--env', 'POSTGRES_DB=agentops',
-    '--env', 'PGDATA=/var/lib/postgresql/data',
-    'postgres:16',
+    '--env', 'PGDATA=/var/lib/postgresql/18/docker',
+    'postgres:18.4-trixie',
   ]);
   await waitFor('PostgreSQL readiness', async () => {
     const result = spawnSync(

@@ -5,6 +5,37 @@ Registration であり、process 環境変数の allowlist は使わない。fre
 `mrbaron3/servo` を唯一の enabled Registration として、release receipt policy と
 既定 gate SLA 3600 秒を含めて作成する。
 
+## 固定 toolchain と更新方針
+
+2026-08-04 時点の production 固定値は Node.js 24.19.0 LTS、npm 12.0.2、
+TypeScript 7.0.2、Vite 8.2.0、Vitest 4.1.10、Playwright 1.62.1、Zod 4.4.3、
+Go 1.26.5、PostgreSQL 18.4、Debian 13 (trixie)、GitHub CLI 2.97.0、
+Codex CLI 0.146.0、Claude Code 2.1.221、gosu 1.19 である。OCI base は version tag
+だけでなく manifest digest、Debian package は 2026-08-04 snapshot と exact version で固定する。
+`@types/node` は全 major の最新版ではなく、production Node 24 と一致する 24 系最新版を使う。
+Go はアプリが直接利用する module と配布 binary 本体を最新版にする。`deploy/gh` の推移依存は
+GitHub CLI 2.97.0 が選んだ検証済み MVS graph に従い、`go get -u all` で上流の選択を個別に
+上書きしない。
+
+Node.js 26.6.0 は Current であり LTS ではない。Node 26 系の LTS 予定日は
+2026-10-28 だが、その時点の exact version は事前に仮定しない。自律パイプラインでは
+Node.js の production 推奨に従い、LTS 化、依存 compatibility、同じ headless/OCI 検証が
+揃った更新 PR でのみ major を進める。
+
+依存更新時は少なくとも次を実行し、`npm outdated` で表示される Node 型定義が意図した
+major-line 例外だけであることを確認する。
+
+```sh
+npm outdated
+npm audit
+npm test
+mise exec go@1.26.5 -- go test -race ./...
+mise exec go@1.26.5 -- go vet ./...
+container build --target runner -t agentops-runner:verify -f deploy/Containerfile .
+container run --rm --entrypoint /bin/sh agentops-runner:verify -c \
+  'node --version && git --version && gh --version && codex --version && claude --version'
+```
+
 ## 起動前確認
 
 ```sh
@@ -106,6 +137,20 @@ schema down migration、volume 削除、実行中 job の強制中断は行わ�
 4. `status:json` の provenance、Dashboard health、Servo Registration、直前の terminal/current Issue
    projectionを再確認する。PostgreSQL/runner volume は保存されるので、同じ release/job identity から
    recovery する。
+
+### PostgreSQL 16 から 18 への境界
+
+PostgreSQL の major data directory は binary 互換ではない。起動前プローブは named volume 内の
+`/var/lib/postgresql/data/PG_VERSION` と `/var/lib/postgresql/18/docker/PG_VERSION` を読むだけで、
+legacy layout、18 以外の current layout、両 layout の混在を検出すると container/volume を削除せず
+停止する。したがって、旧 16 volume に対して 18 が空クラスタを作り、dashboard から既存 state が
+消えたように見えることはない。
+
+既存 16 deployment は DRAINING 完了後、同じ PostgreSQL 18 image を使う一時 restore volume へ
+`pg_dump`/`pg_restore` の検証済み logical migration を行い、schema version/checksum、registration、
+job/release projection の件数と restart reconstruction を確認してから volume を切り替える。旧 volume は
+rollback 証拠として保持する。この migration を完了するまで通常の `start` / `deploy` は意図的に
+fail closed となる。
 
 ## 実環境 smoke の境界
 

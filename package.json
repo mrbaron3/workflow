@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "npm@12.0.2",
   "description": "AgentOps — a local-first operating harness for running coding agents (Claude Code / Codex / Gemini) through an Issue Contract -> PR -> Eval -> Repair -> Release loop.",
   "engines": {
-    "node": ">=20"
+    "node": ">=24 <25"
   },
   "bin": {
     "agentops": "./bin/agentops.mjs"
@@ -34,23 +35,27 @@
   },
   "dependencies": {
     "pg": "^8.22.0",
-    "yaml": "^2.5.1",
-    "zod": "^3.23.8"
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
   },
   "overrides": {
     "esbuild": "0.28.1",
     "postcss": "8.5.23"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.0",
-    "@types/node": "^22.5.5",
-    "@types/pg": "^8.20.0",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^24.13.3",
+    "@types/pg": "^8.20.3",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",
     "happy-dom": "^20.11.1",
-    "tsx": "^4.19.1",
-    "typescript": "^5.6.2",
-    "vite": "^6.4.3",
-    "vitest": "^3.2.7"
+    "tsx": "^4.23.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "fsevents": false
   }
 }

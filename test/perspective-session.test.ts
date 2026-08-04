@@ -771,12 +771,10 @@ describe('restricted repository-PR reviewers', () => {
     const root = tmpDir('restricted-review-sigkill');
     const executable = path.join(root, 'claude');
     fs.writeFileSync(executable, [
-      '#!/usr/bin/env node',
-      "const fs = require('node:fs');",
-      "process.on('SIGTERM', () => {});",
-      "fs.writeFileSync('provider.pid', String(process.pid));",
-      'process.stdin.resume();',
-      'setInterval(() => {}, 1000);',
+      '#!/bin/sh',
+      "trap '' TERM",
+      "printf '%s' \"$$\" > provider.pid",
+      'while :; do sleep 1; done',
     ].join('\n'), { mode: 0o700 });
     const job = restrictedJob('claude-timeout');
     const started = Date.now();
@@ -796,6 +794,7 @@ describe('restricted repository-PR reviewers', () => {
           parentEnv: {
             PATH: `${root}${path.delimiter}${process.env.PATH ?? ''}`,
             ANTHROPIC_API_KEY: 'test-only',
+            [RESTRICTED_REVIEW_API_KEY_OPT_IN]: 'true',
           },
         },
       },

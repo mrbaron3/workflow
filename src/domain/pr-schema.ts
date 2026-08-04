@@ -225,7 +225,7 @@ const RevisionGateSnapshotRecord = z.object({
   revisionId: z.string(),
   headSha: PrHeadSha,
   requiredPerspectives: z.array(z.string()).default([]),
-  perspectiveVerdicts: z.record(Verdict).default({}),
+  perspectiveVerdicts: z.record(z.string(), Verdict).default({}),
   checks: z.array(RevisionCheck).default([]),
   unresolvedBlockingThreadIds: z.array(z.string()).default([]),
   blockingReviewThreads: z.array(RevisionReviewThread).default([]),

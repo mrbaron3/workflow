@@ -70,7 +70,7 @@ function postgresSpec(): ContainerSpec {
     env: {
       POSTGRES_PASSWORD: password,
       POSTGRES_DB: 'agentops',
-      PGDATA: '/var/lib/postgresql/data',
+      PGDATA: '/var/lib/postgresql/18/docker',
     },
   };
 }
