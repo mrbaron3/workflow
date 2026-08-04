@@ -72,6 +72,8 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
       git=1:2.47.3-0+deb13u1 \
     && npm install --global npm@12.0.2 \
     && npm --version | grep -qx '12.0.2' \
+    && rm -rf /opt/yarn-v* \
+    && rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && rm -rf /var/lib/apt/lists/*
 # Container-neutral roots (DATA-container-runtime-004). AGENTOPS_APP_ROOT is CONSUMED by the CLI
 # bootstrap (resolveHarnessRoot): Store / workspace / systemDir all anchor on it, so nothing depends on
@@ -79,6 +81,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
 # resolveContainerPaths as workspace/store move onto dedicated volumes (#12/#14). None carries a macOS
 # dependency; here APP_ROOT=/app equals the cwd, so behavior is identical to a bare run.
 ENV NODE_ENV=production \
+    YARN_VERSION= \
     AGENTOPS_APP_ROOT=/app \
     AGENTOPS_WORKSPACE_ROOT=/workspace \
     AGENTOPS_STORE_ROOT=/data/store \
@@ -124,7 +127,8 @@ RUN apt-get update \
     && codex --version \
     && claude --version \
     && rm -rf /usr/local/lib/node_modules/npm \
-    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
+    && rm -rf /opt/yarn-v* \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && rm -rf /var/lib/apt/lists/*
 ENV HOME=/home/agentops \
     AGENTOPS_APP_ROOT=/app \
@@ -166,10 +170,12 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
     && codex --version \
     && claude --version \
     && rm -rf /usr/local/lib/node_modules/npm \
-    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
+    && rm -rf /opt/yarn-v* \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=agentops:agentops /app /app
 ENV HOME=/home/agentops \
+    YARN_VERSION= \
     AGENTOPS_APP_ROOT=/app
 WORKDIR /app
 USER agentops

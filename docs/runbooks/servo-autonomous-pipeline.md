@@ -13,6 +13,8 @@ Go 1.26.5、PostgreSQL 18.4、Debian 13 (trixie)、GitHub CLI 2.97.0、
 Codex CLI 0.146.0、Claude Code 2.1.221、gosu 1.19 である。OCI base は version tag
 だけでなく manifest digest、Debian package は 2026-08-04 snapshot と exact version で固定する。
 `@types/node` は全 major の最新版ではなく、production Node 24 と一致する 24 系最新版を使う。
+package manager は npm に統一し、Node base image に同梱される未使用の Yarn Classic は production
+image から削除する。
 Go はアプリが直接利用する module と配布 binary 本体を最新版にする。`deploy/gh` の推移依存は
 GitHub CLI 2.97.0 が選んだ検証済み MVS graph に従い、`go get -u all` で上流の選択を個別に
 上書きしない。
