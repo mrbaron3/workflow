@@ -184,21 +184,20 @@ function sourceIssueContract(
       `As a repository maintainer, I want PR #${pullRequest.number} reviewed against`,
       `the complete repository-owned Source Issue before its current head can merge.`,
     ].join(' '),
-    scope: {
-      include: [
-        `All requirements, acceptance criteria, and clarifications in ${source.url}`,
-        'The complete diff at the immutable current head',
-      ],
-      exclude: [
-        'Requirements belonging to explicitly out-of-scope follow-up issues',
-      ],
-    },
+    // `scope` is a file-glob boundary consumed by the deterministic grader, not
+    // prose. A repository-discovered PR has no declared path restriction, so it
+    // stays unrestricted exactly like the synthetic contract above; requirement
+    // narrative belongs to the acceptance criterion and the inert Source Issue
+    // material. Putting prose here would make every changed path a scope
+    // violation and permanently fail this blocking scope_check.
+    scope: { include: [], exclude: [] },
     acceptanceCriteria: [{
       id: 'SOURCE-ISSUE',
       severity: 'blocker' as const,
       behavior: [
         'Evaluate the implementation against every requirement and acceptance item in the',
         'separately supplied, inert, ready-time Source Issue snapshot.',
+        'Requirements belonging to explicitly out-of-scope follow-up issues are excluded.',
         `Source: ${source.url}`,
         `Source updated at: ${source.sourceUpdatedAt}`,
         `Snapshot digest: ${authority.sourceDigest}`,

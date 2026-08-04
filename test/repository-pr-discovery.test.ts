@@ -17,6 +17,7 @@ import {
   transitionPrRevision,
 } from '../src/domain/schema.js';
 import { runGithubDevelopmentTurn } from '../src/intake/development-turn.js';
+import { groundArtifact } from '../src/pipeline/execution/grade.js';
 import {
   attemptForRevision,
   discoverRepositoryPullRequests,
@@ -1145,6 +1146,20 @@ describe('repository-wide pull request discovery', () => {
     expect(discovery.issue.implementationNotes).toContain(
       'Trusted Source Issue: https://github.com/acme/theme/issues/8',
     );
+    // `scope` is a file-glob boundary for the deterministic grader. Requirement
+    // prose here would make every changed path a scope violation, so the
+    // blocking SOURCE-ISSUE scope_check could never pass and no reviewed head
+    // could reach merge. A discovered PR declares no path restriction.
+    expect(contract.scope).toEqual({ include: [], exclude: [] });
+    expect(
+      groundArtifact({
+        contract,
+        target: env.config.target!,
+        worktree: env.root,
+        branch: 'feature/state-contract',
+        changed: ['src/state.ts', 'test/state.test.ts'],
+      }).scopeViolations,
+    ).toEqual([]);
   });
 
   it('SOURCE-ISSUE fails closed when a PR no longer references its release Issue', () => {
