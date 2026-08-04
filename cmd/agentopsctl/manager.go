@@ -191,7 +191,7 @@ func (manager *manager) Start(
 	}
 	startingMode := persisted.State.Mode
 	initialMode = &startingMode
-	if err := manager.validateExistingTopology(ctx, persisted.State.Mode); err != nil {
+	if err := manager.validateExistingTopology(ctx); err != nil {
 		return err
 	}
 	if persisted.State.Mode == lifecycle.ModeActive {
@@ -2714,7 +2714,6 @@ func validateSpecActual(
 
 func (manager *manager) validateExistingTopology(
 	ctx context.Context,
-	mode lifecycle.Mode,
 ) error {
 	for _, name := range []string{
 		manager.config.ControlContainer,
@@ -2735,9 +2734,25 @@ func (manager *manager) validateExistingTopology(
 			case manager.config.GitHubBrokerContainer:
 				validateErr = validateGitHubBrokerActual(actual, manager.config)
 			case manager.config.TriageContainer:
-				validateErr = validateTriageActual(actual, manager.config, mode)
+				workerMode, modeErr := existingWorkerMode(actual, false)
+				if modeErr != nil {
+					return modeErr
+				}
+				validateErr = validateTriageActual(
+					actual,
+					manager.config,
+					workerMode,
+				)
 			case manager.config.RunnerContainer:
-				validateErr = validateRunnerActual(actual, manager.config, mode)
+				workerMode, modeErr := existingWorkerMode(actual, true)
+				if modeErr != nil {
+					return modeErr
+				}
+				validateErr = validateRunnerActual(
+					actual,
+					manager.config,
+					workerMode,
+				)
 			case manager.config.PostgresContainer:
 				validateErr = validatePostgresActual(actual, manager.config)
 			}
@@ -2747,6 +2762,38 @@ func (manager *manager) validateExistingTopology(
 		}
 	}
 	return nil
+}
+
+// existingWorkerMode reads the lifecycle boundary the running worker was
+// created with. A failed start can durably compensate to MONITOR_ONLY before
+// it has replaced the prior ACTIVE containers. Validating those containers as
+// MONITOR_ONLY would reject their expected read-only credential mount and make
+// the next start unable to repair the mixed topology. The worker's own mode is
+// safe to use for this structural preflight; validateSpecActual later requires
+// the exact desired-mode spec before the topology can be published.
+func existingWorkerMode(
+	actual *lifecycle.ContainerActual,
+	runner bool,
+) (lifecycle.Mode, error) {
+	var raw string
+	found := false
+	for _, entry := range actual.Configuration.InitProcess.Environment {
+		key, value, present := strings.Cut(entry, "=")
+		if !present || key != "AGENTOPS_OPERATING_MODE" {
+			continue
+		}
+		if found {
+			return "", fmt.Errorf("worker operating mode is duplicated")
+		}
+		raw = value
+		found = true
+	}
+	mode, err := lifecycle.ParseMode(raw)
+	if !found || err != nil || mode == lifecycle.ModeOff ||
+		(runner && mode != lifecycle.ModeActive && mode != lifecycle.ModeDraining) {
+		return "", fmt.Errorf("worker operating mode is invalid")
+	}
+	return mode, nil
 }
 
 func validateGitHubBrokerActual(
