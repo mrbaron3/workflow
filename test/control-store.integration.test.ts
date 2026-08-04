@@ -443,12 +443,10 @@ integration('PostgreSQL control store', () => {
     const claims = await Promise.all([
       store.claimMonitorBrokerRequest({
         workerId: 'monitor-runner-a',
-        allowedRepositories: [repo.repository],
         leaseMs: 5_000,
       }),
       store.claimMonitorBrokerRequest({
         workerId: 'monitor-runner-b',
-        allowedRepositories: [repo.repository],
         leaseMs: 5_000,
       }),
     ]);
@@ -484,7 +482,6 @@ integration('PostgreSQL control store', () => {
     expect(stillLeased.rows[0]?.status).toBe('leased');
     const recovered = await store.claimMonitorBrokerRequest({
       workerId: 'monitor-runner-recovery',
-      allowedRepositories: [repo.repository],
       leaseMs: 5_000,
     });
     expect(recovered).toMatchObject({ id: requestId });
@@ -513,7 +510,6 @@ integration('PostgreSQL control store', () => {
     await store.updateRegistration(repo.id, { enabled: false });
     await expect(store.claimMonitorBrokerRequest({
       workerId: 'monitor-runner-stale',
-      allowedRepositories: [repo.repository],
       leaseMs: 5_000,
     })).resolves.toBeNull();
     const stale = await pool.query<{
@@ -582,7 +578,6 @@ integration('PostgreSQL control store', () => {
     });
     const request = await store.claimMonitorBrokerRequest({
       workerId: 'capability-triage',
-      allowedRepositories: [repo.repository],
       leaseMs: 30_000,
     });
     expect(request).toMatchObject({ id: requestId });
@@ -896,6 +891,380 @@ integration('PostgreSQL control store', () => {
         },
       },
     });
+  });
+
+  it('persists review perspectives and enforces exact-head child DAG integration', async () => {
+    const store = await migratedStore();
+    const registrations = await store.listRegistrations();
+    const repo = registrations.find((candidate) =>
+      candidate.repository === 'mrbaron3/servo')!;
+    const policy = {
+      authority: 'human-ready-allowed' as const,
+      requiredGateSignals: [
+        { source: 'repository-grader' as const, name: 'test' },
+      ],
+      requiredReviewPerspectives: ['security' as const, 'codeQuality' as const],
+      minimumHeadEpochs: 1,
+    };
+    const parentRelease = (await store.createRelease({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+      releaseKey: 'issue:71:review-dag',
+      repository: repo.repository,
+      issueNumber: 71,
+      policy,
+    })).release;
+    const parentJob = await store.enqueueJob({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+      source: { kind: 'manual', key: 'review-dag-parent' },
+      idempotencyKey: 'review-dag-parent',
+      jobType: 'agentops.runner',
+      payload: {
+        schemaVersion: 1,
+        repository: { owner: 'mrbaron3', name: 'servo' },
+        event: { kind: 'issue', number: 71, action: 'recovery' },
+        target: { baseRef: 'refs/heads/main' },
+        execution: {
+          mode: 'development_turn', requiredChecks: ['test'],
+          mergeMethod: 'squash', readyLabel: 'ready',
+          claimedLabel: 'agent-claimed',
+        },
+        artifacts: [],
+      },
+    });
+    await store.linkJobToRelease({
+      jobId: parentJob.job.id,
+      releaseId: parentRelease.id,
+    });
+    const parentLease = await store.acquireLease({
+      workerId: 'review-dag-parent', durationMs: 30_000,
+      jobType: 'agentops.runner',
+    });
+    expect(parentLease?.job.id).toBe(parentJob.job.id);
+    const parentHead = 'a'.repeat(40);
+    await store.recordDevelopmentReviewRound({
+      token: parentLease!.token,
+      workerId: 'review-dag-parent',
+      review: {
+        round: 1,
+        headSha: parentHead,
+        branch: 'agent/issue-71',
+        pullRequestNumber: 81,
+        outcome: 'request-changes',
+        startedAt: '2026-08-04T01:00:00.000Z',
+        completedAt: '2026-08-04T01:01:00.000Z',
+        perspectives: [{
+          perspective: 'security',
+          verdict: 'request_changes',
+          findings: [{
+            criterionId: 'SEC-child', severity: 'major',
+            expected: 'isolated authorization boundary',
+            observed: 'adjacent subsystem lacks its own guard',
+            requiredFix: ['implement the adjacent authorization boundary'],
+            disposition: 'separate-issue',
+            separationReason: 'The subsystem is independently testable and outside parent scope.',
+          }, {
+            criterionId: 'QUALITY-child', severity: 'major',
+            expected: 'independent migration coverage',
+            observed: 'the adjacent migration lacks restart coverage',
+            requiredFix: ['add isolated restart coverage'],
+            disposition: 'separate-issue',
+            separationReason: 'The migration is independent of the parent change.',
+          }],
+        }],
+      },
+    });
+    await expect(store.recordDevelopmentReviewRound({
+      token: parentLease!.token,
+      workerId: 'review-dag-parent',
+      review: {
+        round: 1,
+        headSha: parentHead,
+        branch: 'agent/issue-71',
+        pullRequestNumber: 81,
+        outcome: 'approve',
+        startedAt: '2026-08-04T01:00:00.000Z',
+        completedAt: '2026-08-04T01:02:00.000Z',
+        perspectives: [{
+          perspective: 'security',
+          verdict: 'approve',
+          findings: [],
+        }],
+      },
+    })).rejects.toThrow(/immutable/);
+    const findingKey = `sha256:${'b'.repeat(64)}`;
+    await expect(store.recordReviewChild({
+      token: parentLease!.token,
+      workerId: 'review-dag-parent',
+      childIssueNumber: 99,
+      childIssueUrl: 'https://github.com/mrbaron3/servo/issues/99',
+      findingKey: `sha256:${'c'.repeat(64)}`,
+      finding: {
+        criterionId: 'SEC-fabricated', severity: 'major',
+        expected: 'a durable finding',
+        observed: 'no perspective recorded this finding',
+        requiredFix: ['reject it'],
+        disposition: 'separate-issue',
+        separationReason: 'This fabricated record must not enter the DAG.',
+      },
+      reviewRound: 1,
+      parentPullRequestNumber: 81,
+      parentBranch: 'agent/issue-71',
+      parentHeadSha: parentHead,
+    })).rejects.toThrow(/durable review evidence/);
+    const childNodeId = await store.recordReviewChild({
+      token: parentLease!.token,
+      workerId: 'review-dag-parent',
+      childIssueNumber: 72,
+      childIssueUrl: 'https://github.com/mrbaron3/servo/issues/72',
+      findingKey,
+      finding: {
+        criterionId: 'SEC-child', severity: 'major',
+        expected: 'isolated authorization boundary',
+        observed: 'adjacent subsystem lacks its own guard',
+        requiredFix: ['implement the adjacent authorization boundary'],
+        disposition: 'separate-issue',
+        separationReason: 'The subsystem is independently testable and outside parent scope.',
+      },
+      reviewRound: 1,
+      parentPullRequestNumber: 81,
+      parentBranch: 'agent/issue-71',
+      parentHeadSha: parentHead,
+    });
+    await expect(store.recordReviewChild({
+      token: parentLease!.token,
+      workerId: 'review-dag-parent',
+      childIssueNumber: 72,
+      childIssueUrl: 'https://github.com/mrbaron3/servo/issues/72',
+      findingKey,
+      finding: {
+        criterionId: 'SEC-child', severity: 'major',
+        expected: 'isolated authorization boundary',
+        observed: 'adjacent subsystem lacks its own guard',
+        requiredFix: ['implement the adjacent authorization boundary'],
+        disposition: 'separate-issue',
+        separationReason: 'The subsystem is independently testable and outside parent scope.',
+      },
+      reviewRound: 1,
+      parentPullRequestNumber: 81,
+      parentBranch: 'agent/issue-71',
+      parentHeadSha: parentHead,
+    })).resolves.toBe(childNodeId);
+    const siblingNodeId = await store.recordReviewChild({
+      token: parentLease!.token,
+      workerId: 'review-dag-parent',
+      childIssueNumber: 73,
+      childIssueUrl: 'https://github.com/mrbaron3/servo/issues/73',
+      findingKey: `sha256:${'e'.repeat(64)}`,
+      finding: {
+        criterionId: 'QUALITY-child', severity: 'major',
+        expected: 'independent migration coverage',
+        observed: 'the adjacent migration lacks restart coverage',
+        requiredFix: ['add isolated restart coverage'],
+        disposition: 'separate-issue',
+        separationReason: 'The migration is independent of the parent change.',
+      },
+      reviewRound: 1,
+      parentPullRequestNumber: 81,
+      parentBranch: 'agent/issue-71',
+      parentHeadSha: parentHead,
+    });
+    await expect(store.reviewLineageGate(parentRelease.id)).resolves.toMatchObject({
+      ready: false,
+      pending: [
+        { issueNumber: 72, status: 'pending' },
+        { issueNumber: 73, status: 'pending' },
+      ],
+    });
+    await expect(store.getReviewChildTarget(repo.repository, 72)).resolves.toMatchObject({
+      nodeId: childNodeId,
+      parentIssueNumber: 71,
+      parentPullRequestNumber: 81,
+      parentBranch: 'agent/issue-71',
+      parentHeadSha: parentHead,
+    });
+
+    await pool.query(
+      `UPDATE agentops_control.job_leases SET status = 'released'
+        WHERE lease_token = $1`,
+      [parentLease!.token],
+    );
+    await pool.query(
+      `UPDATE agentops_control.job_attempts
+          SET status = 'succeeded', finished_at = clock_timestamp()
+        WHERE id = $1`,
+      [parentLease!.attemptId],
+    );
+    await pool.query(
+      `UPDATE agentops_control.jobs
+          SET status = 'succeeded', finished_at = clock_timestamp()
+        WHERE id = $1`,
+      [parentJob.job.id],
+    );
+    const childRelease = (await store.createRelease({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+      releaseKey: 'issue:72:review-dag',
+      repository: repo.repository,
+      issueNumber: 72,
+      policy,
+    })).release;
+    const childJob = await store.enqueueJob({
+      registrationId: repo.id,
+      registrationVersion: repo.version,
+      source: { kind: 'manual', key: 'review-dag-child' },
+      idempotencyKey: 'review-dag-child',
+      jobType: 'agentops.runner',
+      payload: {
+        schemaVersion: 1,
+        repository: { owner: 'mrbaron3', name: 'servo' },
+        event: { kind: 'issue', number: 72, action: 'recovery' },
+        target: {
+          baseRef: 'refs/heads/agent/issue-71',
+          headRef: parentHead,
+        },
+        execution: {
+          mode: 'development_turn', requiredChecks: ['test'],
+          mergeMethod: 'squash', readyLabel: 'ready',
+          claimedLabel: 'agent-claimed',
+        },
+        artifacts: [],
+      },
+    });
+    await store.linkJobToRelease({
+      jobId: childJob.job.id,
+      releaseId: childRelease.id,
+    });
+    const childLease = await store.acquireLease({
+      workerId: 'review-dag-child', durationMs: 30_000,
+      jobType: 'agentops.runner',
+    });
+    expect(childLease?.job.id).toBe(childJob.job.id);
+    await expect(store.bindReviewChildRelease({
+      token: childLease!.token,
+      workerId: 'review-dag-child',
+      releaseId: childRelease.id,
+    })).resolves.toBe(childNodeId);
+    const childHead = 'c'.repeat(40);
+    const integratedHead = 'd'.repeat(40);
+    await store.recordDevelopmentReviewRound({
+      token: childLease!.token,
+      workerId: 'review-dag-child',
+      review: {
+        round: 2,
+        headSha: childHead,
+        branch: 'agent/issue-72',
+        pullRequestNumber: 82,
+        outcome: 'request-changes',
+        startedAt: '2026-08-04T02:00:00.000Z',
+        completedAt: '2026-08-04T02:01:00.000Z',
+        perspectives: [{
+          perspective: 'codeQuality',
+          verdict: 'request_changes',
+          findings: [{
+            criterionId: 'NESTED-child', severity: 'major',
+            expected: 'nested work remains isolated',
+            observed: 'a second independent boundary is missing',
+            requiredFix: ['implement the nested boundary'],
+            disposition: 'separate-issue',
+            separationReason: 'The nested boundary has its own acceptance criteria.',
+          }],
+        }],
+      },
+    });
+    const grandchildNodeId = await store.recordReviewChild({
+      token: childLease!.token,
+      workerId: 'review-dag-child',
+      childIssueNumber: 74,
+      childIssueUrl: 'https://github.com/mrbaron3/servo/issues/74',
+      findingKey: `sha256:${'f'.repeat(64)}`,
+      finding: {
+        criterionId: 'NESTED-child', severity: 'major',
+        expected: 'nested work remains isolated',
+        observed: 'a second independent boundary is missing',
+        requiredFix: ['implement the nested boundary'],
+        disposition: 'separate-issue',
+        separationReason: 'The nested boundary has its own acceptance criteria.',
+      },
+      reviewRound: 2,
+      parentPullRequestNumber: 82,
+      parentBranch: 'agent/issue-72',
+      parentHeadSha: childHead,
+    });
+    await expect(store.reviewLineageGate(childRelease.id)).resolves.toMatchObject({
+      ready: false,
+      pending: [{ issueNumber: 74, status: 'pending' }],
+    });
+    await pool.query(
+      `UPDATE agentops_control.releases
+          SET status = 'merged', pull_request_number = 82,
+              final_head = $2, merge_sha = $3, merge_actor = 'integration-test',
+              completed_at = clock_timestamp(), updated_at = clock_timestamp()
+        WHERE id = $1`,
+      [childRelease.id, childHead, integratedHead],
+    );
+    await expect(store.markReviewChildIntegrated({
+      token: childLease!.token,
+      workerId: 'review-dag-child',
+      releaseId: childRelease.id,
+      pullRequestNumber: 82,
+      childHeadSha: childHead,
+      integratedHeadSha: integratedHead,
+    })).rejects.toThrow(/integration is invalid/);
+    await pool.query(
+      `UPDATE agentops_control.development_lineage_nodes
+          SET status = 'integrated', integrated_head_sha = $2,
+              integrated_at = clock_timestamp(), updated_at = clock_timestamp()
+        WHERE id = $1`,
+      [grandchildNodeId, '1'.repeat(40)],
+    );
+    await expect(store.markReviewChildIntegrated({
+      token: childLease!.token,
+      workerId: 'review-dag-child',
+      releaseId: childRelease.id,
+      pullRequestNumber: 82,
+      childHeadSha: childHead,
+      integratedHeadSha: integratedHead,
+    })).resolves.toBe(childNodeId);
+    await pool.query(
+      `UPDATE agentops_control.development_lineage_nodes
+          SET status = 'integrated', integrated_head_sha = $2,
+              integrated_at = clock_timestamp(), updated_at = clock_timestamp()
+        WHERE id = $1`,
+      [siblingNodeId, '2'.repeat(40)],
+    );
+    await expect(store.reviewLineageGate(parentRelease.id)).resolves.toEqual({
+      ready: true,
+      pending: [],
+      integratedHeads: [integratedHead, '2'.repeat(40)],
+    });
+
+    const root = await pool.query<{ id: string }>(
+      `SELECT id FROM agentops_control.development_lineage_nodes
+        WHERE release_id = $1`,
+      [parentRelease.id],
+    );
+    await expect(pool.query(
+      `UPDATE agentops_control.development_lineage_nodes
+          SET parent_node_id = $2 WHERE id = $1`,
+      [root.rows[0]!.id, childNodeId],
+    )).rejects.toThrow(/cycle/);
+    const review = await pool.query<{
+      outcome: string;
+      perspective: string;
+      finding_count: number;
+    }>(
+      `SELECT round.outcome, perspective.perspective, perspective.finding_count
+         FROM agentops_control.development_review_rounds round
+         JOIN agentops_control.development_review_perspectives perspective
+           ON perspective.review_round_id = round.id
+        WHERE round.job_id = $1`,
+      [parentJob.job.id],
+    );
+    expect(review.rows).toEqual([{
+      outcome: 'request-changes', perspective: 'security', finding_count: 2,
+    }]);
   });
 
   it('deduplicates concurrent webhook and poll enqueue and duplicate deliveries', async () => {
@@ -1257,6 +1626,10 @@ integration('PostgreSQL control store', () => {
         worktreePath: '/workspace/registrations/repo/jobs/job/attempt-1/worktree',
         branch: 'agent/progress-source-s0',
         parentIssueNumber: 1,
+        headSha: '0123456789012345678901234567890123456789',
+        reviewRound: 1,
+        reviewOutcome: 'running',
+        gateKey: 'review',
       },
     });
     const refreshedId = await store.recordDevelopmentProgress({
@@ -1273,6 +1646,10 @@ integration('PostgreSQL control store', () => {
         worktreePath: '/workspace/registrations/repo/jobs/job/attempt-1/worktree',
         branch: 'agent/progress-source-s0',
         parentIssueNumber: 1,
+        headSha: '0123456789012345678901234567890123456789',
+        reviewRound: 1,
+        reviewOutcome: 'running',
+        gateKey: 'review',
       },
     });
     expect(refreshedId).toBe(firstId);
@@ -1301,6 +1678,10 @@ integration('PostgreSQL control store', () => {
               '/workspace/registrations/repo/jobs/job/attempt-1/worktree',
             branch: 'agent/progress-source-s0',
             parentIssueNumber: 1,
+            headSha: '0123456789012345678901234567890123456789',
+            reviewRound: 1,
+            reviewOutcome: 'running',
+            gateKey: 'review',
           },
         ],
       );
@@ -1317,6 +1698,10 @@ integration('PostgreSQL control store', () => {
       worker_id: string;
       summary: string;
       parent_issue_number: string;
+      head_sha: string;
+      review_round: number;
+      review_outcome: string;
+      gate_key: string;
       count: string;
     }>(
       `SELECT max(repository) AS repository,
@@ -1325,6 +1710,10 @@ integration('PostgreSQL control store', () => {
               max(worker_id) AS worker_id,
               max(summary) AS summary,
               max(parent_issue_number)::text AS parent_issue_number,
+              max(head_sha) AS head_sha,
+              max(review_round) AS review_round,
+              max(review_outcome) AS review_outcome,
+              max(gate_key) AS gate_key,
               count(*)::text AS count
          FROM agentops_control.development_progress_events
         WHERE job_id = $1`,
@@ -1337,6 +1726,10 @@ integration('PostgreSQL control store', () => {
       worker_id: lease!.workerId,
       summary: 'Runner capability updated progress without table SELECT',
       parent_issue_number: '1',
+      head_sha: '0123456789012345678901234567890123456789',
+      review_round: 1,
+      review_outcome: 'running',
+      gate_key: 'review',
       count: '1',
     });
 

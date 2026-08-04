@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { z } from 'zod';
-import { CanonicalRepository } from '../control-store/types.js';
 import {
   loadGitHubBrokerCredential,
   type GitHubBrokerCredential,
@@ -17,7 +16,6 @@ import {
   releaseRuntimeConfigurationFromEnvironment,
 } from '../evidence/release-projection.js';
 
-const Repository = CanonicalRepository;
 const NamedVolume = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/);
 const Mount = z.object({
   source: NamedVolume,
@@ -38,8 +36,6 @@ export const TriageStartupInput = z.object({
   providerAuth: z.enum(['none', 'api-key', 'codex-login']),
   model: z.string().trim().min(1).max(128).nullable(),
   operatingMode: z.enum(['MONITOR_ONLY', 'ACTIVE', 'DRAINING']),
-  repositories: z.array(Repository).min(1).max(64)
-    .refine((items) => new Set(items).size === items.length),
   leaseDurationMs: z.number().int().min(5_000).max(60 * 60_000),
   heartbeatIntervalMs: z.number().int().min(500).max(10 * 60_000),
   reconciliationIntervalMs: z.number().int().min(250).max(10 * 60_000),
@@ -132,21 +128,6 @@ function json(name: string, raw: string | undefined): unknown {
       false,
     );
   }
-}
-
-function repositories(raw: string): string[] {
-  const values = raw.split(',').map((value) => value.trim());
-  if (
-    values.some((value) => value === '' || value !== value.toLowerCase())
-    || new Set(values).size !== values.length
-  ) {
-    throw new RunnerExecutionError(
-      'startup_isolation_failure',
-      'triage repository allowlist must be unique canonical owner/name values',
-      false,
-    );
-  }
-  return z.array(Repository).min(1).max(64).parse(values);
 }
 
 function validateTriageRuntime(
@@ -269,7 +250,6 @@ export function loadTriageStartup(
     providerAuth,
     model: env.AGENTOPS_TRIAGE_MODEL?.trim() || null,
     operatingMode,
-    repositories: repositories(required(env, 'AGENTOPS_MONITOR_REPOSITORIES')),
     leaseDurationMs: integer(env, 'AGENTOPS_TRIAGE_LEASE_MS', 60_000),
     heartbeatIntervalMs: integer(env, 'AGENTOPS_TRIAGE_HEARTBEAT_MS', 15_000),
     reconciliationIntervalMs: integer(

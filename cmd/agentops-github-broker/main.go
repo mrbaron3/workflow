@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mrbaron3/workflow/internal/control"
 	"github.com/mrbaron3/workflow/internal/githubapp"
 	"github.com/mrbaron3/workflow/internal/lifecycle"
 )
@@ -50,24 +49,7 @@ func run() error {
 	}
 	owner := required("AGENTOPS_GITHUB_APP_OWNER")
 	appSlug := required("AGENTOPS_GITHUB_APP_SLUG")
-	monitorRepositories, err := repositories(
-		"AGENTOPS_MONITOR_REPOSITORIES",
-		owner,
-	)
-	if err != nil {
-		return err
-	}
-	var runnerRepositories []string
-	if DevelopmentMode(mode) {
-		runnerRepositories, err = repositories(
-			"AGENTOPS_RUNNER_REPOSITORIES",
-			owner,
-		)
-		if err != nil {
-			return err
-		}
-	}
-	policies := brokerPolicies(mode, monitorRepositories, runnerRepositories)
+	policies := brokerPolicies(mode)
 	capabilities := map[githubapp.Role]string{
 		githubapp.RoleTriage: required(
 			"AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY",
@@ -174,31 +156,6 @@ func environmentValue(name, fallback string) string {
 	return fallback
 }
 
-func repositories(name, owner string) ([]string, error) {
-	raw := required(name)
-	values := strings.Split(raw, ",")
-	seen := make(map[string]struct{}, len(values))
-	if len(values) < 1 || len(values) > 64 {
-		return nil, fmt.Errorf("%s must contain 1..64 repositories", name)
-	}
-	for index := range values {
-		values[index] = strings.TrimSpace(values[index])
-		if values[index] != strings.ToLower(values[index]) ||
-			!control.ValidRepositoryIdentity(values[index]) ||
-			!strings.HasPrefix(values[index], owner+"/") {
-			return nil, fmt.Errorf(
-				"%s must contain canonical repositories owned by the App installation account",
-				name,
-			)
-		}
-		if _, duplicate := seen[values[index]]; duplicate {
-			return nil, fmt.Errorf("%s must not contain duplicates", name)
-		}
-		seen[values[index]] = struct{}{}
-	}
-	return values, nil
-}
-
 // DevelopmentMode reports whether the lifecycle state still carries development
 // work. DRAINING is reachable only from ACTIVE, and a draining runner has to
 // push and close the attempt it was told to finish, so it keeps exactly ACTIVE's
@@ -210,13 +167,9 @@ func DevelopmentMode(mode lifecycle.Mode) bool {
 
 // brokerPolicies is the whole role/scope table. It is pure so the scopes each
 // mode grants can be asserted without standing up an issuer.
-func brokerPolicies(
-	mode lifecycle.Mode,
-	monitorRepositories, runnerRepositories []string,
-) []githubapp.Policy {
+func brokerPolicies(mode lifecycle.Mode) []githubapp.Policy {
 	policies := []githubapp.Policy{{
-		Role:         githubapp.RoleTriage,
-		Repositories: monitorRepositories,
+		Role: githubapp.RoleTriage,
 		Permissions: map[string]string{
 			"contents":      "read",
 			"issues":        triageIssuePermission(mode),
@@ -227,8 +180,7 @@ func brokerPolicies(
 		return policies
 	}
 	return append(policies, githubapp.Policy{
-		Role:         githubapp.RoleRunner,
-		Repositories: runnerRepositories,
+		Role: githubapp.RoleRunner,
 		Permissions: map[string]string{
 			"actions":       "read",
 			"checks":        "read",

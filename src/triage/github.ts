@@ -205,7 +205,7 @@ function parsedJSON<T>(
 }
 
 export class TypedGhTriageClient implements TriageGitHub {
-  private readonly env: NodeJS.ProcessEnv;
+  private readonly githubBroker: GitHubBrokerCredential;
   private readonly actorLogin: string;
 
   constructor(
@@ -219,11 +219,12 @@ export class TypedGhTriageClient implements TriageGitHub {
     ) {
       throw new Error('triage GitHub broker identity is invalid');
     }
-    this.env = githubBrokerEnvironment(githubBroker);
+    this.githubBroker = githubBroker;
     this.actorLogin = actorLogin;
   }
 
   private async api(
+    repository: string,
     args: readonly string[],
     operation: string,
     limits: { timeoutMs?: number; maxBufferBytes?: number } = {},
@@ -237,7 +238,7 @@ export class TypedGhTriageClient implements TriageGitHub {
           ...args,
         ],
         {
-          env: this.env,
+          env: githubBrokerEnvironment(this.githubBroker, Repository.parse(repository)),
           timeoutMs: limits.timeoutMs ?? 30_000,
           maxBufferBytes: limits.maxBufferBytes ?? 8 * 1024 * 1024,
         },
@@ -258,10 +259,12 @@ export class TypedGhTriageClient implements TriageGitHub {
     const safeNumber = z.number().int().positive().parse(issueNumber);
     const [issueRaw, commentsRaw, eventsRaw] = await Promise.all([
       this.api(
+        safeRepository,
         [endpoint(safeRepository, `/issues/${safeNumber}`)],
         'issue-read',
       ),
       this.api(
+        safeRepository,
         [
           '--paginate',
           '--slurp',
@@ -273,6 +276,7 @@ export class TypedGhTriageClient implements TriageGitHub {
         'comment-read',
       ),
       this.api(
+        safeRepository,
         [
           '--paginate',
           '--slurp',
@@ -369,6 +373,7 @@ export class TypedGhTriageClient implements TriageGitHub {
   ): Promise<TriageRepositoryContext> {
     const safeRepository = Repository.parse(repository);
     const repositoryRaw = await this.api(
+      safeRepository,
       [endpoint(safeRepository, '')],
       'repository-read',
     );
@@ -383,6 +388,7 @@ export class TypedGhTriageClient implements TriageGitHub {
       const encodedPath = candidate.split('/').map(encodeURIComponent).join('/');
       try {
         const raw = await this.api(
+          safeRepository,
           [
             endpoint(
               safeRepository,
@@ -413,6 +419,7 @@ export class TypedGhTriageClient implements TriageGitHub {
       }
     }
     const issuesRaw = await this.api(
+      safeRepository,
       [
         endpoint(
           safeRepository,
@@ -441,11 +448,13 @@ export class TypedGhTriageClient implements TriageGitHub {
     repository: string,
     policy: TriagePolicy,
   ): Promise<void> {
+    const safeRepository = Repository.parse(repository);
     const raw = await this.api(
+      safeRepository,
       [
         '--paginate',
         '--slurp',
-        endpoint(repository, '/labels?per_page=100'),
+        endpoint(safeRepository, '/labels?per_page=100'),
       ],
       'label-list',
     );
@@ -479,9 +488,10 @@ export class TypedGhTriageClient implements TriageGitHub {
     for (const definition of definitions) {
       if (!existing.has(definition.name)) {
         await this.api(
+          safeRepository,
           [
             '--method', 'POST',
-            endpoint(repository, '/labels'),
+            endpoint(safeRepository, '/labels'),
             '-f', `name=${definition.name}`,
             '-f', `color=${definition.color}`,
             '-f', `description=${definition.description}`,
@@ -498,14 +508,16 @@ export class TypedGhTriageClient implements TriageGitHub {
     desiredLabel: string,
     policy: TriagePolicy,
   ): Promise<string[]> {
+    const safeRepository = Repository.parse(repository);
     const managed = managedTriageLabels(policy);
     if (!managed.includes(desiredLabel)) {
       throw new Error('desired label is outside the triage policy');
     }
     const raw = await this.api(
+      safeRepository,
       [
         '--method', 'POST',
-        endpoint(repository, `/issues/${issueNumber}/labels`),
+        endpoint(safeRepository, `/issues/${issueNumber}/labels`),
         '-f', `labels[]=${desiredLabel}`,
       ],
       'label-add',
@@ -518,10 +530,11 @@ export class TypedGhTriageClient implements TriageGitHub {
     for (const label of managed) {
       if (label === desiredLabel || !current.has(label)) continue;
       await this.api(
+        safeRepository,
         [
           '--method', 'DELETE',
           endpoint(
-            repository,
+            safeRepository,
             `/issues/${issueNumber}/labels/${encodeURIComponent(label)}`,
           ),
         ],
@@ -536,13 +549,15 @@ export class TypedGhTriageClient implements TriageGitHub {
     issueNumber: number,
     body: string,
   ): Promise<string> {
+    const safeRepository = Repository.parse(repository);
     if (body.length < 1 || body.length > 60_000) {
       throw new Error('triage comment exceeds the bounded body size');
     }
     const raw = await this.api(
+      safeRepository,
       [
         '--method', 'POST',
-        endpoint(repository, `/issues/${issueNumber}/comments`),
+        endpoint(safeRepository, `/issues/${issueNumber}/comments`),
         '-f', `body=${body}`,
       ],
       'comment-create',

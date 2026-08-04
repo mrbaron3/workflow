@@ -48,7 +48,6 @@ interface BrokerStore {
 interface PrivateMonitorBrokerBase {
   store: BrokerStore;
   workerId: string;
-  repositories: readonly string[];
   githubBroker: GitHubBrokerCredential;
   execFileImpl?: ExecFileImpl;
   intervalMs?: number;
@@ -237,7 +236,6 @@ export class PrivateMonitorBroker {
   private readonly requestTimeoutMs: number;
   private readonly maxResponseBytes: number;
   private readonly maxPages: number;
-  private readonly repositories: ReadonlySet<string>;
 
   constructor(private readonly options: PrivateMonitorBrokerOptions) {
     this.intervalMs = options.intervalMs ?? MONITOR_BROKER_INTERVAL_MS;
@@ -246,26 +244,16 @@ export class PrivateMonitorBroker {
     this.maxResponseBytes =
       options.maxResponseBytes ?? MONITOR_BROKER_MAX_RESPONSE_BYTES;
     this.maxPages = options.maxPages ?? MONITOR_BROKER_MAX_PAGES;
-    const repositories = options.repositories.map((repository) =>
-      repository.trim().toLowerCase());
     if (
-      repositories.length < 1
-      || repositories.length > 64
-      || new Set(repositories).size !== repositories.length
-      || options.repositories.some((repository, index) =>
-        repository !== repositories[index])
-      || repositories.some((repository) =>
-        !CanonicalRepository.safeParse(repository).success)
-      || options.githubBroker.role !== 'triage'
+      options.githubBroker.role !== 'triage'
       || !/^[A-Za-z0-9_-]{43,128}$/.test(
         options.githubBroker.capability,
       )
     ) {
       throw new Error(
-        'private monitor broker requires a canonical repository allowlist and role credential',
+        'private monitor broker requires a role credential',
       );
     }
-    this.repositories = new Set(repositories);
   }
 
   requestStop(): void {
@@ -276,12 +264,7 @@ export class PrivateMonitorBroker {
   private async read(
     request: MonitorBrokerRequest,
   ): Promise<MonitorBrokerResponseType> {
-    if (!this.repositories.has(request.repository)) {
-      throw new MonitorBrokerFailure(
-        'repository_denied',
-        'broker request is outside the repository allowlist',
-      );
-    }
+    CanonicalRepository.parse(request.repository);
     const cursorTime = request.cursor.updatedAfter === ''
       ? 0
       : Date.parse(request.cursor.updatedAfter);
@@ -335,7 +318,10 @@ export class PrivateMonitorBroker {
               timeout: remainingMs,
               maxBuffer: remainingBytes,
               killSignal: 'SIGKILL',
-              env: githubBrokerEnvironment(this.options.githubBroker),
+              env: githubBrokerEnvironment(
+                this.options.githubBroker,
+                request.repository,
+              ),
             },
           );
           stdout = result.stdout;
@@ -461,7 +447,6 @@ export class PrivateMonitorBroker {
     try {
       request = await this.options.store.claimMonitorBrokerRequest({
         workerId: this.options.workerId,
-        allowedRepositories: [...this.repositories],
         leaseMs: MONITOR_BROKER_LEASE_MS,
       });
     } catch {

@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +14,52 @@ import (
 	"github.com/mrbaron3/workflow/internal/control"
 	"github.com/mrbaron3/workflow/internal/lifecycle"
 )
+
+func TestPrepareReleaseProvenancePinsCleanServoHeadAndRejectsDrift(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", root}, args...)...)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	git("init", "-q")
+	git("config", "user.name", "AgentOps Test")
+	git("config", "user.email", "agentops@example.invalid")
+	if err := os.WriteFile(filepath.Join(root, "tracked"), []byte("v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "tracked")
+	git("commit", "-qm", "fixture")
+	git("remote", "add", "origin", "git@github.com:mrbaron3/servo.git")
+	head := git("rev-parse", "HEAD")
+	subject := newManager(config{ProjectRoot: root}, nil)
+	if err := subject.prepareReleaseProvenance(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if subject.config.ReleaseConsumerRepository != "mrbaron3/servo" ||
+		subject.config.ReleaseConsumerRevision != head {
+		t.Fatalf("provenance = %#v", subject.config)
+	}
+
+	drifted := newManager(config{
+		ProjectRoot: root, ReleaseConsumerRevision: strings.Repeat("a", 40),
+	}, nil)
+	if err := drifted.prepareReleaseProvenance(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("stale provenance was accepted: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "untracked"), []byte("dirty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := subject.prepareReleaseProvenance(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "uncommitted") {
+		t.Fatalf("dirty deployment source was accepted: %v", err)
+	}
+}
 
 type managerRuntimeRunner struct {
 	results          []lifecycle.CommandResult
@@ -524,6 +573,8 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 		cfg.ControlDBPassword = "control-database-password-value-001"
 		cfg.TriageReadyLabel = "human-approved"
 		cfg.TriageClaimedLabel = "automation-owned"
+		cfg.ReleaseConsumerRepository = "mrbaron3/servo"
+		cfg.ReleaseConsumerRevision = strings.Repeat("a", 40)
 		subject := newManager(cfg, nil)
 
 		monitorControl := subject.controlSpec(lifecycle.ModeMonitorOnly, "192.0.2.10")
@@ -533,8 +584,7 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 			"192.0.2.11",
 			"192.0.2.12",
 		)
-		if monitorControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"] !=
-			cfg.monitorRepositoriesCSV() ||
+		if monitorControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_ENABLED"] != "true" ||
 			monitorControl.Environment["AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN"] !=
 				"0.0.0.0:8082" {
 			t.Fatalf("MONITOR_ONLY control broker boundary = %#v", monitorControl.Environment)
@@ -545,8 +595,6 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 				"triage" ||
 			monitorTriage.Environment["AGENTOPS_GITHUB_BROKER_URL"] !=
 				"http://192.0.2.12:8083" ||
-			monitorTriage.Environment["AGENTOPS_MONITOR_REPOSITORIES"] !=
-				cfg.monitorRepositoriesCSV() ||
 			monitorTriage.Environment["AGENTOPS_TRIAGE_READY_LABEL"] !=
 				"human-approved" ||
 			monitorTriage.Environment["AGENTOPS_TRIAGE_CLAIMED_LABEL"] !=
@@ -591,8 +639,13 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 			"192.0.2.11",
 			"192.0.2.12",
 		)
-		if activeControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"] !=
-			cfg.monitorRepositoriesCSV() ||
+		if activeControl.Environment["AGENTOPS_RELEASE_CONSUMER_REVISION"] !=
+			activeRunner.Environment["AGENTOPS_RELEASE_CONSUMER_REVISION"] ||
+			activeControl.Environment["AGENTOPS_RELEASE_CONSUMER_REPOSITORY"] !=
+				"mrbaron3/servo" {
+			t.Fatal("control/dashboard and runner release provenance diverged")
+		}
+		if activeControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_ENABLED"] != "true" ||
 			activeControl.Environment["AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN"] !=
 				"0.0.0.0:8082" {
 			t.Fatalf("ACTIVE control broker boundary = %#v", activeControl.Environment)
@@ -610,8 +663,6 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 		// scope as ACTIVE, so a draining runner can still close its attempt.
 		drainingBroker := subject.githubBrokerSpec(lifecycle.ModeDraining)
 		if drainingBroker.Environment["AGENTOPS_OPERATING_MODE"] != "DRAINING" ||
-			drainingBroker.Environment["AGENTOPS_RUNNER_REPOSITORIES"] !=
-				cfg.runnerRepositoriesCSV() ||
 			drainingBroker.Environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] !=
 				cfg.githubBrokerCapability("runner") {
 			t.Fatalf(
@@ -764,10 +815,5 @@ func testManagerConfig() config {
 		GitHubAppOwner:         "acme",
 		TriageBrokerCapability: strings.Repeat("t", 43),
 		RunnerBrokerCapability: strings.Repeat("r", 43),
-		MonitorRepositories: []string{
-			"acme/widgets",
-			"acme/design-system",
-		},
-		RunnerRepositories: []string{"acme/design-system"},
 	}
 }

@@ -8,6 +8,7 @@ export const DevelopmentPhase = z.enum([
   'generation',
   'validation',
   'review',
+  'repair',
   'pull-request',
   'merge',
   'human-review',
@@ -46,6 +47,16 @@ export const DevelopmentProgressUpdate = z.object({
   branch: optionalText(500),
   pullRequestNumber: z.number().int().positive().nullable().optional(),
   parentIssueNumber: z.number().int().positive().nullable().optional(),
+  headSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).nullable().optional(),
+  reviewRound: z.number().int().positive().max(1_000).nullable().optional(),
+  reviewOutcome: z.enum([
+    'pending', 'running', 'approve', 'request-changes', 'escalated',
+  ]).nullable().optional(),
+  gateKey: z.enum([
+    'planning', 'design', 'repository-graders', 'review', 'merge',
+    'lease-recovery',
+  ]).nullable().optional(),
+  humanAction: optionalText(1_000),
 }).strict();
 export type DevelopmentProgressUpdate = z.infer<typeof DevelopmentProgressUpdate>;
 

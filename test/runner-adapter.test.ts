@@ -44,7 +44,7 @@ const jobId = 'db837db2-30d7-4788-a56f-00056f5d550e';
 function payload(): RunnerJobPayloadV1 {
   return {
     schemaVersion: 1,
-    repository: { owner: 'owner', name: 'repo' },
+    repository: { owner: 'mrbaron3', name: 'servo' },
     event: { kind: 'issue', number: 14, action: 'labeled' },
     target: { baseRef: 'refs/heads/main' },
     execution: {
@@ -209,12 +209,12 @@ describe('existing AgentOps isolated-runner adapter', () => {
       },
     } as unknown as PostgresControlStore;
     const issue = GithubIssueSnapshot.parse({
-      repository: 'owner/repo',
+      repository: 'mrbaron3/servo',
       number: 14,
       externalId: 'I_14',
       title: 'Choose policy boundaries',
       body: 'Users need a human decision before implementation.',
-      url: 'https://github.com/owner/repo/issues/14',
+      url: 'https://github.com/mrbaron3/servo/issues/14',
       labels: ['human-approved'],
       state: 'open',
       sourceUpdatedAt: '2026-07-25T00:00:00.000Z',
@@ -240,7 +240,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
         ensureManagedComment(repository, issueNumber, comment) {
           sideEffects.push(`comment:${repository}#${issueNumber}`);
           managedBody = comment.body;
-          return 'https://github.com/owner/repo/issues/14#issuecomment-1';
+          return 'https://github.com/mrbaron3/servo/issues/14#issuecomment-1';
         },
         removeClaimedLabel(repository, issueNumber, claimedLabel) {
           sideEffects.push(
@@ -324,8 +324,8 @@ describe('existing AgentOps isolated-runner adapter', () => {
       .toBe('/app/node_modules');
     expect(sideEffects).toEqual([
       'claim',
-      'comment:owner/repo#14',
-      'remove:owner/repo#14:automation-owned',
+      'comment:mrbaron3/servo#14',
+      'remove:mrbaron3/servo#14:automation-owned',
     ]);
     for (const ambiguity of ambiguities) {
       expect(managedBody).toContain(`planning ambiguity: ${ambiguity}`);
@@ -412,9 +412,9 @@ describe('existing AgentOps isolated-runner adapter', () => {
       headSha,
       externalRef: {
         provider: 'github',
-        repository: 'owner/repo',
+        repository: 'mrbaron3/servo',
         number: 38,
-        url: 'https://github.com/owner/repo/pull/38',
+        url: 'https://github.com/mrbaron3/servo/pull/38',
       },
       createdAt: now,
       updatedAt: now,
@@ -488,7 +488,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
         id: releaseId,
         registrationId,
         releaseKey: 'issue:14:legacy',
-        repository: 'owner/repo',
+        repository: 'mrbaron3/servo',
         issueNumber: 14,
         policy: {
           authority: 'human-ready-allowed',
@@ -555,7 +555,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
       provider: 'codex',
       controlStore,
       releaseRuntime: {
-        consumer: { repository: 'owner/repo', revision: 'c'.repeat(40) },
+        consumer: { repository: 'mrbaron3/servo', revision: 'c'.repeat(40) },
         environment: {
           kind: 'container',
           reference: 'legacy-test',
@@ -607,11 +607,11 @@ describe('existing AgentOps isolated-runner adapter', () => {
     const activeLease = lease();
     activeLease.job.releaseId = releaseId;
     const sourceCore = {
-      repository: 'owner/repo',
+      repository: 'mrbaron3/servo',
       number: 14,
       title: '[DF-002] phase',
       body: 'Parent: #1',
-      url: 'https://github.com/owner/repo/issues/14',
+      url: 'https://github.com/mrbaron3/servo/issues/14',
       labels: ['human-approved'],
       comments: [],
       state: 'open' as const,
@@ -630,7 +630,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
         id: releaseId,
         registrationId,
         releaseKey: 'issue:14:frozen',
-        repository: 'owner/repo',
+        repository: 'mrbaron3/servo',
         issueNumber: 14,
         policy: {
           authority: 'human-ready-allowed',
@@ -712,7 +712,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
       provider: 'codex',
       controlStore,
       releaseRuntime: {
-        consumer: { repository: 'owner/repo', revision: 'c'.repeat(40) },
+        consumer: { repository: 'mrbaron3/servo', revision: 'c'.repeat(40) },
         environment: {
           kind: 'container',
           reference: 'frozen-test',
@@ -769,11 +769,11 @@ describe('existing AgentOps isolated-runner adapter', () => {
     const releaseId = 'eb837db2-30d7-4788-a56f-00056f5d550e';
     const progress: Array<Record<string, unknown>> = [];
     const sourceCore = {
-      repository: 'owner/repo',
+      repository: 'mrbaron3/servo',
       number: 14,
       title: '[DF-002] Add safe path',
       body: 'Users need the safe path.\n\nParent: #1',
-      url: 'https://github.com/owner/repo/issues/14',
+      url: 'https://github.com/mrbaron3/servo/issues/14',
       labels: ['human-approved'],
       comments: [],
       state: 'open' as const,
@@ -810,7 +810,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
           id: releaseId,
           registrationId,
           releaseKey: 'issue:14:normal-close',
-          repository: 'owner/repo',
+          repository: 'mrbaron3/servo',
           issueNumber: 14,
           policy: {
             authority: 'human-ready-allowed',
@@ -856,12 +856,12 @@ describe('existing AgentOps isolated-runner adapter', () => {
     const githubSideEffects: string[] = [];
     let githubMerged = false;
     const issue = GithubIssueSnapshot.parse({
-      repository: 'owner/repo',
+      repository: 'mrbaron3/servo',
       number: 14,
       externalId: 'I_14',
       title: 'Add safe path',
       body: 'Users need the safe path.',
-      url: 'https://github.com/owner/repo/issues/14',
+      url: 'https://github.com/mrbaron3/servo/issues/14',
       labels: ['human-approved'],
       state: 'open',
       sourceUpdatedAt: '2026-07-25T00:00:00.000Z',
@@ -984,9 +984,9 @@ describe('existing AgentOps isolated-runner adapter', () => {
           githubSideEffects.push('create-pr');
           return {
             provider: 'github',
-            repository: 'owner/repo',
+            repository: 'mrbaron3/servo',
             number: 38,
-            url: 'https://github.com/owner/repo/pull/38',
+            url: 'https://github.com/mrbaron3/servo/pull/38',
           };
         },
         viewPr: () => 'open',
@@ -1065,7 +1065,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
       provider: 'codex',
       controlStore: guardStore,
       releaseRuntime: {
-        consumer: { repository: 'owner/repo', revision: 'c'.repeat(40) },
+        consumer: { repository: 'mrbaron3/servo', revision: 'c'.repeat(40) },
         environment: {
           kind: 'container',
           reference: 'normal-close-test',

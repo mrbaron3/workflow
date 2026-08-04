@@ -41,7 +41,7 @@ function freshExternalStore(
 ): { store: Store; issue: ReturnType<typeof Issue.parse>; releaseId: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `external-work-${issueNumber}-`));
   const store = new Store(root);
-  const intakeKey = `github:${encodeURIComponent('mrbaron3/forma')}:${issueNumber}`;
+  const intakeKey = `github:${encodeURIComponent('mrbaron3/servo')}:${issueNumber}`;
   const issue = Issue.parse({
     id: store.nextId('ISSUE'),
     type: 'feature',
@@ -61,12 +61,12 @@ function freshExternalStore(
     intakeKey,
     provider: 'github',
     snapshot: GithubIssueSnapshot.parse({
-      repository: 'mrbaron3/forma',
+      repository: 'mrbaron3/servo',
       number: issueNumber,
       externalId: `I_${issueNumber}`,
       title: issue.title,
       body: 'Fixture',
-      url: `https://github.com/mrbaron3/forma/issues/${issueNumber}`,
+      url: `https://github.com/mrbaron3/servo/issues/${issueNumber}`,
       labels: ['agent-claimed'],
       state: 'open',
       sourceUpdatedAt: nowISO(),
@@ -102,8 +102,8 @@ describe('stable external work identity', () => {
     const branch23 = `agent/${sampleKey(issue23.issue.id, 0, identity23)}`;
 
     expect(branch20).not.toBe(branch23);
-    expect(branch20).toContain('mrbaron3-forma-issue-20');
-    expect(branch23).toContain('mrbaron3-forma-issue-23');
+    expect(branch20).toContain('mrbaron3-servo-issue-20');
+    expect(branch23).toContain('mrbaron3-servo-issue-23');
 
     const body20 = renderReviewPrBody(
       issue20.store,
@@ -118,12 +118,12 @@ describe('stable external work identity', () => {
     expect(parseWorkIdentityMarker(body20)).not.toEqual(parseWorkIdentityMarker(body23));
     expect(parsePullRequestClosingTarget(body20)).toEqual({
       relation: 'Closes',
-      repository: 'mrbaron3/forma',
+      repository: 'mrbaron3/servo',
       issueNumber: 20,
     });
     expect(parsePullRequestClosingTarget(body23)).toEqual({
       relation: 'Closes',
-      repository: 'mrbaron3/forma',
+      repository: 'mrbaron3/servo',
       issueNumber: 23,
     });
   });
@@ -162,7 +162,7 @@ describe('stable external work identity', () => {
       if (commandName === 'gh') {
         return JSON.stringify([{
           number: 44,
-          url: 'https://github.com/mrbaron3/forma/pull/44',
+          url: 'https://github.com/mrbaron3/servo/pull/44',
           title: 'ISSUE-0001: retry',
           body: firstBody,
           headRefName: branch,
@@ -175,7 +175,7 @@ describe('stable external work identity', () => {
       }
       throw new Error(`unexpected command: ${commandName} ${args.join(' ')}`);
     };
-    expect(realGhGateRunner('mrbaron3/forma', command).preflightPr('/repo', {
+    expect(realGhGateRunner('mrbaron3/servo', command).preflightPr('/repo', {
       base: 'main',
       head: branch,
       title: 'ISSUE-0001: retry',
@@ -183,9 +183,9 @@ describe('stable external work identity', () => {
       existingRef: null,
     })).toEqual({
       provider: 'github',
-      repository: 'mrbaron3/forma',
+      repository: 'mrbaron3/servo',
       number: 44,
-      url: 'https://github.com/mrbaron3/forma/pull/44',
+      url: 'https://github.com/mrbaron3/servo/pull/44',
     });
   });
 });

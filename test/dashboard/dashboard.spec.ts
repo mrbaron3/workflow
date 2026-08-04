@@ -5,6 +5,7 @@ async function bootstrap(page: Page): Promise<void> {
   await expect(page).toHaveURL('/');
   await expect(page.getByRole('heading', { name: 'AgentOps Control' })).toBeVisible();
   await expect(page.locator('#mode')).toHaveText('MONITOR_ONLY');
+  await expect(page.locator('#provenance')).toHaveText('mrbaron3/servo@aaaaaaaaaaaa');
 }
 
 test('CRUD, desired/actual divergence, announcements, and same-origin network boundary', async ({
@@ -14,7 +15,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   const hosts = new Set<string>();
   page.on('request', (request) => hosts.add(new URL(request.url()).origin));
   await bootstrap(page);
-  await expect(page.getByRole('button', { name: /failed 0/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: /failed \d+/ })).toBeVisible();
   await expect(page.getByText('状態ラベルの意味')).toBeVisible();
 
   await page.getByRole('button', { name: 'Registration を追加' }).click();
@@ -94,14 +95,19 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
       [key: string]: unknown;
     };
   const deliveryId = '00000000-0000-4000-8000-000000000015';
-  const registration = snapshot.items[0]!.registration as Record<string, unknown>;
-  const components = snapshot.items[0]!.components as Record<string, Record<string, unknown>>;
+  const targetItem = snapshot.items.find((item) =>
+    (item.registration as Record<string, unknown>).repository === 'example/browser-control')!;
+  // The remainder of this fixture isolates the just-created Registration; the
+  // fresh-store Servo seed is covered by the real bootstrap above.
+  snapshot.items = [targetItem];
+  const registration = targetItem.registration as Record<string, unknown>;
+  const components = targetItem.components as Record<string, Record<string, unknown>>;
   components.issue_monitor!.actual = 'failed';
   components.issue_monitor!.freshness = 'fresh';
   components.pr_monitor!.actual = 'unknown';
   components.pr_monitor!.freshness = 'unknown';
   registration.executionEnabled = false;
-  const healthyQueueItem = structuredClone(snapshot.items[0]!);
+  const healthyQueueItem = structuredClone(targetItem);
   const healthyQueueRegistration = healthyQueueItem.registration as Record<string, unknown>;
   healthyQueueRegistration.id = '00000000-0000-4000-8000-000000000099';
   healthyQueueRegistration.repository = 'example/healthy-queue';
@@ -128,7 +134,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   healthyQueueItem.recentDeliveryFailures = [];
   snapshot.items.push(healthyQueueItem);
   snapshot.nextPageToken = 'expired-snapshot';
-  snapshot.items[0]!.recentDeliveryFailures = [{
+  targetItem.recentDeliveryFailures = [{
     id: deliveryId,
     deliveryKey: 'browser-failed-delivery',
     event: 'issues',
@@ -198,8 +204,32 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
     occurredAt: '2026-07-26T00:01:00Z',
     jobStatus: 'succeeded',
     leaseHeartbeatAt: null,
+    reviewRound: 1,
+    reviewOutcome: 'request-changes',
+    reviewPerspectives: [{
+      perspective: 'security',
+      verdict: 'request_changes',
+      findingCount: 1,
+      findings: [{
+        criterionId: 'SEC-child',
+        severity: 'major',
+        observed: 'adjacent boundary is missing',
+        disposition: 'separate-issue',
+        separationReason: 'independently testable adjacent scope',
+      }],
+    }],
+    branchLineage: {
+      nodeId: '00000000-0000-4000-8000-000000000090',
+      status: 'running',
+      children: [{
+        nodeId: '00000000-0000-4000-8000-000000000091',
+        issueNumber: 10,
+        status: 'pending',
+        parentHeadSha: 'a'.repeat(40),
+      }],
+    },
   };
-  snapshot.items[0]!.developmentProgress = [{
+  targetItem.developmentProgress = [{
     repository: 'example/browser-control',
     issueNumber: 8,
     current: issueEightCurrent,
@@ -285,8 +315,14 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(issueEightProgress).toContainText('running');
   await expect(issueNineProgress).toContainText('human-review / review findings require a new head');
   await expect(issueNineProgress).toContainText('blocked');
+  await issueNineProgress.getByText('review evidence 1 perspective(s)', { exact: true }).click();
+  await expect(issueNineProgress).toContainText('security · request_changes · 1 finding(s)');
+  await expect(issueNineProgress).toContainText('分離理由: independently testable adjacent scope');
+  await issueNineProgress.getByText('branch DAG 1 child(ren)', { exact: true }).click();
+  await expect(issueNineProgress).toContainText('#10 · pending');
   await issueEightProgress.getByText('工程履歴 2件', { exact: true }).click();
-  await expect(issueEightProgress.locator('.progress-history li')).toHaveCount(2);
+  await expect(issueEightProgress.locator('.progress-history').last().locator('li'))
+    .toHaveCount(2);
   await expect(issueEightProgress).not.toContainText('review findings require a new head');
   await expect(page.getByRole('button', { name: /failed 1/ })).toBeVisible();
   await expect(page.getByRole('button', { name: /divergent 1/ })).toBeVisible();
@@ -327,6 +363,9 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(card).toContainText('version 3 · disabled');
   await expect(page.locator('#live')).toContainText('無効化を確認しました');
   await expect(card.getByRole('button', { name: 'example/browser-control の状態詳細を選択' })).toBeFocused();
+  await card.getByRole('button', { name: '再有効化' }).click();
+  await expect(card).toContainText('version 4 · enabled');
+  await expect(page.locator('#live')).toContainText('再有効化を確認しました');
 
   await page.setViewportSize({ width: 767, height: 900 });
   const responsiveLayout = await card.evaluate((element) => {

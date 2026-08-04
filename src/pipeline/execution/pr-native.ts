@@ -111,6 +111,7 @@ export interface PrNativeGithubRunner {
     issueNumber: number,
     prNumber: number,
     expectedHead: string,
+    integrationBranch?: string,
   ): GithubReleaseObservation;
 }
 
@@ -762,12 +763,23 @@ export async function autoMergeCurrentRevision(
   // process crashes after GitHub accepts the merge, reconciliation can prove
   // that this head had already passed rather than guessing from `state=merged`.
   store.save();
-  await options.authorizeMerge?.({
+  const mergeAuthorization = await options.authorizeMerge?.({
     pr,
     revision,
     snapshot,
     github,
   });
+  if (mergeAuthorization && !mergeAuthorization.authorized) {
+    store.save();
+    return {
+      prId: pr.id,
+      revisionId: revision.id,
+      headSha: revision.headSha,
+      decision: 'pending',
+      merged: false,
+      reasons: mergeAuthorization.reasons,
+    };
+  }
   runner.merge(cwd, externalRef.number, revision.headSha);
   revision = store.replacePrRevision(transitionPrRevision(revision, {
     status: 'approved', mergeRequestedAt: nowISO(),
@@ -825,7 +837,7 @@ export interface AutoMergeOptions {
     revision: Extract<PrRevision, { status: 'approved' }>;
     snapshot: z.infer<typeof ApprovedRevisionGateSnapshot>;
     github: GithubPrRevisionState;
-  }) => Promise<void>;
+  }) => Promise<void | { authorized: boolean; reasons: string[] }>;
   /** Persist the observed merge before the local issue can become released. */
   completeMerge?: (input: {
     pr: ReturnType<typeof mergeApprovedPR>;

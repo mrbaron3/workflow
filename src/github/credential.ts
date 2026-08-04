@@ -15,6 +15,7 @@ export const GITHUB_BROKER_ENV_KEYS = [
   'AGENTOPS_GITHUB_BROKER_URL',
   'AGENTOPS_GITHUB_BROKER_CAPABILITY',
   'AGENTOPS_GITHUB_BROKER_ROLE',
+  'AGENTOPS_GITHUB_REPOSITORY',
 ] as const;
 
 export interface GitHubBrokerCredential {
@@ -106,12 +107,17 @@ export function githubBrokerVariables(
 /** The whole minimal environment for a `gh`/helper subprocess. */
 export function githubBrokerEnvironment(
   credential: GitHubBrokerCredential,
+  repository: string,
   source: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
+  const parsedRepository = z.string().regex(
+    /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?\/[a-z0-9_.-]{1,100}$/,
+  ).parse(repository);
   return {
     PATH: source.PATH ?? '/usr/local/bin:/usr/bin:/bin',
     HOME: '/home/agentops',
     ...githubBrokerVariables(credential),
+    AGENTOPS_GITHUB_REPOSITORY: parsedRepository,
     ...(source.HTTP_PROXY ? { HTTP_PROXY: source.HTTP_PROXY } : {}),
     ...(source.HTTPS_PROXY ? { HTTPS_PROXY: source.HTTPS_PROXY } : {}),
     ...(source.NO_PROXY ? { NO_PROXY: source.NO_PROXY } : {}),
@@ -152,7 +158,11 @@ export async function resolveGitHubActorLogin(
   let stdout: string;
   try {
     ({ stdout } = await run(CREDENTIAL_HELPER, ['actor'], {
-      env: githubBrokerEnvironment(credential),
+      env: {
+        PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
+        HOME: '/home/agentops',
+        ...githubBrokerVariables(credential),
+      },
       timeout: 30_000,
     }));
   } catch {

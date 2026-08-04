@@ -414,6 +414,7 @@ describe('driveIssueLive orchestration ordering', () => {
               severity: 'major',
               observed: `attempt ${reviewCount} still fails`,
               requiredFix: ['repair it'],
+              disposition: 'in-change',
             }],
           }));
           return {

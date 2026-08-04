@@ -93,7 +93,6 @@ async function main(): Promise<void> {
   const broker = new PrivateMonitorBroker({
     store,
     workerId: config.workerId,
-    repositories: config.repositories,
     githubBroker: credentials.githubBroker,
     log: (message) => process.stdout.write(`${message}\n`),
   });
@@ -112,7 +111,6 @@ async function main(): Promise<void> {
         provider: config.provider,
         providerAuth: config.providerAuth,
         operatingMode: config.operatingMode,
-        repositories: config.repositories,
         publishedPortCount: config.publishedPorts.length,
         mountSources: config.mounts.map((mount) => mount.source),
         outbound: config.outbound,

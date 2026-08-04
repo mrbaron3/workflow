@@ -19,6 +19,7 @@ import { z } from 'zod';
 import {
   FindingLineage,
   FindingLineageRef,
+  FindingDisposition,
   Severity,
   Verdict,
   type AgentProvider,
@@ -117,6 +118,9 @@ const RawFinding = z.object({
   requiredFix: z.array(z.string().max(MAX_REVIEW_REQUIRED_FIX_CHARS))
     .max(MAX_REVIEW_REQUIRED_FIXES)
     .default([]),
+  disposition: FindingDisposition,
+  separationReason: z.string().trim().min(1)
+    .max(MAX_REVIEW_FINDING_TEXT_CHARS).nullable().optional(),
   // Re-review attestation (ISSUE-0009): strictly 'persisted' | 'new' or absent. An invalid
   // value fails the whole parse (→ escalate) — never coerced, never defaulted.
   lineage: FindingLineage.nullable().optional(),
@@ -134,6 +138,20 @@ const RawFinding = z.object({
       code: z.ZodIssueCode.custom,
       path: ['lineageRef'],
       message: 'only a persisted finding may carry a prior finding identity',
+    });
+  }
+  if (finding.disposition === 'separate-issue' && !finding.separationReason) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['separationReason'],
+      message: 'separate-issue finding requires an independent-scope reason',
+    });
+  }
+  if (finding.disposition === 'in-change' && finding.separationReason) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['separationReason'],
+      message: 'in-change finding cannot carry a separation reason',
     });
   }
 });
@@ -181,6 +199,8 @@ export function parsePerspectiveFindings(
       reproductionSteps: [],
       evidence: { trace: 'findings.json' },
       requiredFix: f.requiredFix,
+      disposition: f.disposition,
+      ...(f.separationReason ? { separationReason: f.separationReason } : {}),
       // absent stays absent (legacy) — never silently classified either way
       ...(f.lineage ? { lineage: f.lineage } : {}),
       ...(f.lineageRef ? { lineageRef: f.lineageRef } : {}),
@@ -363,12 +383,18 @@ export function perspectivePrompt(
       : []),
     ``,
     `## Output`,
+    `Classify every concrete finding before writing it:`,
+    `- "in-change": required to satisfy the current accepted contract, or small and tightly`,
+    `  coupled enough that deferring it would leave this revision incorrect.`,
+    `- "separate-issue": a coherent, independently testable problem whose implementation`,
+    `  would materially expand the current contract. Do not use this to defer a blocker that`,
+    `  the current revision introduced or must fix. Supply separationReason with the boundary.`,
     `Write your verdict to ${evalRelDir}/findings.json as JSON:`,
     `{"verdict": "approve" | "request_changes", "score": <0..1>,`,
     ` "findings": [{"criterionId": "...", "severity": "blocker|major|minor",`,
     ...(reReview
-      ? [`   "observed": "...", "expected": "...", "requiredFix": ["..."],`, `   "lineage": "persisted" | "new", "lineageRef": "<prior ref; persisted only>"}]}`]
-      : [`   "observed": "...", "expected": "...", "requiredFix": ["..."]}]}`]),
+      ? [`   "observed": "...", "expected": "...", "requiredFix": ["..."],`, `   "disposition": "in-change" | "separate-issue",`, `   "separationReason": "<required only for separate-issue>",`, `   "lineage": "persisted" | "new", "lineageRef": "<prior ref; persisted only>"}]}`]
+      : [`   "observed": "...", "expected": "...", "requiredFix": ["..."],`, `   "disposition": "in-change" | "separate-issue",`, `   "separationReason": "<required only for separate-issue>"}]}`]),
     `Use request_changes only for a concrete blocker or major defect. Minor suggestions may be`,
     `reported with approve and must never be promoted solely because of function length, style,`,
     `or an unproven hypothetical. Do not edit code — only write findings.json.`,

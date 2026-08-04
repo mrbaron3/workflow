@@ -790,6 +790,16 @@ export type PlanningEnrichmentRecord = z.infer<typeof PlanningEnrichmentRecord>;
 export const FindingLineage = z.enum(['persisted', 'new']);
 export type FindingLineage = z.infer<typeof FindingLineage>;
 
+/**
+ * Review scope decision. `in-change` is work required to make the current
+ * revision satisfy its accepted contract. `separate-issue` is a coherent,
+ * independently testable problem whose implementation would expand that
+ * contract; it must be integrated through a child branch before the parent
+ * can merge.
+ */
+export const FindingDisposition = z.enum(['in-change', 'separate-issue']);
+export type FindingDisposition = z.infer<typeof FindingDisposition>;
+
 export const Finding = z.object({
   criterionId: z.string(),
   severity: Severity,
@@ -801,6 +811,25 @@ export const Finding = z.object({
   lineage: FindingLineage.optional(),
   /** Stable prior-finding reference, required by new persisted review outputs. */
   lineageRef: FindingLineageRef.optional(),
+  /** Optional only for historical stored runs; every new reviewer output requires it. */
+  disposition: FindingDisposition.optional(),
+  /** Required evidence that a separate issue is independently scoped. */
+  separationReason: z.string().trim().min(1).max(2_000).optional(),
+}).superRefine((finding, context) => {
+  if (finding.disposition === 'separate-issue' && !finding.separationReason) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['separationReason'],
+      message: 'separate-issue finding requires a separation reason',
+    });
+  }
+  if (finding.disposition !== 'separate-issue' && finding.separationReason) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['separationReason'],
+      message: 'only separate-issue findings may carry a separation reason',
+    });
+  }
 });
 export type Finding = z.infer<typeof Finding>;
 

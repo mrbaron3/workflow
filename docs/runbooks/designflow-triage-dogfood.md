@@ -38,8 +38,6 @@ development runner（別capability、private workspace、ACTIVEだけ）
 1. operatorのprivate env fileで少なくとも次を設定する。値はshell history、Issue、logへ書かない。
 
    ```sh
-   export AGENTOPS_MONITOR_REPOSITORIES='mrbaron3/workflow,mrbaron3/designflow'
-   export AGENTOPS_RUNNER_REPOSITORIES='mrbaron3/designflow'
    export AGENTOPS_GITHUB_APP_ID='<numeric App id>'
    export AGENTOPS_GITHUB_APP_INSTALLATION_ID='<numeric installation id>'
    export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
@@ -104,7 +102,8 @@ development runner（別capability、private workspace、ACTIVEだけ）
    EOF
    ```
 
-   allowlistだけ、またはRegistrationだけでは観測されない。両方の一致が必要。
+   repository scope は current enabled Registration だけから解決される。process env の
+   repository allowlist は設定しない。
 
 4. Dashboardでrepository、monitor freshness、queue、last failureを確認してから`ACTIVE`へ進める。
    ACTIVEではprovider credentialも必要になる。
@@ -113,24 +112,20 @@ development runner（別capability、private workspace、ACTIVEだけ）
    mise run active
    ```
 
-   `mise run active`は既に配置済みのimageを再利用する。ローカルのServo修正をdogfood環境へ
-   反映する場合だけ、graceful drainと再buildを行う次の形を使う。
-
-   ```sh
-   mise run active -- --build
-   ```
+   `mise run active` は clean HEAD を検証し、必要なら current job を drain してから全 image を
+   rebuild/migrate/promoteする staged deployment である。
 
    その他のlifecycle操作も同じ入口に揃えてある。`mise tasks`で一覧できる。
 
    | task | 実体 |
    | --- | --- |
    | `mise run status` | `agentopsctl status`（`-- --json`でJSON） |
-   | `mise run progress -- mrbaron3/forma#1` | 親Epicから子Issueのphase/blocker/next gateを一覧 |
-   | `mise run progress -- mrbaron3/forma#8` | 子Issueの工程履歴、session、branch、PR、worktreeを表示 |
-   | `mise run worktree -- --diff mrbaron3/forma#8` | 明示した子Issueの隔離worktree状態と差分を表示 |
-   | `mise run worktree -- --shell mrbaron3/forma#8` | 明示した子Issueの隔離worktreeへ再開用shellで入る |
+   | `mise run progress -- owner/repository#1` | 親Epicから子Issueのphase/blocker/next gateを一覧 |
+   | `mise run progress -- owner/repository#8` | 子Issueの工程履歴、session、branch、PR、worktreeを表示 |
+   | `mise run worktree -- --diff owner/repository#8` | 明示した子Issueの隔離worktree状態と差分を表示 |
+   | `mise run worktree -- --shell owner/repository#8` | 明示した子Issueの隔離worktreeへ再開用shellで入る |
    | `mise run monitor` | `agentopsctl start --mode MONITOR_ONLY --build` |
-   | `mise run active` | `agentopsctl start --mode ACTIVE` |
+   | `mise run active` | `agentopsctl deploy` |
    | `mise run drain` | `agentopsctl drain` |
    | `mise run stop` | `agentopsctl stop` |
    | `mise run logs` | `agentopsctl logs`（`-- --component triage --follow`） |
@@ -153,7 +148,7 @@ schema 17より前に作られたreleaseはその受領証を持たず、後か�
 ```sh
 mise run drain    # 実行中のjobを完走させてからstop
 mise run stop
-# ここでupgrade（mise run active -- --build）
+# ここでupgrade（mise run active）
 ```
 
 drainせずにupgradeした場合、またはdrain中にreadyが付いていたIssueがある場合は、

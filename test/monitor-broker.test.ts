@@ -70,7 +70,6 @@ describe('typed private-repository monitor broker', () => {
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       execFileImpl,
     });
@@ -122,7 +121,6 @@ describe('typed private-repository monitor broker', () => {
       const broker = new PrivateMonitorBroker({
         store: scenarioStore,
         workerId: 'triage-1',
-        repositories: ['acme/widgets'],
         githubBroker,
         ...scenario.options,
       });
@@ -160,7 +158,6 @@ describe('typed private-repository monitor broker', () => {
     broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       fetchImpl,
       fetchAuthorization,
@@ -199,7 +196,6 @@ describe('typed private-repository monitor broker', () => {
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       fetchImpl,
       fetchAuthorization,
@@ -238,7 +234,6 @@ describe('typed private-repository monitor broker', () => {
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       fetchImpl,
       fetchAuthorization,
@@ -253,26 +248,26 @@ describe('typed private-repository monitor broker', () => {
     );
   });
 
-  it('supports multiple repositories and rejects a request outside that allowlist', async () => {
-    const store = storeFor();
+  it('uses each durable Registration request as the repository authority', async () => {
+    const registeredRequest = {
+      ...request,
+      repository: 'design-lab/component-catalog',
+    };
+    const store = storeFor(registeredRequest);
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      expect(String(input)).toContain('/repos/design-lab/component-catalog/issues');
+      return new Response('[]', { status: 200 });
+    });
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['other/repository', 'design-lab/component-catalog'],
       githubBroker,
-      fetchImpl: vi.fn(),
+      fetchImpl,
       fetchAuthorization,
     });
     await expect(broker.runOnce()).resolves.toBe(true);
-    expect(store.failMonitorBrokerRequest).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 'repository_denied' }),
-    );
-    expect(() => new PrivateMonitorBroker({
-      store: storeFor(),
-      workerId: 'triage-1',
-      repositories: ['Upper/Repo'],
-      githubBroker,
-    })).toThrow(/canonical repository allowlist/);
+    expect(store.failMonitorBrokerRequest).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledOnce();
   });
 
   it('fails closed on provider response byte limits without persisting a body', async () => {
@@ -280,7 +275,6 @@ describe('typed private-repository monitor broker', () => {
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       maxResponseBytes: 1,
       fetchImpl: vi.fn(async () => new Response('[]', { status: 200 })),
@@ -312,7 +306,6 @@ describe('typed private-repository monitor broker', () => {
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       fetchImpl,
       fetchAuthorization,
@@ -337,7 +330,6 @@ describe('typed private-repository monitor broker', () => {
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       fetchImpl: vi.fn(),
       fetchAuthorization,
@@ -357,7 +349,6 @@ describe('typed private-repository monitor broker', () => {
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       fetchImpl: vi.fn(async () => new Response('[]', { status: 200 })),
       fetchAuthorization,
@@ -375,7 +366,6 @@ describe('typed private-repository monitor broker', () => {
     const broker = new PrivateMonitorBroker({
       store,
       workerId: 'triage-1',
-      repositories: ['acme/widgets'],
       githubBroker,
       fetchImpl: vi.fn(async () => new Response('invalid json', { status: 200 })),
       fetchAuthorization,

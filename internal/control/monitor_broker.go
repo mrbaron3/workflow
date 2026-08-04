@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -44,12 +43,11 @@ var ErrMonitorBrokerTransientProvider = errors.New(
 
 // BrokeredGitHubSource is a typed PostgreSQL request/response boundary. It
 // exposes no URL or arbitrary method: only issue and pull_request monitor reads
-// for explicitly configured repositories can cross from credential-free
-// control to the credential-bearing triage broker.
+// for repositories selected by a current durable Registration can cross from
+// credential-free control to the credential-bearing triage broker.
 type BrokeredGitHubSource struct {
-	Store               *Store
-	AllowedRepositories []string
-	Timeout             time.Duration
+	Store   *Store
+	Timeout time.Duration
 }
 
 func (source BrokeredGitHubSource) Poll(
@@ -58,17 +56,8 @@ func (source BrokeredGitHubSource) Poll(
 	kind string,
 	cursor map[string]any,
 ) ([]WorkItem, map[string]any, time.Time, error) {
-	allowed := false
-	for _, repository := range source.AllowedRepositories {
-		if registration.Repository == strings.ToLower(strings.TrimSpace(repository)) {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
-		return nil, nil, time.Time{}, fmt.Errorf(
-			"monitor broker repository is outside the configured allowlist",
-		)
+	if !registration.Enabled || !ValidRepositoryIdentity(registration.Repository) {
+		return nil, nil, time.Time{}, fmt.Errorf("monitor broker registration is not current")
 	}
 	if kind != "issue" && kind != "pull_request" {
 		return nil, nil, time.Time{}, fmt.Errorf("monitor broker kind is not allowed")

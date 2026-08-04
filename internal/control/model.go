@@ -165,7 +165,8 @@ func validJSONObject(raw json.RawMessage) bool {
 		MinimumHeadEpochs          int          `json:"minimumHeadEpochs"`
 	}
 	type registrationConfiguration struct {
-		ReleaseEvidence *releasePolicy `json:"releaseEvidence,omitempty"`
+		ReleaseEvidence    *releasePolicy `json:"releaseEvidence,omitempty"`
+		GateTimeoutSeconds map[string]int `json:"gateTimeoutSeconds,omitempty"`
 	}
 	var value registrationConfiguration
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -173,9 +174,19 @@ func validJSONObject(raw json.RawMessage) bool {
 	if decoder.Decode(&value) != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return false
 	}
+	allowedGateKeys := map[string]struct{}{
+		"default": {}, "planning": {}, "design": {},
+		"repository-graders": {}, "review": {}, "merge": {},
+		"lease-recovery": {},
+	}
+	for key, seconds := range value.GateTimeoutSeconds {
+		if _, supported := allowedGateKeys[key]; !supported || seconds < 60 || seconds > 2_592_000 {
+			return false
+		}
+	}
 	policy := value.ReleaseEvidence
 	if policy == nil {
-		return bytes.Equal(bytes.TrimSpace(raw), []byte(`{}`))
+		return len(value.GateTimeoutSeconds) > 0 || bytes.Equal(bytes.TrimSpace(raw), []byte(`{}`))
 	}
 	if policy.Authority != "human-ready-allowed" &&
 		policy.Authority != "ai-triage-required" {
@@ -304,6 +315,7 @@ type DevelopmentIssueProgress struct {
 	IssueNumber  int64                      `json:"issueNumber"`
 	Current      DevelopmentProgressEvent   `json:"current"`
 	History      []DevelopmentProgressEvent `json:"history"`
+	StartedAt    time.Time                  `json:"startedAt"`
 	LastActivity time.Time                  `json:"lastActivity"`
 }
 
@@ -338,6 +350,43 @@ type DevelopmentProgressEvent struct {
 	JobStatus           string     `json:"jobStatus"`
 	JobLastError        *string    `json:"jobLastError"`
 	LeaseHeartbeatAt    *time.Time `json:"leaseHeartbeatAt"`
+
+	// Canonical operator projection. These fields are derived from the durable
+	// event plus job/attempt/lease/release facts; they are never accepted from a
+	// runner. In particular, terminal facts override a stale running event.
+	KanbanLane         string          `json:"kanbanLane"`
+	HeadSHA            *string         `json:"headSha"`
+	ReviewRound        *int            `json:"reviewRound"`
+	ReviewOutcome      *string         `json:"reviewOutcome"`
+	GateKey            *string         `json:"gateKey"`
+	GateEnteredAt      *time.Time      `json:"gateEnteredAt"`
+	GateWaitSeconds    int64           `json:"gateWaitSeconds"`
+	HumanAction        *string         `json:"humanAction"`
+	Terminal           bool            `json:"terminal"`
+	EscalationID       *int64          `json:"escalationId"`
+	EscalatedAt        *time.Time      `json:"escalatedAt"`
+	EscalationEvidence json.RawMessage `json:"escalationEvidence,omitempty"`
+	ReviewPerspectives json.RawMessage `json:"reviewPerspectives,omitempty"`
+	BranchLineage      json.RawMessage `json:"branchLineage,omitempty"`
+
+	// Supporting durable facts are intentionally not exposed as a second API
+	// state model. canonicalDevelopmentProgress consumes them immediately after
+	// the row is scanned.
+	JobUpdatedAt          time.Time  `json:"-"`
+	JobType               string     `json:"-"`
+	JobAvailableAt        time.Time  `json:"-"`
+	JobFinishedAt         *time.Time `json:"-"`
+	AttemptStatus         string     `json:"-"`
+	LeaseExpiresAt        *time.Time `json:"-"`
+	ReleaseStatus         *string    `json:"-"`
+	ReleaseFinalHead      *string    `json:"-"`
+	JobResultOutcome      *string    `json:"-"`
+	JobFailureCode        *string    `json:"-"`
+	JobFailureRetryable   *bool      `json:"-"`
+	EscalationReason      *string    `json:"-"`
+	EscalationHumanAction *string    `json:"-"`
+	EscalationGateEntered *time.Time `json:"-"`
+	EscalationTargetSHA   *string    `json:"-"`
 }
 
 type CommandFence struct {

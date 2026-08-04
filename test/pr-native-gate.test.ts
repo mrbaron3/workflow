@@ -181,7 +181,7 @@ describe('external epic completion', () => {
   const issues: GithubRepositoryIssue[] = [
     {
       number: 1,
-      title: 'Forma v0',
+      title: 'Servo pipeline',
       body: parentBody,
       authorLogin: 'owner',
       subIssueNumbers: [],
@@ -381,7 +381,7 @@ describe('external epic completion', () => {
     const inventory: GithubRepositoryIssue[] = [
       {
         number: 1,
-        title: 'Forma v0',
+        title: 'Servo pipeline',
         body: 'DF-010',
         authorLogin: 'owner',
         subIssueNumbers: [],
@@ -905,6 +905,41 @@ describe('PR revision identity and automatic current-head gate', () => {
       PERSPECTIVES,
       { authorizeMerge: async () => { throw new Error('receipt certification failed'); } },
     )).rejects.toThrow('receipt certification failed');
+    expect(merges).toBe(0);
+    expect(store.getIssue(pr.issueId)?.status).not.toBe('released');
+  });
+
+  it('keeps an approved current head pending while durable child integration is incomplete', async () => {
+    const { store, pr } = setup();
+    const revision = observePrRevision(store, pr, SHA_A);
+    for (const perspective of PERSPECTIVES) {
+      addReview(store, pr, revision.id, SHA_A, perspective);
+    }
+    let merges = 0;
+    const runner: PrNativeGithubRunner = {
+      viewRevision: () => greenGithub(),
+      merge: () => { merges += 1; },
+      closeIssue: () => {},
+    };
+    const result = await autoMergeCurrentRevision(
+      store,
+      CONFIG,
+      pr,
+      runner,
+      '/repo',
+      PERSPECTIVES,
+      {
+        authorizeMerge: async () => ({
+          authorized: false,
+          reasons: ['child issue #72 is running'],
+        }),
+      },
+    );
+    expect(result).toMatchObject({
+      decision: 'pending',
+      merged: false,
+      reasons: ['child issue #72 is running'],
+    });
     expect(merges).toBe(0);
     expect(store.getIssue(pr.issueId)?.status).not.toBe('released');
   });

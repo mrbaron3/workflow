@@ -566,6 +566,10 @@ export async function reviewRepositoryPullRequest(
       state: 'running',
       summary: `Reviewing ${revision.headSha.slice(0, 12)} in an isolated worktree`,
       nextGate: 'all required perspectives and repository graders approve',
+      headSha: revision.headSha,
+      reviewRound: revision.ordinal,
+      reviewOutcome: 'running',
+      gateKey: 'review',
       worktreePath: options.operatorWorktreePath ?? worktree,
       branch: pullRequest.headRefName,
       pullRequestNumber: pullRequest.number,
@@ -743,6 +747,17 @@ export async function reviewRepositoryPullRequest(
       blocker: panel.verdict === 'approve'
         ? null
         : reviewBlocker || `current-head review verdict is ${panel.verdict}`,
+      headSha: revision.headSha,
+      reviewRound: revision.ordinal,
+      reviewOutcome: panel.verdict === 'approve'
+        ? 'approve'
+        : panel.verdict === 'request_changes'
+          ? 'request-changes'
+          : 'escalated',
+      gateKey: panel.verdict === 'approve' ? null : 'review',
+      humanAction: panel.verdict === 'approve'
+        ? null
+        : 'address the structured findings and push a new pull request head',
       worktreePath: options.operatorWorktreePath ?? worktree,
       branch: pullRequest.headRefName,
       pullRequestNumber: pullRequest.number,

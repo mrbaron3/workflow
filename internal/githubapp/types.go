@@ -31,8 +31,20 @@ func (role Role) Valid() bool {
 }
 
 type TokenRequest struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Role          Role   `json:"role"`
+	Repository    string `json:"repository"`
+}
+
+type ActorRequest struct {
 	SchemaVersion int  `json:"schemaVersion"`
 	Role          Role `json:"role"`
+}
+
+type ActorResponse struct {
+	SchemaVersion int    `json:"schemaVersion"`
+	Role          Role   `json:"role"`
+	ActorLogin    string `json:"actorLogin"`
 }
 
 type TokenResponse struct {
@@ -65,6 +77,7 @@ func DecodeStrict[T any](reader io.Reader, limit int64) (T, error) {
 func ValidateTokenResponse(
 	response TokenResponse,
 	expectedRole Role,
+	expectedRepository string,
 	now time.Time,
 ) error {
 	if response.SchemaVersion != SchemaVersion {
@@ -81,7 +94,8 @@ func ValidateTokenResponse(
 		response.ExpiresAt.After(now.Add(2*time.Hour)) {
 		return fmt.Errorf("credential response expiry is invalid")
 	}
-	if len(response.Repositories) == 0 || len(response.Repositories) > 64 {
+	if len(response.Repositories) != 1 ||
+		response.Repositories[0] != expectedRepository {
 		return fmt.Errorf("credential response repository set is invalid")
 	}
 	seen := make(map[string]struct{}, len(response.Repositories))

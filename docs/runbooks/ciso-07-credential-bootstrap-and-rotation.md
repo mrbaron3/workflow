@@ -40,13 +40,14 @@ bind-mounts the Mac home directory.
 2. Create one GitHub App owned by the same account as every monitored repository. Disable
    webhooks and grant only this repository permission union: Actions read, Checks read,
    Contents write, Issues write, Pull requests write, Commit statuses read, and Workflows write.
-   Select only the repositories in `AGENTOPS_MONITOR_REPOSITORIES` when installing it. Record the
+   Select only the repositories represented by durable Registrations when installing it. Record the
    numeric App id, installation id, canonical slug, and owner as
    `AGENTOPS_GITHUB_APP_ID`, `AGENTOPS_GITHUB_APP_INSTALLATION_ID`,
    `AGENTOPS_GITHUB_APP_SLUG`, and `AGENTOPS_GITHUB_APP_OWNER`. Save the generated private key as
    one absolute `.pem` file with mode `0600` or stricter and set
-   `AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE`. Set `AGENTOPS_RUNNER_REPOSITORIES` to the exact subset
-   that development execution may modify. Leave `GH_TOKEN`, `GITHUB_TOKEN`, and every
+   `AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE`. Repository scope is resolved from the current enabled
+   PostgreSQL Registration at every broker claim; there is no process environment allowlist or
+   second repository source of truth. Leave `GH_TOKEN`, `GITHUB_TOKEN`, and every
    `AGENTOPS_*_GITHUB_TOKEN` unset.
 
    `agentopsctl` validates the RSA PEM, streams it over stdin into the
@@ -54,7 +55,7 @@ bind-mounts the Mac home directory.
    `agentops-*-github-broker`. The broker verifies App/installation identity and mints exact role
    scopes before reporting ready. `MONITOR_ONLY` triage receives Contents/Issues/Pull requests
    read. `ACTIVE` triage receives Contents read, Issues write, Pull requests read. `ACTIVE` runner
-   receives the configured runner repository subset plus the development permission set.
+   receives the claimed Registration repository plus the development permission set.
 3. For Codex login-file mode, leave `OPENAI_API_KEY` unset and set
    `AGENTOPS_RUNNER_CODEX_AUTH_FILE` to the absolute private `auth.json`, mode `0600` or
    stricter. `agentopsctl` rejects symlinks, non-regular files, alternative filenames, and
@@ -62,14 +63,14 @@ bind-mounts the Mac home directory.
    on stdin, writes only `/credentials/codex/auth.json` in the named credential volume,
    changes ownership to uid/gid `65532`, verifies mode `0400`, and is removed. No host path
    or credential bytes enter runtime argv/logs; the source path is redacted from errors.
-4. Set `AGENTOPS_MONITOR_REPOSITORIES` to a comma-separated 1–64 item canonical allowlist whose
-   repositories all belong to `AGENTOPS_GITHUB_APP_OWNER`.
-   Run `agentopsctl start --mode MONITOR_ONLY --build`, create a Registration for every intended
+4. Run `agentopsctl start --mode MONITOR_ONLY --build`, create a Registration for every intended
    repository through the Dashboard/API, and verify readiness and repository state.
-   The allowlist and Registration are separate mandatory fences. `MONITOR_ONLY` starts
+   The Registration is the durable repository authority. `MONITOR_ONLY` starts
    PostgreSQL, control, GitHub App broker, and triage only; triage receives no provider token/Codex credential
    volume and cannot classify or promote an Issue. Then explicitly run
-   `agentopsctl start --mode ACTIVE`. ACTIVE adds provider egress/auth to triage, performs a
+   `agentopsctl deploy`. The deploy command verifies a clean exact source HEAD, drains any current
+   ACTIVE leases, rebuilds every image, migrates, promotes through MONITOR_ONLY, and then enters
+   ACTIVE. ACTIVE adds provider egress/auth to triage, performs a
    bounded nonlogging provider-authentication probe, and starts the separately credentialed
    development runner.
 
@@ -115,7 +116,7 @@ bind-mounts the Mac home directory.
    App private key, while `OFF` generate a second key in GitHub, atomically replace the private
    `AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE`, start `MONITOR_ONLY`, and verify broker readiness and a
    poll before deleting the prior key in GitHub. To change repositories or permissions, update
-   the GitHub App installation first, update the exact local allowlists, and restart; the broker
+   the GitHub App installation first, update the durable Registration, and restart; the broker
    fails closed if the issued token returns a different repository or permission set.
 5. Verify each rotated role can authenticate and its old credential fails. Verify exact
    container mounts/publications and then explicitly return to `ACTIVE`.

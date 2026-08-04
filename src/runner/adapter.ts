@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { isDeepStrictEqual } from 'node:util';
 import type { HarnessConfig } from '../config.js';
 import type { TargetGraderConfig } from '../config.js';
@@ -62,6 +63,10 @@ import {
   RUNNER_DEPENDENCY_PATH,
   RUNNER_DEPENDENCY_ROOT,
 } from '../pipeline/execution/runner-sandbox.js';
+import {
+  realReviewChildGithub,
+  type ReviewChildGithub,
+} from '../pipeline/execution/review-children.js';
 
 interface AgentOpsAdapterResultBase {
   headSha: string | null;
@@ -117,6 +122,7 @@ export interface ExistingAgentOpsAdapterDependencies {
   groundBuild?: LiveOptions['groundBuild'];
   regressReport?: LiveOptions['regressReport'];
   planningHumanReviewGithub?: (cwd: string) => PlanningHumanReviewGitHub;
+  reviewChildGithub?: (cwd: string) => ReviewChildGithub;
 }
 
 /**
@@ -168,6 +174,38 @@ export function hasDurableCurrentHeadReviewStop(
 
 function baseBranch(ref: string): string {
   return ref.replace(/^refs\/heads\//, '');
+}
+
+function missingIntegratedHeads(
+  worktree: string,
+  currentHead: string,
+  integratedHeads: readonly string[],
+): string[] {
+  return integratedHeads.filter((integratedHead) => {
+    const result = spawnSync(
+      'git',
+      ['-C', worktree, 'merge-base', '--is-ancestor', integratedHead, currentHead],
+      {
+        encoding: 'utf8',
+        timeout: 10_000,
+        maxBuffer: 1024 * 1024,
+        env: {
+          PATH: process.env.PATH,
+          HOME: '/home/agentops',
+          GIT_CONFIG_GLOBAL: '/dev/null',
+          GIT_CONFIG_NOSYSTEM: '1',
+        },
+      },
+    );
+    if (result.error) {
+      throw new RunnerExecutionError(
+        'workspace_failure',
+        `cannot verify cumulative child ancestry: ${result.error.message}`,
+        true,
+      );
+    }
+    return result.status !== 0;
+  });
 }
 
 interface NodePackageManifest {
@@ -382,7 +420,14 @@ function guardedPrNativeRunner(
     },
     ...(delegate.observeRelease
       ? {
-          observeRelease(cwd, repository, issueNumber, prNumber, expectedHead) {
+          observeRelease(
+            cwd,
+            repository,
+            issueNumber,
+            prNumber,
+            expectedHead,
+            integrationBranch,
+          ) {
             assertPullRequest(prNumber);
             return delegate.observeRelease!(
               cwd,
@@ -390,6 +435,7 @@ function guardedPrNativeRunner(
               issueNumber,
               prNumber,
               expectedHead,
+              integrationBranch,
             );
           },
         }
@@ -562,6 +608,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
     const event = input.payload.event;
     const repository =
       `${input.payload.repository.owner}/${input.payload.repository.name}`;
+    process.env.AGENTOPS_GITHUB_REPOSITORY = repository;
     process.env.AGENTOPS_RUNNER_REGISTRATION_ROOT =
       input.workspace.registrationRoot;
     process.env[RUNNER_DEPENDENCY_ROOT] = RUNNER_DEPENDENCY_PATH;
@@ -713,6 +760,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
                 'Mutable current Issue text will not be injected into review authority.',
               ].join(' '),
               nextGate: `human removes ${input.payload.execution.claimedLabel}, then reapplies ${input.payload.execution.readyLabel} to attest and freeze current Issue requirements`,
+              humanAction: `remove ${input.payload.execution.claimedLabel}, then reapply ${input.payload.execution.readyLabel} to attest current requirements`,
               worktreePath: input.workspace.worktreePath,
               pullRequestNumber: activePullRequest,
             });
@@ -887,6 +935,51 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       release && input.controlStore && input.releaseRuntime
       ? {
           authorizeMerge: async ({ pr, revision, snapshot, github }) => {
+            if (typeof input.controlStore!.reviewLineageGate === 'function') {
+              const lineageGate = await input.controlStore!.reviewLineageGate(
+                release.id,
+              );
+              if (!lineageGate.ready) {
+                const reasons = lineageGate.pending.map((child) =>
+                  `child issue #${child.issueNumber} is ${child.status}`);
+                await reportProgress({
+                  eventKey: `merge:child-gate:${revision.headSha}`,
+                  phase: 'merge',
+                  step: 'child integration gate',
+                  state: 'waiting',
+                  summary: reasons.join('; '),
+                  nextGate: 'all child PRs integrated into the parent branch',
+                  headSha: revision.headSha,
+                  gateKey: 'merge',
+                  branch: pr.branch,
+                  pullRequestNumber: pr.externalRef?.number ?? null,
+                });
+                return { authorized: false, reasons };
+              }
+              const missingHeads = missingIntegratedHeads(
+                input.workspace.worktreePath,
+                revision.headSha,
+                lineageGate.integratedHeads,
+              );
+              if (missingHeads.length > 0) {
+                const reasons = missingHeads.map((head) =>
+                  `cumulative parent head does not contain integrated child head ${head}`);
+                await reportProgress({
+                  eventKey: `merge:child-ancestry:${revision.headSha}`,
+                  phase: 'merge',
+                  step: 'cumulative child ancestry gate',
+                  state: 'blocked',
+                  blocker: reasons.join('; '),
+                  nextGate: 'reconcile the parent integration branch at the expected SHA',
+                  humanAction: 'repair the parent branch so every integrated child head is an ancestor',
+                  headSha: revision.headSha,
+                  gateKey: 'merge',
+                  branch: pr.branch,
+                  pullRequestNumber: pr.externalRef?.number ?? null,
+                });
+                return { authorized: false, reasons };
+              }
+            }
             await input.fence.arm('release');
             input.fence.consume('release');
             await projectReleasePreMerge({
@@ -902,6 +995,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
               runtime: input.releaseRuntime!,
             });
             await input.fence.arm('merge');
+            return { authorized: true, reasons: [] };
           },
           completeMerge: async ({ pr, revision }) => {
             if (!pr.pr.externalRef || !prNativeRunner.observeRelease) {
@@ -918,6 +1012,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
               release.issueNumber,
               pr.pr.externalRef.number,
               revision.headSha,
+              baseBranch(input.payload.target.baseRef),
             );
             await input.fence.arm('release');
             input.fence.consume('release');
@@ -927,6 +1022,19 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
               producer,
               observation,
             );
+            if (
+              input.payload.lineage
+              && typeof input.controlStore!.markReviewChildIntegrated === 'function'
+            ) {
+              await input.controlStore!.markReviewChildIntegrated({
+                token: input.lease.token,
+                workerId: input.lease.workerId,
+                releaseId: release.id,
+                pullRequestNumber: pr.pr.externalRef.number,
+                childHeadSha: revision.headSha,
+                integratedHeadSha: observation.mergeSha,
+              });
+            }
           },
           beforeRelease: async () => {
             await input.fence.arm('release');
@@ -983,6 +1091,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           summary: 'Release is merged; legacy release has no immutable Source Issue snapshot',
           blocker: 'Mutable current Issue text cannot authorize a parent Issue transition',
           nextGate: 'human manually reconciles the parent Issue if this phase belongs to an epic',
+          humanAction: 'manually reconcile the parent Issue if this phase belongs to an epic',
           worktreePath: null,
           pullRequestNumber: release.pullRequest,
         });
@@ -1081,6 +1190,71 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           gateRunner,
           prNativeRunner,
           releaseIdentity: release?.id ?? null,
+          ...(input.controlStore
+            && typeof input.controlStore.recordDevelopmentReviewRound === 'function'
+            ? {
+                reviewRoundRecorder: async (
+                  review: Parameters<
+                    PostgresControlStore['recordDevelopmentReviewRound']
+                  >[0]['review'],
+                ) => {
+                  await input.controlStore!.recordDevelopmentReviewRound({
+                    token: input.lease.token,
+                    workerId: input.lease.workerId,
+                    review,
+                  });
+                },
+              }
+            : {}),
+          ...(release
+            && input.controlStore
+            && typeof input.controlStore.recordReviewChild === 'function'
+            ? {
+                separateFindingHandler: async ({
+                  round,
+                  headSha,
+                  branch,
+                  pullRequestNumber,
+                  findings,
+                }: Parameters<
+                  NonNullable<LiveOptions['separateFindingHandler']>
+                >[0]) => {
+                  const github = (
+                    this.dependencies.reviewChildGithub
+                    ?? realReviewChildGithub
+                  )(input.workspace.worktreePath);
+                  for (const finding of findings) {
+                    await input.fence.arm('release');
+                    input.fence.consume('release');
+                    const child = github.ensureChildIssue({
+                      repository,
+                      readyLabel: input.payload.execution.readyLabel,
+                      parentReleaseId: release.id,
+                      parentIssueNumber: release.issueNumber,
+                      parentPullRequestNumber: pullRequestNumber,
+                      parentBranch: branch,
+                      parentHeadSha: headSha,
+                      reviewRound: round,
+                      perspective: finding.perspective,
+                      findingIdentity: finding.identity,
+                      finding: finding.finding,
+                    });
+                    await input.controlStore!.recordReviewChild({
+                      token: input.lease.token,
+                      workerId: input.lease.workerId,
+                      childIssueNumber: child.number,
+                      childIssueUrl: child.url,
+                      findingKey: child.findingKey,
+                      finding: finding.finding,
+                      reviewRound: round,
+                      parentPullRequestNumber: pullRequestNumber,
+                      parentBranch: branch,
+                      parentHeadSha: headSha,
+                    });
+                  }
+                },
+              }
+            : {}),
           beforeProviderExecution: beforeProvider,
           beforePush: () => input.fence.arm('push'),
           beforeCreatePr: () => input.fence.arm('push'),
@@ -1262,6 +1436,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         state: 'blocked',
         blocker: enrichment.reasons.join('; '),
         nextGate: 'human updates the Issue and reapplies the ready label',
+        humanAction: 'update the Issue requirements and reapply the ready label',
         worktreePath: input.workspace.worktreePath,
       });
       return {
@@ -1329,6 +1504,8 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         state: 'waiting',
         summary: `PR #${matchingPr.externalRef?.number ?? 'unprojected'} is ${matchingPr.status}`,
         nextGate: 'next pull request reconciliation',
+        headSha: matchingPr.headSha,
+        gateKey: 'merge',
         worktreePath: input.workspace.worktreePath,
         branch: matchingPr.branch,
         pullRequestNumber: matchingPr.externalRef?.number ?? null,
@@ -1343,7 +1520,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
     if (sourceIssueAuthority) {
       // Arm immediately before the only possible parent-Issue mutation. The
       // deterministic reconciler remains a no-op while any required phase is
-      // open (for Forma #1, DF-009 is explicitly future scope and excluded).
+      // open; parent closure is authorized only by the frozen Source Issue.
       await input.fence.arm('release');
       const epic = reconcileExternalEpicClosure(
         prNativeRunner,

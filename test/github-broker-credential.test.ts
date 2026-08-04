@@ -26,7 +26,11 @@ describe('GitHub App broker client boundary', () => {
       capability: 't'.repeat(43),
       role: 'triage',
     });
-    expect(githubBrokerEnvironment(credential, environment())).toEqual({
+    expect(githubBrokerEnvironment(
+      credential,
+      'acme/widgets',
+      environment(),
+    )).toEqual({
       PATH: '/usr/local/bin:/usr/bin:/bin',
       HOME: '/home/agentops',
       HTTP_PROXY: 'http://control:8082',
@@ -34,6 +38,7 @@ describe('GitHub App broker client boundary', () => {
       AGENTOPS_GITHUB_BROKER_URL: 'http://github-broker:8083/',
       AGENTOPS_GITHUB_BROKER_CAPABILITY: 't'.repeat(43),
       AGENTOPS_GITHUB_BROKER_ROLE: 'triage',
+      AGENTOPS_GITHUB_REPOSITORY: 'acme/widgets',
     });
   });
 

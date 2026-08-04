@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -181,7 +182,7 @@ func TestRegistrationCommandsCarryStrictReleaseEvidenceConfiguration(t *testing.
 	configuration := `{"releaseEvidence":{"authority":"ai-triage-required",` +
 		`"requiredGateSignals":[{"source":"repository-grader","name":"api_test"}],` +
 		`"requiredReviewPerspectives":["functionality","security"],` +
-		`"minimumHeadEpochs":1}}`
+		`"minimumHeadEpochs":1},"gateTimeoutSeconds":{"default":3600,"review":600}}`
 	store := &fakeAPIStore{}
 	request := httptest.NewRequest(
 		http.MethodPost,
@@ -221,6 +222,10 @@ func TestRegistrationCommandsCarryStrictReleaseEvidenceConfiguration(t *testing.
 		`"minimumHeadEpochs":1}}`
 	if validJSONObject(json.RawMessage(unsupported)) {
 		t.Fatal("unsupported review perspective passed the control contract")
+	}
+	if validJSONObject(json.RawMessage(`{"gateTimeoutSeconds":{"unknown":60}}`)) ||
+		validJSONObject(json.RawMessage(`{"gateTimeoutSeconds":{"review":59}}`)) {
+		t.Fatal("unsupported or unsafe gate timeout passed the control contract")
 	}
 }
 
@@ -366,6 +371,30 @@ func TestVersionConflictReturnsStructuredCurrentFence(t *testing.T) {
 		!bytes.Contains(response.Body.Bytes(), []byte(`"registrationVersion":4`)) ||
 		!bytes.Contains(response.Body.Bytes(), []byte(`"recordedAt":"2026-07-26T02:00:00Z"`)) {
 		t.Fatalf("version conflict = %d headers=%v body=%s", response.Code, response.Header(), response.Body)
+	}
+}
+
+func TestHealthAndRegistrationPageExposeTheSameReleaseProvenance(t *testing.T) {
+	api := testAPI(&fakeAPIStore{})
+	api.ReleaseRepository = "mrbaron3/servo"
+	api.ReleaseRevision = strings.Repeat("a", 40)
+
+	healthRequest := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	healthResponse := httptest.NewRecorder()
+	api.Handler().ServeHTTP(healthResponse, healthRequest)
+	if healthResponse.Code != http.StatusOK ||
+		!bytes.Contains(healthResponse.Body.Bytes(), []byte(`"repository":"mrbaron3/servo"`)) ||
+		!bytes.Contains(healthResponse.Body.Bytes(), []byte(`"revision":"`+strings.Repeat("a", 40)+`"`)) {
+		t.Fatalf("health provenance = %d: %s", healthResponse.Code, healthResponse.Body)
+	}
+
+	pageRequest := httptest.NewRequest(http.MethodGet, "/v1/registrations", nil)
+	pageRequest.Header.Set("Authorization", "Bearer control-token")
+	pageResponse := httptest.NewRecorder()
+	api.Handler().ServeHTTP(pageResponse, pageRequest)
+	if pageResponse.Code != http.StatusOK ||
+		!bytes.Contains(pageResponse.Body.Bytes(), []byte(`"provenance":{"repository":"mrbaron3/servo"`)) {
+		t.Fatalf("registration provenance = %d: %s", pageResponse.Code, pageResponse.Body)
 	}
 }
 

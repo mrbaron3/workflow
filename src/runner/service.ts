@@ -292,6 +292,38 @@ export class IsolatedRunnerService {
         });
         effectiveReleaseId = recovered.id;
       }
+      if (
+        payload.event.kind === 'issue'
+        && typeof this.store.getReviewChildTarget === 'function'
+      ) {
+        const lineage = await this.store.getReviewChildTarget(
+          repository,
+          payload.event.number,
+        );
+        if (lineage) {
+          if (effectiveReleaseId === null) {
+            throw new RunnerExecutionError(
+              'unknown_job_contract',
+              'review child job has no durable release identity',
+              false,
+              'claim',
+            );
+          }
+          await this.store.bindReviewChildRelease({
+            token: lease.token,
+            workerId: this.config.workerId,
+            releaseId: effectiveReleaseId,
+          });
+          payload = RunnerJobPayloadV1Contract.parse({
+            ...payload,
+            target: {
+              baseRef: lineage.parentBranch,
+              headRef: lineage.parentHeadSha,
+            },
+            lineage,
+          });
+        }
+      }
       verifyArtifactReferences(
         this.config.workspaceRoot,
         envelope.registrationId,

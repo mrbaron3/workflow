@@ -267,8 +267,6 @@ export AGENTOPS_RUNNER_DB_PASSWORD='<different 32+ bytes>'
 export AGENTOPS_CONTROL_TOKEN='<32+ byte random operator bearer token>'
 export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<random single-use bootstrap token>'
 export AGENTOPS_GITHUB_WEBHOOK_SECRET='<webhook secret>'
-export AGENTOPS_MONITOR_REPOSITORIES='mrbaron3/workflow,mrbaron3/designflow'
-export AGENTOPS_RUNNER_REPOSITORIES='mrbaron3/designflow'
 export AGENTOPS_GITHUB_APP_ID='<numeric App id>'
 export AGENTOPS_GITHUB_APP_INSTALLATION_ID='<numeric installation id>'
 export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
@@ -308,8 +306,8 @@ deliveries. Configure `AGENTOPS_GITHUB_POLL_INTERVAL` and
 wake-up: periodic PostgreSQL reconciliation remains the recovery path after missed notifications,
 control restart, forwarder exit, or DB reconnect. Unknown, disabled, stale, or disconnected
 Registrations never create jobs.
-The repository allowlist and PostgreSQL Registrations are independent fences: a repository must
-be present in both before it is observed. `MONITOR_ONLY` runs only the credential-limited triage
+PostgreSQL Registration is the single durable repository authority used at every broker claim;
+there is no process environment repository allowlist. `MONITOR_ONLY` runs only the credential-limited triage
 container's typed Issue/PR broker; it does not invoke an AI provider, add labels/comments, or start
 the development runner. It updates monitor freshness but deliberately does not advance the
 processing cursor, so existing work observed before cutover is re-read once ACTIVE. `ACTIVE` lets
@@ -324,8 +322,8 @@ its own capability, workspace, and provider credential. A dedicated internal-onl
 only process that can read the GitHub App private key; it returns repository/permission-scoped
 installation tokens in memory to the `gh`/Git helper. Static PAT variables are rejected and the
 control process receives neither a GitHub token nor a broker capability.
-See the [Designflow dogfood runbook](docs/runbooks/designflow-triage-dogfood.md) for registration,
-label policy, and the first external-target validation. The credential threat model and exact
+See the [Servo autonomous-pipeline runbook](docs/runbooks/servo-autonomous-pipeline.md) for registration,
+staged deployment, rollback, and operator verification. The credential threat model and exact
 role matrix are in [ADR-0019](docs/decisions/ADR-0019-github-app-credential-broker.md).
 
 The old TypeScript GUI/router types remain as a non-durable PR #9 compatibility oracle. The legacy

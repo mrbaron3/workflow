@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	ControlSchemaVersion = 18
+	ControlSchemaVersion = 21
 	migrationLockKey     = int64(0x4349534f02)
 )
 
@@ -1864,6 +1864,125 @@ func (store *Store) AppendAudit(
 	return unavailable(err)
 }
 
+// ReconcileGateEscalations resolves stale observations and creates at most one
+// escalation per job/gate/head. The caller supplies the observation time so
+// tests can exercise the SLA boundary without sleeping.
+func (store *Store) ReconcileGateEscalations(
+	ctx context.Context,
+	now time.Time,
+) (int64, error) {
+	var inserted int64
+	err := store.pool.QueryRow(ctx, `
+		WITH latest AS (
+		  SELECT DISTINCT ON (progress.job_id)
+		         progress.*, job.status AS job_status,
+		         registration.enabled AS registration_enabled,
+		         registration.configuration,
+		         release.status AS release_status,
+		         release.final_head AS release_final_head
+		    FROM agentops_control.development_progress_events progress
+		    JOIN agentops_control.jobs job ON job.id = progress.job_id
+		    JOIN agentops_control.repository_registrations registration
+		      ON registration.id = progress.registration_id
+		    LEFT JOIN agentops_control.releases release
+		      ON release.id = progress.release_id
+		   ORDER BY progress.job_id, progress.occurred_at DESC, progress.id DESC
+		), resolved AS (
+		  UPDATE agentops_control.human_escalations escalation
+		     SET resolved_at = $1
+		    FROM latest
+		   WHERE escalation.job_id = latest.job_id
+		     AND escalation.resolved_at IS NULL
+		     AND (
+		       latest.job_status IN ('succeeded', 'failed', 'cancelled', 'rejected')
+		       OR latest.release_status = 'merged'
+		       OR latest.gate_key IS DISTINCT FROM escalation.gate_key
+		       OR latest.state NOT IN ('running', 'waiting')
+		     )
+		  RETURNING escalation.id
+		), configured AS (
+		  SELECT latest.*,
+		         GREATEST(60, LEAST(2592000, COALESCE(
+		           CASE
+		             WHEN jsonb_typeof(
+		               latest.configuration->'gateTimeoutSeconds'->latest.gate_key
+		             ) = 'number'
+		             AND pg_input_is_valid(
+		               latest.configuration->'gateTimeoutSeconds'->>latest.gate_key,
+		               'integer'
+		             )
+		             THEN (
+		               latest.configuration->'gateTimeoutSeconds'->>latest.gate_key
+		             )::integer
+		           END,
+		           CASE
+		             WHEN jsonb_typeof(
+		               latest.configuration->'gateTimeoutSeconds'->'default'
+		             ) = 'number'
+		             AND pg_input_is_valid(
+		               latest.configuration->'gateTimeoutSeconds'->>'default',
+		               'integer'
+		             )
+		             THEN (
+		               latest.configuration->'gateTimeoutSeconds'->>'default'
+		             )::integer
+		           END,
+		           3600
+		         ))) AS timeout_seconds
+		    FROM latest
+		   WHERE latest.registration_enabled
+		     AND latest.job_status = 'leased'
+		     AND latest.release_status IS DISTINCT FROM 'merged'
+		     AND latest.gate_key IS NOT NULL
+		     AND latest.state IN ('running', 'waiting')
+		), inserted AS (
+		  INSERT INTO agentops_control.human_escalations(
+		    registration_id, registration_version, job_id, attempt_id, release_id,
+		    repository, subject_kind, subject_number, gate_key, target_sha,
+		    reason, evidence, human_action, gate_entered_at, escalated_at
+		  )
+		  SELECT configured.registration_id, configured.registration_version,
+		         configured.job_id, configured.attempt_id, configured.release_id,
+		         configured.repository, configured.subject_kind,
+		         configured.subject_number, configured.gate_key,
+		         COALESCE(configured.head_sha, configured.release_final_head),
+		         format(
+		           'gate %s exceeded its %s second SLA',
+		           configured.gate_key, configured.timeout_seconds
+		         ),
+		         jsonb_build_object(
+		           'progressEventId', configured.id,
+		           'phase', configured.phase,
+		           'step', configured.step,
+		           'state', configured.state,
+		           'timeoutSeconds', configured.timeout_seconds,
+		           'observedAt', $1,
+		           'targetSha', COALESCE(
+		             configured.head_sha, configured.release_final_head
+		           )
+		         ),
+		         CASE configured.gate_key
+		           WHEN 'planning' THEN 'inspect planning output and update the Issue requirements or resume the retained session'
+		           WHEN 'design' THEN 'record the required design decision or repair the design provider configuration'
+		           WHEN 'repository-graders' THEN 'inspect the retained worktree and repair or restart the failing grader'
+		           WHEN 'review' THEN 'inspect perspective evidence and push a corrected current head or approve the documented exception'
+		           WHEN 'merge' THEN 'resolve current-head GitHub checks, reviews, threads, or mergeability blockers'
+		           ELSE 'inspect lease recovery and safely retry or reapply the ready label'
+		         END,
+		         configured.occurred_at, $1
+		    FROM configured
+		   WHERE $1 - configured.occurred_at
+		         >= make_interval(secs => configured.timeout_seconds)
+		  ON CONFLICT (job_id, gate_key, COALESCE(target_sha, '')) DO NOTHING
+		  RETURNING id
+		)
+		SELECT count(*) FROM inserted`, now.UTC()).Scan(&inserted)
+	if err != nil {
+		return 0, unavailable(err)
+	}
+	return inserted, nil
+}
+
 const (
 	// Per-card orientation bounds. The full history stays queryable through
 	// `agentopsctl progress`, which is paged by its own explicit --limit.
@@ -1880,12 +1999,97 @@ const developmentProgressSelect = `SELECT
        progress.phase, progress.step, progress.state, progress.summary,
        progress.next_gate, progress.blocker, progress.session_name,
        progress.worktree_path, progress.branch, progress.pull_request_number,
-       progress.occurred_at, job.status, job.last_error, lease.heartbeat_at
+	   progress.head_sha, progress.review_round, progress.review_outcome,
+	   progress.gate_key, progress.human_action,
+	   progress.occurred_at, job.status, job.last_error, lease.heartbeat_at,
+	   job.job_type,
+	   job.updated_at, job.available_at, job.finished_at, attempt.status,
+	   lease.expires_at, release.status, release.final_head,
+	   job.result->>'outcome', job.failure->>'code',
+	   CASE WHEN job.failure ? 'retryable'
+	        THEN (job.failure->>'retryable')::boolean END,
+	   escalation.id, escalation.reason,
+	   COALESCE(escalation.evidence, '{}'::jsonb),
+	   escalation.human_action, escalation.gate_entered_at,
+	   escalation.escalated_at, escalation.target_sha,
+	   COALESCE(review_evidence.perspectives, '[]'::jsonb),
+	   COALESCE(lineage.details, '{}'::jsonb)
   FROM agentops_control.development_progress_events progress
   JOIN agentops_control.jobs job ON job.id = progress.job_id
   JOIN agentops_control.job_attempts attempt ON attempt.id = progress.attempt_id
   LEFT JOIN agentops_control.job_leases lease
-    ON lease.attempt_id = progress.attempt_id AND lease.status = 'active'`
+	ON lease.attempt_id = progress.attempt_id AND lease.status = 'active'
+  LEFT JOIN agentops_control.releases release ON release.id = progress.release_id
+  LEFT JOIN LATERAL (
+	SELECT current_escalation.*
+	  FROM agentops_control.human_escalations current_escalation
+	 WHERE current_escalation.job_id = progress.job_id
+	   AND current_escalation.resolved_at IS NULL
+	 ORDER BY current_escalation.escalated_at DESC, current_escalation.id DESC
+	 LIMIT 1
+  ) escalation ON TRUE
+  LEFT JOIN LATERAL (
+	SELECT jsonb_agg(
+	         jsonb_build_object(
+	           'perspective', perspective.perspective,
+	           'verdict', perspective.verdict,
+	           'findingCount', perspective.finding_count,
+	           'findings', perspective.findings,
+	           'completedAt', perspective.completed_at
+	         ) ORDER BY perspective.perspective
+	       ) AS perspectives
+	  FROM agentops_control.development_review_perspectives perspective
+	 WHERE perspective.review_round_id = (
+	   SELECT review_round.id
+	     FROM agentops_control.development_review_rounds review_round
+	    WHERE review_round.job_id = progress.job_id
+	      AND (
+	        progress.review_round IS NULL
+	        OR review_round.round = progress.review_round
+	      )
+	      AND (
+	        progress.head_sha IS NULL
+	        OR review_round.head_sha = progress.head_sha
+	      )
+	    ORDER BY review_round.updated_at DESC, review_round.id DESC
+	    LIMIT 1
+	 )
+  ) review_evidence ON TRUE
+  LEFT JOIN LATERAL (
+	SELECT jsonb_build_object(
+	         'nodeId', node.id,
+	         'status', node.status,
+	         'parentNodeId', node.parent_node_id,
+	         'parentIssueNumber', parent.issue_number,
+	         'parentBranch', node.parent_branch,
+	         'parentHeadSha', node.parent_head_sha,
+	         'childPullRequestNumber', node.child_pull_request_number,
+	         'childHeadSha', node.child_head_sha,
+	         'integratedHeadSha', node.integrated_head_sha,
+	         'children', COALESCE((
+	           SELECT jsonb_agg(
+	             jsonb_build_object(
+	               'nodeId', child.id,
+	               'issueNumber', child.issue_number,
+	               'status', child.status,
+	               'parentHeadSha', child.parent_head_sha,
+	               'pullRequestNumber', child.child_pull_request_number,
+	               'headSha', child.child_head_sha,
+	               'integratedHeadSha', child.integrated_head_sha
+	             ) ORDER BY child.created_at, child.id
+	           )
+	             FROM agentops_control.development_lineage_nodes child
+	            WHERE child.parent_node_id = node.id
+	         ), '[]'::jsonb)
+	       ) AS details
+	  FROM agentops_control.development_lineage_nodes node
+	  LEFT JOIN agentops_control.development_lineage_nodes parent
+	    ON parent.id = node.parent_node_id
+	 WHERE node.registration_id = progress.registration_id
+	   AND node.repository = progress.repository
+	   AND node.issue_number = progress.subject_number
+	 LIMIT 1
+  ) lineage ON TRUE`
 
 func scanDevelopmentProgress(row rowScanner) (DevelopmentProgressEvent, error) {
 	var event DevelopmentProgressEvent
@@ -1913,10 +2117,35 @@ func scanDevelopmentProgress(row rowScanner) (DevelopmentProgressEvent, error) {
 		&event.WorktreePath,
 		&event.Branch,
 		&event.PullRequestNumber,
+		&event.HeadSHA,
+		&event.ReviewRound,
+		&event.ReviewOutcome,
+		&event.GateKey,
+		&event.HumanAction,
 		&event.OccurredAt,
 		&event.JobStatus,
 		&event.JobLastError,
 		&event.LeaseHeartbeatAt,
+		&event.JobType,
+		&event.JobUpdatedAt,
+		&event.JobAvailableAt,
+		&event.JobFinishedAt,
+		&event.AttemptStatus,
+		&event.LeaseExpiresAt,
+		&event.ReleaseStatus,
+		&event.ReleaseFinalHead,
+		&event.JobResultOutcome,
+		&event.JobFailureCode,
+		&event.JobFailureRetryable,
+		&event.EscalationID,
+		&event.EscalationReason,
+		&event.EscalationEvidence,
+		&event.EscalationHumanAction,
+		&event.EscalationGateEntered,
+		&event.EscalatedAt,
+		&event.EscalationTargetSHA,
+		&event.ReviewPerspectives,
+		&event.BranchLineage,
 	)
 	return event, err
 }
@@ -1927,6 +2156,329 @@ func developmentProgressActivity(event DevelopmentProgressEvent) time.Time {
 		activity = *event.LeaseHeartbeatAt
 	}
 	return activity
+}
+
+type developmentProgressQuerier interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}
+
+const developmentJobsWithoutProgressSelect = `SELECT
+       job.id, job.registration_id, job.registration_version, job.release_id,
+       registration.repository, job.job_type, job.status, job.last_error,
+       job.created_at, job.updated_at, job.available_at,
+       COALESCE(
+         release.issue_number,
+         CASE WHEN pg_input_is_valid(job.payload->'event'->>'number', 'bigint')
+           THEN (job.payload->'event'->>'number')::bigint END,
+         CASE WHEN pg_input_is_valid(job.payload->'issue'->>'number', 'bigint')
+           THEN (job.payload->'issue'->>'number')::bigint END
+       ) AS issue_number,
+       attempt.id, attempt.attempt_number, attempt.status, attempt.worker_id,
+       lease.heartbeat_at, lease.expires_at,
+       release.status, release.final_head,
+       job.result->>'outcome', job.failure->>'code',
+       CASE WHEN job.failure ? 'retryable'
+            THEN (job.failure->>'retryable')::boolean END
+  FROM agentops_control.jobs job
+  JOIN agentops_control.repository_registrations registration
+    ON registration.id = job.registration_id
+  LEFT JOIN agentops_control.releases release ON release.id = job.release_id
+  LEFT JOIN LATERAL (
+    SELECT current_attempt.*
+      FROM agentops_control.job_attempts current_attempt
+     WHERE current_attempt.job_id = job.id
+     ORDER BY current_attempt.attempt_number DESC, current_attempt.id DESC
+     LIMIT 1
+  ) attempt ON TRUE
+  LEFT JOIN agentops_control.job_leases lease
+    ON lease.attempt_id = attempt.id AND lease.status = 'active'
+ WHERE job.job_type IN ('agentops.triage', 'agentops.runner')
+   AND NOT EXISTS (
+     SELECT 1 FROM agentops_control.development_progress_events progress
+      WHERE progress.job_id = job.id
+   )
+   AND COALESCE(
+     release.issue_number,
+     CASE WHEN pg_input_is_valid(job.payload->'event'->>'number', 'bigint')
+       THEN (job.payload->'event'->>'number')::bigint END,
+     CASE WHEN pg_input_is_valid(job.payload->'issue'->>'number', 'bigint')
+       THEN (job.payload->'issue'->>'number')::bigint END
+   ) IS NOT NULL`
+
+func developmentJobsWithoutProgress(
+	ctx context.Context,
+	querier developmentProgressQuerier,
+	where string,
+	arguments ...any,
+) ([]DevelopmentProgressEvent, error) {
+	rows, err := querier.Query(ctx,
+		developmentJobsWithoutProgressSelect+where,
+		arguments...,
+	)
+	if err != nil {
+		return nil, unavailable(err)
+	}
+	defer rows.Close()
+	events := make([]DevelopmentProgressEvent, 0)
+	for rows.Next() {
+		var event DevelopmentProgressEvent
+		var attemptID, attemptStatus, workerID *string
+		var attemptNumber *int
+		if err := rows.Scan(
+			&event.JobID,
+			&event.RegistrationID,
+			&event.RegistrationVersion,
+			&event.ReleaseID,
+			&event.Repository,
+			&event.JobType,
+			&event.JobStatus,
+			&event.JobLastError,
+			&event.OccurredAt,
+			&event.JobUpdatedAt,
+			&event.JobAvailableAt,
+			&event.SubjectNumber,
+			&attemptID,
+			&attemptNumber,
+			&attemptStatus,
+			&workerID,
+			&event.LeaseHeartbeatAt,
+			&event.LeaseExpiresAt,
+			&event.ReleaseStatus,
+			&event.ReleaseFinalHead,
+			&event.JobResultOutcome,
+			&event.JobFailureCode,
+			&event.JobFailureRetryable,
+		); err != nil {
+			return nil, unavailable(err)
+		}
+		event.SubjectKind = "issue"
+		event.EventKey = "job:" + event.JobStatus
+		event.Phase = "intake"
+		event.Step = "durable work awaiting first progress report"
+		event.State = "pending"
+		event.WorkerID = "unassigned"
+		if attemptID != nil {
+			event.AttemptID = *attemptID
+		}
+		if attemptNumber != nil {
+			event.AttemptNumber = *attemptNumber
+		}
+		if attemptStatus != nil {
+			event.AttemptStatus = *attemptStatus
+		}
+		if workerID != nil {
+			event.WorkerID = *workerID
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, unavailable(err)
+	}
+	return events, nil
+}
+
+func textPointer(value string) *string {
+	return &value
+}
+
+// canonicalDevelopmentProgress folds immutable progress history with the
+// authoritative job/lease/release state. It is deliberately pure so fake-clock
+// tests can pin recovery and stale-display boundaries without PostgreSQL time.
+func canonicalDevelopmentProgress(
+	event DevelopmentProgressEvent,
+	now time.Time,
+) DevelopmentProgressEvent {
+	projected := event
+	projected.Terminal = false
+	if event.ReleaseFinalHead != nil {
+		projected.HeadSHA = event.ReleaseFinalHead
+	}
+	if projected.HumanAction == nil && projected.State == "blocked" {
+		projected.HumanAction = event.NextGate
+	}
+	projected.GateEnteredAt = nil
+	projected.GateWaitSeconds = 0
+	if projected.EscalationID == nil {
+		projected.EscalationEvidence = nil
+	}
+
+	if event.ReleaseStatus != nil && *event.ReleaseStatus == "merged" {
+		projected.KanbanLane = "released"
+		projected.Phase = "completed"
+		projected.Step = "implementation released"
+		projected.State = "succeeded"
+		projected.Summary = textPointer("GitHub merge and release receipt are durable")
+		projected.NextGate = nil
+		projected.Blocker = nil
+		projected.HumanAction = nil
+		projected.Terminal = true
+		return projected
+	}
+
+	if event.JobStatus == "failed" || event.JobStatus == "cancelled" ||
+		event.JobStatus == "rejected" {
+		projected.KanbanLane = "failed"
+		projected.Phase = "failed"
+		projected.Step = "runner job " + event.JobStatus
+		projected.State = "failed"
+		projected.NextGate = nil
+		projected.HumanAction = textPointer(
+			"inspect the failure, correct the cause, then reapply the ready label or retry the delivery",
+		)
+		if event.JobLastError != nil {
+			projected.Blocker = event.JobLastError
+		} else {
+			projected.Blocker = textPointer(event.JobStatus)
+		}
+		projected.Terminal = true
+		return projected
+	}
+
+	if (event.ReleaseStatus != nil && *event.ReleaseStatus == "abandoned") ||
+		(event.JobResultOutcome != nil && *event.JobResultOutcome == "needs-human-review") {
+		projected.KanbanLane = "human-escalated"
+		projected.Phase = "human-review"
+		projected.State = "blocked"
+		projected.Terminal = true
+		if projected.Blocker == nil {
+			projected.Blocker = textPointer("human judgment is required")
+		}
+		if projected.HumanAction == nil {
+			projected.HumanAction = textPointer(
+				"update the Issue requirements and reapply the ready label",
+			)
+		}
+		return projected
+	}
+
+	if event.EscalationID != nil {
+		projected.KanbanLane = "human-escalated"
+		projected.Phase = "human-review"
+		projected.State = "blocked"
+		projected.Blocker = event.EscalationReason
+		projected.HumanAction = event.EscalationHumanAction
+		projected.GateEnteredAt = event.EscalationGateEntered
+		if event.EscalationTargetSHA != nil {
+			projected.HeadSHA = event.EscalationTargetSHA
+		}
+		if event.GateKey != nil && *event.GateKey == "review" {
+			projected.ReviewOutcome = textPointer("escalated")
+		}
+		if projected.GateEnteredAt != nil && now.After(*projected.GateEnteredAt) {
+			projected.GateWaitSeconds = int64(now.Sub(*projected.GateEnteredAt) / time.Second)
+		}
+		return projected
+	}
+
+	if event.JobStatus == "queued" {
+		if event.AttemptNumber == 0 && event.JobType == "agentops.triage" {
+			projected.KanbanLane = "ready"
+			projected.Phase = "intake"
+			projected.State = "pending"
+			projected.Step = "ready Issue queued for intake"
+			projected.Summary = textPointer("Durable triage work is waiting for its first lease")
+			projected.NextGate = textPointer("triage claim")
+			projected.HumanAction = nil
+			return projected
+		}
+		if event.AttemptNumber == 0 {
+			projected.KanbanLane = "intake-planning"
+			projected.Phase = "intake"
+			projected.State = "waiting"
+			projected.Step = "development intake queued"
+			projected.Summary = textPointer("Promoted work is waiting for its first runner lease")
+			projected.NextGate = textPointer("runner claim")
+			projected.HumanAction = nil
+			return projected
+		}
+		projected.KanbanLane = "gate-wait"
+		projected.State = "waiting"
+		projected.Step = "runner recovery queued"
+		projected.Summary = textPointer("The previous attempt ended; a bounded retry is scheduled")
+		projected.NextGate = textPointer("next runner lease")
+		projected.HumanAction = nil
+		return projected
+	}
+
+	if event.JobStatus == "leased" &&
+		(event.LeaseExpiresAt == nil || !event.LeaseExpiresAt.After(now)) {
+		projected.KanbanLane = "gate-wait"
+		projected.State = "waiting"
+		projected.Step = "expired lease recovery pending"
+		projected.Summary = textPointer("The claimed attempt has no live lease; reconciliation will reclaim it")
+		projected.NextGate = textPointer("lease reconciliation")
+		projected.HumanAction = nil
+		return projected
+	}
+	if event.JobStatus == "leased" && event.EventKey == "job:leased" {
+		projected.KanbanLane = "intake-planning"
+		projected.Phase = "intake"
+		projected.State = "running"
+		projected.Step = "claimed work starting"
+		projected.Summary = textPointer("The live lease bounds claim ownership while the worker starts")
+		projected.NextGate = textPointer("first durable phase report")
+		return projected
+	}
+
+	projected.KanbanLane = kanbanLaneFor(event)
+	if projected.State == "waiting" || projected.State == "blocked" {
+		entered := projected.OccurredAt
+		projected.GateEnteredAt = &entered
+		if now.After(entered) {
+			projected.GateWaitSeconds = int64(now.Sub(entered) / time.Second)
+		}
+	}
+	return projected
+}
+
+func kanbanLaneFor(event DevelopmentProgressEvent) string {
+	if event.State == "failed" || event.Phase == "failed" {
+		return "failed"
+	}
+	if event.Phase == "human-review" || event.State == "blocked" {
+		return "human-escalated"
+	}
+	if event.State == "waiting" {
+		return "gate-wait"
+	}
+	switch event.Phase {
+	case "intake", "planning":
+		return "intake-planning"
+	case "design":
+		return "design"
+	case "generation", "validation", "pull-request":
+		return "implementation"
+	case "review":
+		return "review"
+	case "repair":
+		return "repair"
+	case "merge":
+		return "merge-ready"
+	case "completed":
+		return "released"
+	default:
+		return "ready"
+	}
+}
+
+func projectCurrentProgressEvents(
+	events []DevelopmentProgressEvent,
+	now time.Time,
+) {
+	seen := make(map[string]struct{})
+	for index := range events {
+		event := events[index]
+		number := int64(0)
+		if event.SubjectNumber != nil {
+			number = *event.SubjectNumber
+		}
+		key := fmt.Sprintf("%s:%d", event.SubjectKind, number)
+		if _, present := seen[key]; present {
+			continue
+		}
+		seen[key] = struct{}{}
+		events[index] = canonicalDevelopmentProgress(event, now)
+	}
 }
 
 // DevelopmentProgress returns newest-first durable progress. An absent Issue
@@ -1987,6 +2539,36 @@ func (store *Store) DevelopmentProgress(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, unavailable(err)
+	}
+	synthetic, err := developmentJobsWithoutProgress(
+		ctx,
+		store.pool,
+		` AND registration.repository = $1
+		  AND ($2::bigint IS NULL OR COALESCE(
+		    release.issue_number,
+		    CASE WHEN pg_input_is_valid(job.payload->'event'->>'number', 'bigint')
+		      THEN (job.payload->'event'->>'number')::bigint END,
+		    CASE WHEN pg_input_is_valid(job.payload->'issue'->>'number', 'bigint')
+		      THEN (job.payload->'issue'->>'number')::bigint END
+		  ) = $2)
+		  ORDER BY job.created_at DESC, job.id DESC LIMIT $3`,
+		repository,
+		issueNumber,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	events = append(events, synthetic...)
+	sort.SliceStable(events, func(i, j int) bool {
+		if !events[i].OccurredAt.Equal(events[j].OccurredAt) {
+			return events[i].OccurredAt.After(events[j].OccurredAt)
+		}
+		return events[i].ID > events[j].ID
+	})
+	projectCurrentProgressEvents(events, time.Now().UTC())
+	if len(events) > limit {
+		events = events[:limit]
 	}
 	return events, nil
 }
@@ -2451,12 +3033,16 @@ func (store *Store) Projections(
 						IssueNumber:  issueNumber,
 						Current:      event,
 						History:      make([]DevelopmentProgressEvent, 0, developmentProgressHistoryLimit),
+						StartedAt:    event.OccurredAt,
 						LastActivity: developmentProgressActivity(event),
 					},
 				)
 			}
 			issueProgress := &projection.DevelopmentProgress[index]
 			issueProgress.History = append(issueProgress.History, event)
+			if event.OccurredAt.Before(issueProgress.StartedAt) {
+				issueProgress.StartedAt = event.OccurredAt
+			}
 			if activity := developmentProgressActivity(event); activity.After(issueProgress.LastActivity) {
 				issueProgress.LastActivity = activity
 			}
@@ -2464,6 +3050,58 @@ func (store *Store) Projections(
 		progressRows.Close()
 		if err := progressRows.Err(); err != nil {
 			return nil, unavailable(err)
+		}
+		syntheticProgress, err := developmentJobsWithoutProgress(
+			ctx,
+			transaction,
+			` AND job.registration_id = $1
+			  ORDER BY job.created_at DESC, job.id DESC LIMIT $2`,
+			registration.ID,
+			developmentProgressIssueLimit+1,
+		)
+		if err != nil {
+			return nil, err
+		}
+		for _, event := range syntheticProgress {
+			if event.SubjectNumber == nil {
+				return nil, unavailable(errors.New("queued issue work has no issue number"))
+			}
+			issueNumber := *event.SubjectNumber
+			index, present := issueIndexes[issueNumber]
+			if !present {
+				index = len(projection.DevelopmentProgress)
+				issueIndexes[issueNumber] = index
+				projection.DevelopmentProgress = append(
+					projection.DevelopmentProgress,
+					DevelopmentIssueProgress{
+						Repository:   event.Repository,
+						IssueNumber:  issueNumber,
+						Current:      event,
+						History:      []DevelopmentProgressEvent{event},
+						StartedAt:    event.OccurredAt,
+						LastActivity: developmentProgressActivity(event),
+					},
+				)
+				continue
+			}
+			issueProgress := &projection.DevelopmentProgress[index]
+			issueProgress.History = append(issueProgress.History, event)
+			if event.OccurredAt.After(issueProgress.Current.OccurredAt) {
+				issueProgress.Current = event
+			}
+			if event.OccurredAt.Before(issueProgress.StartedAt) {
+				issueProgress.StartedAt = event.OccurredAt
+			}
+			if activity := developmentProgressActivity(event); activity.After(issueProgress.LastActivity) {
+				issueProgress.LastActivity = activity
+			}
+		}
+		for index := range projection.DevelopmentProgress {
+			projection.DevelopmentProgress[index].Current =
+				canonicalDevelopmentProgress(
+					projection.DevelopmentProgress[index].Current,
+					databaseNow,
+				)
 		}
 		sort.SliceStable(projection.DevelopmentProgress, func(i, j int) bool {
 			left := projection.DevelopmentProgress[i]

@@ -22,7 +22,6 @@ function safeEnvironment(): NodeJS.ProcessEnv {
     AGENTOPS_GITHUB_BROKER_URL: 'http://github-broker:8083',
     AGENTOPS_GITHUB_BROKER_CAPABILITY: 't'.repeat(43),
     AGENTOPS_GITHUB_BROKER_ROLE: 'triage',
-    AGENTOPS_MONITOR_REPOSITORIES: 'acme/widgets,sample/design-system',
     OPENAI_API_KEY: 'provider-secret-value',
     AGENTOPS_TRIAGE_MOUNTS_JSON: '[]',
     AGENTOPS_TRIAGE_PUBLISHED_PORTS_JSON: '[]',
@@ -48,16 +47,12 @@ function safeRuntimeBoundary() {
 }
 
 describe('triage startup capability boundary', () => {
-  it('accepts arbitrary canonical repository registrations with no checkout mount', () => {
+  it('accepts durable repository registrations with no checkout mount', () => {
     const loaded = loadTriageStartup(
       safeEnvironment(),
       '/app',
       safeRuntimeBoundary(),
     );
-    expect(loaded.config.repositories).toEqual([
-      'acme/widgets',
-      'sample/design-system',
-    ]);
     expect(loaded.config.mounts).toEqual([]);
     expect(loaded.credentials.providerAuthentication).toEqual({
       kind: 'api-key',
@@ -109,10 +104,6 @@ describe('triage startup capability boundary', () => {
   });
 
   it.each([
-    ['uppercase repository', { AGENTOPS_MONITOR_REPOSITORIES: 'Acme/widgets' }],
-    ['duplicate repository', {
-      AGENTOPS_MONITOR_REPOSITORIES: 'acme/widgets,acme/widgets',
-    }],
     ['development token', {
       AGENTOPS_RUNNER_GITHUB_TOKEN: 'must-not-cross',
     }],

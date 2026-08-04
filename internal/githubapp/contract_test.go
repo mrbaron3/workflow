@@ -109,9 +109,8 @@ func contractIssuer(t *testing.T, now time.Time) *Issuer {
 		AppSlug: "agentops-test", Owner: "acme",
 		APIBaseURL: server.URL, PrivateKey: key,
 		Policies: []Policy{{
-			Role:         RoleTriage,
-			Repositories: []string{"acme/widgets"},
-			Permissions:  map[string]string{"contents": "read", "issues": "write"},
+			Role:        RoleTriage,
+			Permissions: map[string]string{"contents": "read", "issues": "write"},
 		}},
 	}, server.Client(), func() time.Time { return now })
 	if err != nil {
@@ -130,12 +129,14 @@ func TestMintedCredentialSatisfiesPublishedContract(t *testing.T) {
 	if err := requestSchema.Validate(contractInstance(t, TokenRequest{
 		SchemaVersion: SchemaVersion,
 		Role:          RoleTriage,
+		Repository:    "acme/widgets",
 	})); err != nil {
 		t.Fatalf("broker request violates the published contract: %v", err)
 	}
 	credential, err := contractIssuer(t, now).Token(
 		context.Background(),
 		RoleTriage,
+		"acme/widgets",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +146,7 @@ func TestMintedCredentialSatisfiesPublishedContract(t *testing.T) {
 	); err != nil {
 		t.Fatalf("minted credential violates the published contract: %v", err)
 	}
-	if err := ValidateTokenResponse(credential, RoleTriage, now); err != nil {
+	if err := ValidateTokenResponse(credential, RoleTriage, "acme/widgets", now); err != nil {
 		t.Fatalf("minted credential failed runtime validation: %v", err)
 	}
 }
@@ -167,7 +168,7 @@ func TestContractAndRuntimeValidationRejectTheSameCredentials(t *testing.T) {
 	if err := schema.Validate(contractInstance(t, valid)); err != nil {
 		t.Fatalf("contract rejected a valid credential: %v", err)
 	}
-	if err := ValidateTokenResponse(valid, RoleTriage, now); err != nil {
+	if err := ValidateTokenResponse(valid, RoleTriage, "acme/widgets", now); err != nil {
 		t.Fatalf("runtime validation rejected a valid credential: %v", err)
 	}
 	for name, mutate := range map[string]func(*TokenResponse){
@@ -203,7 +204,7 @@ func TestContractAndRuntimeValidationRejectTheSameCredentials(t *testing.T) {
 		if schema.Validate(contractInstance(t, candidate)) == nil {
 			t.Errorf("published contract accepted %s", name)
 		}
-		if ValidateTokenResponse(candidate, RoleTriage, now) == nil {
+		if ValidateTokenResponse(candidate, RoleTriage, "acme/widgets", now) == nil {
 			t.Errorf("runtime validation accepted %s", name)
 		}
 	}

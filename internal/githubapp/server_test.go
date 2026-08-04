@@ -19,6 +19,7 @@ type fixedIssuer struct {
 func (issuer *fixedIssuer) Token(
 	_ context.Context,
 	role Role,
+	repository string,
 ) (TokenResponse, error) {
 	issuer.calls = append(issuer.calls, role)
 	return TokenResponse{
@@ -26,11 +27,13 @@ func (issuer *fixedIssuer) Token(
 		Role:          role,
 		Token:         strings.Repeat("t", 40),
 		ExpiresAt:     time.Now().UTC().Add(time.Hour),
-		Repositories:  []string{"acme/widgets"},
+		Repositories:  []string{repository},
 		Permissions:   map[string]string{"issues": "read"},
 		ActorLogin:    "agentops-test[bot]",
 	}, nil
 }
+
+func (issuer *fixedIssuer) ActorLogin() string { return "agentops-test[bot]" }
 
 func TestServerEnforcesRoleSpecificCapabilities(t *testing.T) {
 	issuer := &fixedIssuer{}
@@ -133,7 +136,7 @@ func TestBrokerClientRejectsMalformedCredentialResponse(t *testing.T) {
 		BaseURL:    server.URL,
 		Capability: strings.Repeat("a", 32),
 		Role:       RoleTriage,
-	}).Token(context.Background())
+	}).Token(context.Background(), "acme/widgets")
 	if err == nil {
 		t.Fatal("role-confused broker response was accepted")
 	}
@@ -149,6 +152,7 @@ func brokerRequest(
 	body, err := json.Marshal(TokenRequest{
 		SchemaVersion: SchemaVersion,
 		Role:          role,
+		Repository:    "acme/widgets",
 	})
 	if err != nil {
 		t.Fatal(err)

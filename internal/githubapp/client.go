@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/mrbaron3/workflow/internal/control"
 )
 
 const (
@@ -28,18 +30,22 @@ type BrokerClient struct {
 	Now        func() time.Time
 }
 
-func (client BrokerClient) Token(ctx context.Context) (TokenResponse, error) {
+func (client BrokerClient) Token(
+	ctx context.Context,
+	repository string,
+) (TokenResponse, error) {
 	base, err := validateBrokerURL(client.BaseURL)
 	if err != nil {
 		return TokenResponse{}, err
 	}
 	if len(strings.TrimSpace(client.Capability)) < 32 ||
-		!client.Role.Valid() {
+		!client.Role.Valid() || !control.ValidRepositoryIdentity(repository) {
 		return TokenResponse{}, fmt.Errorf("broker client capability is invalid")
 	}
 	body, err := json.Marshal(TokenRequest{
 		SchemaVersion: SchemaVersion,
 		Role:          client.Role,
+		Repository:    repository,
 	})
 	if err != nil {
 		return TokenResponse{}, err
@@ -83,8 +89,49 @@ func (client BrokerClient) Token(ctx context.Context) (TokenResponse, error) {
 	if client.Now != nil {
 		now = client.Now().UTC()
 	}
-	if err := ValidateTokenResponse(result, client.Role, now); err != nil {
+	if err := ValidateTokenResponse(result, client.Role, repository, now); err != nil {
 		return TokenResponse{}, err
+	}
+	return result, nil
+}
+
+func (client BrokerClient) Actor(ctx context.Context) (ActorResponse, error) {
+	base, err := validateBrokerURL(client.BaseURL)
+	if err != nil {
+		return ActorResponse{}, err
+	}
+	if len(strings.TrimSpace(client.Capability)) < 32 || !client.Role.Valid() {
+		return ActorResponse{}, fmt.Errorf("broker client capability is invalid")
+	}
+	body, err := json.Marshal(ActorRequest{SchemaVersion: SchemaVersion, Role: client.Role})
+	if err != nil {
+		return ActorResponse{}, err
+	}
+	endpoint := base.ResolveReference(&url.URL{Path: "/v1/github-actor"})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), bytes.NewReader(body))
+	if err != nil {
+		return ActorResponse{}, err
+	}
+	request.Header.Set("Authorization", "Bearer "+client.Capability)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Accept", "application/json")
+	httpClient := client.HTTPClient
+	if httpClient == nil {
+		httpClient = brokerHTTPClient(brokerHealthTimeout)
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return ActorResponse{}, fmt.Errorf("GitHub credential broker actor request failed")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 16*1024))
+		return ActorResponse{}, fmt.Errorf("GitHub credential broker actor returned HTTP %d", response.StatusCode)
+	}
+	result, err := DecodeStrict[ActorResponse](response.Body, 4096)
+	if err != nil || result.SchemaVersion != SchemaVersion || result.Role != client.Role ||
+		!appActorLoginPattern.MatchString(result.ActorLogin) {
+		return ActorResponse{}, fmt.Errorf("GitHub credential broker returned an invalid actor")
 	}
 	return result, nil
 }
