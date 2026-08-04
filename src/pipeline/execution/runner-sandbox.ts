@@ -8,6 +8,14 @@ export const RUNNER_SANDBOX_MARKER = 'AGENTOPS_RUNNER_PROCESS_SANDBOX';
 export const RUNNER_SANDBOX_ROOT = 'AGENTOPS_RUNNER_REGISTRATION_ROOT';
 export const RUNNER_DEPENDENCY_ROOT = 'AGENTOPS_RUNNER_DEPENDENCY_ROOT';
 
+/**
+ * The only dependency root an isolated runner may bind. It is baked into the
+ * runner image, so it is a fixed identity rather than configuration: accepting
+ * any other path would let a compromised environment point graders and
+ * providers at attacker-supplied modules.
+ */
+export const RUNNER_DEPENDENCY_PATH = '/app/node_modules';
+
 export interface RunnerDependencyMount {
   source: string;
   target: string;
@@ -72,7 +80,7 @@ export function prepareRunnerDependencyMount(
   }
   const dependencyRoot = env[RUNNER_DEPENDENCY_ROOT];
   if (
-    dependencyRoot !== '/app/node_modules'
+    dependencyRoot !== RUNNER_DEPENDENCY_PATH
     || !fs.existsSync(dependencyRoot)
     || !fs.statSync(dependencyRoot).isDirectory()
   ) {
@@ -235,7 +243,7 @@ export function sandboxedShellCommand(
   // call runnerSandboxArgs directly and never receive a credential home.
   const providerCredentialHome = disposableProviderConfigHome(env);
   const dependencyRoot = env[RUNNER_DEPENDENCY_ROOT];
-  if (dependencyRoot !== undefined && dependencyRoot !== '/app/node_modules') {
+  if (dependencyRoot !== undefined && dependencyRoot !== RUNNER_DEPENDENCY_PATH) {
     throw new Error('isolated runner dependency root is absent or invalid');
   }
   return [

@@ -844,14 +844,19 @@ func (manager *manager) Worktree(
 	}
 	worktree := ""
 	selectedIndex := -1
+	rejectedPaths := 0
 	var status lifecycle.CommandResult
 	for index, item := range report.Items {
 		if item.WorktreePath == nil {
 			continue
 		}
 		candidate := *item.WorktreePath
+		// A path this command cannot prove is inside the runner volume is never
+		// inspected, but it is also not authority to abandon the search: one
+		// legacy or foreign event must not hide every usable retained attempt.
 		if !retainedWorktreePath.MatchString(candidate) {
-			return fmt.Errorf("recorded worktree path is outside the runner volume")
+			rejectedPaths++
+			continue
 		}
 		candidateStatus := manager.runtime.Exec(
 			ctx,
@@ -867,9 +872,21 @@ func (manager *manager) Worktree(
 		break
 	}
 	if worktree == "" {
+		if rejectedPaths > 0 {
+			return fmt.Errorf(
+				"no available isolated worktree is recorded for %s#%d "+
+					"(%d recorded path(s) were outside the runner volume and skipped)",
+				repository,
+				issueNumber,
+				rejectedPaths,
+			)
+		}
 		return fmt.Errorf("no available isolated worktree is recorded for %s#%d", repository, issueNumber)
 	}
 	fmt.Printf("worktree: %s\n", worktree)
+	if rejectedPaths > 0 {
+		fmt.Printf("skipped: %d recorded path(s) outside the runner volume\n", rejectedPaths)
+	}
 	if selectedIndex > 0 {
 		fmt.Println("preserved: yes (superseded by newer progress)")
 	}

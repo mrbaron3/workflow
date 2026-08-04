@@ -25,7 +25,11 @@ import { recordAgentInvocation } from '../../agents/invocation.js';
 import { resolveAgentRoute, resolvedGeneratorProvider } from '../../agents/routing.js';
 import { pollable, blockedByDependencies, formatBlockedLine } from './guard.js';
 import { mapPool } from './pool.js';
-import { runGeneratorSession } from './session.js';
+import {
+  generatorSessionName,
+  generatorWorktreePath,
+  runGeneratorSession,
+} from './session.js';
 import {
   canonicalGithubRepository,
   sampleKey,
@@ -275,8 +279,10 @@ export async function runLiveSample(
     : store.db.prs.find((candidate) => candidate.id === returnedPr.id)!;
   let worktree: string | null = null; // the last completed attempt's checkout = the build at the gate
   const progressWork = progressKeyPart(issueKey);
-  const expectedSession = `ao-${issueKey}`;
-  const expectedWorktree = path.join(harnessRoot, '.harness', 'worktrees', issueKey);
+  // Reported before the session exists, so the coordinates come from the module
+  // that creates them rather than from a second copy of the layout rule.
+  const expectedSession = generatorSessionName(issueKey);
+  const expectedWorktree = generatorWorktreePath(harnessRoot, issueKey);
 
   const loop = await runBoundedRepairLoop(store, config, issue.id, pr, async (attempt, repairBrief) => {
     // 1. real generator session — carries the repair brief on attempt > 1 and reuses the worktree

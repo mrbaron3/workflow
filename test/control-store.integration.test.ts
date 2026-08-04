@@ -346,13 +346,13 @@ integration('PostgreSQL control store', () => {
       [legacyAttemptId, legacyJobId],
     );
 
-    await expect(migrateControlSchema(pool)).resolves.toBe(17);
+    await expect(migrateControlSchema(pool)).resolves.toBe(CONTROL_SCHEMA_VERSION);
     await expect(assertControlSchema(pool)).resolves.toBeUndefined();
     const installed = await pool.query<{ version: number }>(
       `SELECT max(version)::integer AS version
          FROM agentops_control.schema_migrations`,
     );
-    expect(installed.rows[0]?.version).toBe(17);
+    expect(installed.rows[0]?.version).toBe(CONTROL_SCHEMA_VERSION);
     const backfilled = await pool.query<{ blocker_length: number }>(
       `SELECT length(blocker)::integer AS blocker_length
          FROM agentops_control.development_progress_events
@@ -374,25 +374,14 @@ integration('PostgreSQL control store', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agentops-bad-migration-'));
     const directory = path.join(root, 'db', 'control-store', 'migrations');
     fs.mkdirSync(directory, { recursive: true });
-    for (const name of [
-      '0001_control_store.sql',
-      '0002_registration_control.sql',
-      '0003_isolated_runner.sql',
-      '0004_agentops_lifecycle.sql',
-      '0005_private_monitor_broker.sql',
-      '0006_monitor_broker_capability_functions.sql',
-      '0007_multi_repository_triage.sql',
-      '0008_release_receipt_outbox.sql',
-      '0009_release_constraint_capabilities.sql',
-      '0010_release_completion_capability.sql',
-      '0011_release_pull_request_binding.sql',
-      '0012_runner_release_review_capabilities.sql',
-      '0013_release_human_review_abandonment.sql',
-      '0014_development_progress.sql',
-      '0015_development_progress_backfill.sql',
-      '0016_reuse_open_release_promotion.sql',
-      '0017_freeze_source_issue_snapshot.sql',
-    ]) {
+    // Enumerated from the real migration set so adding a migration cannot make
+    // this fixture silently non-contiguous instead of exercising the rollback.
+    const migrationNames = fs
+      .readdirSync(path.join(process.cwd(), 'db', 'control-store', 'migrations'))
+      .filter((name) => name.endsWith('.sql'))
+      .sort();
+    expect(migrationNames).toHaveLength(CONTROL_SCHEMA_VERSION);
+    for (const name of migrationNames) {
       const valid = fs.readFileSync(
         path.join(process.cwd(), 'db', 'control-store', 'migrations', name),
         'utf8',

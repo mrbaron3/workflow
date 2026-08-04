@@ -32,6 +32,7 @@ import {
   appendRestrictedReviewOutput,
   RESTRICTED_REVIEW_TERMINATION_GRACE_MS,
   prepareRestrictedReviewExecution,
+  RESTRICTED_REVIEW_API_KEY_OPT_IN,
   runRestrictedReviewSession,
   restrictedReviewLaunch,
   restrictedReviewUserMaterial,
@@ -517,9 +518,9 @@ describe('restricted repository-PR reviewers', () => {
   });
 
   it('PR-INTENT tells a no-tool reviewer to return JSON without attempting a file write', () => {
-    const prompt = restrictedPerspectivePrompt(
-      perspectivePrompt('security', contract, '/tmp/eval/security'),
-    );
+    // The trusted policy takes no per-target input: nothing derived from the
+    // contract or an earlier review may reach the privileged channel.
+    const prompt = restrictedPerspectivePrompt();
 
     expect(prompt).toContain('no-tool, read-only code reviewer');
     expect(prompt).toContain('complete immutable base-to-head diff');
@@ -608,7 +609,7 @@ describe('restricted repository-PR reviewers', () => {
     ['codex', 'OPENAI_API_KEY'],
     ['claude', 'ANTHROPIC_API_KEY'],
   ] as const)(
-    'keeps only the selected %s API key for the no-tool parent CLI',
+    'keeps only the explicitly enabled %s API key for the no-tool parent CLI',
     (provider, apiKeyName) => {
       const operatorHome = tmpDir(`restricted-${provider}-api-key-home`);
       const execution = prepareRestrictedReviewExecution(
@@ -619,6 +620,7 @@ describe('restricted repository-PR reviewers', () => {
           parentEnv: {
             PATH: process.env.PATH,
             LANG: 'C',
+            [RESTRICTED_REVIEW_API_KEY_OPT_IN]: 'true',
             [apiKeyName]: 'provider-api-key-only',
             GITHUB_TOKEN: 'github-secret',
             SSH_AUTH_SOCK: '/operator/agent.sock',
@@ -640,6 +642,48 @@ describe('restricted repository-PR reviewers', () => {
       }
     },
   );
+
+  it.each([
+    ['codex', 'OPENAI_API_KEY', '.codex/auth.json'],
+    ['claude', 'ANTHROPIC_API_KEY', '.claude/.credentials.json'],
+  ] as const)(
+    'never exports a %s API key without an explicit opt-in',
+    (provider, apiKeyName, credentialPath) => {
+      // A key that never enters the environment cannot be read by a tool surface
+      // the provider's disable list missed, so the copied credential is default.
+      const operatorHome = tmpDir(`restricted-${provider}-default-auth-home`);
+      const source = path.join(operatorHome, credentialPath);
+      fs.mkdirSync(path.dirname(source), { recursive: true });
+      fs.writeFileSync(source, '{"token":"operator-login"}', 'utf8');
+      const execution = prepareRestrictedReviewExecution(
+        provider,
+        process.execPath,
+        {
+          operatorHome,
+          parentEnv: {
+            PATH: process.env.PATH,
+            LANG: 'C',
+            [apiKeyName]: 'provider-api-key-only',
+          },
+        },
+      );
+      try {
+        expect(execution.env[apiKeyName]).toBeUndefined();
+        expect(JSON.stringify(execution.env)).not.toContain('provider-api-key-only');
+        expect(fs.existsSync(path.join(execution.home, credentialPath))).toBe(true);
+      } finally {
+        execution.cleanup();
+      }
+    },
+  );
+
+  it('names the opt-in when neither a credential file nor enabled API key exists', () => {
+    const operatorHome = tmpDir('restricted-no-auth-home');
+    expect(() => prepareRestrictedReviewExecution('codex', process.execPath, {
+      operatorHome,
+      parentEnv: { PATH: process.env.PATH, LANG: 'C', OPENAI_API_KEY: 'ignored' },
+    })).toThrow(RESTRICTED_REVIEW_API_KEY_OPT_IN);
+  });
 
   it('PR-INTENT materializes malicious source as inert review data without executing it', () => {
     const repo = tmpDir('restricted-malicious-diff');

@@ -1864,6 +1864,13 @@ func (store *Store) AppendAudit(
 	return unavailable(err)
 }
 
+const (
+	// Per-card orientation bounds. The full history stays queryable through
+	// `agentopsctl progress`, which is paged by its own explicit --limit.
+	developmentProgressIssueLimit   = 20
+	developmentProgressHistoryLimit = 12
+)
+
 const developmentProgressSelect = `SELECT
        progress.id, progress.registration_id, progress.registration_version,
        progress.job_id, progress.attempt_id, attempt.attempt_number,
@@ -2382,24 +2389,41 @@ func (store *Store) Projections(
 		if err := failureRows.Err(); err != nil {
 			return nil, unavailable(err)
 		}
+		// One registration can accumulate unboundedly many Issues. The card is
+		// an orientation surface, not an archive: keep the most recently active
+		// Issues only and let `agentopsctl progress` serve the full history.
+		// One extra Issue is requested purely to report truncation truthfully.
 		progressRows, err := transaction.Query(ctx, `
-			WITH ranked_progress AS (
-			  SELECT progress.id,
-			         row_number() OVER (
-			           PARTITION BY progress.repository, progress.subject_number
-			           ORDER BY progress.occurred_at DESC, progress.id DESC
-			         ) AS history_position
+			WITH recent_issues AS (
+			  SELECT progress.subject_number,
+			         max(progress.occurred_at) AS last_occurred_at
 			    FROM agentops_control.development_progress_events progress
 			   WHERE progress.registration_id = $1
 			     AND progress.subject_kind = 'issue'
 			     AND progress.subject_number IS NOT NULL
+			   GROUP BY progress.subject_number
+			   ORDER BY last_occurred_at DESC, progress.subject_number DESC
+			   LIMIT $2
+			), ranked_progress AS (
+			  SELECT progress.id,
+			         row_number() OVER (
+			           PARTITION BY progress.subject_number
+			           ORDER BY progress.occurred_at DESC, progress.id DESC
+			         ) AS history_position
+			    FROM agentops_control.development_progress_events progress
+			    JOIN recent_issues
+			      ON recent_issues.subject_number = progress.subject_number
+			   WHERE progress.registration_id = $1
+			     AND progress.subject_kind = 'issue'
 			), selected_progress AS (
-			  SELECT id FROM ranked_progress WHERE history_position <= 12
+			  SELECT id FROM ranked_progress WHERE history_position <= $3
 			)
 			`+developmentProgressSelect+`
 			 JOIN selected_progress selected ON selected.id = progress.id
 			 ORDER BY progress.subject_number, progress.occurred_at DESC, progress.id DESC`,
 			registration.ID,
+			developmentProgressIssueLimit+1,
+			developmentProgressHistoryLimit,
 		)
 		if err != nil {
 			return nil, unavailable(err)
@@ -2426,7 +2450,7 @@ func (store *Store) Projections(
 						Repository:   event.Repository,
 						IssueNumber:  issueNumber,
 						Current:      event,
-						History:      make([]DevelopmentProgressEvent, 0, 12),
+						History:      make([]DevelopmentProgressEvent, 0, developmentProgressHistoryLimit),
 						LastActivity: developmentProgressActivity(event),
 					},
 				)
@@ -2449,6 +2473,11 @@ func (store *Store) Projections(
 			}
 			return left.IssueNumber < right.IssueNumber
 		})
+		if len(projection.DevelopmentProgress) > developmentProgressIssueLimit {
+			projection.DevelopmentProgress =
+				projection.DevelopmentProgress[:developmentProgressIssueLimit]
+			projection.DevelopmentProgressTruncated = true
+		}
 		projections = append(projections, projection)
 	}
 	sort.Slice(projections, func(i, j int) bool {

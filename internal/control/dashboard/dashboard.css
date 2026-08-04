@@ -82,6 +82,7 @@ input { width: 100%; min-height: 44px; padding: .65rem .75rem; color: var(--ink)
 .progress-history ol { display: grid; gap: .3rem; padding-left: 1.3rem; }
 .progress-history li { display: grid; grid-template-columns: minmax(8rem, auto) minmax(5rem, auto) minmax(5rem, auto) 1fr; gap: .5rem; align-items: baseline; }
 .progress-history time { color: var(--muted); }
+.progress-truncated p { margin-bottom: 0; }
 .details { padding: .9rem 1.1rem; border-top: 1px solid var(--line); }
 .details summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-weight: 700; }
 .details-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; margin-top: .8rem; font-size: .85rem; }

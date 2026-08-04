@@ -234,7 +234,11 @@
         </dl>
         <details class="progress-history"><summary>工程履歴 ${events.length}件</summary><ol>${history}</ol></details>
       </section>`;
-    }).join('')}</div>`;
+    }).join('')}${item.developmentProgressTruncated
+      ? `<section class="development-progress progress-truncated" aria-label="実装進捗の省略">
+        <p class="quiet">直近 ${issues.length} Issue のみ表示しています。全件は <code>agentopsctl progress</code> で読めます。</p>
+      </section>`
+      : ''}</div>`;
   }
   function card(item) {
     const r = item.registration;

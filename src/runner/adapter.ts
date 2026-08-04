@@ -57,7 +57,10 @@ import {
   linkedParentIssueNumber,
   type DevelopmentProgressUpdate,
 } from '../domain/development-progress.js';
-import { RUNNER_DEPENDENCY_ROOT } from '../pipeline/execution/runner-sandbox.js';
+import {
+  RUNNER_DEPENDENCY_PATH,
+  RUNNER_DEPENDENCY_ROOT,
+} from '../pipeline/execution/runner-sandbox.js';
 
 interface AgentOpsAdapterResultBase {
   headSha: string | null;
@@ -203,13 +206,15 @@ export function inferRepositoryGraders(
     ...(manifest.devDependencies ?? {}),
   };
   if ('typescript' in dependencies && 'vitest' in dependencies) {
+    const tsc = `node ${RUNNER_DEPENDENCY_PATH}/typescript/bin/tsc`;
+    const vitest = `node ${RUNNER_DEPENDENCY_PATH}/vitest/vitest.mjs run --configLoader runner`;
     return {
-      typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
-      unit_tests: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
+      typecheck: `${tsc} --noEmit`,
+      unit_tests: vitest,
       commands: {
-        build: 'node /app/node_modules/typescript/bin/tsc',
-        typecheck: 'node /app/node_modules/typescript/bin/tsc --noEmit',
-        unit_test: 'node /app/node_modules/vitest/vitest.mjs run --configLoader runner',
+        build: tsc,
+        typecheck: `${tsc} --noEmit`,
+        unit_test: vitest,
       },
     };
   }
@@ -354,6 +359,7 @@ function guardedPrNativeRunner(
   fence: RunnerLeaseFence,
   delegate: PrNativeGithubRunner,
   allowedPullRequestNumber?: number,
+  allowedRepository?: string,
 ): PrNativeGithubRunner {
   const assertPullRequest = (number: number): void => {
     if (
@@ -408,8 +414,19 @@ function guardedPrNativeRunner(
       : {}),
     ...(delegate.listRepositoryIssues
       ? {
-          listRepositoryIssues(cwd, repository) {
-            return delegate.listRepositoryIssues!(cwd, repository);
+          listRepositoryIssues(cwd, requestedRepository) {
+            if (
+              allowedRepository !== undefined
+              && requestedRepository !== allowedRepository
+            ) {
+              throw new RunnerExecutionError(
+                'provider_failure',
+                `runner job cannot read the Issue inventory of ${requestedRepository}`,
+                false,
+                'provider',
+              );
+            }
+            return delegate.listRepositoryIssues!(cwd, requestedRepository);
           },
         }
       : {}),
@@ -546,7 +563,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       `${input.payload.repository.owner}/${input.payload.repository.name}`;
     process.env.AGENTOPS_RUNNER_REGISTRATION_ROOT =
       input.workspace.registrationRoot;
-    process.env[RUNNER_DEPENDENCY_ROOT] = '/app/node_modules';
+    process.env[RUNNER_DEPENDENCY_ROOT] = RUNNER_DEPENDENCY_PATH;
     const store = new Store(input.workspace.statePath);
     if (!Store.isInitialized(input.workspace.statePath)) store.save();
     let progressParentIssueNumber: number | null = null;
@@ -826,6 +843,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       input.payload.event.kind === 'pull_request'
         ? input.payload.event.number
         : recoveryPullRequest ?? undefined,
+      repository,
     );
     const beforeProvider = (): Promise<void> => input.fence.arm('provider');
     const beforeMergeAndRelease = async (): Promise<void> => {
@@ -1096,7 +1114,6 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           ...(sourceIssueAuthority
             ? {
                 sourceIssueMaterial: sourceIssueReviewMaterial({
-                  pullRequestNumber: activePullRequest ?? 1,
                   issue: sourceIssueAuthority.issue,
                   sourceDigest: sourceIssueAuthority.sourceDigest,
                 }),

@@ -12,6 +12,7 @@ import {
   releaseRuntimeConfigurationFromEnvironment,
 } from '../evidence/release-projection.js';
 import { RunnerExecutionError } from './errors.js';
+import { RUNNER_DEPENDENCY_PATH } from '../pipeline/execution/runner-sandbox.js';
 
 const NamedVolume = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/);
 const Mount = z.object({
@@ -732,7 +733,7 @@ export function isolatedGraderEnvironment(
     ...(registrationRoot
       ? {
           AGENTOPS_RUNNER_REGISTRATION_ROOT: registrationRoot,
-          AGENTOPS_RUNNER_DEPENDENCY_ROOT: '/app/node_modules',
+          AGENTOPS_RUNNER_DEPENDENCY_ROOT: RUNNER_DEPENDENCY_PATH,
         }
       : {}),
   };

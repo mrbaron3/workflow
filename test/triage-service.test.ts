@@ -5,6 +5,8 @@ import type {
   TriageDecisionV1,
 } from '../src/control-store/types.js';
 import {
+  MAX_TRIAGE_BODY_CHARS,
+  TriageSourceTooLargeError,
   triageMarker,
   triageSourceDigest,
   type TriageGitHub,
@@ -183,6 +185,38 @@ function setup(
 }
 
 describe('capability-limited Issue triage runner', () => {
+  it('turns an unfreezable oversized Source Issue into a human-facing blocker', async () => {
+    const repository = 'acme/widgets';
+    const { service, store, github, provider } = setup(repository, [snapshot(repository)]);
+    // Requirements are frozen verbatim or not at all, so an over-limit Issue is
+    // a human-fixable shape problem — it must name the limit, not fail opaquely.
+    (github.snapshot as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new TriageSourceTooLargeError(
+        `Issue body is 1000001 characters; the limit is ${MAX_TRIAGE_BODY_CHARS}`,
+      ),
+    );
+
+    expect(await service.runOnce()).toBe(true);
+
+    expect(provider.analyze).not.toHaveBeenCalled();
+    expect(store.promoteTriageLease).not.toHaveBeenCalled();
+    expect(store.recordDevelopmentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          eventKey: 'triage:source-too-large',
+          phase: 'human-review',
+          state: 'blocked',
+          blocker: expect.stringContaining(String(MAX_TRIAGE_BODY_CHARS)),
+        }),
+      }),
+    );
+    expect(store.failOrRetryLease).toHaveBeenCalledWith(
+      expect.objectContaining({
+        failure: expect.objectContaining({ retryable: false }),
+      }),
+    );
+  });
+
   it('keeps requirements identity stable across capture metadata retries', () => {
     const core = {
       repository: 'acme/widgets',
@@ -307,15 +341,23 @@ describe('capability-limited Issue triage runner', () => {
         }),
       }),
     );
+    // The freeze is announced as in-flight, never as done: promotion closes this
+    // lease, so a later `succeeded` write would be rejected anyway — and a
+    // failed promotion must not leave a durable event claiming it happened.
     expect(store.recordDevelopmentProgress).toHaveBeenCalledWith(
       expect.objectContaining({
         event: expect.objectContaining({
           eventKey: 'triage:ready-authority-frozen',
           parentIssueNumber: 1,
-          state: 'succeeded',
+          state: 'running',
         }),
       }),
     );
+    const frozenStates = store.recordDevelopmentProgress.mock.calls
+      .map((call) => (call as unknown as [{ event: { eventKey: string; state: string } }])[0].event)
+      .filter((event) => event.eventKey === 'triage:ready-authority-frozen')
+      .map((event) => event.state);
+    expect(frozenStates).toEqual(['running']);
   });
 
   it('rejects an authoritative comment added after the latest human ready event', async () => {

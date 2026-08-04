@@ -246,6 +246,33 @@ const RESTRICTED_REVIEW_API_KEYS: Partial<Record<AgentProvider, string>> = {
   claude: 'ANTHROPIC_API_KEY',
 };
 
+/**
+ * Opt-in switch for API-key authentication in a restricted provider process.
+ *
+ * The copied-credential path is the default because it keeps a live API key out
+ * of the process environment entirely: no tool surface that survives the
+ * provider's disable list can read a secret that was never exported. Deployments
+ * without a login credential file must set this explicitly and accept that the
+ * key is only as isolated as the provider CLI's own tool gating.
+ */
+export const RESTRICTED_REVIEW_API_KEY_OPT_IN =
+  'AGENTOPS_RESTRICTED_REVIEW_ALLOW_API_KEY';
+
+function restrictedReviewApiKey(
+  provider: AgentProvider,
+  apiKeyName: string,
+  parentEnv: NodeJS.ProcessEnv,
+): string | null {
+  if (parentEnv[RESTRICTED_REVIEW_API_KEY_OPT_IN] !== 'true') return null;
+  const apiKey = parentEnv[apiKeyName]?.trim();
+  if (!apiKey) {
+    throw new Error(
+      `restricted ${provider} reviewer API-key authentication is enabled but ${apiKeyName} is empty`,
+    );
+  }
+  return apiKey;
+}
+
 function resolveRestrictedExecutable(
   executable: string,
   parentEnv: NodeJS.ProcessEnv,
@@ -269,11 +296,12 @@ function resolveRestrictedExecutable(
 
 /**
  * Give the trusted provider CLI only its selected authentication and a private HOME.
- * Login auth is copied into the invocation-local HOME; API-key auth remains in the
- * parent CLI environment because every model tool and shell-environment inheritance
- * surface is disabled by the caller. Attacker-controlled text therefore cannot
- * activate operator hooks/config or inherit GitHub, SSH, webhook, cloud, or unrelated
- * process credentials.
+ * Login auth is copied into the invocation-local HOME and is the default: a secret
+ * that never enters the environment cannot be exfiltrated by a tool surface the
+ * provider's disable list missed. API-key auth is used only when the operator opts
+ * in through `AGENTOPS_RESTRICTED_REVIEW_ALLOW_API_KEY`. Attacker-controlled text
+ * therefore cannot activate operator hooks/config or inherit GitHub, SSH, webhook,
+ * cloud, or unrelated process credentials.
  */
 export function prepareRestrictedReviewExecution(
   provider: AgentProvider,
@@ -296,13 +324,16 @@ export function prepareRestrictedReviewExecution(
     if (!credential || !apiKeyName) {
       throw new Error(`unsupported restricted reviewer provider: ${provider}`);
     }
-    const apiKey = parentEnv[apiKeyName]?.trim();
+    const apiKey = restrictedReviewApiKey(provider, apiKeyName, parentEnv);
     if (!apiKey) {
       const source = provider === 'codex' && parentEnv.CODEX_HOME
         ? path.join(parentEnv.CODEX_HOME, 'auth.json')
         : path.join(operatorHome, ...credential.source);
       if (!fs.existsSync(source)) {
-        throw new Error(`restricted ${provider} reviewer credential is unavailable`);
+        throw new Error(
+          `restricted ${provider} reviewer credential is unavailable; `
+          + `set ${RESTRICTED_REVIEW_API_KEY_OPT_IN}=true to authenticate with ${apiKeyName} instead`,
+        );
       }
       const destination = path.join(home, ...credential.destination);
       fs.mkdirSync(path.dirname(destination), { recursive: true, mode: 0o700 });
@@ -348,12 +379,12 @@ export function prepareRestrictedReviewExecution(
 }
 
 /**
- * Static system/developer policy for the no-tool reviewer.  `prompt` is kept in
- * the public signature for compatibility, but deliberately ignored: contracts,
- * target identities, design artifacts, and prior findings must never be
- * promoted into the trusted instruction channel.
+ * Static system/developer policy for the no-tool reviewer. It takes no input by
+ * design: contracts, target identities, design artifacts, and prior findings are
+ * derived from untrusted material and must never reach the trusted instruction
+ * channel, so there is nothing per-target to parameterise here.
  */
-export function restrictedPerspectivePrompt(_prompt = ''): string {
+export function restrictedPerspectivePrompt(): string {
   return [
     'You are a no-tool, read-only code reviewer.',
     'Return only one JSON verdict matching the trusted output schema supplied by the runner.',

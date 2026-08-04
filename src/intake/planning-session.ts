@@ -45,20 +45,12 @@ function safeSegment(value: string): string {
 }
 
 /**
- * Build only trusted planner policy. `intake` and the legacy output path stay in the public API so
- * invocation provenance remains compatible, but neither attacker-controlled Source Issue bytes
- * nor a writable-path instruction is placed in the provider's privileged instruction channel.
+ * Build only trusted planner policy. It takes no input by design: the Source Issue, the repository
+ * inventory, and any system-view snapshot are attacker-controlled or attacker-influenced, and a
+ * writable output path is an instruction — none of them may enter the privileged channel. Every
+ * per-target value the model needs travels in the untrusted user message built beside this.
  */
-export function buildPlanningPrompt(
-  intake: IntakeRecord,
-  outputPath: string,
-  systemSnapshotDir: string | null,
-  target: TargetRepoConfig,
-): string {
-  void intake;
-  void outputPath;
-  void systemSnapshotDir;
-  void target;
+export function buildPlanningPrompt(): string {
   return [
     `You are the issue-planner. Convert the immutable GitHub Source Issue supplied only in the`,
     `user message into 1..N draft requirements.`,
@@ -743,7 +735,10 @@ export async function runPlanningProviderProcess(
     });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
-    let retainedBytes = 0;
+    // Budgeted per stream. A shared counter would let a noisy diagnostic stream
+    // trip the limit and blame the other one, hiding which output actually ran away.
+    let retainedStdoutBytes = 0;
+    let retainedStderrBytes = 0;
     let settled = false;
     const finish = (
       callback: () => void,
@@ -761,7 +756,12 @@ export async function runPlanningProviderProcess(
     child.stdout.on('data', (chunk: Buffer) => {
       if (settled) return;
       try {
-        retainedBytes = appendPlanningProviderOutput(stdout, retainedBytes, chunk, 'stdout');
+        retainedStdoutBytes = appendPlanningProviderOutput(
+          stdout,
+          retainedStdoutBytes,
+          chunk,
+          'stdout',
+        );
       } catch (error) {
         child.kill('SIGKILL');
         finish(() => reject(error));
@@ -770,7 +770,12 @@ export async function runPlanningProviderProcess(
     child.stderr.on('data', (chunk: Buffer) => {
       if (settled) return;
       try {
-        retainedBytes = appendPlanningProviderOutput(stderr, retainedBytes, chunk, 'stderr');
+        retainedStderrBytes = appendPlanningProviderOutput(
+          stderr,
+          retainedStderrBytes,
+          chunk,
+          'stderr',
+        );
       } catch (error) {
         child.kill('SIGKILL');
         finish(() => reject(error));
@@ -825,12 +830,7 @@ export async function runPlanningSession(
   const inputPath = path.join(evidenceDir, 'UNTRUSTED_INPUT.txt');
   const outputPath = path.join(evidenceDir, 'enrichment.json');
   const schemaPath = path.join(evidenceDir, 'enrichment.schema.json');
-  const prompt = buildPlanningPrompt(
-    intake,
-    outputPath,
-    hasSystemViews ? sourceSystemDir : null,
-    config.target,
-  );
+  const prompt = buildPlanningPrompt();
   fs.writeFileSync(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
   fs.writeFileSync(
     schemaPath,

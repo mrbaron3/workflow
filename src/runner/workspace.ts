@@ -67,7 +67,31 @@ const WorkspaceManifest = z.object({
   eventIdentity: z.string().min(1).max(512).nullable(),
   headSha: z.string().regex(/^[0-9a-f]{40,64}$/),
   state: z.enum(['active', 'retained', 'cleaned']),
+  /** When retention started; the only input to automatic reclamation. */
+  retainedAt: z.string().datetime({ offset: true }).nullable().default(null),
 });
+
+export const DEFAULT_RETAINED_WORKSPACE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * How long a retained isolated attempt stays on disk before the runner reclaims
+ * it. Retention exists so a human can inspect a failed attempt, not so a full
+ * checkout survives forever: an abandoned Issue would otherwise leak one
+ * worktree per attempt with no bound. `0` disables automatic reclamation.
+ */
+export function retainedWorkspaceTtlMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.AGENTOPS_RUNNER_RETAINED_WORKSPACE_TTL_MS;
+  if (raw === undefined || raw.trim() === '') return DEFAULT_RETAINED_WORKSPACE_TTL_MS;
+  const parsed = Number(raw);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new RunnerExecutionError(
+      'workspace_failure',
+      `retained workspace TTL is invalid: ${raw}`,
+      false,
+    );
+  }
+  return parsed;
+}
 
 export interface PreparedRunnerWorkspace {
   registrationRoot: string;
@@ -223,6 +247,11 @@ export class RunnerWorkspaceManager {
     );
     const artifactPath = path.join(jobRoot, 'artifacts');
     fs.mkdirSync(registrationRoot, { recursive: true, mode: 0o700 });
+    // Bound the retained-attempt backlog before this job consumes more disk.
+    // `cleanup` only releases retention opportunistically, when a later job for
+    // the same event succeeds, so an Issue that is never retried has no other
+    // reclamation path.
+    this.pruneExpiredRetainedWorkspaces(registrationRoot, repositoryPath);
     const cloneUrl = githubCloneUrl(payload);
     if (!fs.existsSync(repositoryPath)) {
       runChecked(
@@ -371,6 +400,7 @@ export class RunnerWorkspaceManager {
       eventIdentity: payload.event.kind === 'repository' ? payload.event.identity : null,
       headSha: workspace.headSha,
       state,
+      retainedAt: state === 'retained' ? new Date().toISOString() : null,
     });
     fs.writeFileSync(
       this.manifestPath(workspace),
@@ -381,6 +411,120 @@ export class RunnerWorkspaceManager {
 
   retain(workspace: PreparedRunnerWorkspace, payload: RunnerJobPayloadV1): void {
     this.writeManifest(workspace, payload, 'retained');
+  }
+
+  /**
+   * Reclaim retained attempts whose inspection window has elapsed. Retention is
+   * opportunistically released by `cleanup` only when a later job for the same
+   * event succeeds; an Issue that is never retried would otherwise keep every
+   * failed attempt's full checkout forever. This is the unconditional bound.
+   *
+   * Best-effort by construction: a workspace whose metadata cannot be read is
+   * never reclaimed, and any per-attempt failure is reported without aborting
+   * the sweep or the job that triggered it.
+   */
+  pruneExpiredRetainedWorkspaces(
+    registrationRoot: string,
+    repositoryPath: string,
+    now: number = Date.now(),
+  ): string[] {
+    const ttlMs = retainedWorkspaceTtlMs(this.env);
+    if (ttlMs === 0) return [];
+    const jobsRoot = assertInside(registrationRoot, path.join(registrationRoot, 'jobs'));
+    if (!fs.existsSync(jobsRoot)) return [];
+    const reclaimed: string[] = [];
+    for (const jobEntry of fs.readdirSync(jobsRoot, { withFileTypes: true })) {
+      if (!jobEntry.isDirectory() || !JobId.safeParse(jobEntry.name).success) continue;
+      const jobRoot = assertInside(jobsRoot, path.join(jobsRoot, jobEntry.name));
+      for (const entry of fs.readdirSync(jobRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !/^attempt-[1-9][0-9]*$/.test(entry.name)) continue;
+        const attemptRoot = assertInside(jobRoot, path.join(jobRoot, entry.name));
+        const manifestPath = assertInside(
+          registrationRoot,
+          path.join(attemptRoot, 'workspace.json'),
+        );
+        if (!fs.existsSync(manifestPath) || !fs.lstatSync(manifestPath).isFile()) continue;
+        let manifest: z.infer<typeof WorkspaceManifest>;
+        try {
+          manifest = WorkspaceManifest.parse(JSON.parse(fs.readFileSync(manifestPath, 'utf8')));
+        } catch {
+          // Unreadable metadata is never authority to delete an operator checkout.
+          continue;
+        }
+        if (manifest.state !== 'retained') continue;
+        // A manifest written before retention was timestamped falls back to the
+        // directory's own mtime rather than being treated as freshly retained.
+        const retainedAt = manifest.retainedAt !== null
+          ? Date.parse(manifest.retainedAt)
+          : fs.statSync(manifestPath).mtimeMs;
+        if (!Number.isFinite(retainedAt) || now - retainedAt < ttlMs) continue;
+        try {
+          this.reclaimAttemptWorkspace(
+            registrationRoot,
+            repositoryPath,
+            jobRoot,
+            entry.name,
+            manifest,
+            manifestPath,
+          );
+          reclaimed.push(attemptRoot);
+        } catch {
+          // One unreclaimable attempt must not stop the sweep or fail the job.
+        }
+      }
+    }
+    if (reclaimed.length > 0) {
+      this.run(
+        'git',
+        ['-C', repositoryPath, 'worktree', 'prune'],
+        { cwd: registrationRoot, env: this.env },
+      );
+    }
+    return reclaimed;
+  }
+
+  /** Remove one attempt's checkout, provider root, and private branch. */
+  private reclaimAttemptWorkspace(
+    registrationRoot: string,
+    repositoryPath: string,
+    jobRoot: string,
+    attemptName: string,
+    manifest: z.infer<typeof WorkspaceManifest>,
+    manifestPath: string,
+  ): void {
+    const attemptRoot = assertInside(jobRoot, path.join(jobRoot, attemptName));
+    const worktreePath = assertInside(attemptRoot, path.join(attemptRoot, 'worktree'));
+    runBestEffort(
+      this.run,
+      'git',
+      ['-C', repositoryPath, 'worktree', 'remove', '--force', worktreePath],
+      registrationRoot,
+      this.env,
+    );
+    fs.rmSync(worktreePath, { recursive: true, force: true });
+    fs.rmSync(assertInside(attemptRoot, path.join(attemptRoot, 'harness')), {
+      recursive: true,
+      force: true,
+    });
+    runBestEffort(
+      this.run,
+      'git',
+      [
+        '-C', repositoryPath, 'branch', '-D',
+        `runner/${path.basename(jobRoot)}/${attemptName}`,
+      ],
+      registrationRoot,
+      this.env,
+    );
+    fs.writeFileSync(
+      manifestPath,
+      `${JSON.stringify(
+        WorkspaceManifest.parse({ ...manifest, state: 'cleaned', retainedAt: null }),
+        null,
+        2,
+      )}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
   }
 
   /**
@@ -514,43 +658,22 @@ export class RunnerWorkspaceManager {
           preservedWorktree = true;
           continue;
         }
-        runBestEffort(
-          this.run,
-          'git',
-          ['-C', workspace.repositoryPath, 'worktree', 'remove', '--force', worktreePath],
+        this.reclaimAttemptWorkspace(
           workspace.registrationRoot,
-          this.env,
-        );
-        fs.rmSync(worktreePath, { recursive: true, force: true });
-        fs.rmSync(assertInside(attemptRoot, path.join(attemptRoot, 'harness')), {
-          recursive: true,
-          force: true,
-        });
-        runBestEffort(
-          this.run,
-          'git',
-          [
-            '-C', workspace.repositoryPath, 'branch', '-D',
-            `runner/${path.basename(jobRoot)}/${entry.name}`,
-          ],
-          workspace.registrationRoot,
-          this.env,
-        );
-        const cleaned = WorkspaceManifest.parse({
-          ...(manifest ?? {
+          workspace.repositoryPath,
+          jobRoot,
+          entry.name,
+          manifest ?? WorkspaceManifest.parse({
             schemaVersion: 2,
             repository,
             eventKind,
             eventNumber,
             eventIdentity,
             headSha: workspace.headSha,
+            state: 'cleaned',
           }),
-          state: 'cleaned',
-        });
-        fs.writeFileSync(manifestPath, `${JSON.stringify(cleaned, null, 2)}\n`, {
-          encoding: 'utf8',
-          mode: 0o600,
-        });
+          manifestPath,
+        );
       }
       if (!matchedJob || preservedWorktree) continue;
       const legacyNestedWorktrees = assertInside(

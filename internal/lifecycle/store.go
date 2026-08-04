@@ -634,6 +634,13 @@ func BootstrapRoles(
 		`GRANT EXECUTE ON FUNCTION
 		   agentops_control.promote_triage_release(uuid, text, jsonb, text, text, jsonb)
 		   TO agentops_triage`,
+		// Roles are created here, after `migrate` has already run, so the
+		// conditional GRANT inside migration 0017 is skipped on a fresh
+		// database. This list is the only durable grant source for triage
+		// progress and must stay in sync with the runner grant below.
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.record_development_progress(uuid, text, jsonb)
+		   TO agentops_triage`,
 		`GRANT SELECT, INSERT ON agentops_control.runtime_audit TO agentops_triage`,
 		`GRANT USAGE, SELECT ON SEQUENCE agentops_control.runtime_audit_id_seq
 		   TO agentops_triage`,
@@ -648,8 +655,12 @@ func BootstrapRoles(
 		   TO agentops_runner`,
 		`GRANT SELECT, UPDATE ON agentops_control.jobs TO agentops_runner`,
 		`GRANT SELECT ON agentops_control.releases TO agentops_runner`,
-		`GRANT SELECT ON agentops_control.development_progress_events
-		   TO agentops_runner`,
+		// The runner publishes progress only through the SECURITY DEFINER
+		// function, which derives every identity from the live lease. Direct
+		// table reads would expose other Registrations' progress, so migration
+		// 0017 revokes them; bootstrap runs after migrate and must not re-grant.
+		`REVOKE SELECT ON agentops_control.development_progress_events
+		   FROM agentops_runner`,
 		`GRANT SELECT ON agentops_control.release_heads,
 		   agentops_control.release_receipt_outbox,
 		   agentops_control.release_artifacts TO agentops_runner`,

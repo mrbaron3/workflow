@@ -167,3 +167,69 @@ func TestWorktreeShellFindsPreservedSupersededCheckout(t *testing.T) {
 		t.Fatalf("interactive argv = %#v, want %#v", fake.interactive, want)
 	}
 }
+
+// A recorded path this command cannot prove is inside the runner volume is not
+// authority to abandon the search: one legacy or foreign event must not hide
+// every usable retained attempt.
+func TestWorktreeSkipsPathsOutsideTheRunnerVolumeInsteadOfFailing(t *testing.T) {
+	registration := "11111111-1111-4111-8111-111111111111"
+	job := "22222222-2222-4222-8222-222222222222"
+	live := "/workspace/registrations/" + registration + "/jobs/" + job + "/attempt-2/worktree"
+	postgres := `[{"id":"agentops-postgres","configuration":{"labels":` +
+		`{"com.mrbaron3.workflow.agentopsctl":"v1"}},"status":{"state":"running",` +
+		`"networks":[{"network":"agentops-internal","ipv4Address":"192.0.2.10/24"}]}}]`
+	progress := `{"items":[` +
+		`{"worktreePath":"/home/operator/local-checkout"},` +
+		`{"worktreePath":"` + live + `"}` +
+		`]}`
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{
+		{Status: 0, Stdout: "container 0.12.0"},
+		{Status: 0},
+		{Status: 0, Stdout: postgres},
+		{Status: 0, Stdout: progress},
+		{Status: 0, Stdout: "## runner/live\n"},
+	}}
+	subject := newManager(testManagerConfig(), lifecycle.NewAppleRuntimeForTest(fake))
+
+	if err := subject.Worktree(
+		context.Background(),
+		"mrbaron3/forma",
+		8,
+		false,
+		true,
+	); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"exec", "--interactive", "--tty", "--workdir", live,
+		"agentops-runner", "/bin/sh",
+	}
+	if !reflect.DeepEqual(fake.interactive, [][]string{want}) {
+		t.Fatalf("interactive argv = %#v, want %#v", fake.interactive, want)
+	}
+}
+
+func TestWorktreeReportsSkippedPathsWhenNoneRemain(t *testing.T) {
+	postgres := `[{"id":"agentops-postgres","configuration":{"labels":` +
+		`{"com.mrbaron3.workflow.agentopsctl":"v1"}},"status":{"state":"running",` +
+		`"networks":[{"network":"agentops-internal","ipv4Address":"192.0.2.10/24"}]}}]`
+	progress := `{"items":[{"worktreePath":"/home/operator/local-checkout"}]}`
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{
+		{Status: 0, Stdout: "container 0.12.0"},
+		{Status: 0},
+		{Status: 0, Stdout: postgres},
+		{Status: 0, Stdout: progress},
+	}}
+	subject := newManager(testManagerConfig(), lifecycle.NewAppleRuntimeForTest(fake))
+
+	err := subject.Worktree(context.Background(), "mrbaron3/forma", 8, false, true)
+	if err == nil {
+		t.Fatal("expected an error when every recorded path was skipped")
+	}
+	if !strings.Contains(err.Error(), "outside the runner volume") {
+		t.Fatalf("error = %v, want it to report the skipped paths", err)
+	}
+	if len(fake.interactive) != 0 {
+		t.Fatalf("interactive argv = %#v, want none", fake.interactive)
+	}
+}

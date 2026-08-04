@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { Lease, RunnerJobPayloadV1 } from '../src/control-store/types.js';
 import { verifyArtifactReferences } from '../src/runner/artifacts.js';
 import {
+  DEFAULT_RETAINED_WORKSPACE_TTL_MS,
   RunnerWorkspaceManager,
   artifactUri,
   registrationWorkspacePath,
@@ -376,6 +377,88 @@ describe('Registration-rooted runner workspace', () => {
       path.join(path.dirname(retained.worktreePath), 'workspace.json'),
       'utf8',
     ))).toMatchObject({ state: 'retained', eventKind: 'issue', eventNumber: 14 });
+  });
+
+  it('reclaims a retained attempt only after its inspection window elapses', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-retention-ttl-'));
+    const runner: WorkspaceCommandRunner = (command, args) => {
+      if (args[0] === 'clone') fs.mkdirSync(String(args.at(-1)), { recursive: true });
+      if (args.includes('add')) {
+        const index = args.indexOf('add');
+        fs.mkdirSync(String(args[index + 4]), { recursive: true });
+      }
+      if (args.includes('rev-parse')) return { status: 0, stdout: `${sha}\n`, stderr: '' };
+      if (args.includes('get-url')) {
+        return { status: 0, stdout: 'https://github.com/mrbaron3/workflow.git\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    const environment = { PATH: '/usr/bin' };
+    const manager = new RunnerWorkspaceManager(root, environment, runner);
+    const retained = manager.prepare(lease(), payload());
+    fs.writeFileSync(path.join(retained.harnessPath, 'evidence.json'), '{}\n');
+    manager.retain(retained, payload());
+    const manifestPath = path.join(path.dirname(retained.worktreePath), 'workspace.json');
+    const retainedAt = Date.parse(
+      JSON.parse(fs.readFileSync(manifestPath, 'utf8')).retainedAt,
+    );
+
+    // Inside the window the operator's checkout is untouchable, even though no
+    // later job for this event ever succeeds to release it opportunistically.
+    expect(manager.pruneExpiredRetainedWorkspaces(
+      retained.registrationRoot,
+      retained.repositoryPath,
+      retainedAt + DEFAULT_RETAINED_WORKSPACE_TTL_MS - 1,
+    )).toEqual([]);
+    expect(fs.existsSync(retained.worktreePath)).toBe(true);
+
+    const reclaimed = manager.pruneExpiredRetainedWorkspaces(
+      retained.registrationRoot,
+      retained.repositoryPath,
+      retainedAt + DEFAULT_RETAINED_WORKSPACE_TTL_MS,
+    );
+
+    expect(reclaimed).toEqual([path.dirname(retained.worktreePath)]);
+    expect(fs.existsSync(retained.worktreePath)).toBe(false);
+    expect(fs.existsSync(retained.harnessPath)).toBe(false);
+    expect(JSON.parse(fs.readFileSync(manifestPath, 'utf8')))
+      .toMatchObject({ state: 'cleaned', retainedAt: null });
+    // Already reclaimed: a second sweep is a no-op, not a repeated deletion.
+    expect(manager.pruneExpiredRetainedWorkspaces(
+      retained.registrationRoot,
+      retained.repositoryPath,
+      retainedAt + DEFAULT_RETAINED_WORKSPACE_TTL_MS * 10,
+    )).toEqual([]);
+  });
+
+  it('never reclaims a retained attempt when retention expiry is disabled', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-retention-off-'));
+    const runner: WorkspaceCommandRunner = (command, args) => {
+      if (args[0] === 'clone') fs.mkdirSync(String(args.at(-1)), { recursive: true });
+      if (args.includes('add')) {
+        const index = args.indexOf('add');
+        fs.mkdirSync(String(args[index + 4]), { recursive: true });
+      }
+      if (args.includes('rev-parse')) return { status: 0, stdout: `${sha}\n`, stderr: '' };
+      if (args.includes('get-url')) {
+        return { status: 0, stdout: 'https://github.com/mrbaron3/workflow.git\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    };
+    const manager = new RunnerWorkspaceManager(
+      root,
+      { PATH: '/usr/bin', AGENTOPS_RUNNER_RETAINED_WORKSPACE_TTL_MS: '0' },
+      runner,
+    );
+    const retained = manager.prepare(lease(), payload());
+    manager.retain(retained, payload());
+
+    expect(manager.pruneExpiredRetainedWorkspaces(
+      retained.registrationRoot,
+      retained.repositoryPath,
+      Date.now() + DEFAULT_RETAINED_WORKSPACE_TTL_MS * 100,
+    )).toEqual([]);
+    expect(fs.existsSync(retained.worktreePath)).toBe(true);
   });
 
   it('accepts exact artifact digest/size and rejects tampering or cross-Registration reuse', () => {

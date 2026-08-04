@@ -291,6 +291,9 @@ type RegistrationProjection struct {
 	LastJobFailure               *JobFailureProjection          `json:"lastJobFailure"`
 	RecentDeliveryFailures       []DeliveryFailureProjection    `json:"recentDeliveryFailures"`
 	DevelopmentProgress          []DevelopmentIssueProgress     `json:"developmentProgress"`
+	// True when the registration has more Issues with durable progress than
+	// the card shows, so the operator knows to reach for `agentopsctl progress`.
+	DevelopmentProgressTruncated bool `json:"developmentProgressTruncated"`
 }
 
 // DevelopmentIssueProgress groups a current Issue state with history from the

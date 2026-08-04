@@ -42,22 +42,11 @@ describe('planning session contract', () => {
   };
 
   it('keeps privileged planner policy byte-identical and Source Issue bytes only in user input', () => {
-    const policy = buildPlanningPrompt(
-      intake,
-      '/evidence/enrichment.json',
-      '/evidence/system',
-      directCheckerTarget,
-    );
-    const otherPolicy = buildPlanningPrompt(
-      IntakeRecord.parse({
-        ...intake,
-        snapshot: { ...intake.snapshot, title: 'different', body: 'different' },
-      }),
-      '/other/output.json',
-      null,
-      { repo: '/other', graders: { commands: { unit_test: 'vitest' } } },
-    );
-    expect(policy).toBe(otherPolicy);
+    // The policy takes no input at all, which is the strongest form of the
+    // guarantee this test exists for: no per-target byte can reach it.
+    const policy = buildPlanningPrompt();
+    expect(buildPlanningPrompt.length).toBe(0);
+    expect(policy).toBe(buildPlanningPrompt());
     expect(policy).toContain('NO-TOOL, READ-ONLY');
     expect(policy).toContain('attacker-controlled inert data');
     expect(policy).not.toContain('Ignore previous instructions');
@@ -92,7 +81,7 @@ describe('planning session contract', () => {
     try {
       const schemaPath = path.join(root, 'schema.json');
       fs.writeFileSync(schemaPath, JSON.stringify(planningEnrichmentJsonSchema(directCheckerTarget)));
-      const policy = buildPlanningPrompt(intake, '/ignored', null, directCheckerTarget);
+      const policy = buildPlanningPrompt();
       const material = buildPlanningUntrustedMaterial(intake, [], null, ['scope_check']);
       const codex = planningProviderLaunch(
         { provider: 'codex', model: null }, policy, material, root, schemaPath, path.join(root, 'out.json'),

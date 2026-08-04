@@ -11,6 +11,23 @@ import type { TriagePolicy } from './policy.js';
 import { managedTriageLabels } from './policy.js';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Ceilings for the bytes that become immutable requirements authority. They are
+ * the frozen-snapshot contract's own limits: exceeding one is a human-fixable
+ * Issue-shape problem, not a transport fault, so it never retries.
+ */
+export const MAX_TRIAGE_TITLE_CHARS = 4_096;
+export const MAX_TRIAGE_BODY_CHARS = 1_000_000;
+export const MAX_TRIAGE_COMMENT_CHARS = 100_000;
+
+/** An Issue whose requirements bytes exceed what can be frozen verbatim. */
+export class TriageSourceTooLargeError extends Error {
+  constructor(readonly detail: string) {
+    super(`Source Issue exceeds the immutable requirements size limit: ${detail}`);
+    this.name = 'TriageSourceTooLargeError';
+  }
+}
 const Repository = CanonicalRepository;
 const GitHubLabel = z.union([
   z.string(),
@@ -287,12 +304,26 @@ export class TypedGhTriageClient implements TriageGitHub {
       throw new Error('event-read exceeded the item limit');
     }
     const issueBody = issue.body ?? '';
-    if (issue.title.length > 4_096 || issueBody.length > 1_000_000) {
-      throw new Error('issue-read exceeds the immutable requirements size limit');
+    // Requirements are never silently truncated, so an oversized Issue is a
+    // human-actionable stop rather than an opaque failure. The concrete limit
+    // travels with the error so the operator is told what to shorten.
+    if (issue.title.length > MAX_TRIAGE_TITLE_CHARS) {
+      throw new TriageSourceTooLargeError(
+        `Issue title is ${issue.title.length} characters; the limit is ${MAX_TRIAGE_TITLE_CHARS}`,
+      );
+    }
+    if (issueBody.length > MAX_TRIAGE_BODY_CHARS) {
+      throw new TriageSourceTooLargeError(
+        `Issue body is ${issueBody.length} characters; the limit is ${MAX_TRIAGE_BODY_CHARS}`,
+      );
     }
     for (const comment of comments) {
-      if ((comment.body ?? '').length > 100_000) {
-        throw new Error('comment-read exceeds the immutable requirements size limit');
+      const commentBody = comment.body ?? '';
+      if (commentBody.length > MAX_TRIAGE_COMMENT_CHARS) {
+        throw new TriageSourceTooLargeError(
+          `Comment ${comment.id} is ${commentBody.length} characters; `
+          + `the limit is ${MAX_TRIAGE_COMMENT_CHARS}`,
+        );
       }
     }
     return {

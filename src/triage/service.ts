@@ -17,6 +17,7 @@ import {
   hasTriageMarker,
   triageMarker,
   triageSourceDigest,
+  TriageSourceTooLargeError,
   type TriageGitHub,
   type TriageSnapshot,
 } from './github.js';
@@ -403,14 +404,22 @@ export class TriageRunnerService {
       ...sourceIssueCore,
       digest: releaseSourceIssueSnapshotDigest(sourceIssueCore),
     });
+    const parentIssueNumber = linkedParentIssueNumber(
+      sourceIssue.body,
+      sourceIssue.number,
+    );
+    // Announced as in-flight, never as done: the freeze is only a fact once the
+    // database has bound the snapshot to a promoted job below. Reporting
+    // `succeeded` first would leave a durable event asserting a freeze that a
+    // failed promotion never performed.
     await reportProgress({
       eventKey: 'triage:ready-authority-frozen',
       phase: 'intake',
       step: 'ready authority frozen',
-      state: 'succeeded',
-      summary: `Immutable requirements captured for ${repository}#${payload.issue.number}`,
-      nextGate: 'isolated development runner lease',
-      parentIssueNumber: linkedParentIssueNumber(sourceIssue.body, sourceIssue.number),
+      state: 'running',
+      summary: `Freezing immutable requirements for ${repository}#${payload.issue.number}`,
+      nextGate: 'durable release authority',
+      parentIssueNumber,
     });
     const promotedJobId = await this.dependencies.store.promoteTriageLease({
       token: lease.token,
@@ -425,10 +434,43 @@ export class TriageRunnerService {
         ...(triageAuthority ? { triage: triageAuthority } : {}),
       },
     });
+    // No completion event is published here: promotion closes this very lease,
+    // and `record_development_progress` accepts writes only from a live one.
+    // The runner's own `intake:runner-start` is the next durable transition.
     this.log(
       `triage promoted ${repository}#${payload.issue.number} `
       + `to development job ${promotedJobId}`,
     );
+  }
+
+  /**
+   * Read the Issue, converting an over-limit Source Issue into an operator-facing
+   * blocker before it surfaces as an opaque job failure. The limit is a property
+   * of the Issue's own text, so it can only be resolved by a human shortening it.
+   */
+  private async readTriageSnapshot(
+    repository: string,
+    issueNumber: number,
+    reportProgress: (event: DevelopmentProgressUpdate) => Promise<void>,
+  ): Promise<TriageSnapshot> {
+    try {
+      return await this.dependencies.github.snapshot(repository, issueNumber);
+    } catch (error) {
+      if (!(error instanceof TriageSourceTooLargeError)) throw error;
+      await reportProgress({
+        eventKey: 'triage:source-too-large',
+        phase: 'human-review',
+        step: 'Source Issue exceeds the frozen requirements limit',
+        state: 'blocked',
+        summary: `${repository}#${issueNumber} cannot be frozen verbatim`,
+        blocker: boundedProgressBlocker([
+          error.detail,
+          'Requirements are never truncated, so the Issue text itself must be shortened.',
+        ]),
+        nextGate: 'human shortens the Issue or moves the detail into a linked document',
+      });
+      throw new RunnerExecutionError('provider_failure', error.message, false);
+    }
   }
 
   private async processLease(lease: Lease): Promise<void> {
@@ -490,9 +532,10 @@ export class TriageRunnerService {
           false,
         );
       }
-      const snapshot = await this.dependencies.github.snapshot(
+      const snapshot = await this.readTriageSnapshot(
         repository,
         payload.issue.number,
+        reportProgress,
       );
       if (
         snapshot.issue.number !== payload.issue.number
@@ -541,9 +584,10 @@ export class TriageRunnerService {
         return;
       }
       if (snapshot.issue.labels.includes(this.dependencies.policy.readyLabel)) {
-        const current = await this.dependencies.github.snapshot(
+        const current = await this.readTriageSnapshot(
           repository,
           payload.issue.number,
+          reportProgress,
         );
         assertPromotionEligibility(
           current,
@@ -619,9 +663,10 @@ export class TriageRunnerService {
       const providerProvenance = !this.config.providerProvenance
         ? null
         : { ...this.config.providerProvenance, attemptId: lease.attemptId };
-      const current = await this.dependencies.github.snapshot(
+      const current = await this.readTriageSnapshot(
         repository,
         payload.issue.number,
+        reportProgress,
       );
       if (current.issue.labels.includes(this.dependencies.policy.readyLabel)) {
         await this.promote(

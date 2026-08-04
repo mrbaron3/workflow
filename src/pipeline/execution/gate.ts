@@ -193,6 +193,11 @@ export interface ProjectReviewRevisionInput extends OpenGateInput {
   sampleIndex?: number;
 }
 
+/** GitHub rejects a longer pull request body; stay under it with headroom. */
+export const MAX_REVIEW_PR_BODY_CHARS = 60_000;
+/** GitHub rejects a longer pull request title. */
+export const MAX_REVIEW_PR_TITLE_CHARS = 256;
+
 export interface ReviewPrRenderContext {
   baseBranch: string;
   headBranch: string;
@@ -515,78 +520,93 @@ export function renderReviewPrBody(
   const architectureDependencies = issue.dependsOnSystem
     .filter((dependency) => /^(?:ARCH|DATA|DOM|LANG)-/.test(dependency));
   const changedFiles = [...new Set(context?.changedFiles ?? [])].sort();
-  const visibleChangedFiles = changedFiles.slice(0, 100);
-  const lines = [
-    '## Summary',
-    '',
-    `- **Product goal:** ${markdownText(contract.productGoal)}`,
-    `- **User story:** ${markdownText(contract.userStory)}`,
-    `- **Work unit:** ${markdownText(issue.title)}`,
-    '',
-    `Changed files recorded from the committed build: **${changedFiles.length}**`,
-    '',
-    '| Path | Projection |',
-    '| --- | --- |',
-    ...(visibleChangedFiles.length > 0
-      ? visibleChangedFiles.map((file) => `| ${markdownText(file)} | generated revision |`)
-      : ['| — | no changed file was reported |']),
-    ...(changedFiles.length > visibleChangedFiles.length
-      ? [`| … | ${changedFiles.length - visibleChangedFiles.length} additional files; inspect the GitHub diff |`]
-      : []),
-    '',
-    'This pull request is managed by the AgentOps current-head review and bounded repair loop.',
-    'Only an exact reviewed head may be merged.',
-    '',
-    '## Architecture baseline',
-    '',
-    '| Boundary | Before | After |',
-    '| --- | --- | --- |',
-    `| Revision | Base branch \`${markdownCode(revision.baseBranch)}\` | Generated branch \`${markdownCode(revision.headBranch)}\` at \`${markdownCode(revision.headSha)}\` |`,
-    `| Declared include scope | Existing repository state | ${includeScope} |`,
-    `| Declared exclusions | Existing repository state | ${excludeScope} |`,
-    '',
-    'Repository-specific architecture counters are not inferred or fabricated.',
-    'Any baseline explicitly required by the frozen Source Issue remains a validation obligation.',
-    '',
-    '## Applicable ADRs',
-    '',
-  ];
-  if (declaredAdrs.length > 0) {
-    lines.push(...declaredAdrs.map((reference) => `- ${markdownText(reference)}`));
-  } else {
-    lines.push('- No explicit ADR identifier was declared in the frozen Source Issue or accepted contract.');
-  }
-  if (architectureDependencies.length > 0) {
+  const composeHead = (fileLimit: number, criterionLimit: number): string[] => {
+    const visibleChangedFiles = changedFiles.slice(0, fileLimit);
+    const visibleCriteria = contract.acceptanceCriteria.slice(0, criterionLimit);
+    const lines = [
+      '## Summary',
+      '',
+      `- **Product goal:** ${markdownText(contract.productGoal)}`,
+      `- **User story:** ${markdownText(contract.userStory)}`,
+      `- **Work unit:** ${markdownText(issue.title)}`,
+      '',
+      `Changed files recorded from the committed build: **${changedFiles.length}**`,
+      '',
+      '| Path | Projection |',
+      '| --- | --- |',
+      ...(visibleChangedFiles.length > 0
+        ? visibleChangedFiles.map((file) => `| ${markdownText(file)} | generated revision |`)
+        : ['| — | no changed file was reported |']),
+      ...(changedFiles.length > visibleChangedFiles.length
+        ? [`| … | ${changedFiles.length - visibleChangedFiles.length} additional files; inspect the GitHub diff |`]
+        : []),
+      '',
+      'This pull request is managed by the AgentOps current-head review and bounded repair loop.',
+      'Only an exact reviewed head may be merged.',
+      '',
+      '## Architecture baseline',
+      '',
+      '| Boundary | Before | After |',
+      '| --- | --- | --- |',
+      `| Revision | Base branch \`${markdownCode(revision.baseBranch)}\` | Generated branch \`${markdownCode(revision.headBranch)}\` at \`${markdownCode(revision.headSha)}\` |`,
+      `| Declared include scope | Existing repository state | ${includeScope} |`,
+      `| Declared exclusions | Existing repository state | ${excludeScope} |`,
+      '',
+      'Repository-specific architecture counters are not inferred or fabricated.',
+      'Any baseline explicitly required by the frozen Source Issue remains a validation obligation.',
+      '',
+      '## Applicable ADRs',
+      '',
+    ];
+    if (declaredAdrs.length > 0) {
+      lines.push(...declaredAdrs.map((reference) => `- ${markdownText(reference)}`));
+    } else {
+      lines.push('- No explicit ADR identifier was declared in the frozen Source Issue or accepted contract.');
+    }
+    if (architectureDependencies.length > 0) {
+      lines.push(
+        `- Accepted architecture dependencies: ${architectureDependencies.map(markdownText).join(', ')}`,
+      );
+    }
+    if (contract.redLines.length > 0) {
+      lines.push('', 'Contract guardrails:', ...contract.redLines.map((line) => `- ${markdownText(line)}`));
+    }
     lines.push(
-      `- Accepted architecture dependencies: ${architectureDependencies.map(markdownText).join(', ')}`,
+      '',
+      '## Validation',
+      '',
+      '| Criterion | Severity | Method | Required outcome |',
+      '| --- | --- | --- | --- |',
+      ...visibleCriteria.map((criterion) => (
+        `| ${markdownText(criterion.id)} | ${markdownText(criterion.severity)} | `
+        + `${markdownText(criterion.verification.method)} | `
+        + `${criterion.verification.expected.map(markdownText).join('<br>')} |`
+      )),
+      ...(contract.acceptanceCriteria.length > visibleCriteria.length
+        ? [`| … | | | ${contract.acceptanceCriteria.length - visibleCriteria.length} additional criteria; read the accepted contract |`]
+        : []),
+      '',
+      'Status at PR creation: **pending current-head validation**.',
+      'AgentOps runs repository graders, required review perspectives, GitHub checks, and blocking-thread reconciliation before merge.',
+      '',
+      '## Rollback',
+      '',
+      '- Default code rollback: revert the merge commit for this pull request.',
+      '- AgentOps does not infer or execute destructive data rollback; repository-specific migration recovery instructions remain authoritative.',
     );
-  }
-  if (contract.redLines.length > 0) {
-    lines.push('', 'Contract guardrails:', ...contract.redLines.map((line) => `- ${markdownText(line)}`));
-  }
-  lines.push(
-    '',
-    '## Validation',
-    '',
-    '| Criterion | Severity | Method | Required outcome |',
-    '| --- | --- | --- | --- |',
-    ...contract.acceptanceCriteria.map((criterion) => (
-      `| ${markdownText(criterion.id)} | ${markdownText(criterion.severity)} | `
-      + `${markdownText(criterion.verification.method)} | `
-      + `${criterion.verification.expected.map(markdownText).join('<br>')} |`
-    )),
-    '',
-    'Status at PR creation: **pending current-head validation**.',
-    'AgentOps runs repository graders, required review perspectives, GitHub checks, and blocking-thread reconciliation before merge.',
-    '',
-    '## Rollback',
-    '',
-    '- Default code rollback: revert the merge commit for this pull request.',
-    '- AgentOps does not infer or execute destructive data rollback; repository-specific migration recovery instructions remain authoritative.',
-    '',
+    return lines;
+  };
+
+  // GitHub caps a pull request body at 65536 characters. The changed-file and
+  // criterion tables are the only unbounded sections and they are a reading
+  // convenience; the tracking coordinates, work-identity marker, and closing
+  // keyword below are load-bearing and are never dropped. Shrink the tables —
+  // and, as a last resort, the descriptive head — instead of failing a
+  // projection whose PR is otherwise complete and correct.
+  const lines: string[] = [
     '## Tracking',
     '',
-  );
+  ];
   if (source) {
     lines.push(`- Source Issue: ${source.snapshot.repository}#${source.snapshot.number}`);
   } else {
@@ -607,11 +627,27 @@ export function renderReviewPrBody(
     const relation = source.storeIssueIds.length === 1 ? 'Closes' : 'Refs';
     lines.push('', `${relation} ${source.snapshot.repository}#${source.snapshot.number}`);
   }
-  const body = lines.join('\n');
-  if (body.length > 60_000) {
-    throw new Error(`${issueId} generated pull request body exceeds 60000 characters`);
+  const tail = lines.join('\n');
+  const criteria = contract.acceptanceCriteria.length;
+  for (const [fileLimit, criterionLimit] of [
+    [100, criteria],
+    [25, criteria],
+    [25, 25],
+    [0, 10],
+    [0, 0],
+  ]) {
+    const body = `${composeHead(fileLimit!, criterionLimit!).join('\n')}\n\n${tail}`;
+    if (body.length <= MAX_REVIEW_PR_BODY_CHARS) return body;
   }
-  return body;
+  // Contract prose alone can exceed the budget. Cut the head at a line boundary
+  // and say so, so the tail — identity, tracking, and closing keyword — always
+  // survives intact.
+  const notice = '\n\n_Body truncated to fit GitHub\'s pull request size limit._';
+  const head = composeHead(0, 0).join('\n');
+  const budget = MAX_REVIEW_PR_BODY_CHARS - tail.length - notice.length - 2;
+  const cut = head.slice(0, Math.max(0, budget));
+  const trimmed = cut.slice(0, Math.max(0, cut.lastIndexOf('\n')));
+  return `${trimmed}${notice}\n\n${tail}`;
 }
 
 /** Stable user-facing title. Never expose job-local ISSUE-N identifiers to GitHub. */
@@ -625,10 +661,14 @@ export function renderReviewPrTitle(store: Store, issueId: string): string {
       ? `[${issue.planningCandidateKey.replace(/\]/g, '-')}] ${issue.title}`
       : issue.title;
   const title = raw.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  if (title.length === 0 || title.length > 256) {
-    throw new Error(`${issueId} generated pull request title must contain 1..256 characters`);
+  // An empty title is a projection defect and stays fatal. An over-long one is
+  // ordinary Source Issue prose: truncate it rather than fail the PR.
+  if (title.length === 0) {
+    throw new Error(`${issueId} generated pull request title is empty`);
   }
-  return title;
+  return title.length <= MAX_REVIEW_PR_TITLE_CHARS
+    ? title
+    : `${title.slice(0, MAX_REVIEW_PR_TITLE_CHARS - 1).trimEnd()}…`;
 }
 
 function markdownText(value: string): string {

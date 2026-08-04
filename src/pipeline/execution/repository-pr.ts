@@ -220,8 +220,13 @@ function sourceIssueContract(
   });
 }
 
+/**
+ * Requirements bytes for the low-trust reviewer channel. Deliberately takes only
+ * the frozen snapshot and its digest: the material is bound to the Source Issue,
+ * not to a pull request, so callers must not have to invent a PR number to build it.
+ */
 export function sourceIssueReviewMaterial(
-  authority: RepositoryPullRequestIssueAuthority,
+  authority: Pick<RepositoryPullRequestIssueAuthority, 'issue' | 'sourceDigest'>,
 ): string {
   return [
     '--- BEGIN UNTRUSTED SOURCE ISSUE REQUIREMENTS DATA ---',

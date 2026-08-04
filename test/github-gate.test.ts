@@ -32,6 +32,7 @@ import {
   pushGeneratedBranch,
   realGhGateRunner,
   renderGatePrBody,
+  MAX_REVIEW_PR_BODY_CHARS,
   renderReviewPrBody,
   renderReviewPrTitle,
   type GateCommandRunner,
@@ -792,8 +793,38 @@ describe('projectReviewRevision: PR exists before perspective review', () => {
     expect(body).not.toContain('ADROOPS');
     expect(body).toContain('never \\<script\\>');
 
+    // An oversized contract truncates rather than failing the PR projection, and
+    // the load-bearing tail — tracking coordinates and the closing keyword —
+    // survives intact so the PR still binds to its Source Issue.
     issue.contract!.productGoal = 'x'.repeat(60_001);
-    expect(() => renderReviewPrBody(store, 'ISSUE-1')).toThrow(/exceeds 60000/);
+    const bounded = renderReviewPrBody(store, 'ISSUE-1');
+    expect(bounded.length).toBeLessThanOrEqual(MAX_REVIEW_PR_BODY_CHARS);
+    expect(bounded).toContain('Body truncated to fit');
+    expect(bounded).toContain('## Tracking');
+    expect(bounded).toContain('Closes o/r#9');
+  });
+
+  it('shrinks the generated tables before it truncates descriptive prose', () => {
+    const store = tmpStore('review-body-table-shrink');
+    seedGatedIssue(store, 'ISSUE-1', null);
+    seedIntake(store, 'ISSUE-1', 9);
+    const changedFiles = Array.from(
+      { length: 400 },
+      (_, index) => `src/generated/module-${index}/${'segment/'.repeat(20)}index.ts`,
+    );
+
+    const body = renderReviewPrBody(store, 'ISSUE-1', null, {
+      baseBranch: 'main',
+      headBranch: 'agent/issue-1',
+      headSha: 'a'.repeat(40),
+      changedFiles,
+    });
+
+    expect(body.length).toBeLessThanOrEqual(MAX_REVIEW_PR_BODY_CHARS);
+    expect(body).toContain('Changed files recorded from the committed build: **400**');
+    expect(body).toContain('additional files; inspect the GitHub diff');
+    expect(body).not.toContain('Body truncated to fit');
+    expect(body).toContain('Closes o/r#9');
   });
 
   it('uses a stable user-facing title instead of a job-local ISSUE identifier', () => {

@@ -138,6 +138,42 @@ development runner（別capability、private workspace、ACTIVEだけ）
 
    親Epicを`worktree`へ渡すと、任意の子を暗黙選択せず対象子Issueの明示を要求する。
    保持されたattemptは別pathなので、再試行や別Issueの修正とは干渉しない。
+   保持されたattemptは既定で14日後にrunnerが自動回収する（`AGENTOPS_RUNNER_RETAINED_WORKSPACE_TTL_MS`、
+   `0`で無効）。長く残す必要があるなら、その前にworktreeの内容を退避しておく。
+
+## control schema 17へのupgrade（破壊的・一度きり）
+
+control schema 17は**ready時点のSource Issueを凍結した要件authority**を全releaseに必須化する。
+schema 17より前に作られたreleaseはその受領証を持たず、後から遡って作ることもできない
+（凍結すべき「ready時点のIssue本文」がもう残っていない）。したがってmigration 0017は
+**進行中のrelease（`collecting` / `merge-authorized`）を全件`abandoned`にする**。
+
+**upgrade前に必ずdrainする。**
+
+```sh
+mise run drain    # 実行中のjobを完走させてからstop
+mise run stop
+# ここでupgrade（mise run active -- --build）
+```
+
+drainせずにupgradeした場合、またはdrain中にreadyが付いていたIssueがある場合は、
+**GitHub側のlabelはmigrationからは触れない**ので次の状態が残る:
+
+- Issueに`claimed` labelが付いたまま
+- 対応するreleaseは`abandoned`（terminal）
+- 既に開いていたPRはそのまま残る（release識別子とは切り離される）
+
+回収手順（Issueごとに人間が行う）:
+
+1. `mise run progress -- <owner>/<repo>#<番号>` で状態を確認する。migration 0017が
+   この回収手順を説明するdurable progress eventを書き込んでいる。
+2. 残っているPRを見て、continueするかcloseするかを決める。
+3. `claimed` labelを外す。
+4. 要件を確認し、改めて`ready` labelを付け直す。これが新しいready authorityとなり、
+   その時点のIssue本文が新しいreleaseへ凍結される。
+
+`ready`を貼り直さない限りIssueは再開しない。これは意図された fail-closed であり、
+人間の再承認なしに古い（もう検証できない）要件で実装を続けないための境界である。
 
 ## 最初に流すIssue
 

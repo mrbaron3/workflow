@@ -56,6 +56,7 @@ export {
   MAX_UNTRUSTED_REVIEW_MATERIAL_BYTES,
   STATIC_REVIEW_DIFF_CONTEXT_LINES,
   prepareRestrictedReviewExecution,
+  RESTRICTED_REVIEW_API_KEY_OPT_IN,
   restrictedPerspectivePrompt,
   restrictedReviewLaunch,
   restrictedReviewUserMaterial,
