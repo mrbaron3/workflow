@@ -59,6 +59,7 @@ import {
   type RepositoryPullRequestIssueAuthority,
 } from '../pipeline/execution/repository-pr.js';
 import type { DevelopmentProgressReporter } from '../domain/development-progress.js';
+import type { ExternalWorkIdentity } from '../pipeline/execution/work-identity.js';
 
 export interface PlanningRunnerInput {
   intake: IntakeRecord;
@@ -211,6 +212,7 @@ export async function runGithubDevelopmentTurn(
 ): Promise<GithubDevelopmentTurnResult> {
   const prNativeRunner = deps.prNativeRunner
     ?? realPrNativeGithubRunner(config.gate?.mergeMethod);
+  const repositoryRepairIdentities: Record<string, ExternalWorkIdentity> = {};
   if ((config.gate?.backend ?? 'store') === 'github' && config.target) {
     const targetRoot = path.resolve(harnessRoot, config.target.repo);
     const discoveries = deps.discoverPullRequests === false
@@ -265,6 +267,9 @@ export async function runGithubDevelopmentTurn(
           `⇩ discovered ${discovery.pr.id} from repository PR `
           + `#${discovery.pullRequest.number}@${discovery.revision.headSha.slice(0, 12)}`,
         );
+      }
+      if (discovery.repairIdentity) {
+        repositoryRepairIdentities[discovery.issue.id] = discovery.repairIdentity;
       }
       if (discovery.reviewRequired) await review(discovery);
     }
@@ -563,7 +568,7 @@ export async function runGithubDevelopmentTurn(
       store,
       config,
       harnessRoot,
-      { ...deps.liveOptions, prNativeRunner },
+      { ...deps.liveOptions, prNativeRunner, repositoryRepairIdentities },
       log,
     ));
   const driveResults = await driveQueue();

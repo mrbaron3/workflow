@@ -36,6 +36,12 @@ import {
   repositoryGraderProfileEvidence,
 } from '../src/runner/adapter.js';
 import { Store, nowISO } from '../src/store/store.js';
+import {
+  projectedWorkIdentity,
+  renderWorkIdentityMarker,
+  sampleKey,
+  type ExternalWorkIdentity,
+} from '../src/pipeline/execution/work-identity.js';
 
 const roots: string[] = [];
 const SHA_A = 'a'.repeat(40);
@@ -1160,6 +1166,75 @@ describe('repository-wide pull request discovery', () => {
         changed: ['src/state.ts', 'test/state.test.ts'],
       }).scopeViolations,
     ).toEqual([]);
+  });
+
+  it('SOURCE-ISSUE repairs only an exactly identified release-owned AgentOps PR', async () => {
+    const env = setup();
+    const identity: ExternalWorkIdentity = {
+      repository: 'acme/theme',
+      issueNumber: 8,
+      intakeKey: 'github:acme%2Ftheme:8',
+      workUnitKey: 'source',
+      releaseId: 'f8d7a520-f0b5-4ebe-9fae-e20510ee5159',
+    };
+    env.pulls[0]!.headRefName = `agent/${sampleKey('unused', 0, identity)}`;
+    env.pulls[0]!.body = [
+      renderWorkIdentityMarker(projectedWorkIdentity(identity, 0)),
+      'Closes acme/theme#8',
+    ].join('\n\n');
+    const discovery = discoverRepositoryPullRequests(
+      env.store,
+      env.config,
+      env.runner,
+      env.root,
+      {
+        pullRequestNumber: 9,
+        sourceDigest: 'd'.repeat(64),
+        issue: GithubIssueSnapshot.parse({
+          repository: 'acme/theme',
+          number: 8,
+          externalId: 'I_source',
+          title: 'Immutable state contract',
+          body: 'Authoritative acceptance criteria',
+          url: 'https://github.com/acme/theme/issues/8',
+          labels: ['agent-claimed'],
+          state: 'open',
+          sourceUpdatedAt: '2026-08-03T08:00:00.000Z',
+          snapshotAt: '2026-08-03T08:01:00.000Z',
+        }),
+      },
+    )[0]!;
+
+    expect(discovery).toMatchObject({
+      repairIdentity: identity,
+      issue: { assignedAgent: 'codex' },
+      pr: { origin: 'repository-discovery', agentGeneratedHeadSha: SHA_A },
+    });
+    enterRepositoryPrEvaluation(env.store, discovery.issue);
+    env.store.setStatus(discovery.issue.id, 'changes-requested');
+    let repairs = 0;
+    const results = await runLoopLive(env.store, env.config, env.root, {
+      repositoryRepairIdentities: {
+        [discovery.issue.id]: discovery.repairIdentity!,
+      },
+      driveIssue: async (issue) => {
+        repairs += 1;
+        return {
+          issueId: issue.id,
+          prId: discovery.pr.id,
+          verdict: 'approve',
+          status: 'needs-human-review',
+          gateFailed: false,
+          escalated: false,
+          attempts: 1,
+          exhausted: false,
+          sampleCount: 1,
+        };
+      },
+    });
+
+    expect(repairs).toBe(1);
+    expect(results).toHaveLength(1);
   });
 
   it('SOURCE-ISSUE fails closed when a PR no longer references its release Issue', () => {

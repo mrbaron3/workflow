@@ -53,8 +53,12 @@ import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
 import type { DevelopmentProgressReporter } from '../../domain/development-progress.js';
 import {
   canonicalGithubRepository,
+  parseWorkIdentityMarker,
   parsePullRequestClosingTarget,
+  sampleKey,
+  type ExternalWorkIdentity,
 } from './work-identity.js';
+import { githubIntakeKey } from '../../intake/github-issues.js';
 
 /** Trusted Source Issue authority resolved through a durable release/PR binding. */
 export interface RepositoryPullRequestIssueAuthority {
@@ -73,6 +77,8 @@ export interface RepositoryPullRequestDiscovery {
   reviewRequired: boolean;
   /** Requirements bytes are supplied only as inert restricted-review input. */
   sourceIssueMaterial: string | null;
+  /** Exact AgentOps identity authorizing repair of this release-bound current head. */
+  repairIdentity: ExternalWorkIdentity | null;
 }
 
 export interface RepositoryPullRequestReviewResult {
@@ -285,6 +291,7 @@ function createRepositoryReviewIssue(
   store: Store,
   config: HarnessConfig,
   pullRequest: GithubOpenPullRequest,
+  repairIdentity: ExternalWorkIdentity | null,
   authority?: RepositoryPullRequestIssueAuthority,
 ): IssueType {
   const timestamp = nowISO();
@@ -299,15 +306,42 @@ function createRepositoryReviewIssue(
     title: projection.title,
     area: 'fullstack',
     status: 'ready-for-evaluation',
-    // Repository-authored heads are attacker-controlled. Review them through the
-    // restricted no-tool path, but do not place them on the ordinary generator
-    // repair queue, whose provider process intentionally retains push authority.
-    assignedAgent: null,
+    // Only an exact AgentOps identity on a release-bound PR can re-enter the
+    // credential-bearing repair lane. Ordinary repository heads remain review-only.
+    assignedAgent: repairIdentity ? resolvedGeneratorProvider(config) : null,
     contract: projection.contract,
     implementationNotes: projection.implementationNotes,
     createdAt: timestamp,
     updatedAt: timestamp,
   }));
+}
+
+function trustedRepairIdentity(
+  pullRequest: GithubOpenPullRequest,
+  authority: RepositoryPullRequestIssueAuthority | undefined,
+  repository: string,
+): ExternalWorkIdentity | null {
+  if (!authority || authority.pullRequestNumber !== pullRequest.number) return null;
+  const projected = parseWorkIdentityMarker(pullRequest.body);
+  if (
+    !projected
+    || projected.releaseId === null
+    || projected.sampleIndex !== 0
+    || canonicalGithubRepository(projected.repository)
+      !== canonicalGithubRepository(repository)
+    || projected.issueNumber !== authority.issue.number
+    || projected.intakeKey !== githubIntakeKey(repository, authority.issue.number)
+  ) return null;
+  const identity: ExternalWorkIdentity = {
+    repository: projected.repository,
+    issueNumber: projected.issueNumber,
+    intakeKey: projected.intakeKey,
+    workUnitKey: projected.workUnitKey,
+    releaseId: projected.releaseId,
+  };
+  return pullRequest.headRefName === `agent/${sampleKey('repository-repair', 0, identity)}`
+    ? identity
+    : null;
 }
 
 function currentRevisionAttempted(
@@ -348,6 +382,11 @@ export function discoverRepositoryPullRequests(
 
   for (const pullRequest of pullRequests) {
     const repository = configuredRepository ?? repositoryFromPullRequest(pullRequest);
+    const candidateRepairIdentity = trustedRepairIdentity(
+      pullRequest,
+      authority,
+      repository,
+    );
     const projection = repositoryPrProjection(pullRequest, repository, authority);
     let pr = store.db.prs.find(
       (candidate) => candidate.externalRef?.provider === 'github'
@@ -366,6 +405,7 @@ export function discoverRepositoryPullRequests(
         store,
         config,
         pullRequest,
+        candidateRepairIdentity,
         authority,
       );
       const timestamp = nowISO();
@@ -376,6 +416,7 @@ export function discoverRepositoryPullRequests(
         baseBranch: pullRequest.baseRefName,
         generator: resolvedGeneratorProvider(config),
         origin: 'repository-discovery',
+        agentGeneratedHeadSha: candidateRepairIdentity ? pullRequest.headSha : null,
         attempts: 0,
         status: 'open',
         externalRef: projection.externalRef,
@@ -388,9 +429,12 @@ export function discoverRepositoryPullRequests(
 
     const issue = store.requireIssue(pr.issueId);
     if (pr.origin === 'repository-discovery') {
+      const repairIdentity = pr.agentGeneratedHeadSha === pullRequest.headSha
+        ? candidateRepairIdentity
+        : null;
       store.updateIssue(issue.id, {
         title: projection.title,
-        assignedAgent: null,
+        assignedAgent: repairIdentity ? resolvedGeneratorProvider(config) : null,
         contract: projection.contract,
         implementationNotes: projection.implementationNotes,
       });
@@ -416,6 +460,9 @@ export function discoverRepositoryPullRequests(
       reviewRequired: !currentRevisionAttempted(store, pr, revision),
       sourceIssueMaterial: authority?.pullRequestNumber === pullRequest.number
         ? sourceIssueReviewMaterial(authority)
+        : null,
+      repairIdentity: pr.agentGeneratedHeadSha === pullRequest.headSha
+        ? candidateRepairIdentity
         : null,
     });
   }
