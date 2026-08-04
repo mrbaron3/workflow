@@ -38,10 +38,10 @@ function fakeRunner(
 const fullSpec: ContainerSpec = {
   role: 'postgres',
   name: 'agentops-postgres',
-  image: 'postgres:16',
+  image: 'postgres:18.4-trixie',
   network: 'agentops-internal',
   publish: [{ hostIp: '127.0.0.1', hostPort: 17600, containerPort: 8080 }],
-  volumes: [{ volume: 'agentops-postgres-data', mountPath: '/var/lib/postgresql/data', readOnly: false }],
+  volumes: [{ volume: 'agentops-postgres-data', mountPath: '/var/lib/postgresql', readOnly: false }],
   env: { POSTGRES_PASSWORD: 'x' },
   workdir: '/app',
   command: ['postgres', '-c', 'max_connections=50'],
@@ -71,10 +71,10 @@ describe('container-runtime adapter — neutral argv translation', () => {
     expect(buildRunArgs(fullSpec)).toEqual([
       'run', '--detach', '--name', 'agentops-postgres', '--network', 'agentops-internal',
       '--publish', '127.0.0.1:17600:8080',
-      '--volume', 'agentops-postgres-data:/var/lib/postgresql/data',
+      '--volume', 'agentops-postgres-data:/var/lib/postgresql',
       '--env', 'POSTGRES_PASSWORD=x',
       '--workdir', '/app',
-      'postgres:16', 'postgres', '-c', 'max_connections=50',
+      'postgres:18.4-trixie', 'postgres', '-c', 'max_connections=50',
     ]);
   });
 

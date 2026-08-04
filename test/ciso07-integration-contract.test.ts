@@ -78,12 +78,12 @@ describe('CISO-07 integrated release source contracts', () => {
     expect(containerfile).toContain(' AS triage-runner');
     expect(containerfile).toContain(' AS github-broker');
     expect(containerfile).toContain(' AS postgres');
-    expect(containerfile).toContain('git=1:2.39.5-0+deb12u3');
+    expect(containerfile).toContain('git=1:2.47.3-0+deb13u1');
     expect(containerfile).toContain(
-      'snapshot.debian.org/archive/debian/20260714T000000Z',
+      'snapshot.debian.org/archive/debian/20260804T000000Z',
     );
     expect(containerfile).toContain(
-      'snapshot.debian.org/archive/debian-security/20260714T000000Z',
+      'snapshot.debian.org/archive/debian-security/20260804T000000Z',
     );
     expect(containerfile).toContain(
       'deploy/provider-cli/package-lock.json',
@@ -91,9 +91,9 @@ describe('CISO-07 integrated release source contracts', () => {
     expect(containerfile).toContain(
       'npm ci --omit=dev --ignore-scripts --prefix /opt/provider-cli',
     );
-    expect(containerfile).toContain('golang:1.26.5-bookworm@sha256:');
+    expect(containerfile).toContain('golang:1.26.5-trixie@sha256:');
     expect(containerfile).toContain(
-      'gcr.io/distroless/static-debian12:nonroot@sha256:',
+      'gcr.io/distroless/static-debian13:nonroot@sha256:',
     );
     expect(containerfile).toContain('USER 65532:65532');
     expect(containerfile).toContain('github.com/cli/cli/v2/cmd/gh');
@@ -110,13 +110,13 @@ describe('CISO-07 integrated release source contracts', () => {
     };
     expect(providerLock.packages['node_modules/@openai/codex']).toEqual(
       expect.objectContaining({
-        version: '0.145.0',
+        version: '0.146.0',
         integrity: expect.stringMatching(/^sha512-/),
       }),
     );
     expect(providerLock.packages['node_modules/@anthropic-ai/claude-code'])
       .toEqual(expect.objectContaining({
-        version: '2.1.220',
+        version: '2.1.221',
         integrity: expect.stringMatching(/^sha512-/),
       }));
 

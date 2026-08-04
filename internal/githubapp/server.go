@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/mrbaron3/workflow/internal/control"
 )
 
 const (
@@ -21,7 +23,8 @@ const (
 )
 
 type TokenIssuer interface {
-	Token(context.Context, Role) (TokenResponse, error)
+	Token(context.Context, Role, string) (TokenResponse, error)
+	ActorLogin() string
 }
 
 type Server struct {
@@ -50,6 +53,7 @@ func (server *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", server.health)
 	mux.HandleFunc("/v1/github-token", server.token)
+	mux.HandleFunc("/v1/github-actor", server.actor)
 	return securityHeaders(mux)
 }
 
@@ -92,7 +96,7 @@ func (server *Server) token(
 		maxBrokerRequestBytes,
 	)
 	if err != nil || input.SchemaVersion != SchemaVersion ||
-		!input.Role.Valid() {
+		!input.Role.Valid() || !control.ValidRepositoryIdentity(input.Repository) {
 		http.Error(response, "invalid request", http.StatusBadRequest)
 		return
 	}
@@ -101,7 +105,7 @@ func (server *Server) token(
 		http.Error(response, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	credential, err := server.issuer.Token(request.Context(), input.Role)
+	credential, err := server.issuer.Token(request.Context(), input.Role, input.Repository)
 	if err != nil {
 		http.Error(response, "credential unavailable", http.StatusServiceUnavailable)
 		return
@@ -114,6 +118,31 @@ func (server *Server) token(
 	if err := encoder.Encode(credential); err != nil {
 		return
 	}
+}
+
+func (server *Server) actor(response http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodPost || request.Header.Get("Content-Type") != "application/json" {
+		http.Error(response, "invalid request", http.StatusBadRequest)
+		return
+	}
+	request.Body = http.MaxBytesReader(response, request.Body, maxBrokerRequestBytes)
+	input, err := DecodeStrict[ActorRequest](request.Body, maxBrokerRequestBytes)
+	if err != nil || input.SchemaVersion != SchemaVersion || !input.Role.Valid() {
+		http.Error(response, "invalid request", http.StatusBadRequest)
+		return
+	}
+	expected, present := server.capabilities[input.Role]
+	if !present || !constantTimeBearer(request.Header.Get("Authorization"), expected) {
+		http.Error(response, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	response.Header().Set("Content-Type", "application/json")
+	response.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(response).Encode(ActorResponse{
+		SchemaVersion: SchemaVersion,
+		Role:          input.Role,
+		ActorLogin:    server.issuer.ActorLogin(),
+	})
 }
 
 func constantTimeBearer(header string, expected [sha256.Size]byte) bool {

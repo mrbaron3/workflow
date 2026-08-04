@@ -10,7 +10,7 @@ import {
   type ReleasePolicy,
 } from '../evidence/release-receipt.js';
 
-export const CONTROL_SCHEMA_VERSION = 18;
+export const CONTROL_SCHEMA_VERSION = 21;
 
 const RepositoryOwner = z.string()
   .min(1)
@@ -74,13 +74,36 @@ export const RepositoryRegistrationInput = z.object({
   executionEnabled: z.boolean().default(true),
   configuration: z.object({
     releaseEvidence: ReleasePolicyContract.optional(),
+    gateTimeoutSeconds: z.object({
+      default: z.number().int().min(60).max(2_592_000).optional(),
+      planning: z.number().int().min(60).max(2_592_000).optional(),
+      design: z.number().int().min(60).max(2_592_000).optional(),
+      'repository-graders': z.number().int().min(60).max(2_592_000).optional(),
+      review: z.number().int().min(60).max(2_592_000).optional(),
+      merge: z.number().int().min(60).max(2_592_000).optional(),
+      'lease-recovery': z.number().int().min(60).max(2_592_000).optional(),
+    }).strict().optional(),
   }).strict().default({}),
 });
 export type RepositoryRegistrationInput = z.infer<typeof RepositoryRegistrationInput>;
-export const RepositoryRegistrationPatch = RepositoryRegistrationInput
-  .omit({ repository: true })
-  .partial()
-  .refine((patch) => Object.keys(patch).length > 0, 'registration patch is empty');
+// Build the patch schema from the same leaf validators without carrying the
+// create-time defaults into partial updates. Zod 4 applies defaults inside
+// `.partial()`, which would otherwise turn `{ enabled: undefined }` into a
+// full default-valued update and silently re-enable a registration.
+export const RepositoryRegistrationPatch = z.object({
+  enabled: RepositoryRegistrationInput.shape.enabled.removeDefault().optional(),
+  issueMonitorEnabled: RepositoryRegistrationInput.shape.issueMonitorEnabled
+    .removeDefault().optional(),
+  prMonitorEnabled: RepositoryRegistrationInput.shape.prMonitorEnabled
+    .removeDefault().optional(),
+  executionEnabled: RepositoryRegistrationInput.shape.executionEnabled
+    .removeDefault().optional(),
+  configuration: RepositoryRegistrationInput.shape.configuration
+    .removeDefault().optional(),
+}).refine(
+  (patch) => Object.values(patch).some((value) => value !== undefined),
+  'registration patch is empty',
+);
 export type RepositoryRegistrationPatch = z.infer<typeof RepositoryRegistrationPatch>;
 
 export interface RepositoryRegistration extends RepositoryRegistrationInput {
@@ -343,6 +366,19 @@ export const RunnerJobPayloadV1Contract = z.object({
   artifacts: z.array(ArtifactReferenceContract).max(64),
   /** Immutable ready-time requirements snapshot; present on promoted Issue jobs. */
   sourceIssue: ReleaseSourceIssueSnapshotContract.optional(),
+  /**
+   * Runner-resolved durable child lineage. It is injected from the control DB
+   * after claim; no Issue-authored bytes can select a parent commit or base.
+   */
+  lineage: z.object({
+    nodeId: z.string().uuid(),
+    parentNodeId: z.string().uuid(),
+    parentIssueNumber: z.number().int().positive(),
+    parentPullRequestNumber: z.number().int().positive(),
+    parentBranch: GitRef,
+    parentHeadSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/),
+    reviewRound: z.number().int().positive().max(1_000),
+  }).strict().optional(),
 }).strict().superRefine((payload, context) => {
   const expectedMode = payload.event.kind === 'issue'
     ? 'development_turn'
@@ -367,6 +403,13 @@ export const RunnerJobPayloadV1Contract = z.object({
       code: z.ZodIssueCode.custom,
       path: ['sourceIssue'],
       message: 'Source Issue snapshot must match the promoted Issue event',
+    });
+  }
+  if (payload.lineage && payload.event.kind !== 'issue') {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['lineage'],
+      message: 'only a child Issue development turn may carry review lineage',
     });
   }
 });
@@ -465,7 +508,7 @@ export const EnqueueJobInput = z.object({
   source: JobSource,
   idempotencyKey: z.string().trim().min(1),
   jobType: z.string().trim().min(1),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   availableAt: z.date().optional(),
 }).superRefine((input, context) => {
   const contract = input.jobType === 'agentops.runner'
@@ -510,7 +553,7 @@ export const JobEnvelopeContract = z.object({
   source: JobSource,
   idempotencyKey: z.string().min(1),
   jobType: z.string().min(1),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   status: z.enum(['queued', 'leased', 'succeeded', 'failed', 'cancelled', 'rejected']),
   createdAt: z.string().datetime(),
   releaseId: z.string().uuid().optional(),

@@ -57,8 +57,6 @@ type config struct {
 	Provider                    string
 	ProviderToken               string
 	CodexAuthPath               string
-	MonitorRepositories         []string
-	RunnerRepositories          []string
 	TriageReadyLabel            string
 	TriageClaimedLabel          string
 	TriageCandidateLabel        string
@@ -202,12 +200,6 @@ func loadConfig() (config, error) {
 		Provider:               provider,
 		ProviderToken:          providerToken,
 		CodexAuthPath:          codexAuthPath,
-		MonitorRepositories: splitRepositories(
-			os.Getenv("AGENTOPS_MONITOR_REPOSITORIES"),
-		),
-		RunnerRepositories: splitRepositories(
-			os.Getenv("AGENTOPS_RUNNER_REPOSITORIES"),
-		),
 		TriageReadyLabel: strings.TrimSpace(
 			environmentValue("AGENTOPS_TRIAGE_READY_LABEL", "ready"),
 		),
@@ -299,9 +291,6 @@ func (value config) validateStart(mode lifecycle.Mode) error {
 			"PostgreSQL admin, control, triage, and runner credentials must be distinct",
 		)
 	}
-	if err := validateRepositoryAllowlist(value.MonitorRepositories); err != nil {
-		return err
-	}
 	if value.ControlGitHubToken != "" ||
 		value.TriageGitHubToken != "" ||
 		value.RunnerGitHubToken != "" {
@@ -391,42 +380,6 @@ func (value config) validateGitHubApp(mode lifecycle.Mode) error {
 	}
 	if err := value.validateBrokerCapabilities(mode); err != nil {
 		return err
-	}
-	for _, repository := range value.MonitorRepositories {
-		if !strings.HasPrefix(repository, value.GitHubAppOwner+"/") {
-			return fmt.Errorf(
-				"monitored repositories must belong to the GitHub App installation owner",
-			)
-		}
-	}
-	if len(value.RunnerRepositories) > 0 {
-		if err := validateRepositoryAllowlistNamed(
-			"AGENTOPS_RUNNER_REPOSITORIES",
-			value.RunnerRepositories,
-		); err != nil {
-			return err
-		}
-		monitored := make(map[string]struct{}, len(value.MonitorRepositories))
-		for _, repository := range value.MonitorRepositories {
-			monitored[repository] = struct{}{}
-		}
-		for _, repository := range value.RunnerRepositories {
-			if !strings.HasPrefix(repository, value.GitHubAppOwner+"/") {
-				return fmt.Errorf(
-					"runner repositories must belong to the GitHub App installation owner",
-				)
-			}
-			if _, present := monitored[repository]; !present {
-				return fmt.Errorf(
-					"AGENTOPS_RUNNER_REPOSITORIES must be a subset of AGENTOPS_MONITOR_REPOSITORIES",
-				)
-			}
-		}
-	}
-	if mode == lifecycle.ModeActive && len(value.RunnerRepositories) == 0 {
-		return fmt.Errorf(
-			"AGENTOPS_RUNNER_REPOSITORIES is required in ACTIVE mode",
-		)
 	}
 	return validateGitHubAppKeySource(value.GitHubAppKeyPath)
 }
@@ -552,14 +505,6 @@ func (value config) triageDatabaseURL(host string) string {
 	return databaseURL("agentops_triage", value.TriageDBPassword, host)
 }
 
-func (value config) monitorRepositoriesCSV() string {
-	return strings.Join(value.MonitorRepositories, ",")
-}
-
-func (value config) runnerRepositoriesCSV() string {
-	return strings.Join(value.RunnerRepositories, ",")
-}
-
 func (value config) triagePolicyLabels() []string {
 	defaults := []string{
 		"ready",
@@ -625,48 +570,6 @@ func resourceName(value string) bool {
 		return false
 	}
 	return true
-}
-
-func splitRepositories(raw string) []string {
-	if strings.TrimSpace(raw) == "" {
-		return nil
-	}
-	values := strings.Split(raw, ",")
-	for index := range values {
-		values[index] = strings.TrimSpace(values[index])
-	}
-	return values
-}
-
-func validateRepositoryAllowlist(repositories []string) error {
-	return validateRepositoryAllowlistNamed(
-		"AGENTOPS_MONITOR_REPOSITORIES",
-		repositories,
-	)
-}
-
-func validateRepositoryAllowlistNamed(
-	name string,
-	repositories []string,
-) error {
-	if len(repositories) < 1 || len(repositories) > 64 {
-		return fmt.Errorf("%s must contain 1..64 repositories", name)
-	}
-	seen := make(map[string]struct{}, len(repositories))
-	for _, repository := range repositories {
-		if repository != strings.ToLower(repository) ||
-			!control.ValidRepositoryIdentity(repository) {
-			return fmt.Errorf(
-				"%s must contain canonical owner/name values",
-				name,
-			)
-		}
-		if _, duplicate := seen[repository]; duplicate {
-			return fmt.Errorf("%s must not contain duplicates", name)
-		}
-		seen[repository] = struct{}{}
-	}
-	return nil
 }
 
 func allDistinct(values []string) bool {

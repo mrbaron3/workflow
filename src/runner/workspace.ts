@@ -220,6 +220,8 @@ export class RunnerWorkspaceManager {
   ) {}
 
   prepare(lease: Lease, payload: RunnerJobPayloadV1): PreparedRunnerWorkspace {
+    this.env.AGENTOPS_GITHUB_REPOSITORY =
+      `${payload.repository.owner}/${payload.repository.name}`;
     const registrationRoot = registrationWorkspacePath(
       this.root,
       lease.job.registrationId,
@@ -316,6 +318,13 @@ export class RunnerWorkspaceManager {
       throw new RunnerExecutionError(
         'workspace_failure',
         `target ref did not resolve to a commit: ${targetRef}`,
+        false,
+      );
+    }
+    if (payload.lineage && headSha !== payload.lineage.parentHeadSha) {
+      throw new RunnerExecutionError(
+        'workspace_failure',
+        `review child parent head moved: expected ${payload.lineage.parentHeadSha}, resolved ${headSha}`,
         false,
       );
     }

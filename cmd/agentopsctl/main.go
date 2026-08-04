@@ -39,6 +39,21 @@ func run(args []string) error {
 	defer stop()
 	manager := newManager(cfg, lifecycle.NewAppleRuntime())
 	switch args[0] {
+	case "deploy":
+		flags := flag.NewFlagSet("deploy", flag.ContinueOnError)
+		timeout := flags.Duration("timeout", 10*time.Minute, "maximum graceful drain wait")
+		requestID := flags.String("request-id", "", "durable staged-deployment identity")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if flags.NArg() != 0 || *timeout <= 0 {
+			return usageError()
+		}
+		return manager.DeployActive(
+			ctx,
+			*timeout,
+			commandID("deploy", *requestID),
+		)
 	case "start":
 		flags := flag.NewFlagSet("start", flag.ContinueOnError)
 		modeRaw := flags.String("mode", "MONITOR_ONLY", "MONITOR_ONLY or ACTIVE")
@@ -211,6 +226,6 @@ func parseProgressTarget(value string) (string, int64, error) {
 
 func usageError() error {
 	return fmt.Errorf(
-		"usage: agentopsctl start|drain|stop|rotate-postgres-admin|status|progress|worktree|logs|open (use -h after a command)",
+		"usage: agentopsctl deploy|start|drain|stop|rotate-postgres-admin|status|progress|worktree|logs|open (use -h after a command)",
 	)
 }

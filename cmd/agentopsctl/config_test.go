@@ -24,6 +24,28 @@ func TestDatabaseURLsEscapeCredentials(t *testing.T) {
 	}
 }
 
+func TestGitHubRepositoryFromRemoteAcceptsOnlyCanonicalGitHubCoordinates(t *testing.T) {
+	for _, remote := range []string{
+		"git@github.com:mrbaron3/servo.git",
+		"ssh://git@github.com/mrbaron3/servo.git",
+		"https://github.com/mrbaron3/servo",
+	} {
+		repository, err := githubRepositoryFromRemote(remote)
+		if err != nil || repository != "mrbaron3/servo" {
+			t.Fatalf("remote %q resolved to %q: %v", remote, repository, err)
+		}
+	}
+	for _, remote := range []string{
+		"https://example.com/mrbaron3/servo.git",
+		"git@github.com:../servo.git",
+		"github.com/mrbaron3/servo",
+	} {
+		if repository, err := githubRepositoryFromRemote(remote); err == nil {
+			t.Fatalf("unsafe remote %q resolved to %q", remote, repository)
+		}
+	}
+}
+
 func TestExactLoopbackPublication(t *testing.T) {
 	actual := &lifecycle.ContainerActual{}
 	actual.Configuration.PublishedPorts = []map[string]any{{
@@ -180,10 +202,6 @@ func TestMonitorOnlyRequiresNoProviderCredentialOrCredentialMount(t *testing.T) 
 		DashboardToken:    strings.Repeat("f", 32),
 		WebhookSecret:     strings.Repeat("g", 32),
 		Provider:          "codex",
-		MonitorRepositories: []string{
-			"acme/widgets",
-			"acme/component-catalog",
-		},
 	}
 	configureTestGitHubApp(t, &value, "acme")
 	if err := value.validateStart(lifecycle.ModeMonitorOnly); err != nil {
@@ -220,7 +238,6 @@ func TestStartRejectsEveryControlGitHubCredential(t *testing.T) {
 		TriageGitHubToken:  strings.Repeat("i", 32),
 		RunnerGitHubToken:  strings.Repeat("j", 32),
 		Provider:           "codex", ProviderToken: strings.Repeat("k", 32),
-		MonitorRepositories: []string{"example/project"},
 	}
 	if err := value.validateStart(lifecycle.ModeActive); err == nil ||
 		!strings.Contains(err.Error(), "forbidden") {
@@ -246,17 +263,15 @@ func TestActiveAllowsCredentialFreeControlWithPrivateBrokerAndCodexLogin(t *test
 	}
 	value := config{
 		Prefix: "agentops", ProjectRoot: root,
-		PostgresPassword:    strings.Repeat("a", 32),
-		ControlDBPassword:   strings.Repeat("b", 32),
-		TriageDBPassword:    strings.Repeat("c", 32),
-		RunnerDBPassword:    strings.Repeat("d", 32),
-		ControlToken:        strings.Repeat("e", 32),
-		DashboardToken:      strings.Repeat("f", 32),
-		WebhookSecret:       strings.Repeat("g", 32),
-		Provider:            "codex",
-		CodexAuthPath:       auth,
-		MonitorRepositories: []string{"sample/design-system"},
-		RunnerRepositories:  []string{"sample/design-system"},
+		PostgresPassword:  strings.Repeat("a", 32),
+		ControlDBPassword: strings.Repeat("b", 32),
+		TriageDBPassword:  strings.Repeat("c", 32),
+		RunnerDBPassword:  strings.Repeat("d", 32),
+		ControlToken:      strings.Repeat("e", 32),
+		DashboardToken:    strings.Repeat("f", 32),
+		WebhookSecret:     strings.Repeat("g", 32),
+		Provider:          "codex",
+		CodexAuthPath:     auth,
 	}
 	configureTestGitHubApp(t, &value, "sample")
 	if err := value.validateStart(lifecycle.ModeActive); err != nil {
@@ -304,29 +319,6 @@ func TestPostgresRotationRequiresDistinctCurrentAndNextCredentials(t *testing.T)
 	value.NextPostgresPassword = value.ControlDBPassword
 	if err := value.validatePostgresRotation(); err == nil {
 		t.Fatal("database role credential reuse was accepted for admin rotation")
-	}
-}
-
-func TestRepositoryAllowlistValidatesContractInsteadOfDogfoodIdentity(
-	t *testing.T,
-) {
-	for _, repositories := range [][]string{
-		{"acme/widgets"},
-		{"sample/design-system", "team-with-dashes/repo_name"},
-	} {
-		if err := validateRepositoryAllowlist(repositories); err != nil {
-			t.Fatalf("valid arbitrary repositories %v rejected: %v", repositories, err)
-		}
-	}
-	for _, repositories := range [][]string{
-		nil,
-		{"Acme/widgets"},
-		{"acme/widgets", "acme/widgets"},
-		{"missing-slash"},
-	} {
-		if err := validateRepositoryAllowlist(repositories); err == nil {
-			t.Fatalf("invalid repository allowlist accepted: %v", repositories)
-		}
 	}
 }
 

@@ -14,6 +14,7 @@
       <h1>AgentOps Control</h1>
     </div>
     <div class="session">
+      <span id="provenance" class="quiet">build 未確認</span>
       <span id="mode" class="mode">確認中</span>
       <span id="freshness" class="quiet">未接続</span>
       <button id="signout" class="ghost" type="button">セッション終了</button>
@@ -83,6 +84,21 @@
         <label class="check"><input id="issue-enabled" type="checkbox"> Issue Monitor</label>
         <label class="check"><input id="pr-enabled" type="checkbox"> PR Monitor</label>
         <label class="check"><input id="execution-enabled" type="checkbox"> Execution</label>
+      </fieldset>
+      <fieldset>
+        <legend>Gate SLA (seconds)</legend>
+        <label for="gate-sla-default">Default</label>
+        <input id="gate-sla-default" type="number" min="60" max="2592000" step="1" value="3600" required>
+        <label for="gate-sla-planning">Planning override</label>
+        <input id="gate-sla-planning" type="number" min="60" max="2592000" step="1" placeholder="default">
+        <label for="gate-sla-design">Design override</label>
+        <input id="gate-sla-design" type="number" min="60" max="2592000" step="1" placeholder="default">
+        <label for="gate-sla-graders">Repository graders override</label>
+        <input id="gate-sla-graders" type="number" min="60" max="2592000" step="1" placeholder="default">
+        <label for="gate-sla-review">Review override</label>
+        <input id="gate-sla-review" type="number" min="60" max="2592000" step="1" placeholder="default">
+        <label for="gate-sla-merge">Merge override</label>
+        <input id="gate-sla-merge" type="number" min="60" max="2592000" step="1" placeholder="default">
       </fieldset>
       <p class="hint">反映後に Control API を再取得し、version と desired state が一致した場合だけ成功として表示します。</p>
       <p id="registration-error" class="dialog-error" role="alert" tabindex="-1" hidden></p>

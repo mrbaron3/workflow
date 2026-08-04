@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AgentOps Registration Control API
-  version: 1.2.0
+  version: 1.3.0
   description: >-
     mrbaron3/workflow#15 のloopback dashboardとPostgreSQL Registration駆動Control API。
     human-approved workflow-ciso05-dashboard-r02 /
@@ -399,6 +399,18 @@ components:
       properties:
         releaseEvidence:
           $ref: "#/components/schemas/ReleaseEvidencePolicy"
+        gateTimeoutSeconds:
+          type: object
+          description: Durable per-gate SLA in seconds; omitted keys use default, then 3600.
+          additionalProperties: false
+          properties:
+            default: { type: integer, minimum: 60, maximum: 2592000 }
+            planning: { type: integer, minimum: 60, maximum: 2592000 }
+            design: { type: integer, minimum: 60, maximum: 2592000 }
+            repository-graders: { type: integer, minimum: 60, maximum: 2592000 }
+            review: { type: integer, minimum: 60, maximum: 2592000 }
+            merge: { type: integer, minimum: 60, maximum: 2592000 }
+            lease-recovery: { type: integer, minimum: 60, maximum: 2592000 }
     ReleaseEvidencePolicy:
       type: object
       additionalProperties: false
@@ -453,6 +465,7 @@ components:
         - observedAt
         - lastSuccessfulAt
         - mode
+        - provenance
       properties:
         items:
           type: array
@@ -468,6 +481,21 @@ components:
           format: date-time
         mode:
           $ref: "#/components/schemas/OperatingMode"
+        provenance:
+          $ref: "#/components/schemas/ReleaseProvenance"
+    ReleaseProvenance:
+      type: object
+      additionalProperties: false
+      required:
+        - repository
+        - revision
+      properties:
+        repository:
+          type: [string, "null"]
+          pattern: "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$"
+        revision:
+          type: [string, "null"]
+          pattern: "^[0-9a-f]{40}$"
     RegistrationProjection:
       type: object
       additionalProperties: false

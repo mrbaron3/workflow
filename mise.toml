@@ -2,10 +2,10 @@
 #
 # 素で叩くと毎回こうなる:
 #   set -a; . ~/.config/agentops/env; set +a
-#   mise exec go@1.24.0 -- go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build
+#   mise exec go@1.26.5 -- go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build
 # 前置の正体は「operator の env を全部 export する」「Go を固定版で解決する」の 2 つで、
 # どちらも mise が持っている機能なので task へ畳む。ツールは [tools] が解決するので
-# `mise exec go@1.24.0 --` は不要になる。
+# `mise exec go@1.26.5 --` は不要になる。
 #
 # 秘密を含む env ファイルの在処だけは個人差があるので、追跡しない mise.local.toml に置く。
 # mise.local.toml.example をコピーして使う。
@@ -16,7 +16,7 @@
 lockfile = true
 
 [tools]
-go = "1.24.0"
+go = "1.26.5"
 
 # 必要な変数が揃っているかを先に見る。mise.local.toml を置き忘れると全変数が空のまま
 # agentopsctl まで進み、どの層で失敗したのか分かりにくいため、入口で名前を挙げて落とす。
@@ -30,7 +30,6 @@ for name in \
   AGENTOPS_GITHUB_APP_SLUG \
   AGENTOPS_GITHUB_APP_OWNER \
   AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE \
-  AGENTOPS_MONITOR_REPOSITORIES \
   AGENTOPS_POSTGRES_PASSWORD \
   AGENTOPS_CONTROL_DB_PASSWORD \
   AGENTOPS_TRIAGE_DB_PASSWORD \
@@ -48,10 +47,8 @@ if [ -n "$missing" ]; then
   echo "mise.local.toml が無い可能性がある。mise.local.toml.example をコピーし、env ファイルの絶対パスを指すこと。" >&2
   exit 1
 fi
-# 値は出さない。allowlist だけは黙って 1 リポジトリになっていても気づけないので見せる。
-echo "env: 必須 13 件を解決した"
-echo "monitor: $AGENTOPS_MONITOR_REPOSITORIES"
-echo "runner:  ${AGENTOPS_RUNNER_REPOSITORIES:-(未設定 — ACTIVE では必須)}"
+# 値は出さない。監視対象は Dashboard の durable Registration で確認する。
+echo "env: 必須 12 件を解決した"
 '''
 
 [tasks."status"]
@@ -64,14 +61,14 @@ description = "topology の現状を JSON で読む"
 depends = ["env:check"]
 run = "go run ./cmd/agentopsctl status --json"
 
-# 例: mise run progress -- mrbaron3/forma#8
+# 例: mise run progress -- mrbaron3/servo#8
 [tasks."progress"]
 description = "Issue 単位の現在工程・worktree・次の gate・blocker を読む"
 depends = ["env:check"]
 run = "go run ./cmd/agentopsctl progress"
 
-# 例: mise run worktree -- --diff mrbaron3/forma#8
-# 再開/手動修正: mise run worktree -- --shell mrbaron3/forma#8
+# 例: mise run worktree -- --diff mrbaron3/servo#8
+# 再開/手動修正: mise run worktree -- --shell mrbaron3/servo#8
 [tasks."worktree"]
 description = "Issue の隔離 worktree を確認・再開する（--diff / --shell）"
 depends = ["env:check"]
@@ -86,9 +83,9 @@ depends = ["env:check"]
 run = "go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build"
 
 [tasks."active"]
-description = "ACTIVE へ進める（provider 資格情報と development runner が加わる）"
+description = "current job をdrainし、exact HEADをbuild/検証してACTIVEへ段階更新する"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl start --mode ACTIVE"
+run = "go run ./cmd/agentopsctl deploy"
 
 [tasks."drain"]
 description = "graceful drain（lease と attempt を落としきる）"

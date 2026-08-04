@@ -163,8 +163,8 @@ describe('lineage through validation into the store (SoT)', () => {
     const parsed = parsePerspectiveFindings({
       verdict: 'request_changes',
       findings: [
-        { criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'persisted', lineageRef: LINEAGE_REF },
-        { criterionId: 'AC-Z-2', severity: 'minor', observed: 'o2', expected: 'e2', lineage: 'new' },
+        { criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', disposition: 'in-change', lineage: 'persisted', lineageRef: LINEAGE_REF },
+        { criterionId: 'AC-Z-2', severity: 'minor', observed: 'o2', expected: 'e2', disposition: 'in-change', lineage: 'new' },
       ],
     });
     expect(parsed.findings[0]!.lineage).toBe('persisted');
@@ -173,18 +173,18 @@ describe('lineage through validation into the store (SoT)', () => {
 
     expect(() => parsePerspectiveFindings({
       verdict: 'request_changes',
-      findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'maybe' }],
+      findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', disposition: 'in-change', lineage: 'maybe' }],
     })).toThrow(); // an invalid attestation never reaches the store
     expect(() => parsePerspectiveFindings({
       verdict: 'request_changes',
-      findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', lineage: 'persisted' }],
+      findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', disposition: 'in-change', lineage: 'persisted' }],
     })).toThrow(/prior finding identity/);
   });
 
   it('ISSUE-0009/AC-LINEAGE-002 a finding without lineage is accepted and stays unclassified (legacy)', () => {
     const parsed = parsePerspectiveFindings({
       verdict: 'request_changes',
-      findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e' }],
+      findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', disposition: 'in-change' }],
     });
     expect(parsed.findings[0]!.lineage).toBeUndefined(); // absent stays absent — never silently classified
     expect(() => Finding.parse({ criterionId: 'C', severity: 'major', expected: 'e', observed: 'o', lineage: 'resolved' })).toThrow();

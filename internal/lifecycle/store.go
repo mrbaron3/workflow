@@ -620,7 +620,7 @@ func BootstrapRoles(
 		`REVOKE UPDATE ON agentops_control.monitor_broker_requests
 		   FROM agentops_triage`,
 		`GRANT EXECUTE ON FUNCTION
-		   agentops_control.claim_monitor_broker_request(text, text[], uuid, integer)
+		   agentops_control.claim_monitor_broker_request(text, uuid, integer)
 		   TO agentops_triage`,
 		`GRANT EXECUTE ON FUNCTION
 		   agentops_control.complete_monitor_broker_request(uuid, uuid, text, jsonb)
@@ -676,13 +676,22 @@ func BootstrapRoles(
 		`GRANT EXECUTE ON FUNCTION
 		   agentops_control.record_development_progress(uuid, text, jsonb)
 		   TO agentops_runner`,
+		`GRANT EXECUTE ON FUNCTION
+		   agentops_control.record_development_review_round(uuid, text, jsonb),
+		   agentops_control.record_review_child(uuid, text, jsonb),
+		   agentops_control.bind_review_child_release(uuid, text, uuid),
+		   agentops_control.mark_review_child_integrated(uuid, text, uuid, bigint, text, text)
+		   TO agentops_runner`,
+		`GRANT SELECT ON agentops_control.development_review_rounds,
+		   agentops_control.development_review_perspectives,
+		   agentops_control.development_lineage_nodes TO agentops_runner`,
 		`GRANT SELECT, INSERT, UPDATE ON agentops_control.job_attempts,
 		   agentops_control.job_leases, agentops_control.artifact_links
 		   TO agentops_runner`,
 		`REVOKE ALL ON agentops_control.monitor_broker_requests
 		   FROM agentops_runner`,
 		`REVOKE EXECUTE ON FUNCTION
-		   agentops_control.claim_monitor_broker_request(text, text[], uuid, integer)
+		   agentops_control.claim_monitor_broker_request(text, uuid, integer)
 		   FROM agentops_runner`,
 		`REVOKE EXECUTE ON FUNCTION
 		   agentops_control.complete_monitor_broker_request(uuid, uuid, text, jsonb)

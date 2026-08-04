@@ -12,11 +12,13 @@
 # Stage boundary keeps the TypeScript runner and Go control-plane release surfaces independent.
 
 # --- deps: resolve the full dependency graph from the lockfile (reproducible) -------------------
-FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS deps
+FROM node:24.19.0-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df AS deps
 WORKDIR /app
 # Only the manifest + lockfile, so this layer caches unless dependencies change.
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm install --global npm@12.0.2 \
+    && npm --version | grep -qx '12.0.2' \
+    && npm ci
 
 # --- build: bring in the source and prove build+typecheck run in-container from container-relative paths -
 FROM deps AS build
@@ -26,7 +28,7 @@ COPY . .
 RUN npm run typecheck && npm run build
 
 # --- control-build: compile and unit-test the Registration-driven Go control plane ----------------
-FROM golang:1.26.5-bookworm@sha256:1ecb7edf62a0408027bd5729dfd6b1b8766e578e8df93995b225dfd0944eb651 AS control-build
+FROM golang:1.26.5-trixie@sha256:4ee9ffa999b4583ce281939cdff828763083610292f252279a0cee77473bd9a7 AS control-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -58,16 +60,20 @@ CMD ["go", "test", "-race", "./..."]
 # Runs the harness via the tsx launcher (bin/agentops.mjs). Retains the toolchain so the in-container
 # graders (typecheck / unit tests) run against container-relative paths; a leaner prod-only split is a
 # later concern (#14) and does not change this image's standard-OCI shape.
-FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
+FROM node:24.19.0-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df AS runtime
 # git is part of the harness grader/runner toolchain (it shells out to git); install it reproducibly.
 RUN rm -f /etc/apt/sources.list.d/debian.sources \
     && printf '%s\n' \
-      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
-      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
-      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260804T000000Z trixie main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260804T000000Z trixie-updates main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260804T000000Z trixie-security main' \
       > /etc/apt/sources.list \
     && apt-get update && apt-get install -y --no-install-recommends \
-      git=1:2.39.5-0+deb12u3 \
+      git=1:2.47.3-0+deb13u1 \
+    && npm install --global npm@12.0.2 \
+    && npm --version | grep -qx '12.0.2' \
+    && rm -rf /opt/yarn-v* \
+    && rm -f /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && rm -rf /var/lib/apt/lists/*
 # Container-neutral roots (DATA-container-runtime-004). AGENTOPS_APP_ROOT is CONSUMED by the CLI
 # bootstrap (resolveHarnessRoot): Store / workspace / systemDir all anchor on it, so nothing depends on
@@ -75,6 +81,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
 # resolveContainerPaths as workspace/store move onto dedicated volumes (#12/#14). None carries a macOS
 # dependency; here APP_ROOT=/app equals the cwd, so behavior is identical to a bare run.
 ENV NODE_ENV=production \
+    YARN_VERSION= \
     AGENTOPS_APP_ROOT=/app \
     AGENTOPS_WORKSPACE_ROOT=/workspace \
     AGENTOPS_STORE_ROOT=/data/store \
@@ -89,7 +96,7 @@ CMD ["node", "bin/agentops.mjs"]
 FROM control-build AS runner-tools
 WORKDIR /src/deploy/gh
 RUN CGO_ENABLED=0 go build -trimpath \
-      -ldflags="-s -w -X github.com/cli/cli/v2/internal/build.Version=2.96.0" \
+      -ldflags="-s -w -X github.com/cli/cli/v2/internal/build.Version=2.97.0" \
       -o /out/gh github.com/cli/cli/v2/cmd/gh \
     && /out/gh version \
     && /out/gh pr merge --help | grep -q -- '--match-head-commit'
@@ -101,10 +108,10 @@ COPY --from=runner-tools /out/gh /usr/local/libexec/agentops-gh-real
 COPY --from=control-build /out/agentops-github-credential-helper /usr/local/bin/agentops-github-credential-helper
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-         bubblewrap=0.8.0-2+deb12u1 \
-         ca-certificates=20230311+deb12u1 \
-         tmux=3.3a-3 \
-         openssh-client=1:9.2p1-2+deb12u10 \
+         bubblewrap=0.11.0-2+deb13u1 \
+         ca-certificates=20250419 \
+         tmux=3.5a-3 \
+         openssh-client=1:10.0p1-7+deb13u4 \
     && npm ci --omit=dev --ignore-scripts --prefix /opt/provider-cli \
     && node /opt/provider-cli/node_modules/@anthropic-ai/claude-code/install.cjs \
     && ln -s /opt/provider-cli/node_modules/.bin/codex /usr/local/bin/codex \
@@ -120,7 +127,8 @@ RUN apt-get update \
     && codex --version \
     && claude --version \
     && rm -rf /usr/local/lib/node_modules/npm \
-    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
+    && rm -rf /opt/yarn-v* \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && rm -rf /var/lib/apt/lists/*
 ENV HOME=/home/agentops \
     AGENTOPS_APP_ROOT=/app \
@@ -135,19 +143,21 @@ ENTRYPOINT ["node", "dist/src/runner/cli.js"]
 # This image deliberately has no git, ssh, tmux, bubblewrap, checkout volume, or
 # development GitHub credential. The root filesystem is made read-only by the
 # runtime; only /tmp and /home/agentops are tmpfs.
-FROM node:22-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS triage-runner
+FROM node:24.19.0-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df AS triage-runner
 USER root
 COPY --chown=root:root deploy/provider-cli/package.json deploy/provider-cli/package-lock.json /opt/provider-cli/
 COPY --from=runner-tools /out/gh /usr/local/libexec/agentops-gh-real
 COPY --from=control-build /out/agentops-github-credential-helper /usr/local/bin/agentops-github-credential-helper
 RUN rm -f /etc/apt/sources.list.d/debian.sources \
     && printf '%s\n' \
-      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm main' \
-      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260714T000000Z bookworm-updates main' \
-      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260714T000000Z bookworm-security main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260804T000000Z trixie main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian/20260804T000000Z trixie-updates main' \
+      'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260804T000000Z trixie-security main' \
       > /etc/apt/sources.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates=20230311+deb12u1 \
+    && apt-get install -y --no-install-recommends ca-certificates=20250419 \
+    && npm install --global npm@12.0.2 \
+    && npm --version | grep -qx '12.0.2' \
     && npm ci --omit=dev --ignore-scripts --prefix /opt/provider-cli \
     && node /opt/provider-cli/node_modules/@anthropic-ai/claude-code/install.cjs \
     && ln -s /opt/provider-cli/node_modules/.bin/codex /usr/local/bin/codex \
@@ -160,10 +170,12 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
     && codex --version \
     && claude --version \
     && rm -rf /usr/local/lib/node_modules/npm \
-    && rm -f /usr/local/bin/npm /usr/local/bin/npx \
+    && rm -rf /opt/yarn-v* \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=agentops:agentops /app /app
 ENV HOME=/home/agentops \
+    YARN_VERSION= \
     AGENTOPS_APP_ROOT=/app
 WORKDIR /app
 USER agentops
@@ -179,7 +191,7 @@ ENTRYPOINT ["node", "dist/src/triage/cli.js"]
 # root unable to enter the 0700 nonroot home, so the process fails to start before
 # it can seed the key. `/` is traversable by every uid, so both the seeding root and
 # the 65532 broker start there. Sibling targets already set WORKDIR; this one did not.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35 AS github-broker
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6 AS github-broker
 ENV HOME=/home/nonroot \
     AGENTOPS_GITHUB_BROKER_LISTEN=0.0.0.0:8083
 COPY --from=control-build /out/agentops-github-broker /usr/local/bin/agentops-github-broker
@@ -194,7 +206,7 @@ ENTRYPOINT ["/usr/local/bin/agentops-github-broker"]
 # runner-brokered polls in both modes; it intentionally omits the
 # credential-bearing gh forwarder CLI. The fixed nonroot distroless base
 # leaves no shell/package manager.
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35 AS control
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6 AS control
 ENV AGENTOPS_APP_ROOT=/app \
     AGENTOPS_CONTROL_LISTEN=127.0.0.1:8081 \
     AGENTOPS_CONTROL_PROXY_LISTEN=0.0.0.0:8080 \
@@ -220,7 +232,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
 # agentopsctl builds and runs this target instead of pulling a mutable tag at deployment time.
 # The upstream entrypoint retains PostgreSQL's volume initialization semantics; agentopsctl owns
 # role-separated bootstrap, migrations, readiness, rollback-safe failure, and the named volume.
-FROM postgres:16-bookworm@sha256:92620daddcd947f8d5ab5ba66e848702fe443d87fed30c4cea8e389fd78dfc55 AS postgres-rootfs
+FROM postgres:18.4-trixie@sha256:3a82e1f56c8f0f5616a11103ac3d47e632c3938698946a7ad26da0df1334744a AS postgres-rootfs
 COPY --from=postgres-tools /out/gosu /usr/local/bin/gosu
 RUN rm -f /etc/ssl/private/ssl-cert-snakeoil.key \
       /etc/ssl/certs/ssl-cert-snakeoil.pem
@@ -229,12 +241,12 @@ RUN rm -f /etc/ssl/private/ssl-cert-snakeoil.key \
 # secret scanner cannot recover the removed upstream snakeoil private key.
 FROM scratch AS postgres
 COPY --from=postgres-rootfs / /
-ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/16/bin \
+ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/postgresql/18/bin \
     GOSU_VERSION=1.19 \
     LANG=en_US.utf8 \
-    PG_MAJOR=16 \
-    PG_VERSION=16.14-1.pgdg12+1 \
-    PGDATA=/var/lib/postgresql/data
+    PG_MAJOR=18 \
+    PG_VERSION=18.4-1.pgdg13+1 \
+    PGDATA=/var/lib/postgresql/18/docker
 LABEL org.opencontainers.image.source="https://github.com/mrbaron3/workflow" \
       org.opencontainers.image.title="AgentOps PostgreSQL" \
       org.opencontainers.image.description="Pinned PostgreSQL persistence boundary for AgentOps"

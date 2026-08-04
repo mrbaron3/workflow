@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,21 +76,23 @@ type APIStore interface {
 }
 
 type API struct {
-	Store           APIStore
-	ControlToken    string
-	WebhookSecret   string
-	StaleAfter      time.Duration
-	Mode            OperatingMode
-	CanonicalOrigin string
-	BootstrapToken  string
-	SessionTTL      time.Duration
-	RouterWake      func()
-	Log             *slog.Logger
-	statusSuccess   atomic.Int64
-	initOnce        sync.Once
-	initErr         error
-	origin          *url.URL
-	sessions        *browserSessions
+	Store             APIStore
+	ControlToken      string
+	WebhookSecret     string
+	StaleAfter        time.Duration
+	Mode              OperatingMode
+	CanonicalOrigin   string
+	BootstrapToken    string
+	ReleaseRepository string
+	ReleaseRevision   string
+	SessionTTL        time.Duration
+	RouterWake        func()
+	Log               *slog.Logger
+	statusSuccess     atomic.Int64
+	initOnce          sync.Once
+	initErr           error
+	origin            *url.URL
+	sessions          *browserSessions
 	// Keep the published URL order identical to the in-memory token order.
 	bootstrapMu sync.Mutex
 	dashboard   http.Handler
@@ -118,6 +121,16 @@ func (api *API) Initialize() error {
 		if api.BootstrapToken != "" &&
 			(len(api.BootstrapToken) < 32 || len(api.BootstrapToken) > 512) {
 			api.initErr = fmt.Errorf("dashboard bootstrap token must be 32..512 bytes")
+			return
+		}
+		if (api.ReleaseRepository == "") != (api.ReleaseRevision == "") {
+			api.initErr = fmt.Errorf("release provenance repository and revision must be configured together")
+			return
+		}
+		if api.ReleaseRepository != "" &&
+			(!safeRepositoryIdentity(api.ReleaseRepository) ||
+				!regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(api.ReleaseRevision)) {
+			api.initErr = fmt.Errorf("release provenance is invalid")
 			return
 		}
 		api.sessions = newBrowserSessions(api.BootstrapToken, api.SessionTTL)
@@ -201,7 +214,20 @@ func (api *API) health(writer http.ResponseWriter, request *http.Request) {
 		writeError(writer, http.StatusServiceUnavailable, "control_store_unavailable", "control store is unavailable")
 		return
 	}
-	writeJSON(writer, http.StatusOK, map[string]any{"status": "ok"})
+	writeJSON(writer, http.StatusOK, map[string]any{
+		"status":     "ok",
+		"provenance": api.releaseProvenance(),
+	})
+}
+
+func (api *API) releaseProvenance() map[string]any {
+	if api.ReleaseRepository == "" {
+		return map[string]any{"repository": nil, "revision": nil}
+	}
+	return map[string]any{
+		"repository": api.ReleaseRepository,
+		"revision":   api.ReleaseRevision,
+	}
 }
 
 func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Request) {
@@ -359,6 +385,7 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 		"observedAt":       observedAt,
 		"lastSuccessfulAt": observedAt,
 		"mode":             mode,
+		"provenance":       api.releaseProvenance(),
 	})
 }
 

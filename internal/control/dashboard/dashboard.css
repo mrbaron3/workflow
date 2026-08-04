@@ -70,6 +70,14 @@ input { width: 100%; min-height: 44px; padding: .65rem .75rem; color: var(--ink)
 .component dt { color: var(--muted); }
 .component dd { margin: 0; overflow-wrap: anywhere; }
 .development-progress { padding: 1rem 1.1rem; border-top: 1px solid var(--line); background: #f9fbfc; }
+.development-progress-list { overflow: hidden; border-top: 1px solid var(--line); }
+.kanban-board { display: grid; grid-template-columns: repeat(11, minmax(19rem, 1fr)); gap: .75rem; overflow-x: auto; padding: 1rem; background: #edf1f3; scrollbar-gutter: stable; }
+.kanban-column { min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: #f7f9fa; }
+.kanban-column-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: .5rem; min-height: 44px; padding: .6rem .75rem; border-bottom: 1px solid var(--line); background: #f7f9fa; }
+.kanban-column-head span { min-width: 1.5rem; border-radius: 999px; padding: .15rem .4rem; color: var(--muted); background: #e5eaed; font-size: .75rem; font-weight: 800; text-align: center; }
+.kanban-column-cards { display: grid; gap: .6rem; padding: .6rem; }
+.kanban-issue-card { padding: .75rem; border: 1px solid var(--line); border-radius: 7px; background: #fff; box-shadow: 0 1px 4px rgb(20 35 45 / 7%); }
+.kanban-empty { margin: .35rem; text-align: center; }
 .progress-empty { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .progress-empty p { margin-bottom: 0; }
 .progress-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
@@ -120,6 +128,7 @@ fieldset { display: grid; gap: .65rem; border: 1px solid var(--line); border-rad
   .progress-empty, .progress-head { align-items: stretch; flex-direction: column; }
   .progress-grid { grid-template-columns: max-content minmax(0, 1fr); }
   .progress-history li { grid-template-columns: 1fr; gap: .1rem; }
+  .kanban-board { grid-template-columns: repeat(11, minmax(min(17rem, calc(100vw - 3rem)), 1fr)); }
   button { width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) {

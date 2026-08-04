@@ -126,6 +126,55 @@ describe('Registration-rooted runner workspace', () => {
     expect(prepared.headSha).toBe(sha);
   });
 
+  it('checks out a review child from the durable exact parent head and fails on drift', () => {
+    const makeRunner = (resolvedHead: string): WorkspaceCommandRunner =>
+      (_command, args) => {
+        if (args[0] === 'clone') fs.mkdirSync(String(args.at(-1)), { recursive: true });
+        if (args.includes('add')) {
+          const index = args.indexOf('add');
+          fs.mkdirSync(String(args[index + 4]), { recursive: true });
+        }
+        if (args.includes('rev-parse')) {
+          return { status: 0, stdout: `${resolvedHead}\n`, stderr: '' };
+        }
+        if (args.includes('get-url')) {
+          return {
+            status: 0,
+            stdout: 'https://github.com/mrbaron3/workflow.git\n',
+            stderr: '',
+          };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+      };
+    const childPayload: RunnerJobPayloadV1 = {
+      ...payload(),
+      target: { baseRef: 'agent/parent-14', headRef: sha },
+      lineage: {
+        nodeId: '11111111-1111-4111-8111-111111111111',
+        parentNodeId: '22222222-2222-4222-8222-222222222222',
+        parentIssueNumber: 13,
+        parentPullRequestNumber: 44,
+        parentBranch: 'agent/parent-14',
+        parentHeadSha: sha,
+        reviewRound: 1,
+      },
+    };
+    const matchingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-child-head-'));
+    const prepared = new RunnerWorkspaceManager(
+      matchingRoot,
+      { PATH: '/usr/bin' },
+      makeRunner(sha),
+    ).prepare(lease(), childPayload);
+    expect(prepared.headSha).toBe(sha);
+
+    const driftRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-child-drift-'));
+    expect(() => new RunnerWorkspaceManager(
+      driftRoot,
+      { PATH: '/usr/bin' },
+      makeRunner('b'.repeat(40)),
+    ).prepare(lease(), childPayload)).toThrow(/parent head moved/);
+  });
+
   // The harness keeps worktrees of this same mirror alive, and git refuses to update a
   // branch any worktree has checked out. Once a generator's branch reaches the remote, a
   // refs/heads:refs/heads mirror fetch fails for every later job — so the mirror must only
@@ -296,7 +345,7 @@ describe('Registration-rooted runner workspace', () => {
     expect(fs.readFileSync(path.join(first.worktreePath, 'operator-notes.txt'), 'utf8'))
       .toBe('keep me\n');
     expect(git(['log', '-1', '--format=%s'], retry.worktreePath)).toBe('manual retained fix');
-  });
+  }, 15_000);
 
   it('keeps an attempt-scoped generator worktree isolated across retry and later cleanup', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'runner-resolved-gc-'));

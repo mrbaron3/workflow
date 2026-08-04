@@ -34,10 +34,20 @@ export const WebhookRepositoryRegistrationInput = z.object({
 });
 export type WebhookRepositoryRegistrationInput = z.infer<typeof WebhookRepositoryRegistrationInput>;
 
-export const WebhookRepositoryRegistrationPatch = WebhookRepositoryRegistrationInput
-  .omit({ repository: true })
-  .partial()
-  .refine((patch) => Object.keys(patch).length > 0, 'patch must change at least one field');
+export const WebhookRepositoryRegistrationPatch = z.object({
+  enabled: WebhookRepositoryRegistrationInput.shape.enabled.removeDefault().optional(),
+  events: WebhookRepositoryRegistrationInput.shape.events.optional(),
+  consumers: WebhookRepositoryRegistrationInput.shape.consumers.optional(),
+  workspaceRoot: WebhookRepositoryRegistrationInput.shape.workspaceRoot
+    .removeDefault().optional(),
+  readyLabel: WebhookRepositoryRegistrationInput.shape.readyLabel
+    .removeDefault().optional(),
+  baseBranch: WebhookRepositoryRegistrationInput.shape.baseBranch
+    .removeDefault().optional(),
+}).refine(
+  (patch) => Object.values(patch).some((value) => value !== undefined),
+  'patch must change at least one field',
+);
 export type WebhookRepositoryRegistrationPatch = z.infer<typeof WebhookRepositoryRegistrationPatch>;
 
 export const WebhookRepositoryRegistration = WebhookRepositoryRegistrationInput.extend({
@@ -62,8 +72,8 @@ const WebhookDeliveryBase = z.object({
   repository: RepositoryName,
   event: WebhookEvent,
   action: z.string().nullable().default(null),
-  headers: z.record(z.string()).default({}),
-  payload: z.record(z.unknown()),
+  headers: z.record(z.string(), z.string()).default({}),
+  payload: z.record(z.string(), z.unknown()),
   attempts: z.number().int().nonnegative().default(0),
   receivedAt: z.string(),
   updatedAt: z.string(),
@@ -150,7 +160,7 @@ export type WebhookDelivery = Readonly<z.infer<typeof WebhookDelivery>>;
 
 export const WebhookControlDB = z.object({
   version: z.literal(1).default(1),
-  counters: z.record(z.number().int().nonnegative()).default({}),
+  counters: z.record(z.string(), z.number().int().nonnegative()).default({}),
   repositories: z.array(WebhookRepositoryRegistration).default([]),
   deliveries: z.array(WebhookDelivery).default([]).readonly(),
 });
@@ -253,7 +263,7 @@ export const NormalizedGithubEvent = z.object({
   repository: RepositoryName,
   event: WebhookEvent,
   action: z.string().nullable(),
-  payload: z.record(z.unknown()),
+  payload: z.record(z.string(), z.unknown()),
   receivedAt: z.string(),
   source: z.literal('webhook').default('webhook'),
 });

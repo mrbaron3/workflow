@@ -14,16 +14,16 @@ import (
 )
 
 func TestParseProgressTarget(t *testing.T) {
-	repository, issue, err := parseProgressTarget("mrbaron3/forma#8")
-	if err != nil || repository != "mrbaron3/forma" || issue != 8 {
+	repository, issue, err := parseProgressTarget("mrbaron3/servo#8")
+	if err != nil || repository != "mrbaron3/servo" || issue != 8 {
 		t.Fatalf("parseProgressTarget() = %q, %d, %v", repository, issue, err)
 	}
 	for _, invalid := range []string{
-		"mrbaron3/forma",
-		"mrbaron3/forma#0",
-		"mrbaron3/forma#not-a-number",
-		"../forma#8",
-		"mrbaron3/forma#8#9",
+		"mrbaron3/servo",
+		"mrbaron3/servo#0",
+		"mrbaron3/servo#not-a-number",
+		"../servo#8",
+		"mrbaron3/servo#8#9",
 	} {
 		if _, _, err := parseProgressTarget(invalid); err == nil {
 			t.Fatalf("parseProgressTarget(%q) unexpectedly succeeded", invalid)
@@ -70,7 +70,7 @@ func TestWorktreeRejectsAmbiguousEpicAggregate(t *testing.T) {
 	}}
 	subject := newManager(testManagerConfig(), lifecycle.NewAppleRuntimeForTest(fake))
 
-	err := subject.Worktree(context.Background(), "mrbaron3/forma", 1, false, true)
+	err := subject.Worktree(context.Background(), "mrbaron3/servo", 1, false, true)
 	if err == nil || !strings.Contains(err.Error(), "choose an explicit child Issue (#8)") {
 		t.Fatalf("Worktree() error = %v", err)
 	}
@@ -106,7 +106,7 @@ func TestPrintProgressAggregatesEpicChildrenAndWorktree(t *testing.T) {
 	}
 	previous := os.Stdout
 	os.Stdout = write
-	printProgress(report, "mrbaron3/forma", 1)
+	printProgress(report, "mrbaron3/servo", 1)
 	_ = write.Close()
 	os.Stdout = previous
 	output, err := io.ReadAll(read)
@@ -152,7 +152,7 @@ func TestWorktreeShellFindsPreservedSupersededCheckout(t *testing.T) {
 
 	if err := subject.Worktree(
 		context.Background(),
-		"mrbaron3/forma",
+		"mrbaron3/servo",
 		8,
 		false,
 		true,
@@ -193,7 +193,7 @@ func TestWorktreeSkipsPathsOutsideTheRunnerVolumeInsteadOfFailing(t *testing.T) 
 
 	if err := subject.Worktree(
 		context.Background(),
-		"mrbaron3/forma",
+		"mrbaron3/servo",
 		8,
 		false,
 		true,
@@ -222,7 +222,7 @@ func TestWorktreeReportsSkippedPathsWhenNoneRemain(t *testing.T) {
 	}}
 	subject := newManager(testManagerConfig(), lifecycle.NewAppleRuntimeForTest(fake))
 
-	err := subject.Worktree(context.Background(), "mrbaron3/forma", 8, false, true)
+	err := subject.Worktree(context.Background(), "mrbaron3/servo", 8, false, true)
 	if err == nil {
 		t.Fatal("expected an error when every recorded path was skipped")
 	}

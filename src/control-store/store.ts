@@ -13,6 +13,11 @@ import {
   type DevelopmentProgressUpdate as DevelopmentProgressUpdateType,
 } from '../domain/development-progress.js';
 import {
+  DevelopmentReviewFinding,
+  DevelopmentReviewRound,
+  type DevelopmentReviewRound as DevelopmentReviewRoundType,
+} from '../domain/development-review.js';
+import {
   DurableReleaseReceiptContract,
   ReleaseArtifactContract,
   ReleaseMergeIntentReceiptContract,
@@ -1137,7 +1142,6 @@ export class PostgresControlStore {
 
   async claimMonitorBrokerRequest(input: {
     workerId: string;
-    allowedRepositories: readonly string[];
     leaseMs: number;
   }): Promise<MonitorBrokerRequest | null> {
     if (
@@ -1147,24 +1151,11 @@ export class PostgresControlStore {
     ) {
       throw new Error('monitor broker lease must be 5000..60000ms');
     }
-    const allowedRepositories = input.allowedRepositories.map((repository) =>
-      repository.trim().toLowerCase());
-    if (
-      allowedRepositories.length < 1
-      || allowedRepositories.length > 64
-      || new Set(allowedRepositories).size !== allowedRepositories.length
-      || input.allowedRepositories.some((repository, index) =>
-        repository !== allowedRepositories[index])
-      || allowedRepositories.some((repository) =>
-        !CanonicalRepository.safeParse(repository).success)
-    ) {
-      throw new Error('monitor broker repository allowlist is invalid');
-    }
     return transaction(this.pool, async (client) => {
       const leaseToken = randomUUID();
       const result = await client.query<MonitorBrokerRequestRow>(
-        `SELECT * FROM agentops_control.claim_monitor_broker_request($1, $2, $3, $4)`,
-        [input.workerId, allowedRepositories, leaseToken, input.leaseMs],
+        `SELECT * FROM agentops_control.claim_monitor_broker_request($1, $2, $3)`,
+        [input.workerId, leaseToken, input.leaseMs],
       );
       const row = result.rows[0];
       if (!row) return null;
@@ -1930,6 +1921,194 @@ export class PostgresControlStore {
       throw new Error('development progress insert returned no identity');
     }
     return progressId;
+  }
+
+  async recordDevelopmentReviewRound(input: {
+    token: string;
+    workerId: string;
+    review: DevelopmentReviewRoundType;
+  }): Promise<number> {
+    if (!input.workerId.trim()) throw new Error('workerId is required');
+    const review = DevelopmentReviewRound.parse(input.review);
+    const result = await this.pool.query<{ review_id: string }>(
+      `SELECT agentops_control.record_development_review_round($1, $2, $3)
+         AS review_id`,
+      [input.token, input.workerId, review],
+    );
+    const reviewId = Number(result.rows[0]?.review_id);
+    if (!Number.isSafeInteger(reviewId) || reviewId < 1) {
+      throw new Error('development review round insert returned no identity');
+    }
+    return reviewId;
+  }
+
+  async recordReviewChild(input: {
+    token: string;
+    workerId: string;
+    childIssueNumber: number;
+    childIssueUrl: string;
+    findingKey: string;
+    finding: z.input<typeof DevelopmentReviewFinding>;
+    reviewRound: number;
+    parentPullRequestNumber: number;
+    parentBranch: string;
+    parentHeadSha: string;
+  }): Promise<string> {
+    const child = z.object({
+      token: z.string().uuid(),
+      workerId: z.string().trim().min(1).max(256),
+      childIssueNumber: z.number().int().positive(),
+      childIssueUrl: z.string().url().max(2_000),
+      findingKey: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+      finding: DevelopmentReviewFinding.refine(
+        (finding) => finding.disposition === 'separate-issue',
+        'review child requires separate-issue disposition',
+      ),
+      reviewRound: z.number().int().positive().max(1_000),
+      parentPullRequestNumber: z.number().int().positive(),
+      parentBranch: z.string().trim().min(1).max(500),
+      parentHeadSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/),
+    }).strict().parse(input);
+    const result = await this.pool.query<{ child_id: string }>(
+      `SELECT agentops_control.record_review_child($1, $2, $3) AS child_id`,
+      [child.token, child.workerId, {
+        childIssueNumber: child.childIssueNumber,
+        childIssueUrl: child.childIssueUrl,
+        findingKey: child.findingKey,
+        finding: child.finding,
+        reviewRound: child.reviewRound,
+        parentPullRequestNumber: child.parentPullRequestNumber,
+        parentBranch: child.parentBranch,
+        parentHeadSha: child.parentHeadSha,
+      }],
+    );
+    return z.string().uuid().parse(result.rows[0]?.child_id);
+  }
+
+  async getReviewChildTarget(
+    repositoryInput: string,
+    issueNumberInput: number,
+  ): Promise<{
+    nodeId: string;
+    parentNodeId: string;
+    parentIssueNumber: number;
+    parentPullRequestNumber: number;
+    parentBranch: string;
+    parentHeadSha: string;
+    reviewRound: number;
+  } | null> {
+    const repository = CanonicalRepository.parse(repositoryInput);
+    const issueNumber = z.number().int().positive().parse(issueNumberInput);
+    const result = await this.pool.query<{
+      id: string;
+      parent_node_id: string;
+      parent_issue_number: string;
+      parent_pull_request_number: string;
+      parent_branch: string;
+      parent_head_sha: string;
+      review_round: number;
+    }>(
+      `SELECT child.id, child.parent_node_id,
+              parent.issue_number AS parent_issue_number,
+              child.parent_pull_request_number, child.parent_branch,
+              child.parent_head_sha, child.review_round
+         FROM agentops_control.development_lineage_nodes child
+         JOIN agentops_control.development_lineage_nodes parent
+           ON parent.id = child.parent_node_id
+        WHERE child.repository = $1 AND child.issue_number = $2`,
+      [repository, issueNumber],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      nodeId: row.id,
+      parentNodeId: row.parent_node_id,
+      parentIssueNumber: Number(row.parent_issue_number),
+      parentPullRequestNumber: Number(row.parent_pull_request_number),
+      parentBranch: row.parent_branch,
+      parentHeadSha: row.parent_head_sha,
+      reviewRound: row.review_round,
+    };
+  }
+
+  async bindReviewChildRelease(input: {
+    token: string;
+    workerId: string;
+    releaseId: string;
+  }): Promise<string> {
+    const parsed = z.object({
+      token: z.string().uuid(),
+      workerId: z.string().trim().min(1).max(256),
+      releaseId: z.string().uuid(),
+    }).strict().parse(input);
+    const result = await this.pool.query<{ child_id: string }>(
+      `SELECT agentops_control.bind_review_child_release($1, $2, $3)
+         AS child_id`,
+      [parsed.token, parsed.workerId, parsed.releaseId],
+    );
+    return z.string().uuid().parse(result.rows[0]?.child_id);
+  }
+
+  async reviewLineageGate(releaseIdInput: string): Promise<{
+    ready: boolean;
+    pending: Array<{ issueNumber: number; status: string }>;
+    integratedHeads: string[];
+  }> {
+    const releaseId = z.string().uuid().parse(releaseIdInput);
+    const rows = await this.pool.query<{
+      issue_number: string;
+      status: string;
+      integrated_head_sha: string | null;
+    }>(
+      `SELECT child.issue_number, child.status, child.integrated_head_sha
+         FROM agentops_control.development_lineage_nodes parent
+         JOIN agentops_control.development_lineage_nodes child
+           ON child.parent_node_id = parent.id
+        WHERE parent.release_id = $1
+        ORDER BY child.created_at, child.id`,
+      [releaseId],
+    );
+    const pending = rows.rows
+      .filter((row) => row.status !== 'integrated')
+      .map((row) => ({ issueNumber: Number(row.issue_number), status: row.status }));
+    return {
+      ready: pending.length === 0,
+      pending,
+      integratedHeads: rows.rows.flatMap((row) =>
+        row.integrated_head_sha ? [row.integrated_head_sha] : []),
+    };
+  }
+
+  async markReviewChildIntegrated(input: {
+    token: string;
+    workerId: string;
+    releaseId: string;
+    pullRequestNumber: number;
+    childHeadSha: string;
+    integratedHeadSha: string;
+  }): Promise<string> {
+    const parsed = z.object({
+      token: z.string().uuid(),
+      workerId: z.string().trim().min(1).max(256),
+      releaseId: z.string().uuid(),
+      pullRequestNumber: z.number().int().positive(),
+      childHeadSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/),
+      integratedHeadSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/),
+    }).strict().parse(input);
+    const result = await this.pool.query<{ child_id: string }>(
+      `SELECT agentops_control.mark_review_child_integrated(
+         $1, $2, $3, $4, $5, $6
+       ) AS child_id`,
+      [
+        parsed.token,
+        parsed.workerId,
+        parsed.releaseId,
+        parsed.pullRequestNumber,
+        parsed.childHeadSha,
+        parsed.integratedHeadSha,
+      ],
+    );
+    return z.string().uuid().parse(result.rows[0]?.child_id);
   }
 
   async reclaimExpiredLeases(

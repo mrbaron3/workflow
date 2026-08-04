@@ -31,9 +31,8 @@ const (
 )
 
 type Policy struct {
-	Role         Role
-	Repositories []string
-	Permissions  map[string]string
+	Role        Role
+	Permissions map[string]string
 }
 
 type IssuerConfig struct {
@@ -73,7 +72,8 @@ type Issuer struct {
 
 	// policies and states are fixed by NewIssuer and never mutated afterwards,
 	// so both are safe to read concurrently without a lock.
-	states map[Role]*roleState
+	statesMu sync.Mutex
+	states   map[string]*roleState
 }
 
 func NewIssuer(
@@ -100,7 +100,7 @@ func NewIssuer(
 	}
 	policies := make(map[Role]Policy, len(config.Policies))
 	for _, policy := range config.Policies {
-		normalized, err := normalizePolicy(policy, config.Owner)
+		normalized, err := normalizePolicy(policy)
 		if err != nil {
 			return nil, err
 		}
@@ -126,10 +126,6 @@ func NewIssuer(
 	if now == nil {
 		now = time.Now
 	}
-	states := make(map[Role]*roleState, len(policies))
-	for role := range policies {
-		states[role] = &roleState{}
-	}
 	return &Issuer{
 		appID:          config.AppID,
 		installationID: config.InstallationID,
@@ -140,7 +136,7 @@ func NewIssuer(
 		policies:       policies,
 		client:         client,
 		now:            now,
-		states:         states,
+		states:         make(map[string]*roleState),
 	}, nil
 }
 
@@ -168,19 +164,26 @@ func (issuer *Issuer) Warm(ctx context.Context) error {
 func (issuer *Issuer) Token(
 	ctx context.Context,
 	role Role,
+	repository string,
 ) (TokenResponse, error) {
 	policy, present := issuer.policies[role]
 	if !present {
 		return TokenResponse{}, fmt.Errorf("GitHub App role is not configured")
 	}
-	state := issuer.states[role]
+	repository = strings.TrimSpace(repository)
+	if repository != strings.ToLower(repository) ||
+		!control.ValidRepositoryIdentity(repository) ||
+		!strings.HasPrefix(repository, issuer.owner+"/") {
+		return TokenResponse{}, fmt.Errorf("GitHub App repository is outside the installation owner")
+	}
+	state := issuer.stateFor(role, repository)
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	now := issuer.now().UTC()
 	if state.valid && now.Before(state.cached.refreshAt) {
 		return cloneTokenResponse(state.cached.response), nil
 	}
-	response, err := issuer.mint(ctx, policy, now)
+	response, err := issuer.mint(ctx, policy, repository, now)
 	if err != nil {
 		return TokenResponse{}, err
 	}
@@ -195,6 +198,22 @@ func (issuer *Issuer) Token(
 	}
 	state.valid = true
 	return cloneTokenResponse(response), nil
+}
+
+func (issuer *Issuer) ActorLogin() string {
+	return issuer.appSlug + "[bot]"
+}
+
+func (issuer *Issuer) stateFor(role Role, repository string) *roleState {
+	key := string(role) + "\x00" + repository
+	issuer.statesMu.Lock()
+	defer issuer.statesMu.Unlock()
+	state := issuer.states[key]
+	if state == nil {
+		state = &roleState{}
+		issuer.states[key] = state
+	}
+	return state
 }
 
 func (issuer *Issuer) verifyIdentity(ctx context.Context) error {
@@ -258,22 +277,19 @@ func (issuer *Issuer) verifyIdentity(ctx context.Context) error {
 func (issuer *Issuer) mint(
 	ctx context.Context,
 	policy Policy,
+	repository string,
 	now time.Time,
 ) (TokenResponse, error) {
 	jwt, err := SignAppJWT(issuer.privateKey, issuer.appID, now)
 	if err != nil {
 		return TokenResponse{}, err
 	}
-	names := make([]string, 0, len(policy.Repositories))
-	for _, repository := range policy.Repositories {
-		_, name, _ := strings.Cut(repository, "/")
-		names = append(names, name)
-	}
+	_, name, _ := strings.Cut(repository, "/")
 	request := struct {
 		Repositories []string          `json:"repositories"`
 		Permissions  map[string]string `json:"permissions"`
 	}{
-		Repositories: names,
+		Repositories: []string{name},
 		Permissions:  policy.Permissions,
 	}
 	var issued struct {
@@ -311,7 +327,7 @@ func (issuer *Issuer) mint(
 	if err := issuer.verifyRepositories(
 		ctx,
 		issued.Token,
-		policy.Repositories,
+		[]string{repository},
 	); err != nil {
 		return TokenResponse{}, err
 	}
@@ -320,9 +336,9 @@ func (issuer *Issuer) mint(
 		Role:          policy.Role,
 		Token:         issued.Token,
 		ExpiresAt:     issued.ExpiresAt.UTC(),
-		Repositories:  append([]string(nil), policy.Repositories...),
+		Repositories:  []string{repository},
 		Permissions:   cloneMap(policy.Permissions),
-		ActorLogin:    issuer.appSlug + "[bot]",
+		ActorLogin:    issuer.ActorLogin(),
 	}, nil
 }
 
@@ -409,29 +425,11 @@ func (issuer *Issuer) githubJSON(
 	return nil
 }
 
-func normalizePolicy(policy Policy, owner string) (Policy, error) {
+func normalizePolicy(policy Policy) (Policy, error) {
 	if !policy.Role.Valid() ||
-		len(policy.Repositories) < 1 || len(policy.Repositories) > 64 ||
 		len(policy.Permissions) < 1 || len(policy.Permissions) > 16 {
 		return Policy{}, fmt.Errorf("GitHub App role policy is invalid")
 	}
-	repositories := make([]string, 0, len(policy.Repositories))
-	seen := make(map[string]struct{}, len(policy.Repositories))
-	for _, repository := range policy.Repositories {
-		if repository != strings.ToLower(strings.TrimSpace(repository)) ||
-			!control.ValidRepositoryIdentity(repository) ||
-			!strings.HasPrefix(repository, owner+"/") {
-			return Policy{}, fmt.Errorf(
-				"GitHub App role repository is outside the installation owner",
-			)
-		}
-		if _, duplicate := seen[repository]; duplicate {
-			return Policy{}, fmt.Errorf("GitHub App role repository is duplicated")
-		}
-		seen[repository] = struct{}{}
-		repositories = append(repositories, repository)
-	}
-	sort.Strings(repositories)
 	permissions := make(map[string]string, len(policy.Permissions))
 	for name, level := range policy.Permissions {
 		if !safePermissionName(name) ||
@@ -441,9 +439,8 @@ func normalizePolicy(policy Policy, owner string) (Policy, error) {
 		permissions[name] = level
 	}
 	return Policy{
-		Role:         policy.Role,
-		Repositories: repositories,
-		Permissions:  permissions,
+		Role:        policy.Role,
+		Permissions: permissions,
 	}, nil
 }
 

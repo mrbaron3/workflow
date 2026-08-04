@@ -14,6 +14,7 @@
     selectedCardId: '',
     nextPageToken: '',
     anomalyFilter: 'all',
+    provenance: null,
   };
   const byId = (id) => document.getElementById(id);
   const live = (message) => {
@@ -32,6 +33,15 @@
     return state.pendingKeys.get(scope);
   };
   const clearCommandKey = (scope) => state.pendingKeys.delete(scope);
+  const stableValue = (value) => {
+    if (Array.isArray(value)) return value.map(stableValue);
+    if (value && typeof value === 'object') return Object.fromEntries(
+      Object.keys(value).sort().map((key) => [key, stableValue(value[key])]),
+    );
+    return value;
+  };
+  const sameConfiguration = (left, right) =>
+    JSON.stringify(stableValue(left || {})) === JSON.stringify(stableValue(right || {}));
   const outcomeText = (body) => {
     const outcome = body?.outcome;
     if (!outcome) return '';
@@ -198,6 +208,103 @@
       </dl>
     </section>`;
   }
+  const KANBAN_LANES = [
+    ['ready', 'ready'],
+    ['intake-planning', 'intake / planning'],
+    ['design', 'design'],
+    ['implementation', 'implementation'],
+    ['review', 'review'],
+    ['repair', 'repair'],
+    ['gate-wait', 'gate wait'],
+    ['human-escalated', 'human escalated'],
+    ['merge-ready', 'merge ready'],
+    ['released', 'released'],
+    ['failed', 'failed'],
+  ];
+  function kanbanLane(current) {
+    if (current.kanbanLane) return current.kanbanLane;
+    if (['failed', 'cancelled', 'rejected'].includes(current.jobStatus)) return 'failed';
+    if (current.state === 'blocked' || current.phase === 'human-review') return 'human-escalated';
+    if (current.state === 'waiting') return 'gate-wait';
+    if (current.phase === 'completed') return current.state === 'succeeded' ? 'released' : 'failed';
+    if (current.phase === 'merge') return 'merge-ready';
+    if (current.phase === 'review' || current.phase === 'validation') return 'review';
+    if (current.phase === 'repair') return 'repair';
+    if (current.phase === 'generation' || current.phase === 'implementation') return 'implementation';
+    if (current.phase === 'design') return 'design';
+    if (current.phase === 'planning' || current.phase === 'intake') return 'intake-planning';
+    return 'ready';
+  }
+  function formatDuration(seconds) {
+    if (!Number.isFinite(Number(seconds))) return '—';
+    const total = Math.max(0, Math.floor(Number(seconds)));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const remainder = total % 60;
+    if (hours > 0) return `${hours}h ${minutes}m`;
+    if (minutes > 0) return `${minutes}m ${remainder}s`;
+    return `${remainder}s`;
+  }
+  function developmentProgressCard(issue) {
+    const current = issue.current;
+    const events = Array.isArray(issue.history) ? issue.history : [];
+    const visibleState = current.state;
+    const lane = kanbanLane(current);
+    const subject = `${issue.repository}#${Number(issue.issueNumber)}`;
+    const reviewRound = Number(current.reviewRound || 0);
+    const laneTitle = lane === 'review' && reviewRound > 0 ? `review round ${reviewRound}` : lane;
+    const escalationEvidence = current.escalationId
+      ? JSON.stringify(current.escalationEvidence || {})
+      : '—';
+    const reviewPerspectives = Array.isArray(current.reviewPerspectives)
+      ? current.reviewPerspectives
+      : [];
+    const perspectiveEvidence = reviewPerspectives.map((perspective) => {
+      const findings = Array.isArray(perspective.findings) ? perspective.findings : [];
+      const findingLines = findings.map((finding) =>
+        `<li><strong>${escapeHTML(finding.severity || 'unknown')} · ${escapeHTML(finding.disposition || 'legacy')}</strong> ${escapeHTML(finding.criterionId || 'finding')}: ${escapeHTML(finding.observed || '—')}${finding.separationReason ? `<br><span>分離理由: ${escapeHTML(finding.separationReason)}</span>` : ''}</li>`
+      ).join('');
+      return `<li><strong>${escapeHTML(perspective.perspective || 'unknown')}</strong> · ${escapeHTML(perspective.verdict || 'unknown')} · ${Number(perspective.findingCount || findings.length)} finding(s)${findingLines ? `<ul>${findingLines}</ul>` : ''}</li>`;
+    }).join('');
+    const lineage = current.branchLineage && typeof current.branchLineage === 'object'
+      ? current.branchLineage
+      : {};
+    const lineageChildren = Array.isArray(lineage.children) ? lineage.children : [];
+    const lineageEvidence = lineage.nodeId
+      ? `<p>node <code>${escapeHTML(lineage.nodeId)}</code> · ${escapeHTML(lineage.status || 'unknown')}${lineage.parentIssueNumber ? ` · parent #${Number(lineage.parentIssueNumber)} @ <code>${escapeHTML(lineage.parentHeadSha || '—')}</code>` : ''}</p>${lineageChildren.length > 0 ? `<ul>${lineageChildren.map((child) => `<li>#${Number(child.issueNumber)} · ${escapeHTML(child.status || 'unknown')} · parent <code>${escapeHTML(child.parentHeadSha || '—')}</code>${child.pullRequestNumber ? ` · PR #${Number(child.pullRequestNumber)}` : ''}</li>`).join('')}</ul>` : ''}`
+      : '<p class="quiet">lineage なし</p>';
+    const history = [...events].reverse().map((event) =>
+      `<li><time>${formatTime(event.occurredAt)}</time><span>${escapeHTML(event.phase)}</span><strong>${escapeHTML(event.state)}</strong><span>${escapeHTML(event.step)}</span></li>`
+    ).join('');
+    return `<section class="development-progress kanban-issue-card" aria-label="${escapeHTML(subject)} の実装進捗">
+      <header class="progress-head">
+        <div><p class="component-name">${escapeHTML(laneTitle)} · ${escapeHTML(subject)}</p>
+          <strong>${escapeHTML(current.phase)} / ${escapeHTML(current.step)}</strong></div>
+        <span class="badge ${['failed', 'blocked'].includes(visibleState) ? 'bad' : visibleState === 'waiting' ? 'warn' : ''}">${escapeHTML(visibleState)}</span>
+      </header>
+      <dl class="progress-grid">
+        <dt>開始</dt><dd>${formatTime(issue.startedAt || current.occurredAt)}</dd>
+        <dt>最終活動</dt><dd>${formatTime(issue.lastActivity)}</dd>
+        <dt>次の gate</dt><dd>${escapeHTML(current.nextGate || '—')}</dd>
+        <dt>gate 待機</dt><dd>${formatDuration(current.gateWaitSeconds)}</dd>
+        <dt>blocker</dt><dd>${escapeHTML(current.blocker || current.jobLastError || '—')}</dd>
+        <dt>人間の操作</dt><dd>${escapeHTML(current.humanAction || '—')}</dd>
+        <dt>escalation</dt><dd>${current.escalationId ? `#${Number(current.escalationId)} · ${formatTime(current.escalatedAt)}` : '—'}</dd>
+        <dt>evidence</dt><dd><code>${escapeHTML(escalationEvidence)}</code></dd>
+        <dt>head SHA</dt><dd><code>${escapeHTML(current.headSha || '—')}</code></dd>
+        <dt>review</dt><dd>${reviewRound > 0 ? `round ${reviewRound} · ${escapeHTML(current.reviewOutcome || '進行中')}` : '—'}</dd>
+        <dt>branch</dt><dd>${escapeHTML(current.branch || '—')}</dd>
+        <dt>親 Epic</dt><dd>${current.parentIssueNumber ? `#${Number(current.parentIssueNumber)}` : '—'}</dd>
+        <dt>PR</dt><dd>${current.pullRequestNumber ? `#${Number(current.pullRequestNumber)}` : '—'}</dd>
+        <dt>owner</dt><dd>${escapeHTML(current.workerId)} · attempt ${Number(current.attemptNumber)}</dd>
+        <dt>session</dt><dd>${escapeHTML(current.sessionName || '—')}</dd>
+        <dt>worktree</dt><dd><code>${escapeHTML(current.worktreePath || '—')}</code></dd>
+      </dl>
+      <details class="progress-history"><summary>review evidence ${reviewPerspectives.length} perspective(s)</summary><ul>${perspectiveEvidence || '<li>まだ記録されていません</li>'}</ul></details>
+      <details class="progress-history"><summary>branch DAG ${lineageChildren.length} child(ren)</summary>${lineageEvidence}</details>
+      <details class="progress-history"><summary>工程履歴 ${events.length}件</summary><ol>${history}</ol></details>
+    </section>`;
+  }
   function developmentProgress(item) {
     const issues = Array.isArray(item.developmentProgress) ? item.developmentProgress : [];
     if (issues.length === 0) {
@@ -206,35 +313,20 @@
         <p class="quiet">runner が次の工程へ遷移すると、Issue単位の状態がここに表示されます。</p>
       </section>`;
     }
-    return `<div class="development-progress-list">${issues.map((issue) => {
-      const current = issue.current;
-      const events = Array.isArray(issue.history) ? issue.history : [];
-      const failedJob = ['failed', 'cancelled', 'rejected'].includes(current.jobStatus);
-      const visibleState = failedJob ? 'failed' : current.state;
-      const subject = `${issue.repository}#${Number(issue.issueNumber)}`;
-      const history = [...events].reverse().map((event) =>
-        `<li><time>${formatTime(event.occurredAt)}</time><span>${escapeHTML(event.phase)}</span><strong>${escapeHTML(event.state)}</strong><span>${escapeHTML(event.step)}</span></li>`
-      ).join('');
-      return `<section class="development-progress" aria-label="${escapeHTML(subject)} の実装進捗">
-        <header class="progress-head">
-          <div><p class="component-name">実装進捗 · ${escapeHTML(subject)}</p>
-            <strong>${escapeHTML(current.phase)} / ${escapeHTML(current.step)}</strong></div>
-          <span class="badge ${visibleState === 'failed' || visibleState === 'blocked' ? 'bad' : visibleState === 'waiting' ? 'warn' : ''}">${escapeHTML(visibleState)}</span>
-        </header>
-        <dl class="progress-grid">
-          <dt>最終活動</dt><dd>${formatTime(issue.lastActivity)}</dd>
-          <dt>次の gate</dt><dd>${escapeHTML(current.nextGate || '—')}</dd>
-          <dt>blocker</dt><dd>${escapeHTML(current.blocker || current.jobLastError || '—')}</dd>
-          <dt>branch</dt><dd>${escapeHTML(current.branch || '—')}</dd>
-          <dt>親 Epic</dt><dd>${current.parentIssueNumber ? `#${Number(current.parentIssueNumber)}` : '—'}</dd>
-          <dt>PR</dt><dd>${current.pullRequestNumber ? `#${Number(current.pullRequestNumber)}` : '—'}</dd>
-          <dt>owner</dt><dd>${escapeHTML(current.workerId)} · attempt ${Number(current.attemptNumber)}</dd>
-          <dt>session</dt><dd>${escapeHTML(current.sessionName || '—')}</dd>
-          <dt>worktree</dt><dd><code>${escapeHTML(current.worktreePath || '—')}</code></dd>
-        </dl>
-        <details class="progress-history"><summary>工程履歴 ${events.length}件</summary><ol>${history}</ol></details>
+    const issuesByLane = new Map(KANBAN_LANES.map(([lane]) => [lane, []]));
+    issues.forEach((issue) => {
+      const lane = kanbanLane(issue.current);
+      if (!issuesByLane.has(lane)) issuesByLane.set(lane, []);
+      issuesByLane.get(lane).push(issue);
+    });
+    const columns = KANBAN_LANES.map(([lane, label]) => {
+      const laneIssues = issuesByLane.get(lane) || [];
+      return `<section class="kanban-column" aria-label="${escapeHTML(label)} lane" data-lane="${escapeHTML(lane)}">
+        <header class="kanban-column-head"><strong>${escapeHTML(label)}</strong><span>${laneIssues.length}</span></header>
+        <div class="kanban-column-cards">${laneIssues.map(developmentProgressCard).join('') || '<p class="quiet kanban-empty">対象なし</p>'}</div>
       </section>`;
-    }).join('')}${item.developmentProgressTruncated
+    }).join('');
+    return `<div class="development-progress-list"><div class="kanban-board" aria-label="${escapeHTML(item.registration.repository)} の開発 Kanban">${columns}</div>${item.developmentProgressTruncated
       ? `<section class="development-progress progress-truncated" aria-label="実装進捗の省略">
         <p class="quiet">直近 ${issues.length} Issue のみ表示しています。全件は <code>agentopsctl progress</code> で読めます。</p>
       </section>`
@@ -257,6 +349,7 @@
         </div>
         <div class="card-actions">
           <button class="ghost" type="button" data-edit="${escapeHTML(r.id)}" ${state.connected ? '' : 'disabled'}>編集</button>
+          <button class="primary" type="button" data-enable="${escapeHTML(r.id)}" ${!r.enabled && state.connected ? '' : 'hidden disabled'}>再有効化</button>
           <button class="danger" type="button" data-disable="${escapeHTML(r.id)}" ${r.enabled && state.connected ? '' : 'disabled'}>無効化</button>
         </div>
       </header>
@@ -271,6 +364,7 @@
           <span>Queue depth<br><strong>${Number(item.queueDepth || 0)}</strong></span>
           <span>Active job<br><strong>${escapeHTML(item.activeJobId || '—')} / ${escapeHTML(item.activeJobState || '—')} / version ${escapeHTML(item.activeJobRegistrationVersion || '—')}</strong></span>
           <span>Last error<br><strong>${escapeHTML(item.lastJobFailure?.lastError || '—')}</strong></span>
+          <span>Gate SLA<br><strong>${Number(r.configuration?.gateTimeoutSeconds?.default || 3600)} seconds default</strong></span>
           <ul class="delivery-list" aria-label="最近の配送失敗">${deliveries || '<li>配送失敗はありません</li>'}</ul>
         </div>
       </details>
@@ -313,6 +407,11 @@
       state.connected = true;
       state.lastGood = page.lastSuccessfulAt || page.observedAt;
       byId('mode').textContent = page.mode;
+      state.provenance = page.provenance || null;
+      const revision = state.provenance?.revision;
+      byId('provenance').textContent = revision
+        ? `${state.provenance.repository}@${revision.slice(0, 12)}`
+        : 'build provenance 未設定';
       byId('freshness').textContent = `最終取得 ${formatTime(state.lastGood)}`;
       byId('alert').hidden = true;
       byId('create').disabled = false;
@@ -392,6 +491,13 @@
     byId('issue-enabled').checked = registration?.issueMonitorEnabled ?? true;
     byId('pr-enabled').checked = registration?.prMonitorEnabled ?? true;
     byId('execution-enabled').checked = registration?.executionEnabled ?? false;
+    const timeouts = registration?.configuration?.gateTimeoutSeconds || {};
+    byId('gate-sla-default').value = String(timeouts.default || 3600);
+    byId('gate-sla-planning').value = timeouts.planning || '';
+    byId('gate-sla-design').value = timeouts.design || '';
+    byId('gate-sla-graders').value = timeouts['repository-graders'] || '';
+    byId('gate-sla-review').value = timeouts.review || '';
+    byId('gate-sla-merge').value = timeouts.merge || '';
     byId('registration-dialog').showModal();
     byId('repository').focus();
   }
@@ -406,6 +512,20 @@
       issueMonitorEnabled: byId('issue-enabled').checked,
       prMonitorEnabled: byId('pr-enabled').checked,
       executionEnabled: byId('execution-enabled').checked,
+    };
+    const gateTimeoutSeconds = { default: Number(byId('gate-sla-default').value) };
+    [
+      ['planning', 'gate-sla-planning'],
+      ['design', 'gate-sla-design'],
+      ['repository-graders', 'gate-sla-graders'],
+      ['review', 'gate-sla-review'],
+      ['merge', 'gate-sla-merge'],
+    ].forEach(([key, input]) => {
+      if (byId(input).value !== '') gateTimeoutSeconds[key] = Number(byId(input).value);
+    });
+    body.configuration = {
+      ...(state.selected?.configuration || {}),
+      gateTimeoutSeconds,
     };
     if (!id) body.repository = repository;
     const scope = id ? `update:${id}:${version}` : `create:${repository}`;
@@ -423,7 +543,8 @@
       const expected = response.registration;
       if (!verified || verified.version !== expected.version
         || ['enabled', 'issueMonitorEnabled', 'prMonitorEnabled', 'executionEnabled']
-          .some((key) => verified[key] !== expected[key])) {
+          .some((key) => verified[key] !== expected[key])
+        || !sameConfiguration(verified.configuration, expected.configuration)) {
         throw new Error('authoritative re-query did not verify the command outcome');
       }
       clearCommandKey(scope);
@@ -468,6 +589,32 @@
       live(`無効化失敗: ${error.message}`);
       handleOperationalFailure(error);
       showDialogError('confirm-error', error);
+    }
+  }
+
+  async function enableRegistration(registration) {
+    const scope = `enable:${registration.id}:${registration.version}`;
+    try {
+      const response = await api(`/v1/registrations/${registration.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Idempotency-Key': commandKey(scope),
+          'If-Match': `"${registration.version}"`,
+        },
+        body: JSON.stringify({ enabled: true }),
+      });
+      const page = await statusPage(`/v1/registrations?repository=${encodeURIComponent(registration.repository)}`);
+      const verified = page.items?.[0]?.registration;
+      if (!verified || !verified.enabled || verified.version !== response.registration.version) {
+        throw new Error('authoritative re-query did not verify re-enable');
+      }
+      clearCommandKey(scope);
+      await load({ announce: false });
+      document.querySelector(`[data-enable="${CSS.escape(registration.id)}"]`)?.focus();
+      live(`${registration.repository} version ${verified.version} の再有効化を確認しました (${response.outcome.outcome})`);
+    } catch (error) {
+      live(`再有効化失敗: ${error.message}`);
+      handleOperationalFailure(error);
     }
   }
 
@@ -593,8 +740,9 @@
     const select = event.target.closest('[data-select]');
     const edit = event.target.closest('[data-edit]');
     const disable = event.target.closest('[data-disable]');
+    const enable = event.target.closest('[data-enable]');
     const delivery = event.target.closest('[data-delivery]');
-    const id = select?.dataset.select || edit?.dataset.edit || disable?.dataset.disable
+    const id = select?.dataset.select || edit?.dataset.edit || disable?.dataset.disable || enable?.dataset.enable
       || delivery?.closest('.card')?.dataset.id;
     const item = state.items.find((candidate) => candidate.registration.id === id);
     if (!item) return;
@@ -605,6 +753,7 @@
       live(`${item.registration.repository} の状態詳細を選択しました。異常: ${isAnomaly(item) ? 'あり' : 'なし'}`);
     }
     if (edit) openRegistration(item.registration);
+    if (enable) enableRegistration(item.registration);
     if (disable) {
       rememberDialogTrigger();
       state.selected = item.registration;

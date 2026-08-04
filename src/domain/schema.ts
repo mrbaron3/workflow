@@ -173,7 +173,7 @@ export const DesignAuthority = z.discriminatedUnion('provider', [
 ]);
 export type DesignAuthority = z.infer<typeof DesignAuthority>;
 
-const ReviewProjectionRecord = z.record(z.unknown());
+const ReviewProjectionRecord = z.record(z.string(), z.unknown());
 
 /**
  * Workflow-owned, deterministic subset of WF-DF-005's review projection. Nested records retain
@@ -776,7 +776,7 @@ export const PlanningEnrichmentRecord = z.object({
   legacyDesigns: z.array(LegacyDesignRevision).default([]),
   designDecisionHistory: z.array(DesignPlanningDecision).default([]),
   uiDesignCandidateKeys: z.array(z.string()).default([]),
-  uiDesignInvocationKeys: z.record(z.string()).default({}),
+  uiDesignInvocationKeys: z.record(z.string(), z.string()).default({}),
   createdAt: z.string(),
 });
 export type PlanningEnrichmentRecord = z.infer<typeof PlanningEnrichmentRecord>;
@@ -790,17 +790,46 @@ export type PlanningEnrichmentRecord = z.infer<typeof PlanningEnrichmentRecord>;
 export const FindingLineage = z.enum(['persisted', 'new']);
 export type FindingLineage = z.infer<typeof FindingLineage>;
 
+/**
+ * Review scope decision. `in-change` is work required to make the current
+ * revision satisfy its accepted contract. `separate-issue` is a coherent,
+ * independently testable problem whose implementation would expand that
+ * contract; it must be integrated through a child branch before the parent
+ * can merge.
+ */
+export const FindingDisposition = z.enum(['in-change', 'separate-issue']);
+export type FindingDisposition = z.infer<typeof FindingDisposition>;
+
 export const Finding = z.object({
   criterionId: z.string(),
   severity: Severity,
   expected: z.string(),
   observed: z.string(),
   reproductionSteps: z.array(z.string()).default([]),
-  evidence: z.record(z.string()).default({}), // label -> relative path under evidence dir
+  evidence: z.record(z.string(), z.string()).default({}), // label -> relative path under evidence dir
   requiredFix: z.array(z.string()).default([]),
   lineage: FindingLineage.optional(),
   /** Stable prior-finding reference, required by new persisted review outputs. */
   lineageRef: FindingLineageRef.optional(),
+  /** Optional only for historical stored runs; every new reviewer output requires it. */
+  disposition: FindingDisposition.optional(),
+  /** Required evidence that a separate issue is independently scoped. */
+  separationReason: z.string().trim().min(1).max(2_000).optional(),
+}).superRefine((finding, context) => {
+  if (finding.disposition === 'separate-issue' && !finding.separationReason) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['separationReason'],
+      message: 'separate-issue finding requires a separation reason',
+    });
+  }
+  if (finding.disposition !== 'separate-issue' && finding.separationReason) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['separationReason'],
+      message: 'only separate-issue findings may carry a separation reason',
+    });
+  }
 });
 export type Finding = z.infer<typeof Finding>;
 
@@ -835,7 +864,7 @@ const EvalRunRecord = z.object({
   promptVersion: z.string().default('v0'),
   graderVersion: z.string().default('v0'),
   verdict: Verdict,
-  hardGates: z.record(GateResult).default({}),
+  hardGates: z.record(z.string(), GateResult).default({}),
   findings: z.array(Finding).default([]),
   scores: Scores,
   overall: z.number().min(0).max(1),
@@ -882,7 +911,7 @@ export const EvalTask = z.object({
    * null = legacy/uncaptured: runnable only via the config fallback when bound to the
    * current target. Additive.
    */
-  graderCommands: z.record(z.string()).nullable().default(null),
+  graderCommands: z.record(z.string(), z.string()).nullable().default(null),
   /**
    * Retirement audit (FEAT-005): why/when a human retired this task from execution. Set
    * ONLY by pipeline/lifecycle.ts retireEvalTask (a judgment point, never automated).
@@ -1042,7 +1071,7 @@ export const ApprovedSpecRef = z.object({
   /** Blob gitSha of acceptance.yaml at the signed commit. */
   acceptanceBlobGitSha: z.string(),
   /** AC-ID -> content fingerprint pinned at signing (see authoring/fingerprint.ts). */
-  acFingerprints: z.record(z.string()),
+  acFingerprints: z.record(z.string(), z.string()),
   /** Version-pinned system-layer elements referenced (empty on greenfield — not yet seeded). */
   systemRefs: z.array(z.string()).default([]),
   /** AC-IDs this signature covers; status derives from their coverage of the current set. */
@@ -1082,7 +1111,7 @@ export type TargetBinding = z.infer<typeof TargetBinding>;
 export const DB = z.object({
   version: z.literal(1).default(1),
   targetBinding: TargetBinding.nullable().default(null),
-  counters: z.record(z.number()).default({}),
+  counters: z.record(z.string(), z.number()).default({}),
   roadmap: Roadmap.nullable().default(null),
   epics: z.array(Epic).default([]),
   features: z.array(Feature).default([]),

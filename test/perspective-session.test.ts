@@ -65,7 +65,7 @@ function writeFindings(evalRoot: string, perspective: string, body: unknown): vo
 
 describe('parsePerspectiveFindings', () => {
   it('normalises a valid session output into a PerspectiveResult', () => {
-    const r = parsePerspectiveFindings({ verdict: 'request_changes', score: 0.4, findings: [{ criterionId: 'C1', severity: 'major', observed: 'o', requiredFix: ['fix it'] }] });
+    const r = parsePerspectiveFindings({ verdict: 'request_changes', score: 0.4, findings: [{ criterionId: 'C1', severity: 'major', observed: 'o', requiredFix: ['fix it'], disposition: 'in-change' }] });
     expect(r.verdict).toBe('request_changes');
     expect(r.overall).toBe(0.4);
     expect(r.findings[0]!.criterionId).toBe('C1');
@@ -85,6 +85,7 @@ describe('parsePerspectiveFindings', () => {
         criterionId: 'C1',
         severity: 'major',
         observed: 'o',
+        disposition: 'in-change',
         requiredFix: ['fix it'],
         lineage: null,
       }],
@@ -100,6 +101,7 @@ describe('parsePerspectiveFindings', () => {
         criterionId: 'C1',
         severity: 'major',
         observed: 'still present',
+        disposition: 'in-change',
         lineage: 'persisted',
         lineageRef: LINEAGE_REF,
       }],
@@ -769,12 +771,10 @@ describe('restricted repository-PR reviewers', () => {
     const root = tmpDir('restricted-review-sigkill');
     const executable = path.join(root, 'claude');
     fs.writeFileSync(executable, [
-      '#!/usr/bin/env node',
-      "const fs = require('node:fs');",
-      "process.on('SIGTERM', () => {});",
-      "fs.writeFileSync('provider.pid', String(process.pid));",
-      'process.stdin.resume();',
-      'setInterval(() => {}, 1000);',
+      '#!/bin/sh',
+      "trap '' TERM",
+      "printf '%s' \"$$\" > provider.pid",
+      'while :; do sleep 1; done',
     ].join('\n'), { mode: 0o700 });
     const job = restrictedJob('claude-timeout');
     const started = Date.now();
@@ -794,6 +794,7 @@ describe('restricted repository-PR reviewers', () => {
           parentEnv: {
             PATH: `${root}${path.delimiter}${process.env.PATH ?? ''}`,
             ANTHROPIC_API_KEY: 'test-only',
+            [RESTRICTED_REVIEW_API_KEY_OPT_IN]: 'true',
           },
         },
       },
@@ -879,8 +880,8 @@ describe('runPanel with the real session backend', () => {
     writeFindings(evalRoot, 'codeQuality', {
       verdict: 'request_changes',
       findings: [
-        { criterionId: 'AC-1', severity: 'major', observed: 'still duplicated', expected: 'deduplicated', lineage: 'persisted', lineageRef: LINEAGE_REF },
-        { criterionId: 'AC-1', severity: 'minor', observed: 'unattested note', expected: 'e' }, // legacy: no lineage
+        { criterionId: 'AC-1', severity: 'major', observed: 'still duplicated', expected: 'deduplicated', disposition: 'in-change', lineage: 'persisted', lineageRef: LINEAGE_REF },
+        { criterionId: 'AC-1', severity: 'minor', observed: 'unattested note', expected: 'e', disposition: 'in-change' }, // legacy: no lineage
       ],
     });
     const store = storeAt('psg-panel-lineage-store');

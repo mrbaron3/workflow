@@ -18,13 +18,22 @@ describe('GitHub credential broker v1 contracts', () => {
 
   it('accepts only an exact versioned role request', () => {
     const validate = ajv.compile(load('token-request.schema.json'));
-    expect(validate({ schemaVersion: 1, role: 'triage' })).toBe(true);
     expect(validate({
       schemaVersion: 1,
       role: 'triage',
+      repository: 'mrbaron3/servo',
+    })).toBe(true);
+    expect(validate({
+      schemaVersion: 1,
+      role: 'triage',
+      repository: 'mrbaron3/servo',
       repositories: ['acme/widgets'],
     })).toBe(false);
-    expect(validate({ schemaVersion: 2, role: 'runner' })).toBe(false);
+    expect(validate({
+      schemaVersion: 2,
+      role: 'runner',
+      repository: 'mrbaron3/servo',
+    })).toBe(false);
   });
 
   it('bounds the secret response and rejects scope extensions', () => {

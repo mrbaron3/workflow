@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,11 +59,38 @@ func (manager *manager) Start(
 	build bool,
 	requestID string,
 ) (resultErr error) {
+	if err := manager.prepareReleaseProvenance(ctx); err != nil {
+		return err
+	}
 	if err := manager.config.validateStart(mode); err != nil {
 		return err
 	}
+	if !build {
+		return fmt.Errorf(
+			"start requires --build so the image is bound to the exact clean source HEAD",
+		)
+	}
 	if err := manager.ensureRuntime(ctx); err != nil {
 		return err
+	}
+	if manager.runtime.ImageExists(ctx, manager.config.ControlImage) {
+		postgres, err := manager.runtime.Container(
+			ctx,
+			manager.config.PostgresContainer,
+		)
+		if err != nil {
+			return err
+		}
+		if postgres != nil && postgres.Status.State == "running" {
+			current, statusErr := manager.databaseStatus(ctx)
+			if statusErr == nil && (current.State.Mode == lifecycle.ModeActive ||
+				(current.State.Mode == lifecycle.ModeDraining &&
+					(current.ActiveLeases > 0 || current.InFlightAttempts > 0))) {
+				return fmt.Errorf(
+					"running work must be drained before image build; run agentopsctl drain first",
+				)
+			}
+		}
 	}
 	if build || !manager.runtime.ImageExists(ctx, manager.config.PostgresImage) {
 		if err := manager.runtime.BuildImage(
@@ -121,6 +149,9 @@ func (manager *manager) Start(
 		); err != nil {
 			return err
 		}
+	}
+	if err := manager.prepareBuiltReleaseProvenance(ctx); err != nil {
+		return err
 	}
 	if err := manager.runtime.EnsureNetwork(ctx, manager.config.Network); err != nil {
 		return err
@@ -334,6 +365,191 @@ func (manager *manager) Start(
 	)
 }
 
+// DeployActive is the self-update boundary. It validates the exact clean
+// source before touching lifecycle state, lets every current lease finish, and
+// only then builds/migrates/replaces the topology from that revision.
+func (manager *manager) DeployActive(
+	ctx context.Context,
+	timeout time.Duration,
+	requestID string,
+) error {
+	if err := manager.prepareReleaseProvenance(ctx); err != nil {
+		return err
+	}
+	if err := manager.config.validateStart(lifecycle.ModeActive); err != nil {
+		return err
+	}
+	if err := manager.ensureRuntime(ctx); err != nil {
+		return err
+	}
+	postgres, err := manager.runtime.Container(ctx, manager.config.PostgresContainer)
+	if err != nil {
+		return err
+	}
+	if postgres != nil && postgres.Status.State == "running" &&
+		manager.runtime.ImageExists(ctx, manager.config.ControlImage) {
+		status, err := manager.databaseStatus(ctx)
+		if err != nil {
+			return err
+		}
+		if status.State.Mode == lifecycle.ModeActive ||
+			status.State.Mode == lifecycle.ModeDraining {
+			if err := manager.Drain(ctx, timeout, requestID+":drain"); err != nil {
+				return err
+			}
+		}
+	}
+	return manager.Start(ctx, lifecycle.ModeActive, true, requestID+":promote")
+}
+
+func (manager *manager) prepareReleaseProvenance(ctx context.Context) error {
+	git := func(args ...string) (string, error) {
+		command := exec.CommandContext(
+			ctx,
+			"git",
+			append([]string{"-C", manager.config.ProjectRoot}, args...)...,
+		)
+		output, err := command.Output()
+		if err != nil {
+			return "", fmt.Errorf("read deployment source identity: %w", err)
+		}
+		return strings.TrimSpace(string(output)), nil
+	}
+	head, err := git("rev-parse", "HEAD")
+	if err != nil || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(head) {
+		return fmt.Errorf("deployment source HEAD is unavailable or invalid")
+	}
+	dirty, err := git("status", "--porcelain", "--untracked-files=normal")
+	if err != nil {
+		return err
+	}
+	if dirty != "" {
+		return fmt.Errorf(
+			"deployment source has uncommitted changes; commit the exact release before building",
+		)
+	}
+	remote, err := git("remote", "get-url", "origin")
+	if err != nil {
+		return err
+	}
+	repository, err := githubRepositoryFromRemote(remote)
+	if err != nil {
+		return err
+	}
+	if repository != "mrbaron3/servo" {
+		return fmt.Errorf(
+			"deployment source repository must be mrbaron3/servo, got %s",
+			repository,
+		)
+	}
+	if configured := manager.config.ReleaseConsumerRepository; configured != "" && configured != repository {
+		return fmt.Errorf(
+			"AGENTOPS_RELEASE_CONSUMER_REPOSITORY does not match origin",
+		)
+	}
+	if configured := manager.config.ReleaseConsumerRevision; configured != "" && configured != head {
+		return fmt.Errorf(
+			"AGENTOPS_RELEASE_CONSUMER_REVISION does not match deployment source HEAD",
+		)
+	}
+	manager.config.ReleaseConsumerRepository = repository
+	manager.config.ReleaseConsumerRevision = head
+	return nil
+}
+
+func (manager *manager) prepareBuiltReleaseProvenance(ctx context.Context) error {
+	digest, err := manager.runtime.ImageDigest(ctx, manager.config.RunnerImage)
+	if err != nil {
+		return fmt.Errorf("read built runner image provenance: %w", err)
+	}
+	providerDefaults, err := builtProviderDefaults(
+		manager.config.ProjectRoot,
+		manager.config.Provider,
+	)
+	if err != nil {
+		return err
+	}
+	revision := manager.config.ReleaseConsumerRevision
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(revision) {
+		return fmt.Errorf("built release provenance requires an exact consumer revision")
+	}
+	manager.config.ReleaseEnvironmentKind = "container"
+	manager.config.ReleaseEnvironmentReference = fmt.Sprintf(
+		"%s@source-%s",
+		manager.config.RunnerImage,
+		revision[:12],
+	)
+	manager.config.ReleaseEnvironmentDigest = digest
+	manager.config.ReleaseProviderDefaults = providerDefaults
+	return nil
+}
+
+func builtProviderDefaults(projectRoot, provider string) (string, error) {
+	manifestPath := filepath.Join(projectRoot, "deploy", "provider-cli", "package.json")
+	manifestBody, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", fmt.Errorf("read provider manifest: %w", err)
+	}
+	var manifest struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal(manifestBody, &manifest); err != nil {
+		return "", fmt.Errorf("parse provider manifest: %w", err)
+	}
+	packageName := ""
+	referencePrefix := ""
+	switch provider {
+	case "codex":
+		packageName = "@openai/codex"
+		referencePrefix = "codex-cli-"
+	case "claude":
+		packageName = "@anthropic-ai/claude-code"
+		referencePrefix = "claude-code-"
+	default:
+		return "", fmt.Errorf("unsupported provider provenance %q", provider)
+	}
+	version := strings.TrimSpace(manifest.Dependencies[packageName])
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`).MatchString(version) {
+		return "", fmt.Errorf("provider manifest must pin %s to an exact version", packageName)
+	}
+	lockBody, err := os.ReadFile(
+		filepath.Join(projectRoot, "deploy", "provider-cli", "package-lock.json"),
+	)
+	if err != nil {
+		return "", fmt.Errorf("read provider lockfile: %w", err)
+	}
+	lockDigest := sha256.Sum256(lockBody)
+	value := []map[string]string{{
+		"provider":       provider,
+		"reference":      referencePrefix + version + ":provider-default",
+		"resolverDigest": fmt.Sprintf("sha256:%x", lockDigest),
+	}}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("encode provider provenance: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func githubRepositoryFromRemote(remote string) (string, error) {
+	value := strings.TrimSpace(remote)
+	for _, prefix := range []string{
+		"git@github.com:", "ssh://git@github.com/", "https://github.com/",
+	} {
+		if strings.HasPrefix(value, prefix) {
+			value = strings.TrimPrefix(value, prefix)
+			value = strings.TrimSuffix(value, ".git")
+			value = strings.ToLower(strings.Trim(value, "/"))
+			if regexp.MustCompile(
+				`^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9_.-]{1,100}$`,
+			).MatchString(value) {
+				return value, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("origin must be a canonical github.com repository URL")
+}
+
 func (manager *manager) Drain(
 	ctx context.Context,
 	timeout time.Duration,
@@ -543,6 +759,14 @@ type combinedStatus struct {
 	ControlReachable     bool                                  `json:"controlReachable"`
 	OffLoopbackReachable bool                                  `json:"offLoopbackReachable"`
 	LoopbackOnly         bool                                  `json:"loopbackOnly"`
+	Provenance           deploymentProvenanceStatus            `json:"provenance"`
+}
+
+type deploymentProvenanceStatus struct {
+	Repository      string `json:"repository"`
+	ControlRevision string `json:"controlRevision"`
+	RunnerRevision  string `json:"runnerRevision"`
+	Consistent      bool   `json:"consistent"`
 }
 
 type progressReport struct {
@@ -598,7 +822,44 @@ func (manager *manager) Status(ctx context.Context) (combinedStatus, error) {
 	if control == nil {
 		result.LoopbackOnly = !result.ControlReachable && !result.OffLoopbackReachable
 	}
+	controlRepository := containerEnvironment(
+		result.Containers["control"],
+		"AGENTOPS_RELEASE_CONSUMER_REPOSITORY",
+	)
+	runnerRepository := containerEnvironment(
+		result.Containers["runner"],
+		"AGENTOPS_RELEASE_CONSUMER_REPOSITORY",
+	)
+	result.Provenance = deploymentProvenanceStatus{
+		Repository: controlRepository,
+		ControlRevision: containerEnvironment(
+			result.Containers["control"],
+			"AGENTOPS_RELEASE_CONSUMER_REVISION",
+		),
+		RunnerRevision: containerEnvironment(
+			result.Containers["runner"],
+			"AGENTOPS_RELEASE_CONSUMER_REVISION",
+		),
+	}
+	result.Provenance.Consistent = result.Provenance.Repository != "" &&
+		result.Provenance.ControlRevision != "" &&
+		(result.Containers["runner"] == nil ||
+			(runnerRepository == result.Provenance.Repository &&
+				result.Provenance.RunnerRevision == result.Provenance.ControlRevision))
 	return result, nil
+}
+
+func containerEnvironment(actual *lifecycle.ContainerActual, key string) string {
+	if actual == nil {
+		return ""
+	}
+	for _, entry := range actual.Configuration.InitProcess.Environment {
+		name, value, present := strings.Cut(entry, "=")
+		if present && name == key {
+			return value
+		}
+	}
+	return ""
 }
 
 func redactContainerStatus(
@@ -646,6 +907,13 @@ func printStatus(status combinedStatus) {
 		"control loopback reachable: %t (off-loopback: %t)\n",
 		status.ControlReachable,
 		status.OffLoopbackReachable,
+	)
+	fmt.Printf(
+		"provenance: %s control=%s runner=%s consistent=%t\n",
+		status.Provenance.Repository,
+		status.Provenance.ControlRevision,
+		status.Provenance.RunnerRevision,
+		status.Provenance.Consistent,
 	)
 	if status.Persisted != nil {
 		fmt.Printf(
@@ -742,10 +1010,7 @@ func printProgress(report progressReport, repository string, issueNumber int64) 
 		fmt.Printf("subject: #%d (child of #%d)\n", *current.SubjectNumber, issueNumber)
 	}
 	state := current.State
-	if current.JobStatus == "failed" || current.JobStatus == "cancelled" ||
-		current.JobStatus == "rejected" {
-		state = "failed"
-	}
+	fmt.Printf("kanban lane: %s\n", current.KanbanLane)
 	fmt.Printf("phase: %s\n", current.Phase)
 	fmt.Printf("step: %s\n", current.Step)
 	fmt.Printf("state: %s\n", state)
@@ -760,6 +1025,7 @@ func printProgress(report progressReport, repository string, issueNumber int64) 
 	printProgressValue("session", current.SessionName)
 	printProgressValue("worktree", current.WorktreePath)
 	printProgressValue("branch", current.Branch)
+	printProgressValue("head SHA", current.HeadSHA)
 	if current.PullRequestNumber != nil {
 		fmt.Printf("pull request: #%d\n", *current.PullRequestNumber)
 	} else {
@@ -767,6 +1033,42 @@ func printProgress(report progressReport, repository string, issueNumber int64) 
 	}
 	printProgressValue("summary", current.Summary)
 	printProgressValue("next gate", current.NextGate)
+	printProgressValue("gate", current.GateKey)
+	if current.GateEnteredAt != nil {
+		fmt.Printf("gate wait: %s\n", (time.Duration(current.GateWaitSeconds) * time.Second).String())
+	} else {
+		fmt.Println("gate wait: —")
+	}
+	if current.ReviewRound != nil && *current.ReviewRound > 0 {
+		outcome := "in progress"
+		if current.ReviewOutcome != nil {
+			outcome = *current.ReviewOutcome
+		}
+		fmt.Printf("review: round %d (%s)\n", *current.ReviewRound, outcome)
+	} else {
+		fmt.Println("review: —")
+	}
+	if len(current.ReviewPerspectives) > 0 && string(current.ReviewPerspectives) != "[]" {
+		fmt.Printf("review perspectives: %s\n", string(current.ReviewPerspectives))
+	} else {
+		fmt.Println("review perspectives: —")
+	}
+	if len(current.BranchLineage) > 0 && string(current.BranchLineage) != "{}" {
+		fmt.Printf("branch lineage: %s\n", string(current.BranchLineage))
+	} else {
+		fmt.Println("branch lineage: —")
+	}
+	printProgressValue("human action", current.HumanAction)
+	if current.EscalationID != nil {
+		escalatedAt := "unknown time"
+		if current.EscalatedAt != nil {
+			escalatedAt = current.EscalatedAt.Local().Format(time.RFC3339)
+		}
+		fmt.Printf("escalation: #%d at %s\n", *current.EscalationID, escalatedAt)
+		fmt.Printf("escalation evidence: %s\n", string(current.EscalationEvidence))
+	} else {
+		fmt.Println("escalation: —")
+	}
 	blocker := current.Blocker
 	if blocker == nil {
 		blocker = current.JobLastError
@@ -1137,6 +1439,9 @@ func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
 		if actual.Configuration.Labels["com.mrbaron3.workflow.agentopsctl"] != "v1" {
 			return false, fmt.Errorf("postgres container name is owned by another deployment")
 		}
+		if err := validatePostgresMajorBoundary(actual); err != nil {
+			return false, err
+		}
 		if actual.Status.State == "running" {
 			if err := validatePostgresActual(actual, manager.config); err != nil {
 				return false, err
@@ -1153,11 +1458,113 @@ func (manager *manager) ensurePostgres(ctx context.Context) (bool, error) {
 			return false, err
 		}
 	}
+	if err := manager.validatePostgresVolumeLayout(ctx); err != nil {
+		return false, err
+	}
 	_, err = manager.runtime.RunContainer(ctx, spec)
 	if err != nil {
 		return false, err
 	}
 	return true, manager.waitPostgres(ctx)
+}
+
+const (
+	managedPostgresMajor   = "18"
+	managedPostgresDataDir = "/var/lib/postgresql/18/docker"
+)
+
+func validatePostgresMajorBoundary(actual *lifecycle.ContainerActual) error {
+	major := ""
+	dataDir := ""
+	for _, entry := range actual.Configuration.InitProcess.Environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "PG_MAJOR":
+			major = value
+		case "PGDATA":
+			dataDir = value
+		}
+	}
+	if (major != "" && major != managedPostgresMajor) ||
+		(dataDir != "" && dataDir != managedPostgresDataDir) {
+		return fmt.Errorf(
+			"PostgreSQL major upgrade to %s is required; the existing data volume is preserved and must be migrated before restart",
+			managedPostgresMajor,
+		)
+	}
+	return nil
+}
+
+func (manager *manager) validatePostgresVolumeLayout(ctx context.Context) error {
+	output, err := manager.runtime.RunContainer(ctx, lifecycle.ContainerSpec{
+		Name:  manager.config.PostgresContainer + "-volume-probe",
+		Role:  "postgres-volume-probe",
+		Image: manager.config.PostgresImage,
+		Mounts: []lifecycle.Mount{{
+			Volume:   manager.config.PostgresVolume,
+			Target:   "/var/lib/postgresql",
+			ReadOnly: true,
+		}},
+		ReadOnly:   true,
+		CapDropAll: true,
+		Entrypoint: "/bin/sh",
+		Command: []string{"-ceu", `
+current=""
+legacy=""
+if [ -f /var/lib/postgresql/18/docker/PG_VERSION ]; then
+  current="$(cat /var/lib/postgresql/18/docker/PG_VERSION)"
+fi
+if [ -f /var/lib/postgresql/data/PG_VERSION ]; then
+  legacy="$(cat /var/lib/postgresql/data/PG_VERSION)"
+fi
+printf 'current=%s\nlegacy=%s\n' "$current" "$legacy"
+`},
+		Remove: true,
+	})
+	if err != nil {
+		return fmt.Errorf("inspect PostgreSQL data volume: %w", err)
+	}
+	return validatePostgresVolumeLayout(output)
+}
+
+func validatePostgresVolumeLayout(output string) error {
+	values := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || (key != "current" && key != "legacy") {
+			return fmt.Errorf("PostgreSQL data-volume probe returned an invalid result")
+		}
+		if _, duplicated := values[key]; duplicated {
+			return fmt.Errorf("PostgreSQL data-volume probe returned a duplicated field")
+		}
+		value = strings.TrimSpace(value)
+		if value != "" && !regexp.MustCompile(`^[0-9]+$`).MatchString(value) {
+			return fmt.Errorf("PostgreSQL data-volume probe returned an invalid major version")
+		}
+		values[key] = value
+	}
+	if _, ok := values["current"]; !ok {
+		return fmt.Errorf("PostgreSQL data-volume probe omitted the current layout")
+	}
+	if _, ok := values["legacy"]; !ok {
+		return fmt.Errorf("PostgreSQL data-volume probe omitted the legacy layout")
+	}
+	if values["legacy"] != "" {
+		return fmt.Errorf(
+			"PostgreSQL %s data was found in the legacy layout; the volume is preserved and must be migrated to PostgreSQL %s before restart",
+			values["legacy"], managedPostgresMajor,
+		)
+	}
+	if values["current"] != "" && values["current"] != managedPostgresMajor {
+		return fmt.Errorf(
+			"PostgreSQL %s data was found in the current layout; expected major %s and refusing to start",
+			values["current"], managedPostgresMajor,
+		)
+	}
+	return nil
 }
 
 func (manager *manager) postgresSpec() lifecycle.ContainerSpec {
@@ -1169,7 +1576,7 @@ func (manager *manager) postgresSpec() lifecycle.ContainerSpec {
 		Environment: map[string]string{
 			"POSTGRES_PASSWORD": manager.config.PostgresPassword,
 			"POSTGRES_DB":       "agentops",
-			"PGDATA":            "/var/lib/postgresql/data",
+			"PGDATA":            managedPostgresDataDir,
 		},
 		Mounts: []lifecycle.Mount{{
 			Volume: manager.config.PostgresVolume,
@@ -1438,14 +1845,15 @@ func (manager *manager) controlSpec(
 			"http://127.0.0.1:%d",
 			manager.config.ControlHostPort,
 		),
-		"AGENTOPS_CONTROL_LISTEN":                     "127.0.0.1:8081",
-		"AGENTOPS_CONTROL_PROXY_LISTEN":               "0.0.0.0:8080",
-		"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":         "0.0.0.0:8082",
-		"AGENTOPS_RUNNER_PROVIDER":                    manager.config.Provider,
-		"AGENTOPS_RUNNER_PROVIDER_AUTH":               manager.config.providerAuth(mode),
-		"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES": manager.config.monitorRepositoriesCSV(),
-		"AGENTOPS_APP_ROOT":                           "/app",
+		"AGENTOPS_CONTROL_LISTEN":                "127.0.0.1:8081",
+		"AGENTOPS_CONTROL_PROXY_LISTEN":          "0.0.0.0:8080",
+		"AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN":    "0.0.0.0:8082",
+		"AGENTOPS_RUNNER_PROVIDER":               manager.config.Provider,
+		"AGENTOPS_RUNNER_PROVIDER_AUTH":          manager.config.providerAuth(mode),
+		"AGENTOPS_GITHUB_MONITOR_BROKER_ENABLED": "true",
+		"AGENTOPS_APP_ROOT":                      "/app",
 	}
+	manager.config.addReleaseProvenance(environment)
 	return lifecycle.ContainerSpec{
 		Name:  manager.config.ControlContainer,
 		Role:  "control",
@@ -1699,7 +2107,6 @@ func (manager *manager) githubBrokerSpec(
 		),
 		"AGENTOPS_GITHUB_APP_SLUG":                 manager.config.GitHubAppSlug,
 		"AGENTOPS_GITHUB_APP_OWNER":                manager.config.GitHubAppOwner,
-		"AGENTOPS_MONITOR_REPOSITORIES":            manager.config.monitorRepositoriesCSV(),
 		"AGENTOPS_OPERATING_MODE":                  string(mode),
 		"AGENTOPS_GITHUB_BROKER_LISTEN":            "0.0.0.0:8083",
 		"AGENTOPS_GITHUB_BROKER_TRIAGE_CAPABILITY": manager.config.githubBrokerCapability("triage"),
@@ -1712,8 +2119,6 @@ func (manager *manager) githubBrokerSpec(
 	// its attempt. Withholding the runner policy here would start a broker the
 	// draining runner cannot use.
 	if mode == lifecycle.ModeActive || mode == lifecycle.ModeDraining {
-		environment["AGENTOPS_RUNNER_REPOSITORIES"] =
-			manager.config.runnerRepositoriesCSV()
 		environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] =
 			manager.config.githubBrokerCapability("runner")
 	}
@@ -1857,7 +2262,6 @@ func (manager *manager) triageSpec(
 		"AGENTOPS_TRIAGE_PROVIDER":             manager.config.Provider,
 		"AGENTOPS_TRIAGE_PROVIDER_AUTH":        providerAuth,
 		"AGENTOPS_OPERATING_MODE":              string(mode),
-		"AGENTOPS_MONITOR_REPOSITORIES":        manager.config.monitorRepositoriesCSV(),
 		"AGENTOPS_TRIAGE_MOUNTS_JSON":          string(mountJSON),
 		"AGENTOPS_TRIAGE_PUBLISHED_PORTS_JSON": "[]",
 		"AGENTOPS_TRIAGE_OUTBOUND_JSON":        string(outboundJSON),

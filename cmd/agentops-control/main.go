@@ -116,13 +116,10 @@ func run() error {
 		BaseURL: environment("AGENTOPS_GITHUB_API_URL", "https://api.github.com"),
 		Token:   firstNonEmpty(os.Getenv("GH_TOKEN"), os.Getenv("GITHUB_TOKEN")),
 	}
-	brokerRepositories, err := repositoryAllowlist(
-		os.Getenv("AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"),
-	)
-	if err != nil {
-		return err
-	}
-	if len(brokerRepositories) > 0 {
+	if strings.EqualFold(
+		strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_MONITOR_BROKER_ENABLED")),
+		"true",
+	) {
 		if strings.TrimSpace(os.Getenv("GH_TOKEN")) != "" ||
 			strings.TrimSpace(os.Getenv("GITHUB_TOKEN")) != "" {
 			return fmt.Errorf(
@@ -130,9 +127,8 @@ func run() error {
 			)
 		}
 		monitorSource = control.BrokeredGitHubSource{
-			Store:               store,
-			AllowedRepositories: brokerRepositories,
-			Timeout:             control.DefaultMonitorBrokerTimeout,
+			Store:   store,
+			Timeout: control.DefaultMonitorBrokerTimeout,
 		}
 	}
 	runner := &control.ProductionRunner{
@@ -172,9 +168,15 @@ func run() error {
 		Mode:            mode,
 		CanonicalOrigin: canonicalOrigin,
 		BootstrapToken:  bootstrapToken,
-		SessionTTL:      durationEnvironment("AGENTOPS_DASHBOARD_SESSION_TTL", 8*time.Hour),
-		RouterWake:      router.Signal,
-		Log:             log,
+		ReleaseRepository: strings.TrimSpace(
+			os.Getenv("AGENTOPS_RELEASE_CONSUMER_REPOSITORY"),
+		),
+		ReleaseRevision: strings.TrimSpace(
+			os.Getenv("AGENTOPS_RELEASE_CONSUMER_REVISION"),
+		),
+		SessionTTL: durationEnvironment("AGENTOPS_DASHBOARD_SESSION_TTL", 8*time.Hour),
+		RouterWake: router.Signal,
+		Log:        log,
 	}
 	if err := api.Initialize(); err != nil {
 		return fmt.Errorf("initialize dashboard security boundary: %w", err)
@@ -390,33 +392,4 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func repositoryAllowlist(raw string) ([]string, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	seen := make(map[string]struct{})
-	repositories := make([]string, 0)
-	for _, candidate := range strings.Split(raw, ",") {
-		repository := strings.TrimSpace(candidate)
-		if !control.ValidRepositoryIdentity(repository) {
-			return nil, fmt.Errorf(
-				"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES must contain canonical owner/name values",
-			)
-		}
-		if _, present := seen[repository]; present {
-			return nil, fmt.Errorf(
-				"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES must not contain duplicates",
-			)
-		}
-		seen[repository] = struct{}{}
-		repositories = append(repositories, repository)
-	}
-	if len(repositories) > 64 {
-		return nil, fmt.Errorf(
-			"AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES supports at most 64 repositories",
-		)
-	}
-	return repositories, nil
 }

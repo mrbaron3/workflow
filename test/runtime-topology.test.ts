@@ -143,10 +143,10 @@ describe('default topology builder', () => {
   it('places postgres on a persistent volume and the official image, internal-only', () => {
     const topology = baseTopology();
     const postgres = topology.containers.find((c) => c.role === 'postgres');
-    expect(postgres?.image).toBe('postgres:16');
+    expect(postgres?.image).toBe('postgres:18.4-trixie');
     expect(postgres?.publish).toEqual([]);
     expect(postgres?.volumes[0]?.mountPath).toBe('/var/lib/postgresql');
-    expect(postgres?.env.PGDATA).toBe('/var/lib/postgresql/data');
+    expect(postgres?.env.PGDATA).toBe('/var/lib/postgresql/18/docker');
     expect(topology.volumes.map((v) => v.name)).toContain('agentops-smoke-postgres-data');
   });
 

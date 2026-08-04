@@ -65,7 +65,8 @@ npm run smoke:postgres:apple
 ```
 
 Apple Containerのext4 named volumeには`lost+found`があるため、volumeは`/var/lib/postgresql`へmountし、
-`PGDATA=/var/lib/postgresql/data`を指定する。PostgreSQLとrunnerにhost publishはない。
+PostgreSQL 18 の version-specific layout に合わせて
+`PGDATA=/var/lib/postgresql/18/docker`を指定する。PostgreSQLとrunnerにhost publishはない。
 
 ## Registration-driven Go control（CISO-03）
 
@@ -154,8 +155,6 @@ export AGENTOPS_RUNNER_DB_PASSWORD='<32+ bytes: distinct runner role>'
 export AGENTOPS_CONTROL_TOKEN='<32+ bytes>'
 export AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN='<32+ bytes>'
 export AGENTOPS_GITHUB_WEBHOOK_SECRET='<32+ bytes>'
-export AGENTOPS_MONITOR_REPOSITORIES='owner/repo-a,owner/repo-b'
-export AGENTOPS_RUNNER_REPOSITORIES='owner/repo-b'
 export AGENTOPS_GITHUB_APP_ID='<numeric App id>'
 export AGENTOPS_GITHUB_APP_INSTALLATION_ID='<numeric installation id>'
 export AGENTOPS_GITHUB_APP_SLUG='<canonical app slug>'
@@ -169,7 +168,7 @@ export AGENTOPS_RUNNER_PROVIDER=codex
 export OPENAI_API_KEY='<ACTIVE triage/development provider credential>'
 
 go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build --request-id operator-start-001
-go run ./cmd/agentopsctl start --mode ACTIVE --request-id operator-active-001
+go run ./cmd/agentopsctl deploy --request-id operator-active-001
 go run ./cmd/agentopsctl status --json
 go run ./cmd/agentopsctl logs --component triage --lines 200
 go run ./cmd/agentopsctl logs --component runner --lines 200
@@ -177,6 +176,11 @@ go run ./cmd/agentopsctl open
 go run ./cmd/agentopsctl drain --timeout 10m --request-id operator-drain-001
 go run ./cmd/agentopsctl stop --timeout 10m --request-id operator-stop-001
 ```
+
+監視・実行対象は環境変数ではなく control store の `registrations` が唯一の authority である。
+初期 migration は `mrbaron3/servo` だけを有効登録し、以後は dashboard から冪等に登録、無効化、再有効化する。
+`deploy` は clean な Servo checkout と commit provenance を検証して image を build し、既存 job があれば
+DRAINING で lease を保護してから同じ revision の control／runner を staged 起動する。
 
 `open`はcontrolログから最新のone-time bootstrap URLを選び、session未確立ならcookieを発行して
 Dashboardへredirectする。既存の有効sessionはtokenを消費せず再利用し、新規sessionがtokenを

@@ -239,6 +239,8 @@ export interface DriveResult {
   attempts: number;
   /** True when the loop exhausted its bound without converging (escalated to human review). */
   exhausted: boolean;
+  /** Parent is intentionally paused until review-discovered child PRs integrate. */
+  waitingForChildren?: boolean;
   /** best-of-N: how many independent samples were driven (absent/1 for the single-sample default). */
   sampleCount?: number;
 }
@@ -254,6 +256,8 @@ export interface AttemptOutcome {
   stuck?: boolean;
   /** The graded evaluator panel for this attempt (absent iff `stuck`). */
   panel?: PanelResult;
+  /** Review findings were split into durable child branches; parent waits without retrying. */
+  waitingForChildren?: boolean;
 }
 
 /** Produce one attempt's build+grade. `brief` is null on attempt 1, a repair brief thereafter. */
@@ -305,6 +309,7 @@ export async function runBoundedRepairLoop(
   let gateFailed = false;
   let panelEscalated = false;
   let stuck = false;
+  let waitingForChildren = false;
   let currentPr = pr;
 
   for (let attempt = startAttempt; attempt <= maxAttempts; attempt++) {
@@ -337,6 +342,12 @@ export async function runBoundedRepairLoop(
       panelEscalated = true; // panel already sent the issue to needs-human-review
       break;
     }
+    if (outcome.waitingForChildren) {
+      waitingForChildren = true;
+      if (manage) applyPanelVerdict(store, issueId, 'request_changes');
+      currentPr = store.replacePR(transitionPR(currentPr, { status: 'changes-requested' }));
+      break;
+    }
     if (panel.verdict === 'approve') {
       if (manage) {
         applyPanelVerdict(store, issueId, 'approve', config.gate?.backend ?? 'store');
@@ -356,7 +367,7 @@ export async function runBoundedRepairLoop(
 
   // Bounded escalation (AC-REPAIR-004): exhausted the loop without converging -> human review.
   const converged = lastVerdict === 'approve';
-  const exhausted = !converged && !panelEscalated && !stuck;
+  const exhausted = !converged && !panelEscalated && !stuck && !waitingForChildren;
   if (manage && exhausted && store.getIssue(issueId)!.status !== 'needs-human-review') {
     store.setStatus(issueId, 'needs-human-review');
   }
@@ -369,6 +380,7 @@ export async function runBoundedRepairLoop(
     escalated: panelEscalated || stuck,
     attempts: currentPr.attempts,
     exhausted,
+    waitingForChildren,
   };
 }
 

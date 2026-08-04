@@ -100,6 +100,7 @@ export function observeGithubRelease(
   issueNumber: number,
   prNumber: number,
   expectedHead: string,
+  integrationBranch?: string,
 ): GithubReleaseObservation {
   const parsedHead = GithubSha.parse(expectedHead);
   const pr = GhReleasePrViewResponse.parse(JSON.parse(commandRunner('gh', [
@@ -115,16 +116,18 @@ export function observeGithubRelease(
     'issue', 'view', String(issueNumber), '--repo', repository, '--json',
     'state,stateReason',
   ], cwd)));
-  const repositoryView = GhRepositoryViewResponse.parse(JSON.parse(commandRunner('gh', [
-    'repo', 'view', repository, '--json', 'defaultBranchRef',
-  ], cwd)));
+  const releaseBranch = integrationBranch ?? GhRepositoryViewResponse.parse(
+    JSON.parse(commandRunner('gh', [
+      'repo', 'view', repository, '--json', 'defaultBranchRef',
+    ], cwd)),
+  ).defaultBranchRef.name;
   const comparison = GhCompareResponse.parse(JSON.parse(commandRunner('gh', [
-    'api', `repos/${repository}/compare/${pr.mergeCommit.oid}...${repositoryView.defaultBranchRef.name}`,
+    'api', `repos/${repository}/compare/${pr.mergeCommit.oid}...${releaseBranch}`,
   ], cwd)));
   if (comparison.status !== 'ahead' && comparison.status !== 'identical') {
     throw new Error(
       `merge commit ${pr.mergeCommit.oid} is not reachable from `
-      + `${repositoryView.defaultBranchRef.name}`,
+      + `${releaseBranch}`,
     );
   }
   return {
@@ -329,7 +332,14 @@ export function realPrNativeGithubRunner(
         'pr', 'diff', String(prNumber), ...repoArgs, '--name-only',
       ], cwd,
     ).split('\n').map((line) => line.trim()).filter(Boolean),
-    observeRelease(cwd, targetRepository, issueNumber, prNumber, expectedHead) {
+    observeRelease(
+      cwd,
+      targetRepository,
+      issueNumber,
+      prNumber,
+      expectedHead,
+      integrationBranch,
+    ) {
       if (repository && repository !== targetRepository) {
         throw new Error(
           `release repository ${targetRepository} does not match scoped ${repository}`,
@@ -342,6 +352,7 @@ export function realPrNativeGithubRunner(
         issueNumber,
         prNumber,
         expectedHead,
+        integrationBranch,
       );
     },
     merge(cwd, prNumber, expectedHeadSha) {

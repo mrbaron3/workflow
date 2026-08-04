@@ -36,6 +36,284 @@ func TestExpectedMigrationsMatchControlSchemaVersion(t *testing.T) {
 	}
 }
 
+func TestBootstrapRolesMatchesCurrentMonitorAndReviewCapabilities(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	if err := lifecyclestore.BootstrapRoles(
+		ctx,
+		databaseURL,
+		strings.Repeat("c", 32),
+		strings.Repeat("t", 32),
+		strings.Repeat("r", 32),
+	); err != nil {
+		t.Fatal(err)
+	}
+	var triageClaim, runnerClaim, runnerReview, runnerLineage, oldClaimAbsent bool
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		  has_function_privilege(
+		    'agentops_triage',
+		    'agentops_control.claim_monitor_broker_request(text,uuid,integer)',
+		    'EXECUTE'
+		  ),
+		  has_function_privilege(
+		    'agentops_runner',
+		    'agentops_control.claim_monitor_broker_request(text,uuid,integer)',
+		    'EXECUTE'
+		  ),
+		  has_function_privilege(
+		    'agentops_runner',
+		    'agentops_control.record_development_review_round(uuid,text,jsonb)',
+		    'EXECUTE'
+		  ),
+		  has_table_privilege(
+		    'agentops_runner',
+		    'agentops_control.development_lineage_nodes',
+		    'SELECT'
+		  ),
+		  to_regprocedure(
+		    'agentops_control.claim_monitor_broker_request(text,text[],uuid,integer)'
+		  ) IS NULL`).Scan(
+		&triageClaim,
+		&runnerClaim,
+		&runnerReview,
+		&runnerLineage,
+		&oldClaimAbsent,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if !triageClaim || runnerClaim || !runnerReview || !runnerLineage ||
+		!oldClaimAbsent {
+		t.Fatalf(
+			"role boundary triageClaim=%t runnerClaim=%t runnerReview=%t runnerLineage=%t oldClaimAbsent=%t",
+			triageClaim,
+			runnerClaim,
+			runnerReview,
+			runnerLineage,
+			oldClaimAbsent,
+		)
+	}
+}
+
+func TestGateEscalationIsDurableOneShotAndResolvesOnAdvance(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	store := &Store{pool: pool}
+	configuration := json.RawMessage(`{"gateTimeoutSeconds":{"review":60}}`)
+	registrations, err := store.ListRegistrations(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(registrations) != 1 || registrations[0].Repository != "mrbaron3/servo" {
+		t.Fatalf("fresh registrations = %#v, want only mrbaron3/servo", registrations)
+	}
+	if !strings.Contains(string(registrations[0].Configuration), `"releaseEvidence"`) {
+		t.Fatalf("fresh Servo registration lacks release evidence policy: %s", registrations[0].Configuration)
+	}
+	registration, err := store.UpdateRegistration(
+		ctx,
+		registrations[0].ID,
+		registrations[0].Version,
+		RegistrationPatch{Configuration: configuration},
+		"gate-escalation-registration",
+		"integration",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := time.Date(2026, 8, 4, 3, 0, 0, 0, time.UTC)
+	head := "0123456789012345678901234567890123456789"
+	setup, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = setup.Rollback(ctx) }()
+	if _, err := setup.Exec(ctx, `
+		INSERT INTO agentops_control.jobs(
+		  id, registration_id, registration_version, source_kind, source_key,
+		  idempotency_key, job_type, payload, status
+		) VALUES (
+		  '20000000-0000-4000-8000-000000000019', $1, $2, 'manual',
+		  'servo-review', 'servo-review', 'agentops.runner', '{}', 'leased'
+		)`, registration.ID, registration.Version); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setup.Exec(ctx, `
+		INSERT INTO agentops_control.job_attempts(
+		  id, job_id, attempt_number, worker_id, status, started_at
+		) VALUES (
+		  '30000000-0000-4000-8000-000000000019',
+		  '20000000-0000-4000-8000-000000000019', 1, 'servo-runner',
+		  'running', $1
+		)`, entered); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setup.Exec(ctx, `
+		INSERT INTO agentops_control.job_leases(
+		  id, job_id, attempt_id, lease_token, worker_id, status,
+		  acquired_at, heartbeat_at, expires_at
+		) VALUES (
+		  '40000000-0000-4000-8000-000000000019',
+		  '20000000-0000-4000-8000-000000000019',
+		  '30000000-0000-4000-8000-000000000019',
+		  '50000000-0000-4000-8000-000000000019', 'servo-runner', 'active',
+		  $1::timestamptz, $1::timestamptz,
+		  $1::timestamptz + interval '3 hours'
+		)`, entered); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setup.Exec(ctx, `
+		INSERT INTO agentops_control.development_progress_events(
+		  registration_id, registration_version, job_id, attempt_id,
+		  repository, subject_kind, subject_number, worker_id, event_key,
+		  phase, step, state, next_gate, head_sha, review_round,
+		  review_outcome, gate_key, occurred_at
+		) VALUES (
+		  $1, $2, '20000000-0000-4000-8000-000000000019',
+		  '30000000-0000-4000-8000-000000000019', 'mrbaron3/servo',
+		  'issue', 19, 'servo-runner', 'review:round-1:start', 'review',
+		  'perspective review panel', 'running', 'panel verdict', $4, 1,
+		  'running', 'review', $3
+		)`, registration.ID, registration.Version, entered, head); err != nil {
+		t.Fatal(err)
+	}
+	if err := setup.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if count, err := store.ReconcileGateEscalations(
+		ctx, entered.Add(59*time.Second),
+	); err != nil || count != 0 {
+		t.Fatalf("pre-SLA reconciliation count=%d err=%v", count, err)
+	}
+	if count, err := store.ReconcileGateEscalations(
+		ctx, entered.Add(60*time.Second),
+	); err != nil || count != 1 {
+		t.Fatalf("SLA reconciliation count=%d err=%v", count, err)
+	}
+	if count, err := store.ReconcileGateEscalations(
+		ctx, entered.Add(2*time.Hour),
+	); err != nil || count != 0 {
+		t.Fatalf("one-shot reconciliation count=%d err=%v", count, err)
+	}
+	issue := int64(19)
+	progress, err := store.DevelopmentProgress(ctx, "mrbaron3/servo", &issue, 10)
+	if err != nil || len(progress) != 1 ||
+		progress[0].KanbanLane != "human-escalated" ||
+		progress[0].EscalationID == nil || progress[0].HeadSHA == nil ||
+		*progress[0].HeadSHA != head || progress[0].HumanAction == nil ||
+		len(progress[0].EscalationEvidence) == 0 {
+		t.Fatalf("escalated progress=%#v err=%v", progress, err)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.development_progress_events(
+		  registration_id, registration_version, job_id, attempt_id,
+		  repository, subject_kind, subject_number, worker_id, event_key,
+		  phase, step, state, head_sha, review_round, review_outcome, occurred_at
+		) VALUES (
+		  $1, $2, '20000000-0000-4000-8000-000000000019',
+		  '30000000-0000-4000-8000-000000000019', 'mrbaron3/servo',
+		  'issue', 19, 'servo-runner', 'review:round-1:passed', 'review',
+		  'all perspectives passed', 'succeeded', $3, 1, 'approve', $4
+		)`, registration.ID, registration.Version, head, entered.Add(61*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if count, err := store.ReconcileGateEscalations(
+		ctx, entered.Add(62*time.Second),
+	); err != nil || count != 0 {
+		t.Fatalf("advance reconciliation count=%d err=%v", count, err)
+	}
+	var unresolved int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM agentops_control.human_escalations
+		 WHERE resolved_at IS NULL
+	`).Scan(&unresolved); err != nil || unresolved != 0 {
+		t.Fatalf("unresolved escalation count=%d err=%v", unresolved, err)
+	}
+}
+
+func TestQueuedReadyIssueProjectsBeforeTheFirstWorkerEvent(t *testing.T) {
+	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("AGENTOPS_TEST_DATABASE_URL is not set")
+	}
+	ctx := context.Background()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	resetAndMigrate(t, ctx, pool, root)
+	store := &Store{pool: pool}
+	registrations, err := store.ListRegistrations(ctx)
+	if err != nil || len(registrations) != 1 {
+		t.Fatalf("registrations = %#v, %v", registrations, err)
+	}
+	registration := registrations[0]
+	if _, err := pool.Exec(ctx, `
+		UPDATE agentops_control.lifecycle_state
+		   SET mode = 'ACTIVE', generation = generation + 1,
+		       updated_at = clock_timestamp()
+		 WHERE singleton`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO agentops_control.jobs(
+		  id, registration_id, registration_version, source_kind, source_key,
+		  idempotency_key, job_type, payload, status
+		) VALUES (
+		  '20000000-0000-4000-8000-000000000090', $1, $2, 'poll',
+		  'servo-ready-90', 'servo-ready-90', 'agentops.triage',
+		  '{"schemaVersion":1,"repository":{"owner":"mrbaron3","name":"servo"},"issue":{"number":90,"observedUpdatedAt":"2026-08-04T00:00:00Z"}}',
+		  'queued'
+		)`, registration.ID, registration.Version); err != nil {
+		t.Fatal(err)
+	}
+	issue := int64(90)
+	progress, err := store.DevelopmentProgress(ctx, registration.Repository, &issue, 10)
+	if err != nil || len(progress) != 1 || progress[0].KanbanLane != "ready" ||
+		progress[0].AttemptID != "" || progress[0].WorkerID != "unassigned" {
+		t.Fatalf("pre-event CLI progress = %#v, %v", progress, err)
+	}
+	projections, err := store.Projections(ctx, time.Minute)
+	if err != nil || len(projections) != 1 ||
+		len(projections[0].DevelopmentProgress) != 1 ||
+		projections[0].DevelopmentProgress[0].Current.KanbanLane != "ready" {
+		t.Fatalf("pre-event dashboard projection = %#v, %v", projections, err)
+	}
+}
+
 func TestPostgresLifecycleTransitionIntegration(t *testing.T) {
 	databaseURL := os.Getenv("AGENTOPS_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -308,9 +586,8 @@ func TestMonitorBrokerRequestAndOriginAuditAreAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := BrokeredGitHubSource{
-		Store:               &Store{pool: pool},
-		AllowedRepositories: []string{"acme/widgets"},
-		Timeout:             time.Second,
+		Store:   &Store{pool: pool},
+		Timeout: time.Second,
 	}
 	_, _, _, err = source.Poll(ctx, Registration{
 		ID:                  registrationID,
@@ -1617,6 +1894,9 @@ func resetAndMigrate(
 		"0016_reuse_open_release_promotion.sql",
 		"0017_freeze_source_issue_snapshot.sql",
 		"0018_requirements_upgrade_pr_recovery.sql",
+		"0019_durable_kanban_gates.sql",
+		"0020_registration_repository_authority.sql",
+		"0021_review_rounds_and_branch_dag.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

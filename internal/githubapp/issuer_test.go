@@ -123,8 +123,7 @@ func TestIssuerWarmsIdentityThenMintsExactRolePoliciesAndRefreshesCache(t *testi
 		PrivateKey:     key,
 		Policies: []Policy{
 			{
-				Role:         RoleTriage,
-				Repositories: []string{"acme/widgets", "acme/workflow"},
+				Role: RoleTriage,
 				Permissions: map[string]string{
 					"contents":      "read",
 					"issues":        "write",
@@ -132,8 +131,7 @@ func TestIssuerWarmsIdentityThenMintsExactRolePoliciesAndRefreshesCache(t *testi
 				},
 			},
 			{
-				Role:         RoleRunner,
-				Repositories: []string{"acme/widgets"},
+				Role: RoleRunner,
 				Permissions: map[string]string{
 					"actions":       "read",
 					"checks":        "read",
@@ -155,16 +153,15 @@ func TestIssuerWarmsIdentityThenMintsExactRolePoliciesAndRefreshesCache(t *testi
 	if mints["triage"] != 0 || mints["runner"] != 0 {
 		t.Fatalf("startup unexpectedly minted credentials = %#v", mints)
 	}
-	triage, err := issuer.Token(context.Background(), RoleTriage)
+	triage, err := issuer.Token(context.Background(), RoleTriage, "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner, err := issuer.Token(context.Background(), RoleRunner)
+	runner, err := issuer.Token(context.Background(), RoleRunner, "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(triage.Repositories, ",") !=
-		"acme/widgets,acme/workflow" ||
+	if strings.Join(triage.Repositories, ",") != "acme/widgets" ||
 		strings.Join(runner.Repositories, ",") != "acme/widgets" ||
 		triage.ActorLogin != "agentops-test[bot]" {
 		t.Fatalf("unexpected scoped credentials: %#v %#v", triage, runner)
@@ -173,7 +170,7 @@ func TestIssuerWarmsIdentityThenMintsExactRolePoliciesAndRefreshesCache(t *testi
 		t.Fatalf("on-demand/cache mints = %#v", mints)
 	}
 	now = now.Add(16 * time.Minute)
-	if _, err := issuer.Token(context.Background(), RoleTriage); err != nil {
+	if _, err := issuer.Token(context.Background(), RoleTriage, "acme/widgets"); err != nil {
 		t.Fatal(err)
 	}
 	if mints["triage"] != 2 || mints["runner"] != 1 {
@@ -225,9 +222,8 @@ func TestIssuerRejectsRepositoryScopeDrift(t *testing.T) {
 		AppSlug: "agentops-test", Owner: "acme",
 		APIBaseURL: server.URL, PrivateKey: key,
 		Policies: []Policy{{
-			Role:         RoleTriage,
-			Repositories: []string{"acme/widgets"},
-			Permissions:  map[string]string{"issues": "read"},
+			Role:        RoleTriage,
+			Permissions: map[string]string{"issues": "read"},
 		}},
 	}, server.Client(), func() time.Time { return now })
 	if err != nil {
@@ -236,7 +232,7 @@ func TestIssuerRejectsRepositoryScopeDrift(t *testing.T) {
 	if err := issuer.Warm(context.Background()); err != nil {
 		t.Fatalf("identity warm-up failed before token scope validation: %v", err)
 	}
-	if _, err := issuer.Token(context.Background(), RoleTriage); err == nil ||
+	if _, err := issuer.Token(context.Background(), RoleTriage, "acme/widgets"); err == nil ||
 		!strings.Contains(err.Error(), "scope drifted") {
 		t.Fatalf("repository scope drift was accepted: %v", err)
 	}

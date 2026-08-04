@@ -85,9 +85,10 @@ class LeaseHeartbeat {
         }
       });
       this.worker.on('error', (error) => {
-        this.fence.markLost(`heartbeat worker crashed: ${error.message}`);
+        const detail = error instanceof Error ? error.message : String(error);
+        this.fence.markLost(`heartbeat worker crashed: ${detail}`);
         this.log(
-          `runner heartbeat worker crashed for lease ${this.lease.id}: ${error.message}`,
+          `runner heartbeat worker crashed for lease ${this.lease.id}: ${detail}`,
         );
       });
       this.worker.on('exit', (code) => {
@@ -291,6 +292,38 @@ export class IsolatedRunnerService {
           releaseId: recovered.id,
         });
         effectiveReleaseId = recovered.id;
+      }
+      if (
+        payload.event.kind === 'issue'
+        && typeof this.store.getReviewChildTarget === 'function'
+      ) {
+        const lineage = await this.store.getReviewChildTarget(
+          repository,
+          payload.event.number,
+        );
+        if (lineage) {
+          if (effectiveReleaseId === null) {
+            throw new RunnerExecutionError(
+              'unknown_job_contract',
+              'review child job has no durable release identity',
+              false,
+              'claim',
+            );
+          }
+          await this.store.bindReviewChildRelease({
+            token: lease.token,
+            workerId: this.config.workerId,
+            releaseId: effectiveReleaseId,
+          });
+          payload = RunnerJobPayloadV1Contract.parse({
+            ...payload,
+            target: {
+              baseRef: lineage.parentBranch,
+              headRef: lineage.parentHeadSha,
+            },
+            lineage,
+          });
+        }
       }
       verifyArtifactReferences(
         this.config.workspaceRoot,

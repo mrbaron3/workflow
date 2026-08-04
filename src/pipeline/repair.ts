@@ -8,8 +8,11 @@ import type { EvalRun, Finding, Severity } from '../domain/schema.js';
 import type { RepairBrief, PanelRepairBrief, PanelInstruction } from '../domain/artifact.js';
 
 export function buildRepairBrief(run: EvalRun): RepairBrief {
-  const blocking = run.findings.filter((f) => f.severity === 'blocker');
-  const findings = blocking.length > 0 ? blocking : run.findings;
+  const currentChange = run.findings.filter(
+    (finding) => finding.disposition !== 'separate-issue',
+  );
+  const blocking = currentChange.filter((f) => f.severity === 'blocker');
+  const findings = blocking.length > 0 ? blocking : currentChange;
   const instructions = findings.flatMap((f) =>
     f.requiredFix.length > 0 ? f.requiredFix : [`Resolve ${f.criterionId}`],
   );
@@ -34,6 +37,7 @@ export function buildPanelRepairBrief(runs: EvalRun[]): PanelRepairBrief {
   const byContent = new Map<string, { finding: Finding; perspectives: Set<string> }>();
   for (const run of runs) {
     for (const f of run.findings) {
+      if (f.disposition === 'separate-issue') continue;
       const key = JSON.stringify([f.criterionId, f.requiredFix]);
       const entry = byContent.get(key);
       if (entry) {

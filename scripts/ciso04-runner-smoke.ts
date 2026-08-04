@@ -173,8 +173,8 @@ async function main(): Promise<void> {
     '--env',
     'POSTGRES_DB=agentops',
     '--env',
-    'PGDATA=/var/lib/postgresql/data',
-    'postgres:16',
+    'PGDATA=/var/lib/postgresql/18/docker',
+    'postgres:18.4-trixie',
   ]);
   await waitFor('PostgreSQL readiness', () =>
     spawnSync(

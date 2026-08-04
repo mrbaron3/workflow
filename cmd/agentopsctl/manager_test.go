@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +14,136 @@ import (
 	"github.com/mrbaron3/workflow/internal/control"
 	"github.com/mrbaron3/workflow/internal/lifecycle"
 )
+
+func TestPrepareReleaseProvenancePinsCleanServoHeadAndRejectsDrift(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", root}, args...)...)
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	git("init", "-q")
+	git("config", "user.name", "AgentOps Test")
+	git("config", "user.email", "agentops@example.invalid")
+	if err := os.WriteFile(filepath.Join(root, "tracked"), []byte("v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "tracked")
+	git("commit", "-qm", "fixture")
+	git("remote", "add", "origin", "git@github.com:mrbaron3/servo.git")
+	head := git("rev-parse", "HEAD")
+	subject := newManager(config{ProjectRoot: root}, nil)
+	if err := subject.prepareReleaseProvenance(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if subject.config.ReleaseConsumerRepository != "mrbaron3/servo" ||
+		subject.config.ReleaseConsumerRevision != head {
+		t.Fatalf("provenance = %#v", subject.config)
+	}
+
+	drifted := newManager(config{
+		ProjectRoot: root, ReleaseConsumerRevision: strings.Repeat("a", 40),
+	}, nil)
+	if err := drifted.prepareReleaseProvenance(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("stale provenance was accepted: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "untracked"), []byte("dirty\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := subject.prepareReleaseProvenance(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "uncommitted") {
+		t.Fatalf("dirty deployment source was accepted: %v", err)
+	}
+}
+
+func TestBuiltProviderDefaultsUsesExactProviderAndLockDigest(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "deploy", "provider-cli")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(directory, "package.json"),
+		[]byte(`{"dependencies":{"@openai/codex":"0.146.0","@anthropic-ai/claude-code":"2.1.221"}}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(directory, "package-lock.json"),
+		[]byte("locked provider graph\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := builtProviderDefaults(root, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != `[{"provider":"codex","reference":"codex-cli-0.146.0:provider-default","resolverDigest":"sha256:faeddd4e8bf9e00d399a6c46cff411688f3418c955f0c43378d559d5d841637d"}]` {
+		t.Fatalf("provider defaults = %s", actual)
+	}
+
+	if _, err := builtProviderDefaults(root, "gemini"); err == nil {
+		t.Fatal("unsupported provider provenance was accepted")
+	}
+	if err := os.WriteFile(
+		filepath.Join(directory, "package.json"),
+		[]byte(`{"dependencies":{"@openai/codex":"^0.146.0"}}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builtProviderDefaults(root, "codex"); err == nil ||
+		!strings.Contains(err.Error(), "exact version") {
+		t.Fatalf("non-exact provider version was accepted: %v", err)
+	}
+}
+
+func TestBuiltReleaseProvenanceOverridesStaleOperatorEnvironment(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "deploy", "provider-cli")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"package.json":      `{"dependencies":{"@openai/codex":"0.146.0"}}`,
+		"package-lock.json": "locked provider graph\n",
+	} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{{
+		Status: 0,
+		Stdout: `{"configuration":{"descriptor":{"digest":"` + digest + `"}}}`,
+	}}}
+	subject := newManager(config{
+		ProjectRoot:                 root,
+		RunnerImage:                 "runner:test",
+		Provider:                    "codex",
+		ReleaseConsumerRevision:     strings.Repeat("b", 40),
+		ReleaseEnvironmentReference: "stale",
+		ReleaseEnvironmentDigest:    "sha256:" + strings.Repeat("c", 64),
+		ReleaseProviderDefaults:     `[{"provider":"codex","reference":"stale"}]`,
+	}, lifecycle.NewAppleRuntimeForTest(fake))
+	if err := subject.prepareBuiltReleaseProvenance(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if subject.config.ReleaseEnvironmentKind != "container" ||
+		subject.config.ReleaseEnvironmentReference !=
+			"runner:test@source-bbbbbbbbbbbb" ||
+		subject.config.ReleaseEnvironmentDigest != digest ||
+		!strings.Contains(subject.config.ReleaseProviderDefaults, "codex-cli-0.146.0") {
+		t.Fatalf("built provenance = %#v", subject.config)
+	}
+}
 
 type managerRuntimeRunner struct {
 	results          []lifecycle.CommandResult
@@ -414,7 +547,7 @@ func TestPostgresSpecRejectsMutableTagImageAndCredentialDrift(t *testing.T) {
 	actual.Configuration.InitProcess.Environment = []string{
 		"POSTGRES_PASSWORD=postgres-password-first-value-0001",
 		"POSTGRES_DB=agentops",
-		"PGDATA=/var/lib/postgresql/data",
+		"PGDATA=/var/lib/postgresql/18/docker",
 	}
 	if err := validateSpecActual(actual, spec); err != nil {
 		t.Fatal(err)
@@ -428,6 +561,78 @@ func TestPostgresSpecRejectsMutableTagImageAndCredentialDrift(t *testing.T) {
 	spec.Environment["POSTGRES_PASSWORD"] = "postgres-password-rotated-value-0002"
 	if err := validateSpecActual(actual, spec); err == nil {
 		t.Fatal("PostgreSQL administrator credential drift was accepted")
+	}
+}
+
+func TestPostgresMajorUpgradeBoundaryPreservesLegacyData(t *testing.T) {
+	actual := &lifecycle.ContainerActual{}
+	actual.Configuration.InitProcess.Environment = []string{
+		"PG_MAJOR=16",
+		"PGDATA=/var/lib/postgresql/data",
+	}
+	if err := validatePostgresMajorBoundary(actual); err == nil ||
+		!strings.Contains(err.Error(), "preserved") {
+		t.Fatalf("legacy PostgreSQL container was accepted: %v", err)
+	}
+	actual.Configuration.InitProcess.Environment = []string{
+		"PG_MAJOR=18",
+		"PGDATA=/var/lib/postgresql/18/docker",
+	}
+	if err := validatePostgresMajorBoundary(actual); err != nil {
+		t.Fatalf("current PostgreSQL container was rejected: %v", err)
+	}
+}
+
+func TestPostgresVolumeLayoutFailsClosedForLegacyOrAmbiguousData(t *testing.T) {
+	for _, output := range []string{
+		"current=\nlegacy=16\n",
+		"current=18\nlegacy=16\n",
+		"current=17\nlegacy=\n",
+		"current=18\n",
+		"unexpected=18\nlegacy=\n",
+		"current=18\ncurrent=18\nlegacy=\n",
+		"current=18-dev\nlegacy=\n",
+	} {
+		if err := validatePostgresVolumeLayout(output); err == nil {
+			t.Fatalf("unsafe volume layout was accepted: %q", output)
+		}
+	}
+	for _, output := range []string{
+		"current=\nlegacy=\n",
+		"current=18\nlegacy=\n",
+	} {
+		if err := validatePostgresVolumeLayout(output); err != nil {
+			t.Fatalf("safe volume layout %q was rejected: %v", output, err)
+		}
+	}
+}
+
+func TestPostgresVolumeProbeIsReadOnlyAndAcceptsAnEmptyVolume(t *testing.T) {
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{{
+		Status: 0,
+		Stdout: "current=\nlegacy=\n",
+	}}}
+	subject := newManager(
+		testManagerConfig(),
+		lifecycle.NewAppleRuntimeForTest(fake),
+	)
+	if err := subject.validatePostgresVolumeLayout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.args) != 1 {
+		t.Fatalf("volume probe commands = %#v", fake.args)
+	}
+	rendered := strings.Join(fake.args[0], " ")
+	for _, expected := range []string{
+		"--rm",
+		"--read-only",
+		"--cap-drop ALL",
+		"--volume agentops-postgres-data:/var/lib/postgresql:ro",
+		"--entrypoint /bin/sh",
+	} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("volume probe omitted %q: %s", expected, rendered)
+		}
 	}
 }
 
@@ -524,6 +729,8 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 		cfg.ControlDBPassword = "control-database-password-value-001"
 		cfg.TriageReadyLabel = "human-approved"
 		cfg.TriageClaimedLabel = "automation-owned"
+		cfg.ReleaseConsumerRepository = "mrbaron3/servo"
+		cfg.ReleaseConsumerRevision = strings.Repeat("a", 40)
 		subject := newManager(cfg, nil)
 
 		monitorControl := subject.controlSpec(lifecycle.ModeMonitorOnly, "192.0.2.10")
@@ -533,8 +740,7 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 			"192.0.2.11",
 			"192.0.2.12",
 		)
-		if monitorControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"] !=
-			cfg.monitorRepositoriesCSV() ||
+		if monitorControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_ENABLED"] != "true" ||
 			monitorControl.Environment["AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN"] !=
 				"0.0.0.0:8082" {
 			t.Fatalf("MONITOR_ONLY control broker boundary = %#v", monitorControl.Environment)
@@ -545,8 +751,6 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 				"triage" ||
 			monitorTriage.Environment["AGENTOPS_GITHUB_BROKER_URL"] !=
 				"http://192.0.2.12:8083" ||
-			monitorTriage.Environment["AGENTOPS_MONITOR_REPOSITORIES"] !=
-				cfg.monitorRepositoriesCSV() ||
 			monitorTriage.Environment["AGENTOPS_TRIAGE_READY_LABEL"] !=
 				"human-approved" ||
 			monitorTriage.Environment["AGENTOPS_TRIAGE_CLAIMED_LABEL"] !=
@@ -591,8 +795,13 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 			"192.0.2.11",
 			"192.0.2.12",
 		)
-		if activeControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_REPOSITORIES"] !=
-			cfg.monitorRepositoriesCSV() ||
+		if activeControl.Environment["AGENTOPS_RELEASE_CONSUMER_REVISION"] !=
+			activeRunner.Environment["AGENTOPS_RELEASE_CONSUMER_REVISION"] ||
+			activeControl.Environment["AGENTOPS_RELEASE_CONSUMER_REPOSITORY"] !=
+				"mrbaron3/servo" {
+			t.Fatal("control/dashboard and runner release provenance diverged")
+		}
+		if activeControl.Environment["AGENTOPS_GITHUB_MONITOR_BROKER_ENABLED"] != "true" ||
 			activeControl.Environment["AGENTOPS_RUNNER_EGRESS_PROXY_LISTEN"] !=
 				"0.0.0.0:8082" {
 			t.Fatalf("ACTIVE control broker boundary = %#v", activeControl.Environment)
@@ -610,8 +819,6 @@ func TestCISO07IntegratedModeTopology(t *testing.T) {
 		// scope as ACTIVE, so a draining runner can still close its attempt.
 		drainingBroker := subject.githubBrokerSpec(lifecycle.ModeDraining)
 		if drainingBroker.Environment["AGENTOPS_OPERATING_MODE"] != "DRAINING" ||
-			drainingBroker.Environment["AGENTOPS_RUNNER_REPOSITORIES"] !=
-				cfg.runnerRepositoriesCSV() ||
 			drainingBroker.Environment["AGENTOPS_GITHUB_BROKER_RUNNER_CAPABILITY"] !=
 				cfg.githubBrokerCapability("runner") {
 			t.Fatalf(
@@ -764,10 +971,5 @@ func testManagerConfig() config {
 		GitHubAppOwner:         "acme",
 		TriageBrokerCapability: strings.Repeat("t", 43),
 		RunnerBrokerCapability: strings.Repeat("r", 43),
-		MonitorRepositories: []string{
-			"acme/widgets",
-			"acme/design-system",
-		},
-		RunnerRepositories: []string{"acme/design-system"},
 	}
 }

@@ -101,4 +101,23 @@ describe('panel repair brief forwards the full fix list (ISSUE-0004)', () => {
     const brief = toGenerateBrief(buildPanelRepairBrief([run('EVAL-1', 'security', [finding('AC-7', 'major', [])])]));
     expect(brief.instructions).toEqual(['Resolve AC-7']);
   });
+
+  it('routes separate-issue findings out of the current-branch repair brief', () => {
+    const inChange = Finding.parse({
+      ...finding('AC-current', 'major', ['fix the current contract']),
+      disposition: 'in-change',
+    });
+    const separate = Finding.parse({
+      ...finding('AC-child', 'major', ['implement isolated child scope']),
+      disposition: 'separate-issue',
+      separationReason: 'This is independently testable adjacent scope.',
+    });
+    const brief = buildPanelRepairBrief([
+      run('EVAL-split', 'codeQuality', [inChange, separate]),
+    ]);
+    expect(brief.findings.map((candidate) => candidate.criterionId))
+      .toEqual(['AC-current']);
+    expect(brief.instructions.flatMap((instruction) => instruction.instructions))
+      .toEqual(['fix the current contract']);
+  });
 });

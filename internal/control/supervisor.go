@@ -21,6 +21,10 @@ type SupervisionStore interface {
 	) error
 }
 
+type gateEscalationStore interface {
+	ReconcileGateEscalations(context.Context, time.Time) (int64, error)
+}
+
 type ComponentRunner interface {
 	Run(context.Context, Registration, string) error
 }
@@ -43,6 +47,7 @@ type Supervisor struct {
 	running     map[string]runningComponent
 	reconciling sync.Mutex
 	generation  uint64
+	now         func() time.Time
 }
 
 func NewSupervisor(
@@ -55,6 +60,7 @@ func NewSupervisor(
 	return &Supervisor{
 		store: store, runner: runner, id: id, interval: interval,
 		wake: make(chan struct{}, 1), log: log, running: make(map[string]runningComponent),
+		now: time.Now,
 	}
 }
 
@@ -85,6 +91,12 @@ func (supervisor *Supervisor) Run(ctx context.Context) error {
 func (supervisor *Supervisor) Reconcile(ctx context.Context) error {
 	supervisor.reconciling.Lock()
 	defer supervisor.reconciling.Unlock()
+	if escalations, supported := supervisor.store.(gateEscalationStore); supported {
+		if _, err := escalations.ReconcileGateEscalations(ctx, supervisor.now()); err != nil {
+			supervisor.stopAll()
+			return err
+		}
+	}
 	registrations, err := supervisor.store.ListRegistrations(ctx)
 	if err != nil {
 		supervisor.stopAll()

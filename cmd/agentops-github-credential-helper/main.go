@@ -27,6 +27,7 @@ const (
 	brokerURLKey        = "AGENTOPS_GITHUB_BROKER_URL"
 	brokerCapabilityKey = "AGENTOPS_GITHUB_BROKER_CAPABILITY"
 	brokerRoleKey       = "AGENTOPS_GITHUB_BROKER_ROLE"
+	brokerRepositoryKey = "AGENTOPS_GITHUB_REPOSITORY"
 	privateKeyDirectory = "/run/agentops-github-app"
 	privateKeyPath      = privateKeyDirectory + "/private-key.pem"
 	realGitHubCLI       = "/usr/local/libexec/agentops-gh-real"
@@ -83,7 +84,8 @@ func credential() (githubapp.TokenResponse, error) {
 		githubapp.BrokerTokenTimeout+5*time.Second,
 	)
 	defer cancel()
-	return client().Token(ctx)
+	repository := strings.TrimSpace(os.Getenv(brokerRepositoryKey))
+	return client().Token(ctx, repository)
 }
 
 func forbidStaticGitHubToken() error {
@@ -99,7 +101,9 @@ func forbidStaticGitHubToken() error {
 // GitHub, so consumers read the actor from the credential itself instead of
 // keeping a second configured copy that can drift. The token stays here.
 func printActorLogin() error {
-	response, err := credential()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	response, err := client().Actor(ctx)
 	if err != nil {
 		return err
 	}
@@ -175,6 +179,7 @@ func scrubBrokerEnvironment(source []string) []string {
 		if present && (key == brokerURLKey ||
 			key == brokerCapabilityKey ||
 			key == brokerRoleKey ||
+			key == brokerRepositoryKey ||
 			key == "GH_TOKEN" ||
 			key == "GITHUB_TOKEN") {
 			continue

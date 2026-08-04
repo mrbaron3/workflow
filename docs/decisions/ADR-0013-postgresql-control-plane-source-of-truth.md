@@ -45,7 +45,8 @@ post-release escapeはreleased buildとの永続linkがなければ較正信号�
 - notificationを失ってもperiodic reconciliationで収束する。
 - evaluation domainの`.harness/db.json`はこのADRの対象外であり、同データをPostgreSQLへ複製しない。
 - Apple Containerのnamed ext4 volumeは`lost+found`を持つため、volumeを`/var/lib/postgresql`へmountし、
-  `PGDATA=/var/lib/postgresql/data`を使う。これはDocker/Podmanでも同じOCI契約で動く。
+  PostgreSQL 18 のversion-specific layoutである
+  `PGDATA=/var/lib/postgresql/18/docker`を使う。これはDocker/Podmanでも同じOCI契約で動く。
 
 ## 実装先 id
 

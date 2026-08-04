@@ -125,9 +125,9 @@ describe('finding lineage — attested, never inferred (ISSUE-0009)', () => {
     const parsed = parsePerspectiveFindings({
       verdict: 'request_changes',
       findings: [
-        { criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'persisted', lineageRef: LINEAGE_REF },
-        { criterionId: 'AC-Z-2', severity: 'minor', observed: 'o2', expected: 'e2', lineage: 'new' },
-        { criterionId: 'AC-Z-3', severity: 'minor', observed: 'o3', expected: 'e3' }, // legacy: no lineage
+        { criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', disposition: 'in-change', lineage: 'persisted', lineageRef: LINEAGE_REF },
+        { criterionId: 'AC-Z-2', severity: 'minor', observed: 'o2', expected: 'e2', disposition: 'in-change', lineage: 'new' },
+        { criterionId: 'AC-Z-3', severity: 'minor', observed: 'o3', expected: 'e3', disposition: 'in-change' }, // legacy: no lineage
       ],
     });
     const lin = (i: number) => (parsed.findings[i] as { lineage?: string }).lineage;
@@ -139,7 +139,7 @@ describe('finding lineage — attested, never inferred (ISSUE-0009)', () => {
     expect(() =>
       parsePerspectiveFindings({
         verdict: 'request_changes',
-        findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', lineage: 'maybe' }],
+        findings: [{ criterionId: 'AC-Z-1', severity: 'major', observed: 'o', expected: 'e', disposition: 'in-change', lineage: 'maybe' }],
       }),
     ).toThrow(); // an invalid attestation never reaches the store
   });

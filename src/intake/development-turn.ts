@@ -318,6 +318,7 @@ export async function runGithubDevelopmentTurn(
       state: 'running',
       summary: `Planning GitHub Issue #${intake.snapshot.number}`,
       nextGate: 'planning contract accepted',
+      gateKey: 'planning',
     });
     const result = await planningRunner({ intake, route });
     const routeMismatch = result.provider !== route.provider
@@ -413,6 +414,7 @@ export async function runGithubDevelopmentTurn(
         state: 'waiting',
         summary: 'Planning requires an approved design resolution',
         nextGate: 'design decision approved',
+        gateKey: 'design',
       });
     } else {
       await deps.progress?.({
@@ -422,6 +424,7 @@ export async function runGithubDevelopmentTurn(
         state: 'blocked',
         blocker: enrichment.reasons.join('; ') || 'planning enrichment was rejected',
         nextGate: 'human updates the Issue and reapplies the ready label',
+        humanAction: 'update the Issue requirements and reapply the ready label',
       });
     }
   }
@@ -454,6 +457,7 @@ export async function runGithubDevelopmentTurn(
         state: 'running',
         summary: `Resolving design for GitHub Issue #${intake.snapshot.number}`,
         nextGate: 'design decision approved',
+        gateKey: 'design',
       });
       if (!deps.designflowResolver || consumer === null) {
         const rejected = rejectDesignPlanningResolution(
@@ -470,6 +474,7 @@ export async function runGithubDevelopmentTurn(
           state: 'blocked',
           blocker: 'selected Designflow provider is unavailable',
           nextGate: 'configure a design provider or revise the Issue',
+          humanAction: 'configure a design provider or revise the Issue requirements',
         });
         continue;
       }
@@ -558,6 +563,7 @@ export async function runGithubDevelopmentTurn(
             state: 'blocked',
             blocker: finalized.reasons.join('; ') || 'design resolution was not approved',
             nextGate: 'human design decision',
+            humanAction: 'record the required human design decision',
           });
     }
   }

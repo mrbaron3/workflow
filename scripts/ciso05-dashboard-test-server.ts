@@ -39,6 +39,8 @@ const child = spawn('go', ['run', './cmd/agentops-control'], {
     AGENTOPS_RECONCILIATION_INTERVAL: '500ms',
     AGENTOPS_GITHUB_POLL_INTERVAL: '1s',
     AGENTOPS_GITHUB_API_URL: 'http://127.0.0.1:9',
+    AGENTOPS_RELEASE_CONSUMER_REPOSITORY: 'mrbaron3/servo',
+    AGENTOPS_RELEASE_CONSUMER_REVISION: 'a'.repeat(40),
   },
   stdio: 'inherit',
 });

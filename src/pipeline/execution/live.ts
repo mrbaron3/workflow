@@ -55,6 +55,12 @@ import { improveTick } from '../improve.js';
 import type { RegressReportRunner } from '../regression.js';
 import { surrogateOracleMismatchRevisions } from '../verification-signal.js';
 import type { DevelopmentProgressReporter } from '../../domain/development-progress.js';
+import type { DevelopmentReviewRound } from '../../domain/development-review.js';
+import {
+  DevelopmentReviewPerspective,
+  reviewFindingProjection,
+} from '../../domain/development-review.js';
+import type { SeparateReviewFinding } from './review-children.js';
 
 export interface LiveOptions {
   /** Which lenses to convene (default: all 7). Reduce it for a cheap smoke. */
@@ -127,6 +133,16 @@ export interface LiveOptions {
   driveIssue?: (issue: Issue) => Promise<DriveResult>;
   /** Structured, durable progress reporter shared by CLI and Dashboard. */
   progress?: DevelopmentProgressReporter;
+  /** Durable, per-perspective review evidence bound to the current immutable head. */
+  reviewRoundRecorder?: (review: DevelopmentReviewRound) => Promise<void>;
+  /** Create and durably bind independently scoped findings to child Issues. */
+  separateFindingHandler?: (input: {
+    round: number;
+    headSha: string;
+    branch: string;
+    pullRequestNumber: number;
+    findings: SeparateReviewFinding[];
+  }) => Promise<void>;
 }
 
 function progressKeyPart(value: string): string {
@@ -358,8 +374,9 @@ export async function runLiveSample(
         phase: 'human-review',
         step: `generator session ${sess.outcome}`,
         state: 'blocked',
-        blocker: `generator session ${sess.outcome}; the isolated session and worktree were retained`,
-        nextGate: 'human inspects or resumes the retained session',
+      blocker: `generator session ${sess.outcome}; the isolated session and worktree were retained`,
+      nextGate: 'human inspects or resumes the retained session',
+      humanAction: 'inspect or resume the retained generator session',
         sessionName: sess.session,
         worktreePath: sess.worktree,
         branch: sess.branch,
@@ -376,6 +393,7 @@ export async function runLiveSample(
         state: 'blocked',
         blocker: 'generator completed without a committed revision',
         nextGate: 'human inspects the retained worktree',
+        humanAction: 'inspect the retained worktree and create a committed revision',
         sessionName: sess.session,
         worktreePath: sess.worktree,
         branch: sess.branch,
@@ -390,6 +408,7 @@ export async function runLiveSample(
       state: 'succeeded',
       summary: `Revision ${sess.headSha.slice(0, 12)} is available for validation`,
       nextGate: 'repository graders',
+      headSha: sess.headSha,
       worktreePath: sess.worktree,
       branch: sess.branch,
       pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
@@ -407,6 +426,8 @@ export async function runLiveSample(
       state: 'running',
       summary: 'Running configured typecheck and test commands in the isolated worktree',
       nextGate: 'review panel',
+      headSha: sess.headSha,
+      gateKey: 'repository-graders',
       worktreePath: sess.worktree,
       branch: sess.branch,
       pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
@@ -430,6 +451,17 @@ export async function runLiveSample(
       store.db.revisionGateSnapshots,
       pr.id,
     ).length;
+    const reviewStartedAt = new Date().toISOString();
+    await opts.reviewRoundRecorder?.({
+      round: attempt,
+      headSha: revision.headSha,
+      branch: sess.branch,
+      pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
+      outcome: 'running',
+      startedAt: reviewStartedAt,
+      completedAt: null,
+      perspectives: [],
+    });
     await opts.progress?.({
       eventKey: `review:${progressWork}:a${attempt}:start`,
       phase: 'review',
@@ -437,6 +469,10 @@ export async function runLiveSample(
       state: 'running',
       summary: `${perspectives.length} independent review perspective(s) evaluating the current revision`,
       nextGate: 'panel verdict',
+      headSha: sess.headSha,
+      reviewRound: attempt,
+      reviewOutcome: 'running',
+      gateKey: 'review',
       worktreePath: sess.worktree,
       branch: sess.branch,
       pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
@@ -492,20 +528,89 @@ export async function runLiveSample(
       },
       { perspectives, grader: sessionBackedGrader(panelSessions.evalRoot) },
     );
+    const completedAt = new Date().toISOString();
+    await opts.reviewRoundRecorder?.({
+      round: attempt,
+      headSha: revision.headSha,
+      branch: sess.branch,
+      pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
+      outcome: panel.verdict === 'approve'
+        ? 'approve'
+        : panel.verdict === 'needs_human'
+          ? 'escalated'
+          : 'request-changes',
+      startedAt: reviewStartedAt,
+      completedAt,
+      perspectives: panel.runs.map((run) => ({
+        perspective: DevelopmentReviewPerspective.parse(
+          run.perspective ?? 'functionality',
+        ),
+        verdict: run.verdict,
+        findings: run.findings.map(reviewFindingProjection),
+      })),
+    });
+    const separateFindings = panel.runs.flatMap((run) =>
+      run.findings.flatMap((finding, findingIndex): SeparateReviewFinding[] => {
+        if (finding.disposition !== 'separate-issue') return [];
+        if (!run.headSha || !run.perspective) {
+          throw new Error('separate review finding has no immutable review identity');
+        }
+        return [{
+          identity: finding.lineageRef ?? findingOriginRef({
+            runId: run.id,
+            prId: run.prId,
+            headSha: run.headSha,
+            attempt: run.attempt,
+            perspective: run.perspective,
+          }, findingIndex),
+          perspective: run.perspective,
+          finding: reviewFindingProjection(finding),
+        }];
+      }),
+    );
+    if (separateFindings.length > 0) {
+      const pullRequestNumber = store.getPR(pr.id)?.externalRef?.number;
+      if (!opts.separateFindingHandler || !pullRequestNumber) {
+        throw new Error(
+          'separate review findings require a durable child-Issue coordinator and parent PR',
+        );
+      }
+      await opts.separateFindingHandler({
+        round: attempt,
+        headSha: revision.headSha,
+        branch: sess.branch,
+        pullRequestNumber,
+        findings: separateFindings,
+      });
+    }
     await opts.progress?.({
       eventKey: `review:${progressWork}:a${attempt}:verdict`,
-      phase: 'review',
+      phase: panel.verdict === 'approve'
+        ? 'review'
+        : separateFindings.length > 0
+          ? 'merge'
+          : 'repair',
       step: `panel verdict: ${panel.verdict}`,
       state: panel.verdict === 'approve' ? 'succeeded' : 'waiting',
       summary: panel.verdict === 'approve'
         ? 'Current revision passed the review panel'
+        : separateFindings.length > 0
+          ? `${separateFindings.length} independently scoped finding(s) are running as child Issues`
         : 'Current revision requires another bounded repair attempt',
-      nextGate: panel.verdict === 'approve' ? 'merge gates' : 'generator repair session',
+      nextGate: panel.verdict === 'approve'
+        ? 'merge gates'
+        : separateFindings.length > 0
+          ? 'all child PRs integrated into the parent branch'
+          : 'generator repair session',
+      headSha: sess.headSha,
+      reviewRound: attempt,
+      reviewOutcome: panel.verdict === 'approve' ? 'approve' : 'request-changes',
+      gateKey: panel.verdict === 'approve' ? null : 'review',
       worktreePath: sess.worktree,
       branch: sess.branch,
       pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
     });
-    return { panel };
+    return { panel, waitingForChildren: separateFindings.length > 0 };
   }, {
     log,
     manageIssueStatus,
@@ -523,6 +628,10 @@ export async function runLiveSample(
         ? 'one or more required reviewer results were missing or invalid'
         : 'bounded repair attempts did not satisfy every required review perspective',
       nextGate: 'inspect or resume the retained isolated worktree; a new PR head triggers re-review',
+      humanAction: 'inspect or resume the retained isolated worktree and push a new PR head',
+      headSha: store.getPR(pr.id)?.headSha ?? null,
+      reviewRound: store.getPR(pr.id)?.attempts || null,
+      reviewOutcome: 'escalated',
       worktreePath: worktree,
       branch: pr.branch,
       pullRequestNumber: store.getPR(pr.id)?.externalRef?.number ?? null,
@@ -679,6 +788,8 @@ export async function driveIssueLive(
       state: 'running',
       summary: 'Checking required reviews, checks, threads, and expected head SHA',
       nextGate: 'GitHub merge confirmation',
+      headSha: pr.headSha,
+      gateKey: 'merge',
       worktreePath: winner.worktree,
       branch: pr.branch,
       pullRequestNumber: pr.externalRef?.number ?? null,
@@ -710,6 +821,11 @@ export async function driveIssueLive(
       summary: result.merged ? 'Implementation released' : result.reasons.join('; '),
       nextGate: result.merged ? null : 'next GitHub pull request reconciliation',
       blocker: result.merged || result.decision === 'pending' ? null : result.reasons.join('; '),
+      headSha: result.headSha ?? pr.headSha,
+      gateKey: result.merged ? null : 'merge',
+      humanAction: result.merged || result.decision === 'pending'
+        ? null
+        : 'resolve the listed merge blockers on the current expected head',
       worktreePath: winner.worktree,
       branch: pr.branch,
       pullRequestNumber: pr.externalRef?.number ?? null,
@@ -722,7 +838,9 @@ export async function driveIssueLive(
   return {
     issueId: issue.id, prId: chosen.prId, verdict: chosen.verdict, status,
     gateFailed: chosen.gateFailed, escalated: chosen.escalated, attempts: chosen.attempts,
-    exhausted: chosen.exhausted, sampleCount: samples.length,
+    exhausted: chosen.exhausted,
+    waitingForChildren: chosen.waitingForChildren,
+    sampleCount: samples.length,
   };
 }
 
