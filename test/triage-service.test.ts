@@ -384,7 +384,7 @@ describe('capability-limited Issue triage runner', () => {
   it('rejects Issue requirements edited after the latest human ready event', async () => {
     const repository = 'acme/widgets';
     const edited = snapshot(repository, [policy.readyLabel]);
-    edited.issue.updatedAt = '2026-07-29T00:00:02.000Z';
+    edited.issue.updatedAt = '2026-07-29T00:00:03.000Z';
     const { service, store } = setup(repository, [edited, edited]);
 
     expect(await service.runOnce()).toBe(true);
@@ -396,6 +396,17 @@ describe('capability-limited Issue triage runner', () => {
         message: expect.stringContaining('reapply the ready label'),
       }),
     }));
+  });
+
+  it('accepts GitHub one-second Issue timestamp lag from the ready label event', async () => {
+    const repository = 'acme/widgets';
+    const ready = snapshot(repository, [policy.readyLabel]);
+    ready.issue.updatedAt = '2026-07-29T00:00:02.000Z';
+    const { service, store } = setup(repository, [ready, structuredClone(ready)]);
+
+    expect(await service.runOnce()).toBe(true);
+    expect(store.promoteTriageLease).toHaveBeenCalledOnce();
+    expect(store.failOrRetryLease).not.toHaveBeenCalled();
   });
 
   it('revalidates eligibility on the second ready snapshot', async () => {

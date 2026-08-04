@@ -294,6 +294,35 @@ func TestValidateSpecActualRejectsImageAndConfigurationDrift(t *testing.T) {
 	}
 }
 
+func TestExistingWorkerModeUsesSealedContainerBoundaryDuringRecovery(t *testing.T) {
+	actual := &lifecycle.ContainerActual{}
+	actual.Configuration.InitProcess.Environment = []string{
+		"AGENTOPS_OPERATING_MODE=ACTIVE",
+	}
+	mode, err := existingWorkerMode(actual, false)
+	if err != nil || mode != lifecycle.ModeActive {
+		t.Fatalf("ACTIVE triage recovery mode = %q, %v", mode, err)
+	}
+	mode, err = existingWorkerMode(actual, true)
+	if err != nil || mode != lifecycle.ModeActive {
+		t.Fatalf("ACTIVE runner recovery mode = %q, %v", mode, err)
+	}
+
+	actual.Configuration.InitProcess.Environment = []string{
+		"AGENTOPS_OPERATING_MODE=MONITOR_ONLY",
+	}
+	if _, err := existingWorkerMode(actual, true); err == nil {
+		t.Fatal("MONITOR_ONLY runner boundary was accepted")
+	}
+	actual.Configuration.InitProcess.Environment = []string{
+		"AGENTOPS_OPERATING_MODE=ACTIVE",
+		"AGENTOPS_OPERATING_MODE=DRAINING",
+	}
+	if _, err := existingWorkerMode(actual, false); err == nil {
+		t.Fatal("duplicated worker mode was accepted")
+	}
+}
+
 func TestRedactContainerStatusRemovesCredentialEnvironmentValues(t *testing.T) {
 	actual := &lifecycle.ContainerActual{}
 	actual.Configuration.InitProcess.Environment = []string{

@@ -6,6 +6,7 @@ import type { TargetGraderConfig } from '../config.js';
 import { DEFAULT_CONFIG } from '../config.js';
 import { Store } from '../store/store.js';
 import {
+  PlanningProviderInvocationError,
   runGithubDevelopmentTurn,
   type GithubDevelopmentTurnResult,
 } from '../intake/development-turn.js';
@@ -595,7 +596,7 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
     };
     const config = runnerConfig(input);
     const releaseId = input.lease.job.releaseId ?? null;
-    const release = releaseId === null
+    let release = releaseId === null
       ? null
       : await input.controlStore?.getRelease(releaseId) ?? null;
     if (releaseId !== null && !release) {
@@ -614,9 +615,36 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
         'release',
       );
     }
-    const recoveryPullRequest = event.kind === 'issue'
+    let recoveryPullRequest = event.kind === 'issue'
       ? release?.pullRequest ?? null
       : null;
+    if (
+      event.kind === 'issue'
+      && release?.status === 'collecting'
+      && release.pullRequest === null
+      && input.controlStore
+      && typeof input.controlStore.recoverRequirementsUpgradePullRequest === 'function'
+    ) {
+      await input.fence.arm('release');
+      input.fence.consume('release');
+      const preservedPullRequest = await input.controlStore
+        .recoverRequirementsUpgradePullRequest({
+          jobId: input.lease.job.id,
+          releaseId: release.id,
+        });
+      if (preservedPullRequest !== null) {
+        release = await input.controlStore.getRelease(release.id);
+        if (!release || release.pullRequest !== preservedPullRequest) {
+          throw new RunnerExecutionError(
+            'internal_failure',
+            'requirements-upgrade pull request recovery did not converge',
+            false,
+            'release',
+          );
+        }
+        recoveryPullRequest = preservedPullRequest;
+      }
+    }
     const activePullRequest = event.kind === 'pull_request'
       ? event.number
       : recoveryPullRequest;
@@ -982,10 +1010,12 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
       };
     }
 
-    const developmentTurn = await runGithubDevelopmentTurn(
-      store,
-      config,
-      {
+    let developmentTurn: GithubDevelopmentTurnResult;
+    try {
+      developmentTurn = await runGithubDevelopmentTurn(
+        store,
+        config,
+        {
         issueRunner,
         ...(input.payload.event.kind === 'issue' && recoveryPullRequest === null
           ? { beforeIssueClaim: () => input.fence.arm('claim') }
@@ -1134,9 +1164,21 @@ export class ExistingAgentOpsRunnerAdapter implements AgentOpsRunnerAdapter {
           progress: reportProgress,
         },
       },
-      input.workspace.harnessPath,
-      input.log,
-    );
+        input.workspace.harnessPath,
+        input.log,
+      );
+    } catch (error) {
+      if (error instanceof PlanningProviderInvocationError) {
+        throw new RunnerExecutionError(
+          'provider_failure',
+          error.message,
+          true,
+          'provider',
+          { cause: error },
+        );
+      }
+      throw error;
+    }
 
     const issueIntake = event.kind === 'issue'
       ? store.db.intakeRecords.find(

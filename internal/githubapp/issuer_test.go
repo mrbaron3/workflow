@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func TestIssuerWarmsExactRolePoliciesAndRefreshesCache(t *testing.T) {
+func TestIssuerWarmsIdentityThenMintsExactRolePoliciesAndRefreshesCache(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -152,6 +152,9 @@ func TestIssuerWarmsExactRolePoliciesAndRefreshesCache(t *testing.T) {
 	if err := issuer.Warm(context.Background()); err != nil {
 		t.Fatal(err)
 	}
+	if mints["triage"] != 0 || mints["runner"] != 0 {
+		t.Fatalf("startup unexpectedly minted credentials = %#v", mints)
+	}
 	triage, err := issuer.Token(context.Background(), RoleTriage)
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +170,7 @@ func TestIssuerWarmsExactRolePoliciesAndRefreshesCache(t *testing.T) {
 		t.Fatalf("unexpected scoped credentials: %#v %#v", triage, runner)
 	}
 	if mints["triage"] != 1 || mints["runner"] != 1 {
-		t.Fatalf("warm/cache mints = %#v", mints)
+		t.Fatalf("on-demand/cache mints = %#v", mints)
 	}
 	now = now.Add(16 * time.Minute)
 	if _, err := issuer.Token(context.Background(), RoleTriage); err != nil {
@@ -230,7 +233,10 @@ func TestIssuerRejectsRepositoryScopeDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := issuer.Warm(context.Background()); err == nil ||
+	if err := issuer.Warm(context.Background()); err != nil {
+		t.Fatalf("identity warm-up failed before token scope validation: %v", err)
+	}
+	if _, err := issuer.Token(context.Background(), RoleTriage); err == nil ||
 		!strings.Contains(err.Error(), "scope drifted") {
 		t.Fatalf("repository scope drift was accepted: %v", err)
 	}

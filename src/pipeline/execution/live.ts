@@ -102,6 +102,8 @@ export interface LiveOptions {
   }) => Promise<void>;
   /** Durable release correlation for external branch/PR identity. */
   releaseIdentity?: string | null;
+  /** Exact release-bound identities allowed to repair imported AgentOps PRs. */
+  repositoryRepairIdentities?: Readonly<Record<string, ExternalWorkIdentity>>;
   /** Isolated-runner lease/Registration fence immediately before expected-SHA merge evaluation. */
   beforeMerge?: () => Promise<void>;
   /** Isolated-runner lease/Registration fence armed for the exact durable release mutation. */
@@ -246,11 +248,8 @@ export async function runLiveSample(
     : contract;
   const target = config.target!;
   const perspectives = opts.perspectives ?? PERSPECTIVES;
-  const workIdentity = externalWorkIdentityFor(
-    store,
-    issue,
-    opts.releaseIdentity ?? null,
-  );
+  const workIdentity = opts.repositoryRepairIdentities?.[issue.id]
+    ?? externalWorkIdentityFor(store, issue, opts.releaseIdentity ?? null);
   if (
     workIdentity
     && config.intake?.backend === 'github'
@@ -738,7 +737,10 @@ export async function runLoopLive(
         && issue.assignedAgent === resolvedGeneratorProvider(config)
         && !store.db.prs.some(
           (pr) => pr.issueId === issue.id && (
-            pr.origin === 'repository-discovery'
+            (
+              pr.origin === 'repository-discovery'
+              && !opts.repositoryRepairIdentities?.[issue.id]
+            )
             || (
               pr.externalRef !== null
               && (

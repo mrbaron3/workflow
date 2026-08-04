@@ -416,9 +416,6 @@ export function planningEnrichmentJsonSchema(target: TargetRepoConfig): JsonSche
             properties: {
               provider: { type: 'string', minLength: 1 },
               externalId: { type: 'string', minLength: 1 },
-              uri: { type: 'string', minLength: 1 },
-              revision: { type: 'string', minLength: 1 },
-              digest: { type: 'string', pattern: '^sha256:[a-f0-9]{64}$' },
             },
           },
         ],
@@ -446,10 +443,6 @@ export function planningEnrichmentJsonSchema(target: TargetRepoConfig): JsonSche
       designDrafts: { type: 'array', items: designDraft },
       ambiguities: { type: 'array', items: { type: 'string', minLength: 1 } },
     },
-    anyOf: [
-      { properties: { candidates: { minItems: 1 } } },
-      { properties: { designDrafts: { minItems: 1 } } },
-    ],
   };
 }
 

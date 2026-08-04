@@ -9,6 +9,7 @@ import {
   type DesignRequest,
   type EnrichmentCandidate,
   type IntakeRecord,
+  type InvocationOutcome,
 } from '../domain/schema.js';
 import { recordAgentInvocation } from '../agents/invocation.js';
 import { resolveAgentRoute, type AgentRoute } from '../agents/routing.js';
@@ -58,6 +59,7 @@ import {
   type RepositoryPullRequestIssueAuthority,
 } from '../pipeline/execution/repository-pr.js';
 import type { DevelopmentProgressReporter } from '../domain/development-progress.js';
+import type { ExternalWorkIdentity } from '../pipeline/execution/work-identity.js';
 
 export interface PlanningRunnerInput {
   intake: IntakeRecord;
@@ -150,6 +152,19 @@ export interface GithubTurnRegistrationOverrides {
   baseBranch?: string;
 }
 
+/** A planner transport/runtime failure is retryable infrastructure, not missing human WHAT. */
+export class PlanningProviderInvocationError extends Error {
+  override readonly name = 'PlanningProviderInvocationError';
+
+  constructor(
+    readonly outcome: InvocationOutcome,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+
 /**
  * Repository registration values are invocation-scoped and take precedence over
  * the workspace defaults. The workspace file is never rewritten by the daemon.
@@ -197,6 +212,7 @@ export async function runGithubDevelopmentTurn(
 ): Promise<GithubDevelopmentTurnResult> {
   const prNativeRunner = deps.prNativeRunner
     ?? realPrNativeGithubRunner(config.gate?.mergeMethod);
+  const repositoryRepairIdentities: Record<string, ExternalWorkIdentity> = {};
   if ((config.gate?.backend ?? 'store') === 'github' && config.target) {
     const targetRoot = path.resolve(harnessRoot, config.target.repo);
     const discoveries = deps.discoverPullRequests === false
@@ -251,6 +267,9 @@ export async function runGithubDevelopmentTurn(
           `⇩ discovered ${discovery.pr.id} from repository PR `
           + `#${discovery.pullRequest.number}@${discovery.revision.headSha.slice(0, 12)}`,
         );
+      }
+      if (discovery.repairIdentity) {
+        repositoryRepairIdentities[discovery.issue.id] = discovery.repairIdentity;
       }
       if (discovery.reviewRequired) await review(discovery);
     }
@@ -322,8 +341,20 @@ export async function runGithubDevelopmentTurn(
     });
     const uiDesigns: Record<string, UiDesignAttempt> = {};
     const planningOutput = PlanningEnrichmentOutput.safeParse(result.output);
+    if (invocation.outcome !== 'completed') {
+      throw new PlanningProviderInvocationError(
+        invocation.outcome,
+        `planning provider ${result.provider}/${result.model ?? 'default'} ended with ${invocation.outcome}`,
+      );
+    }
+    if (!planningOutput.success) {
+      throw new PlanningProviderInvocationError(
+        'failed',
+        `planning provider returned invalid structured output: ${planningOutput.error.message}`,
+      );
+    }
     const configuredDesignProviders = config.intake?.designProviders ?? {};
-    if (invocation.outcome === 'completed' && planningOutput.success) {
+    {
       let selectedUiDesignRoute: AgentRoute | null = null;
       for (const candidate of planningOutput.data.candidates.filter(requiresUiDesign)) {
         // The retained session is an adapter, not an implicit fallback. A malformed, missing,
@@ -537,7 +568,7 @@ export async function runGithubDevelopmentTurn(
       store,
       config,
       harnessRoot,
-      { ...deps.liveOptions, prNativeRunner },
+      { ...deps.liveOptions, prNativeRunner, repositoryRepairIdentities },
       log,
     ));
   const driveResults = await driveQueue();

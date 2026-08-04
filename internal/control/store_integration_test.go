@@ -1616,6 +1616,7 @@ func resetAndMigrate(
 		"0015_development_progress_backfill.sql",
 		"0016_reuse_open_release_promotion.sql",
 		"0017_freeze_source_issue_snapshot.sql",
+		"0018_requirements_upgrade_pr_recovery.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

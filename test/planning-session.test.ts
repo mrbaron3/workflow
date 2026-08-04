@@ -150,6 +150,30 @@ describe('planning session contract', () => {
       .acceptanceCriteria.items.properties.verification.properties.method.enum)
       .toEqual(['build', 'typecheck', 'api_test', 'db_state_check', 'scope_check']);
 
+    const assertStrictObjects = (value: unknown, location = '$'): void => {
+      if (value === null || typeof value !== 'object') return;
+      if (Array.isArray(value)) {
+        value.forEach((entry, index) => assertStrictObjects(entry, `${location}[${index}]`));
+        return;
+      }
+      const record = value as Record<string, unknown>;
+      if (record.type === 'object') {
+        const propertyKeys = Object.keys(
+          (record.properties ?? {}) as Record<string, unknown>,
+        ).sort();
+        expect(record.additionalProperties, `${location}.additionalProperties`).toBe(false);
+        expect(
+          [...((record.required ?? []) as string[])].sort(),
+          `${location}.required`,
+        ).toEqual(propertyKeys);
+      }
+      for (const [key, nested] of Object.entries(record)) {
+        assertStrictObjects(nested, `${location}.${key}`);
+      }
+    };
+    assertStrictObjects(schema);
+    expect(schema).not.toHaveProperty('anyOf');
+
     const valid = {
       candidates: [{
         candidateKey: 'csv-export',

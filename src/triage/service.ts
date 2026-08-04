@@ -21,6 +21,7 @@ import {
   type TriageGitHub,
   type TriageSnapshot,
 } from './github.js';
+
 import {
   labelForDecision,
   type TriagePolicy,
@@ -30,6 +31,13 @@ import {
   linkedParentIssueNumber,
   type DevelopmentProgressUpdate,
 } from '../domain/development-progress.js';
+
+// GitHub's REST Issue and Issue-event timestamps have only second precision,
+// and the Issue updated_at produced by a label mutation can become visible one
+// second after that label event. Keep this tolerance to exactly one timestamp
+// tick, and apply it only to the Issue row. Comment timestamps remain strict
+// because a new/edited comment is independently versioned authority.
+const READY_LABEL_ISSUE_TIMESTAMP_TOLERANCE_MS = 1_000;
 
 export function boundedProgressBlocker(parts: readonly string[]): string {
   const joined = parts.filter((part) => part.trim() !== '').join('; ');
@@ -371,16 +379,23 @@ export class TriageRunnerService {
         false,
       );
     }
-    // GitHub's Issue updatedAt is the only content-version boundary exposed by
-    // the snapshot API. Requiring it not to exceed the ready event prevents a
-    // body/title edit made after the human attestation from becoming authority.
+    // GitHub's Issue updatedAt is the only title/body version boundary exposed
+    // by the snapshot API. Its label-update propagation can lag the matching
+    // event by one second, so tolerate exactly that one timestamp tick for the
+    // Issue row. Comments have their own timestamp and remain strictly bounded.
     // A later edit must be followed by a new remove/add ready action.
     const sourceIssueCore = releaseSourceIssueCore(
       repository,
       snapshot,
       new Date().toISOString(),
     );
-    if (Date.parse(sourceIssueCore.sourceUpdatedAt) > Date.parse(latestReadyEvent.createdAt)) {
+    const readyAt = Date.parse(latestReadyEvent.createdAt);
+    const issueChangedAfterReady = Date.parse(snapshot.issue.updatedAt)
+      > readyAt + READY_LABEL_ISSUE_TIMESTAMP_TOLERANCE_MS;
+    const commentChangedAfterReady = snapshot.comments.some(
+      (comment) => Date.parse(comment.updatedAt) > readyAt,
+    );
+    if (issueChangedAfterReady || commentChangedAfterReady) {
       throw new RunnerExecutionError(
         'provider_failure',
         'Issue content changed after the latest ready event; human must reapply the ready label',

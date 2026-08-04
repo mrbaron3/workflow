@@ -10,7 +10,7 @@ import {
   type ReleasePolicy,
 } from '../evidence/release-receipt.js';
 
-export const CONTROL_SCHEMA_VERSION = 17;
+export const CONTROL_SCHEMA_VERSION = 18;
 
 const RepositoryOwner = z.string()
   .min(1)

@@ -11,6 +11,7 @@ import {
   applyGithubTurnRegistrationOverrides,
   DEFAULT_GITHUB_WATCH_INTERVAL_MS,
   MAX_GITHUB_WATCH_INTERVAL_MS,
+  PlanningProviderInvocationError,
   runGithubDevelopmentTurn,
   watchGithubDevelopment,
 } from '../src/intake/development-turn.js';
@@ -337,17 +338,19 @@ describe('GitHub development turn', () => {
     expect(env.store.db.counters).toEqual(counters);
   });
 
-  it('AC-GHSLICE-006 turns a failed planning session into visible human review, never release', async () => {
+  it('AC-GHSLICE-006 retries a failed planning provider instead of inventing human WHAT', async () => {
     const env = setup();
-    await runGithubDevelopmentTurn(env.store, env.config, {
-      issueRunner: env.runner,
-      planningRunner: async ({ route }) => ({
-        provider: route.provider, model: route.model, prompt: 'planner edited source', outcome: 'failed', output: validOutput,
-      }),
-      driveQueue: async () => [],
-    });
-    expect(env.store.db.intakeRecords[0]!.status).toBe('needs-human-review');
-    expect(env.store.db.planningEnrichments[0]!.reasons.join('\n')).toContain('outcome must be completed');
+    await expect(runGithubDevelopmentTurn(env.store, env.config, {
+        issueRunner: env.runner,
+        planningRunner: async ({ route }) => ({
+          provider: route.provider, model: route.model, prompt: 'provider failure', outcome: 'failed', output: validOutput,
+        }),
+        driveQueue: async () => [],
+      }))
+      .rejects.toBeInstanceOf(PlanningProviderInvocationError);
+    expect(env.store.db.intakeRecords[0]!.status).toBe('planning');
+    expect(env.store.db.agentInvocations[0]?.outcome).toBe('failed');
+    expect(env.store.db.planningEnrichments).toEqual([]);
     expect(env.store.db.issues).toEqual([]);
     expect(env.store.db.prs).toEqual([]);
   });
@@ -355,17 +358,19 @@ describe('GitHub development turn', () => {
   it('AC-GHSLICE-006 records the actual provider but fails closed when it differs from the route', async () => {
     const env = setup();
     const logs: string[] = [];
-    await runGithubDevelopmentTurn(env.store, env.config, {
-      issueRunner: env.runner,
-      planningRunner: async () => ({
-        provider: 'codex', model: 'gpt-5.1-codex', prompt: 'misrouted planner', outcome: 'completed', output: validOutput,
-      }),
-      driveQueue: async () => [],
-    }, process.cwd(), (message) => logs.push(message));
+    await expect(runGithubDevelopmentTurn(env.store, env.config, {
+        issueRunner: env.runner,
+        planningRunner: async () => ({
+          provider: 'codex', model: 'gpt-5.1-codex', prompt: 'misrouted planner', outcome: 'completed', output: validOutput,
+        }),
+        driveQueue: async () => [],
+      }, process.cwd(), (message) => logs.push(message)))
+      .rejects.toBeInstanceOf(PlanningProviderInvocationError);
     expect(env.store.db.agentInvocations[0]).toMatchObject({
       provider: 'codex', model: 'gpt-5.1-codex', outcome: 'failed',
     });
-    expect(env.store.db.planningEnrichments[0]!.status).toBe('needs-human-review');
+    expect(env.store.db.intakeRecords[0]?.status).toBe('planning');
+    expect(env.store.db.planningEnrichments).toEqual([]);
     expect(env.store.db.issues).toEqual([]);
     expect(logs.join('\n')).toContain('planning route mismatch');
   });
