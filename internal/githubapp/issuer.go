@@ -154,15 +154,15 @@ func (issuer *Issuer) Roles() []Role {
 }
 
 func (issuer *Issuer) Warm(ctx context.Context) error {
-	if err := issuer.verifyIdentity(ctx); err != nil {
-		return err
-	}
-	for _, role := range issuer.Roles() {
-		if _, err := issuer.Token(ctx, role); err != nil {
-			return err
-		}
-	}
-	return nil
+	// Startup proves that the configured App and installation are still the
+	// expected principals and that the installation contains every permission
+	// a role may request. Do not mint role credentials here: broker restarts are
+	// lifecycle operations, not credential use, and eagerly creating one token
+	// per role can trip GitHub's endpoint-abuse protection during recovery.
+	// Token performs the remaining exact issued-permission and repository-scope
+	// checks before any credential is returned to a caller, so this stays
+	// fail-closed without turning every restart into a token rotation.
+	return issuer.verifyIdentity(ctx)
 }
 
 func (issuer *Issuer) Token(
