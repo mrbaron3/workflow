@@ -61,6 +61,90 @@ func TestPrepareReleaseProvenancePinsCleanServoHeadAndRejectsDrift(t *testing.T)
 	}
 }
 
+func TestBuiltProviderDefaultsUsesExactProviderAndLockDigest(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "deploy", "provider-cli")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(directory, "package.json"),
+		[]byte(`{"dependencies":{"@openai/codex":"0.146.0","@anthropic-ai/claude-code":"2.1.221"}}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(directory, "package-lock.json"),
+		[]byte("locked provider graph\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := builtProviderDefaults(root, "codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != `[{"provider":"codex","reference":"codex-cli-0.146.0:provider-default","resolverDigest":"sha256:faeddd4e8bf9e00d399a6c46cff411688f3418c955f0c43378d559d5d841637d"}]` {
+		t.Fatalf("provider defaults = %s", actual)
+	}
+
+	if _, err := builtProviderDefaults(root, "gemini"); err == nil {
+		t.Fatal("unsupported provider provenance was accepted")
+	}
+	if err := os.WriteFile(
+		filepath.Join(directory, "package.json"),
+		[]byte(`{"dependencies":{"@openai/codex":"^0.146.0"}}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builtProviderDefaults(root, "codex"); err == nil ||
+		!strings.Contains(err.Error(), "exact version") {
+		t.Fatalf("non-exact provider version was accepted: %v", err)
+	}
+}
+
+func TestBuiltReleaseProvenanceOverridesStaleOperatorEnvironment(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "deploy", "provider-cli")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"package.json":      `{"dependencies":{"@openai/codex":"0.146.0"}}`,
+		"package-lock.json": "locked provider graph\n",
+	} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	fake := &managerRuntimeRunner{results: []lifecycle.CommandResult{{
+		Status: 0,
+		Stdout: `{"configuration":{"descriptor":{"digest":"` + digest + `"}}}`,
+	}}}
+	subject := newManager(config{
+		ProjectRoot:                 root,
+		RunnerImage:                 "runner:test",
+		Provider:                    "codex",
+		ReleaseConsumerRevision:     strings.Repeat("b", 40),
+		ReleaseEnvironmentReference: "stale",
+		ReleaseEnvironmentDigest:    "sha256:" + strings.Repeat("c", 64),
+		ReleaseProviderDefaults:     `[{"provider":"codex","reference":"stale"}]`,
+	}, lifecycle.NewAppleRuntimeForTest(fake))
+	if err := subject.prepareBuiltReleaseProvenance(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if subject.config.ReleaseEnvironmentKind != "container" ||
+		subject.config.ReleaseEnvironmentReference !=
+			"runner:test@source-bbbbbbbbbbbb" ||
+		subject.config.ReleaseEnvironmentDigest != digest ||
+		!strings.Contains(subject.config.ReleaseProviderDefaults, "codex-cli-0.146.0") {
+		t.Fatalf("built provenance = %#v", subject.config)
+	}
+}
+
 type managerRuntimeRunner struct {
 	results          []lifecycle.CommandResult
 	args             [][]string

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -148,6 +149,9 @@ func (manager *manager) Start(
 		); err != nil {
 			return err
 		}
+	}
+	if err := manager.prepareBuiltReleaseProvenance(ctx); err != nil {
+		return err
 	}
 	if err := manager.runtime.EnsureNetwork(ctx, manager.config.Network); err != nil {
 		return err
@@ -451,6 +455,80 @@ func (manager *manager) prepareReleaseProvenance(ctx context.Context) error {
 	manager.config.ReleaseConsumerRepository = repository
 	manager.config.ReleaseConsumerRevision = head
 	return nil
+}
+
+func (manager *manager) prepareBuiltReleaseProvenance(ctx context.Context) error {
+	digest, err := manager.runtime.ImageDigest(ctx, manager.config.RunnerImage)
+	if err != nil {
+		return fmt.Errorf("read built runner image provenance: %w", err)
+	}
+	providerDefaults, err := builtProviderDefaults(
+		manager.config.ProjectRoot,
+		manager.config.Provider,
+	)
+	if err != nil {
+		return err
+	}
+	revision := manager.config.ReleaseConsumerRevision
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(revision) {
+		return fmt.Errorf("built release provenance requires an exact consumer revision")
+	}
+	manager.config.ReleaseEnvironmentKind = "container"
+	manager.config.ReleaseEnvironmentReference = fmt.Sprintf(
+		"%s@source-%s",
+		manager.config.RunnerImage,
+		revision[:12],
+	)
+	manager.config.ReleaseEnvironmentDigest = digest
+	manager.config.ReleaseProviderDefaults = providerDefaults
+	return nil
+}
+
+func builtProviderDefaults(projectRoot, provider string) (string, error) {
+	manifestPath := filepath.Join(projectRoot, "deploy", "provider-cli", "package.json")
+	manifestBody, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return "", fmt.Errorf("read provider manifest: %w", err)
+	}
+	var manifest struct {
+		Dependencies map[string]string `json:"dependencies"`
+	}
+	if err := json.Unmarshal(manifestBody, &manifest); err != nil {
+		return "", fmt.Errorf("parse provider manifest: %w", err)
+	}
+	packageName := ""
+	referencePrefix := ""
+	switch provider {
+	case "codex":
+		packageName = "@openai/codex"
+		referencePrefix = "codex-cli-"
+	case "claude":
+		packageName = "@anthropic-ai/claude-code"
+		referencePrefix = "claude-code-"
+	default:
+		return "", fmt.Errorf("unsupported provider provenance %q", provider)
+	}
+	version := strings.TrimSpace(manifest.Dependencies[packageName])
+	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`).MatchString(version) {
+		return "", fmt.Errorf("provider manifest must pin %s to an exact version", packageName)
+	}
+	lockBody, err := os.ReadFile(
+		filepath.Join(projectRoot, "deploy", "provider-cli", "package-lock.json"),
+	)
+	if err != nil {
+		return "", fmt.Errorf("read provider lockfile: %w", err)
+	}
+	lockDigest := sha256.Sum256(lockBody)
+	value := []map[string]string{{
+		"provider":       provider,
+		"reference":      referencePrefix + version + ":provider-default",
+		"resolverDigest": fmt.Sprintf("sha256:%x", lockDigest),
+	}}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("encode provider provenance: %w", err)
+	}
+	return string(encoded), nil
 }
 
 func githubRepositoryFromRemote(remote string) (string, error) {

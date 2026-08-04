@@ -49,6 +49,9 @@ mise run status
 deploy/start は origin が `mrbaron3/servo` でない、worktree が dirty、または明示した
 `AGENTOPS_RELEASE_CONSUMER_REVISION` が HEAD と違う場合に停止する。`start` は
 `--build` なしでは停止するため、古い mutable-tag image を新しい commit として起動できない。
+environment reference/digest と provider-default reference/digest は runner image build 後に、
+exact HEAD、image descriptor、`deploy/provider-cli` の exact manifest/lock から自動生成する。
+operator env に残った古い値を release receipt へ持ち込まない。
 
 初回は副作用のない監視 mode から始める。
 
