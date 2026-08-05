@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mrbaron3/workflow/internal/control"
-	"github.com/mrbaron3/workflow/internal/designgate"
+	"github.com/mrbaron3/servo/internal/control"
+	"github.com/mrbaron3/servo/internal/designgate"
 )
 
 func main() {

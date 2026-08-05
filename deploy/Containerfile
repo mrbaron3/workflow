@@ -247,7 +247,7 @@ ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/p
     PG_MAJOR=18 \
     PG_VERSION=18.4-1.pgdg13+1 \
     PGDATA=/var/lib/postgresql/18/docker
-LABEL org.opencontainers.image.source="https://github.com/mrbaron3/workflow" \
+LABEL org.opencontainers.image.source="https://github.com/mrbaron3/servo" \
       org.opencontainers.image.title="AgentOps PostgreSQL" \
       org.opencontainers.image.description="Pinned PostgreSQL persistence boundary for AgentOps"
 STOPSIGNAL SIGINT

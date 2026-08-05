@@ -16,7 +16,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/mrbaron3/workflow/internal/jsonschemaregexp"
+	"github.com/mrbaron3/servo/internal/jsonschemaregexp"
 )
 
 func compileContract(t *testing.T, name string) *jsonschema.Schema {

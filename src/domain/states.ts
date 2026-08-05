@@ -2,8 +2,8 @@
  * The issue/work-unit state machine.
  *
  * In this harness, the *source of truth* for where a piece of work sits is its
- * status. On a real GitHub-backed deployment these map 1:1 to `status:*` labels
- * (see templates/labels.yaml). Locally they live on the Issue record in the store.
+ * status. On a real GitHub-backed deployment these map 1:1 to `status:*` labels.
+ * Locally they live on the Issue record in the store.
  *
  * The whole point of modelling this as an explicit machine (rather than free-text)
  * is that the Coordinator can resume, analyse and audit a run from state alone —

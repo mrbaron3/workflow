@@ -52,7 +52,7 @@ development runner（別capability、private workspace、ACTIVEだけ）
    export AGENTOPS_TRIAGE_CANDIDATE_LABEL='ready-candidate'
    export AGENTOPS_TRIAGE_BLOCKED_LABEL='blocked'
    export AGENTOPS_TRIAGE_NEEDS_INFO_LABEL='needs-info'
-   export AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON='["README.md","AGENTS.md","docs/NORTH_STAR.md","docs/ROADMAP.md","docs/HANDOFF.md"]'
+   export AGENTOPS_TRIAGE_CONTEXT_PATHS_JSON='["README.md","AGENTS.md","docs/NORTH_STAR.md","docs/roadmap.yaml","docs/handoffs/HANDOFF.md"]'
    ```
 
    `GH_TOKEN`、`GITHUB_TOKEN`、`AGENTOPS_{CONTROL,TRIAGE,RUNNER}_GITHUB_TOKEN`は設定しない。

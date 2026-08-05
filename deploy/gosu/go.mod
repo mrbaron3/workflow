@@ -1,4 +1,4 @@
-module github.com/mrbaron3/workflow/deploy/gosu
+module github.com/mrbaron3/servo/deploy/gosu
 
 go 1.26.0
 

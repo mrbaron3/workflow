@@ -1,4 +1,4 @@
-module github.com/mrbaron3/workflow/deploy/gh
+module github.com/mrbaron3/servo/deploy/gh
 
 go 1.26.0
 

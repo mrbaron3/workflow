@@ -46,7 +46,6 @@ export const DEFAULT_TRIAGE_POLICY: TriagePolicy = {
     'README.md',
     'AGENTS.md',
     'docs/NORTH_STAR.md',
-    'docs/ROADMAP.md',
     'docs/roadmap.yaml',
   ],
 };

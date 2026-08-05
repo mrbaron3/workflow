@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	lifecyclestore "github.com/mrbaron3/workflow/internal/lifecycle"
+	lifecyclestore "github.com/mrbaron3/servo/internal/lifecycle"
 )
 
 func TestExpectedMigrationsMatchControlSchemaVersion(t *testing.T) {

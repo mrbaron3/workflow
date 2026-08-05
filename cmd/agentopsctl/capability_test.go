@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/mrbaron3/workflow/internal/lifecycle"
+	"github.com/mrbaron3/servo/internal/lifecycle"
 )
 
 // privateStateDirectory points the capability store at a per-test root so no

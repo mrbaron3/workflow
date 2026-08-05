@@ -1,4 +1,4 @@
-module github.com/mrbaron3/workflow
+module github.com/mrbaron3/servo
 
 go 1.26.0
 

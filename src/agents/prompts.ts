@@ -1,7 +1,7 @@
 /**
- * Resolves the on-disk role prompts (agents/*.md) and templates (templates/*).
- * These are the actual prompts you would feed a real coding agent; the harness
- * loads them so prompt text lives in version-controlled files, not in code.
+ * Resolves the on-disk role prompts (agents/*.md). These are the actual prompts
+ * you would feed a real coding agent; the harness loads them so prompt text lives
+ * in version-controlled files, not in code.
  */
 
 import fs from 'node:fs';
@@ -18,10 +18,5 @@ export function pkgPath(...parts: string[]): string {
 
 export function loadRolePrompt(role: AgentRole): string {
   const f = pkgPath('agents', `${role}.md`);
-  return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
-}
-
-export function loadTemplate(name: string): string {
-  const f = pkgPath('templates', name);
   return fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '';
 }

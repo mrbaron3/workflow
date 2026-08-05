@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mrbaron3/workflow/internal/lifecycle"
+	"github.com/mrbaron3/servo/internal/lifecycle"
 )
 
 func TestDatabaseURLsEscapeCredentials(t *testing.T) {

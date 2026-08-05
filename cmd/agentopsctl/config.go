@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mrbaron3/workflow/internal/control"
-	"github.com/mrbaron3/workflow/internal/githubapp"
-	"github.com/mrbaron3/workflow/internal/lifecycle"
+	"github.com/mrbaron3/servo/internal/control"
+	"github.com/mrbaron3/servo/internal/githubapp"
+	"github.com/mrbaron3/servo/internal/lifecycle"
 )
 
 type config struct {

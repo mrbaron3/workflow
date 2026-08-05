@@ -26,8 +26,8 @@ allowed-tools: Read, Write, Edit, Bash
 
 ## 1. Intake — 決定を再ヒアリングせず取り込む
 
-上流に決定 doc（ブレスト結果・draft・メモ等）があれば、パスを尋ねるか `draft/_spec/`（地図は
-`draft/_spec/README.md`、決定は `draft/_spec/decisions/`）を探して読み、
+上流に決定 doc（ブレスト結果・draft・メモ等）があれば、パスを尋ねるか `docs/decisions/`（ADR）と
+`docs/_system/<ctx>/`（境界ごとの設計ビュー）を探して読み、
 決定済み内容を SoT として扱う。spec へは次のように写像する。
 
 | 上流 doc の要素 | spec の写像先 |
