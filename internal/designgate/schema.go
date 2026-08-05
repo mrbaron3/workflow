@@ -13,7 +13,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
-	"github.com/mrbaron3/workflow/internal/jsonschemaregexp"
+	"github.com/mrbaron3/servo/internal/jsonschemaregexp"
 )
 
 // The schemas are semantic copies from ProviderCommit with trailing blank

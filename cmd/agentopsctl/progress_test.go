@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mrbaron3/workflow/internal/control"
-	"github.com/mrbaron3/workflow/internal/lifecycle"
+	"github.com/mrbaron3/servo/internal/control"
+	"github.com/mrbaron3/servo/internal/lifecycle"
 )
 
 func TestParseProgressTarget(t *testing.T) {

@@ -23,7 +23,7 @@ the human confirm. Keep `requirements.md` human-readable; push grader detail int
 ## 1. Intake — consume the decision, don't re-elicit it
 
 If an upstream decision doc exists (brainstorm result, draft, or notes — ask for the path, or look
-under `draft/_spec/`, whose map is `draft/_spec/README.md` and decisions are in `draft/_spec/decisions/`),
+under `docs/decisions/` for the ADRs and `docs/_system/<ctx>/` for the per-context design views),
 read it and treat its decided content as the source. Project it:
 
 | Upstream doc element | Maps to in spec |

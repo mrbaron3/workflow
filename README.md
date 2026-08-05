@@ -106,21 +106,32 @@ both measurable for the same issue.
 
 ```text
 agents/            role prompts (the real prompts you'd feed an agent)
-templates/         issue-contract.md, scorecard.yaml, labels.yaml, epic.md, roadmap.yaml
 seed/              sample-roadmap.yaml — drives the demo
 src/
   domain/          zod contracts (schema.ts) + state machine (states.ts) + artifact types
   store/           the JSON-backed Eval Result DB (store.ts)
   control-store/   PostgreSQL control-plane repositories, migrations, queue and lease contract
-  agents/          AgentRunner: mock.ts (default) + cli.ts (real CLI adapter)
+  agents/          AgentRunner: mock.ts (default) + interactive-backend.ts (tmux provider adapter)
   graders/         hard gates + composite score (index.ts)
   pipeline/        evaluate · repair · coordinator · curator · analyst
+  pipeline/execution/  tmux session orchestration, worktrees, evaluator panel, PR gate
+  intake/          GitHub Issue claim → planning → UI design → trace gate
+  triage/          credential-limited AI issue classification
+  runner/          isolated-workspace job execution
+  runtime/         standard OCI image + container runtime adapter + preflight
   metrics/         pass@1 / pass@k / pass^k / heatmap / cost (metrics.ts)
   planning/        planning tree: roadmap→epic→feature→spec (planning-tree.ts) + legacy seed (planner.ts)
   dashboard/       self-contained HTML + terminal status report
   cli/             the agentops command
+cmd/               Go control plane: agentops-control · agentopsctl · github-broker · credential-helper
+internal/          Go internals: lifecycle · control · githubapp · designgate
+contracts/         JSON Schema + OpenAPI (control-api v1, control-store v1, designflow)
+db/control-store/  PostgreSQL migrations
+deploy/            Containerfile + pinned build-tool modules
+evidence/          durable run / release evidence
+scripts/           smoke, migration and evidence tooling
 test/              vitest: schema, grader, metrics, end-to-end pipeline
-docs/              context-map.md · _system/<ctx>/ · decisions/ (ADR) · ROADMAP.md
+docs/              context-map.md · _system/<ctx>/ · decisions/ (ADR) · specs/ · runbooks/
 ```
 
 ## Concepts (mapped to the brief)
@@ -128,11 +139,11 @@ docs/              context-map.md · _system/<ctx>/ · decisions/ (ADR) · ROADM
 | Concept | Where | Notes |
 | --- | --- | --- |
 | Planning tree | `src/planning/planning-tree.ts`, `Feature` schema | roadmap→epic→feature→spec; planner emits outcomes, AC are never inlined (`docs/specs/planning-tree/`) |
-| Issue Contract | `templates/issue-contract.md`, `IssueContract` schema | a contract is "ready" only when it parses |
-| State machine | `src/domain/states.ts`, `templates/labels.yaml` | `status:*` labels = the lifecycle |
+| Issue Contract | `IssueContract` in `src/domain/schema.ts` | a contract is "ready" only when it parses |
+| State machine | `src/domain/states.ts` | `ISSUE_STATUSES` + `TRANSITIONS`; `status:*` labels mirror it |
 | Generator / Evaluator / Repair | `agents/*.md`, `src/pipeline/*` | Evaluator is independent; verdict from evidence |
 | Hard gates then score | `src/graders/index.ts` | any blocker fails ⇒ `request_changes`, regardless of score |
-| Scorecard + evidence | `src/pipeline/evaluate.ts`, `.harness/evidence/` | matches `templates/scorecard.yaml` |
+| Scorecard + evidence | `src/pipeline/evaluate.ts`, `.harness/evidence/` | `renderScorecard()` writes `scorecard.yaml` from the `EvalRun` contract |
 | pass@k vs pass^k | `src/metrics/metrics.ts` | unbiased estimators; both reported |
 | Eval Task Registry | `src/pipeline/curator.ts` | grows regressions from real failures |
 | Harness self-improvement | `src/pipeline/analyst.ts` | files `type:harness` / `type:eval` issues |

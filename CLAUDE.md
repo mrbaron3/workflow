@@ -1,6 +1,7 @@
 # Project instructions
 
-AI 組織運用ハーネス。仕様の下書き（draft・正式 spec は to-spec で生成）は `draft/_spec/`（地図は `draft/_spec/README.md`、決定は `draft/_spec/decisions/`）、
+AI 組織運用ハーネス。spec は `docs/specs/<feature>/`（`spec.md` ＋ `acceptance.yaml`・to-spec で生成）、
+設計判断は `docs/decisions/`（ADR）、境界ごとの system 層は `docs/_system/<ctx>/`（地図は `docs/context-map.md`）、
 共有決定的ライブラリは `src/`、Agent Skill は `.claude/skills/`。
 
 ## このファイルの方針（決定論はコードへ）
@@ -29,7 +30,7 @@ AI 組織運用ハーネス。仕様の下書き（draft・正式 spec は to-sp
 - **`SKILL.md` の frontmatter `description` は日本語**で書く（トリガー文言を日本語の依頼に合わせる）。
   本文は英語でよい。
 - **相対パスで skill の外へ登らない**（`../` で外に出ない）。skill の外のリポジトリ資源は **root 相対パス**
-  （例: `templates/labels.yaml`）で参照する。**skill 自身がバンドルする資源は skill 相対パスで参照する**
+  （例: `docs/roadmap.yaml`）で参照する。**skill 自身がバンドルする資源は skill 相対パスで参照する**
   （自己完結・可搬性のため）: `assets/` の出力テンプレ（例: `assets/feature-spec.md`）、および `scripts/` から
   `scripts/lib/` の **vendored lib**（例: `./lib/design-lint.js`）。skill の script は実行時に `src/` を読まない。
 - skill は薄く保つ。rubric/手順を焼き込まず、確定処理は `scripts/`（共有ライブラリの薄い
@@ -37,10 +38,12 @@ AI 組織運用ハーネス。仕様の下書き（draft・正式 spec は to-sp
 
 ## 資源の住処
 
-- **テンプレート**は原則 root `templates/` を**単一の住処**とする（skill 配下に複製しない）。ただし
-  **単一 skill だけが使うテンプレ**は、その skill の `assets/` を単一住処として持ってよい（複製でなく**移設**。
-  例: `to-spec` の `assets/feature-spec.md`・`assets/acceptance.yaml`）。コードや複数 consumer が共有する
-  テンプレ（`labels.yaml`・`roadmap.yaml`・`issue-contract.md`・`scorecard.yaml`・`epic.md` 等）は root に置く。
+- **コードと共有する契約の正本は zod**（`src/domain/schema.ts` の契約 ＋ `states.ts` の状態機械）とする。
+  かつて root `templates/` に置いていた雛形（`issue-contract.md`・`scorecard.yaml`・`labels.yaml`・
+  `roadmap.yaml`・`epic.md`）は zod が SSOT になった時点で二重管理になり、実際に status 分類が
+  `states.ts` と乖離したため廃止した（ADR-0002）。**root `templates/` を再導入しない。**
+- **単一 skill だけが使うテンプレ**は、その skill の `assets/` を単一住処として持つ（複製でなく**移設**。
+  例: `to-spec` の `assets/feature-spec.md`・`assets/acceptance.yaml`）。
 - **共有決定的ライブラリ**（`fingerprint` / lint / resolve 等）は **`src/` に単一ソース**を置く（重複実装
   しない）。進行管理役は src を直接呼び、**skill へは vendor して自己完結**させる（手で複製
   しない・実行時に外部を import しない）。vendored lib ＋ `assets/` テンプレで配布可能プラグインへ切り出せる。

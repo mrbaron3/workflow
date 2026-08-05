@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mrbaron3/workflow/internal/control"
+	"github.com/mrbaron3/servo/internal/control"
 )
 
 const (

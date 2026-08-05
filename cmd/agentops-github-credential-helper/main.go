@@ -13,7 +13,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mrbaron3/workflow/internal/githubapp"
+	"github.com/mrbaron3/servo/internal/githubapp"
 )
 
 // Git asks for one field at a time with a fixed prompt. Matching the whole

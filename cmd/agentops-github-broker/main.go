@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mrbaron3/workflow/internal/githubapp"
-	"github.com/mrbaron3/workflow/internal/lifecycle"
+	"github.com/mrbaron3/servo/internal/githubapp"
+	"github.com/mrbaron3/servo/internal/lifecycle"
 )
 
 const (
