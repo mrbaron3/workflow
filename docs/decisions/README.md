@@ -9,7 +9,14 @@
 > 採択した ADR の premises は必ず `_system/<ctx>/` ビューへ **additive に吸収**し、ADR 末尾に **実装先 id**
 > （`ARCH/DOM/DATA/LANG-<CTX>-NNN`）を列挙する。ビュー側の各 id は根拠として ADR を逆参照する。
 > 吸収されるまで ADR は「採択（未吸収）」であり、実装の契約は常にビューの id（ADR を直接実装しない）。
-> この規約の機械検証（採択 ADR ⇔ 実装先 id 実在）は将来 `scripts/check-*` へ落とす（決定論はコードへ）。
+> この規約の機械検証（採択 ADR ⇔ 実装先 id 実在）は将来 `apps/agentops/scripts/check-*` へ
+> 落とす（決定論はコードへ）。
+
+<!-- blockquote separator -->
+
+> **path表記**: ADR-0021以前の本文は決定時の物理配置を歴史として保持する。旧`src/`・`test/`・
+> `scripts/`・`agents/`・`seed/`は現在の`apps/agentops/`配下、旧`cmd/`・`internal/`は
+> `apps/control-plane/`配下に対応する。現在状態と実行可能commandはsystem view／runbookの`apps/*` pathを正とする。
 
 | ADR | 決定 | 状態 |
 | --- | --- | --- |
@@ -31,4 +38,6 @@
 | [ADR-0016](ADR-0016-agentopsctl-lifecycle-authority.md) | 短命な`agentopsctl`だけをApple Container隔離基盤のlifecycle ownerとし、DB権威のdrain fence、復旧、補償、exact loopback publicationを行う | 採択・吸収・実装済み（CISO-06） |
 | [ADR-0017](ADR-0017-private-repository-monitor-broker.md) | private repositoryのIssue/PR readとIssue triageを専用credential境界のtyped durable capabilityへ閉じ、人間ready後だけdevelopmentへpromoteする | 採択・吸収・schema v7構造実装済み（multi-repo live実証待ち） |
 | [ADR-0018](ADR-0018-surrogate-verifier-oracle-calibration.md) | 内部Panel全承認と独立外部検証の棄却をrevision単位の不透明な信号にし、次reviewerの検証被覆を強化する | 採択・吸収・構造実装済み（次revisionでのgrounded効果観測待ち） |
+| [ADR-0019](ADR-0019-github-app-credential-broker.md) | GitHub App credential brokerで手動PATと共有`gh` credentialを廃止し、role-scoped短期tokenをprocess内に閉じる | 採択・実装済み |
 | [ADR-0020](ADR-0020-release-receipt-evidence.md) | live release evidenceをjob topologyでなくdurable release identityとhead-bound causal receiptからcertifyする | 採択・production配線済み（external-target live run待ち） |
+| [ADR-0021](ADR-0021-go-typescript-application-boundaries.md) | GoとTypeScriptを別application rootへ分離し、root DB/contractとDB外runtime境界、当面一体のrelease unitを明示する | 採択・吸収・構造反映済み |

@@ -1,5 +1,13 @@
 # 完全引き継ぎ — AI 開発組織ハーネス（これ一枚で全コンテキスト）
 
+> **2026-08-05 path移設注記**: 本文は当時の判断・観測・実験条件を保持し、repository実装pathと
+> 実行入口だけを現行構成へ読み替える。旧`src/`・`test/`・`scripts/`・`agents/`・`seed/`は
+> 現在の`apps/agentops/`配下、
+> 旧`cmd/`・`internal/`は`apps/control-plane/`配下に対応する。現行運用はroot README、
+> `docs/runbooks/`、[ADR-0021](../decisions/ADR-0021-go-typescript-application-boundaries.md)を正とする。
+
+<!-- blockquote separator -->
+
 > **2026-07-28 更新**: Experience設計の独立provider化は
 > [designflow-integration.md](designflow-integration.md) がworkflow側の実行計画・再開点である。
 > 外部製品は`mrbaron3/designflow`であり、両repositoryは固定contract releaseを境界に独立したtask DAGを持つ。
@@ -23,9 +31,9 @@
 
 - **roadmap（ハーネス自身の WHAT の頂点）** `docs/roadmap.yaml`・**署名対象の要求契約** `docs/requirements/<slug>/`（requirements.md＋acceptance.yaml＋issues.yaml・`to-spec`/`to-detail-design` の著述形式。**⑭改名**: 著述物は要求の delta であり現在仕様でない — 旧 9 features は `docs/specs/<slug>/spec.md` に凍結置台・署名の版固定のため移設しない・検査は両対応）。
 - **設計正本** `docs/_system/`（境界コンテキスト別 4ビュー・⑭で docs/specs/ 下から理想ツリー位置へ移設）＋ `docs/decisions/`（ADR）。
-- **共有 deterministic ライブラリ** `src/`（fingerprint / lint / resolve / pipeline 等）。
+- **共有 deterministic ライブラリ** `apps/agentops/src/`（fingerprint / lint / resolve / pipeline 等）。
 - **Agent Skill** `.claude/skills/`（`to-spec`・`to-system-design`・`to-detail-design`）。
-- **状態＝ SoT** は `.harness/db.json`（Zod schema `src/domain/schema.ts` が単一正本・ADR-0001/0002）。`.harness/` は gitignore・ローカル揮発。
+- **状態＝ SoT** は `.harness/db.json`（Zod schema `apps/agentops/src/domain/schema.ts` が単一正本・ADR-0001/0002）。`.harness/` は gitignore・ローカル揮発。
 
 ## 1. 北極星（最上位要求 = `docs/NORTH_STAR.md`）
 
@@ -51,12 +59,12 @@
 上流（人間が WHAT を著す）から下流（自律実行・評価・改善）へ:
 
 - **planning / authoring / design（上流・著述）** — 署名 spec を著し、system 層（ドメイン/アーキ/データ/言語）と Issue へ分解。
-  実装: `src/pipeline/contract-draft.ts`、skills `to-spec`/`to-system-design`/`to-detail-design`、設計正本 `docs/_system/{authoring,design,planning}`。**④で grounded 一気通貫済み**: `docs/roadmap.yaml`（ハーネス自身の roadmap）→ `plan-roadmap` → `spawn-specs` → 著述・`sign` → `spawn-issues`（issues.yaml に **file-glob `scope`** — `f8b4efa` で AC-id 混入バグを閉鎖）→ `contract-draft` → **`assign`（④新設・`4724bf9`）＝署名済み WHAT の HOW を AI へ委任する明示 opt-in**（adopt が提案用、assign が spec 経由用の対の判断点）。
+  実装: `apps/agentops/src/pipeline/contract-draft.ts`、skills `to-spec`/`to-system-design`/`to-detail-design`、設計正本 `docs/_system/{authoring,design,planning}`。**④で grounded 一気通貫済み**: `docs/roadmap.yaml`（ハーネス自身の roadmap）→ `plan-roadmap` → `spawn-specs` → 著述・`sign` → `spawn-issues`（issues.yaml に **file-glob `scope`** — `f8b4efa` で AC-id 混入バグを閉鎖）→ `contract-draft` → **`assign`（④新設・`4724bf9`）＝署名済み WHAT の HOW を AI へ委任する明示 opt-in**（adopt が提案用、assign が spec 経由用の対の判断点）。
 - **① execution（自律実行）** — ai-managed issue を実 Claude セッション（対話 tmux・`claude -n`、**headless 非目標**）で実装。
-  実装: `src/pipeline/execution/`（`loop.ts` 制御・`live.ts` live 配線・`session.ts` generator・`perspective-session.ts` reviewer・`tmux.ts` 基質・`worktree.ts`・`grade.ts` 実採点・`gate.ts` ゲート・`scoped-context.ts` 設計注入）。正本: **ADR-0005** ＋ `docs/_system/execution` 4ビュー。
+  実装: `apps/agentops/src/pipeline/execution/`（`loop.ts` 制御・`live.ts` live 配線・`session.ts` generator・`perspective-session.ts` reviewer・`tmux.ts` 基質・`worktree.ts`・`grade.ts` 実採点・`gate.ts` ゲート・`scoped-context.ts` 設計注入）。正本: **ADR-0005** ＋ `docs/_system/execution` 4ビュー。
 - **② evaluation（評価）** — 実 tsc/vitest の hard-gate（ADR-0003）＋7観点パネル（functionality は決定論、他6観点は read-only Claude レビュー）。集約 Verdict→ human ゲート。
-  実装: `src/pipeline/panel.ts`・`evaluate.ts`・`src/graders/`・`src/metrics/metrics.ts`。正本: **ADR-0006** ＋ `_system/evaluation`。
-- **③ improvement（自己改善）** — `curator.ts`（失敗→回帰 EvalTask 昇格）＋`analyst.ts`（metrics→`type:harness`/`type:eval` 改善 issue 起票）＋`adopt.ts`（提案→人間 WHAT 確定→drive 可能化）＋`improve.ts`（live turn 末尾の常設 tail）。**改善は同じ roadmap の issue として同じ drive loop で回す**（＝ハーネスが自分を直す）。正本: **ADR-0007**。self-hosting は `config.target.repo='.'`＋env-gate 受け入れテスト（`test/acceptance-harness/`・protectedPaths 保護）。
+  実装: `apps/agentops/src/pipeline/panel.ts`・`evaluate.ts`・`apps/agentops/src/graders/`・`apps/agentops/src/metrics/metrics.ts`。正本: **ADR-0006** ＋ `_system/evaluation`。
+- **③ improvement（自己改善）** — `curator.ts`（失敗→回帰 EvalTask 昇格）＋`analyst.ts`（metrics→`type:harness`/`type:eval` 改善 issue 起票）＋`adopt.ts`（提案→人間 WHAT 確定→drive 可能化）＋`improve.ts`（live turn 末尾の常設 tail）。**改善は同じ roadmap の issue として同じ drive loop で回す**（＝ハーネスが自分を直す）。正本: **ADR-0007**。self-hosting は `config.target.repo='.'`＋env-gate 受け入れテスト（`apps/agentops/test/acceptance-harness/`・protectedPaths 保護）。
 - **オーケストレータは決定論**（ADR-0004・`DOM-execution-008`）: poll/dispatch/grade/gate/store を LLM に委ねない。`agentops run`（`coordinator.ts`）は**mock demo 用の別経路**（approve→自動 released）で、execution の **live 経路**（`runLoopLive`）と混同しない。
 
 ADR 一覧: 0001 JSON store=SoT / 0002 Zod=published language / 0003 hard-gate-before-score / 0004 決定論＋pluggable backend / 0005 execution tmux / 0006 evaluator panel＋PR ゲート / **0007 ③改善ループの配線（adopt=人間WHAT・curate常設・self-hosting env-gate）**。
@@ -170,7 +178,7 @@ channel-compass 側の分離 store には ISSUE-0001..0004 released・INTV-0001.
 - **追記（同日・文書層の改名）**: 「spec という命名は確定仕様（state）との誤解を生む — 実体は
   署名される要求の delta」という人間指摘（DOC_LIFECYCLE の警告そのもの）を受け、**今後の spawn 分
   から `docs/requirements/<slug>/requirements.md`** へ改名（旧 9 features は署名の版固定のため
-  `docs/specs/` に凍結置台・全検査は単一の家 `src/authoring/spec-doc.ts` 経由で両対応）。同時に
+  `docs/specs/` に凍結置台・全検査は単一の家 `apps/agentops/src/authoring/spec-doc.ts` 経由で両対応）。同時に
   **`_system` を `docs/_system/` へ移設**（DOC_TAXONOMY 理想ツリーの位置・生きている state 文書
   なので版固定問題なし）。「アプリの現在仕様」は著述せず署名 AC を supersedes で畳んだ派生
   （feature-catalog・DOC_LIFECYCLE 案A）— fold の実装は最初の supersedes 出現時（M4 序盤想定）に
@@ -197,7 +205,7 @@ drain** に到達。上流著述は to-spec＋**to-detail-design 初実走**（A
 - **turn 2 = A3/M2 出口の観測**: cap=2 で 0020＋0021（**2 spec**）が同時 in-flight・並行
   2-attempt 完走・実測（peak 2 / cap 2 / driven 2）を **0020 自身が建てた計器が store に記録**。
   0021 の generator は scope 制約（agents/ 非含有）を正しく認識し規約文の移設を owner へ
-  註記 — 締結でこちらが agents/generator.md へ移設。
+  註記 — 締結でこちらが apps/agentops/agents/generator.md へ移設。
 - **条件付き承認 ×3（7〜9 例目・全ピン変異 kill 確認）**: sampleKey 単射ピン・計器 required 型
   （⑨規約 — 今回の codeQuality は optional を見逃し = B1 較正ノート）・issuesDriven 母集団ピン・
   turnRecords append-only ピン・rubric matcher の anchor 強化（bare /pin/i が skiPINg にマッチ
@@ -222,7 +230,7 @@ drain** に到達。上流著述は to-spec＋**to-detail-design 初実走**（A
   欠陥クラスの repair マージ残存）。**repairSuccess の低迷は相当部分が冤罪**・⑥以降の条件付き
   承認ピンの多くは brief が完全ならループ自身が着地させられた可能性が高い。
 - **経路**: `analyze --create`（4 issue 起票）→ ISSUE-0016 を R1 の stale draft を**差し替えた**
-  contract（`scripts/seeds/panel-brief-completeness.contract.yaml`・AC-BRIEF-001..003: 全 findings
+  contract（`apps/agentops/scripts/seeds/panel-brief-completeness.contract.yaml`・AC-BRIEF-001..003: 全 findings
   forward・blocker-first は finding フィルタ・集約は内容同一性のみ）で adopt →
   グレーダ先置き（⑨⑩の実失敗形をそのまま再現・gated 5 RED）→ drive（`fdd338f`→build）。
 - **drive**: attempt 1 = functionality/codeQuality approve・testQuality 2 findings（**同一
@@ -338,7 +346,7 @@ criterionId 一致は lens 跨ぎで別内容を「同じ」と主張＝偽陽�
 
 - **WHAT の転換**: lineage（残存/新規）は意味判断 → レビュア（セッション）の attested 判断へ帰属。
   決定論層（Analyst）は `lineage='persisted'` の attested 事実のみ集計（ADR-0004 の境界の再適用）。
-  `analyze --create` → ISSUE-0009 を `scripts/seeds/finding-lineage.contract.yaml`（AC-LINEAGE-001..003・
+  `analyze --create` → ISSUE-0009 を `apps/agentops/scripts/seeds/finding-lineage.contract.yaml`（AC-LINEAGE-001..003・
   criterionId 推測禁止をレッドライン化）で adopt。ISSUE-0008/0010 は planned 在庫。
 - **drive**（`33b6e8f`）: attempt 1 → testQuality major（レンダリング片側のみのテスト）→ repair 4 fix →
   attempt 2 major 解消・**残存 minor 1 件**（Analyst の `attempt<=1` 境界が未 pin）→ 条件付き承認（⑥の型）:
@@ -568,10 +576,10 @@ npm test && npm run typecheck
 npx tsx .claude/skills/to-system-design/scripts/check-system-design.ts .harness/sysdesign-execution --system docs/_system
 
 # grounded execution（cost・claude 認証が要る）
-npx tsx scripts/real-run-sandbox.ts                    # 使い捨て sandbox＋ai-managed ISSUE-0001（roman）
-LENSES=testQuality npx tsx scripts/real-panel-run.ts   # 安く1観点（LENSES 無指定で全6観点）
+npx tsx apps/agentops/scripts/real-run-sandbox.ts                    # 使い捨て sandbox＋ai-managed ISSUE-0001（roman）
+LENSES=testQuality npx tsx apps/agentops/scripts/real-panel-run.ts   # 安く1観点（LENSES 無指定で全6観点）
 GEN_MODEL=haiku HARD=1 MAX_REPAIRS=1 \
-  npx tsx scripts/real-run-sandbox.ts                  # repair 発火狙い（弱コーダ×bait×repair 許可）
+  npx tsx apps/agentops/scripts/real-run-sandbox.ts                  # repair 発火狙い（弱コーダ×bait×repair 許可）
 tmux attach -t agentops                                # ライブ観察（各ロールがタブ・完了で自動クローズ・stuck は残る）
 
 # 上流一気通貫（roadmap → released まで・④で grounded 済みの実列）
@@ -582,8 +590,8 @@ npm run harness -- sign docs/requirements/<slug>    # AUTH-B lint → ApprovedSp
 npm run harness -- spawn-issues docs/requirements/<slug>   # issues.yaml → ISSUE-NNNN（design lint 強制）
 npm run harness -- contract-draft docs/requirements/<slug> # 署名 AC を源に契約（scope は manifest の glob）
 npm run harness -- assign ISSUE-NNNN         # ★人間の委任 opt-in（これで pollable 入り。adopt は提案専用）
-#   （env-gated RED 受け入れテストを test/acceptance-harness/ に先置き・commit してから↓）
-npx tsx scripts/real-run-self.ts && LENSES=codeQuality,testQuality npx tsx scripts/real-panel-run.ts
+#   （env-gated RED 受け入れテストを apps/agentops/test/acceptance-harness/ に先置き・commit してから↓）
+npx tsx apps/agentops/scripts/real-run-self.ts && LENSES=codeQuality,testQuality npx tsx apps/agentops/scripts/real-panel-run.ts
 
 # 改善ループ③（live turn 末尾で curate/regress/analyst-report は自動。手動 CLI:）
 npm run harness -- curate                    # 失敗した blocker AC → 回帰 EvalTask（冪等・target 束縛）
@@ -592,7 +600,7 @@ npm run harness -- analyze --create          # metrics → type:harness/eval iss
 npm run harness -- adopt ISSUE-NNNN [--contract <yaml>]
                                              # 提案の WHAT を確定 → contract-drafted（drive 可能に）
                                              # --contract 省略時は Analyst が添付した draft を検証して使用
-npx tsx scripts/real-run-self.ts             # target をこのリポジトリ自身へ（store は wipe しない）
+npx tsx apps/agentops/scripts/real-run-self.ts             # target をこのリポジトリ自身へ（store は wipe しない）
 npm run harness -- decide ISSUE-NNNN approve # 人間ゲート（approve→released＋humanVerdict 収穫）
 npm run harness -- status --json             # 機械可読スナップショット（改善 before/after 比較）
 npm run harness -- label --run EVAL-NNNNN --human approve|request_changes  # 較正ラベル
@@ -628,9 +636,9 @@ npm run harness -- retire EVAL-TASK-... --reason <text>
 - **受け入れグレーダの未存在 seam は計算 specifier の遅延動的 import**（⑨・⑥規約の拡張）: リテラル
   動的 import でも tsc がモジュール解決を試みる（TS2307）・トップレベル await import は skipIf 前に
   走って baseline suite を壊す。`'../../src/pipeline/' + 'intervene.js'` の形で型消去し、test 本体内で
-  import する（実例: `test/acceptance-harness/intervention-accounting.acceptance.test.ts`）。
+  import する（実例: `apps/agentops/test/acceptance-harness/intervention-accounting.acceptance.test.ts`）。
 - **グレーダ先置きは issue 帰属を宣言して gating する**（⑭・ADR-0007 I3 の拡張・FEAT-009）:
-  新規の先置きガードは `describe.skipIf(!acceptsIssue('ISSUE-XXXX'))`（`src/pipeline/execution/accept.ts`
+  新規の先置きガードは `describe.skipIf(!acceptsIssue('ISSUE-XXXX'))`（`apps/agentops/src/pipeline/execution/accept.ts`
   から import・帰属はこの明示宣言のみ — ファイル名/テスト名からの推測禁止）。drive の採点は駆動
   issue の scoped 活性化を自動注入するため、**複数 issue の同時先置きでも他 issue のガードは休眠**
   （omnibus 封じ・D3）。`ACCEPT_HARNESS=1` は全活性（baseline RED 検査・手動一括確認）として不変。
@@ -638,21 +646,21 @@ npm run harness -- retire EVAL-TASK-... --reason <text>
   scoped 採点に残すと**全休眠→理由付き RED**（activation gap note）になる — 沈黙はしないが、著述時に
   新規約を使うこと。
 - ~~副次 finding: `scope_check` が `scope.exclude` を見ない~~ **✅ 修正済み** — ③一巡目の released 成果
-  そのもの（ISSUE-0003・agent が自律修正・恒久回帰ガード `test/acceptance-harness/scope-exclude` が監視）。
+  そのもの（ISSUE-0003・agent が自律修正・恒久回帰ガード `apps/agentops/test/acceptance-harness/scope-exclude` が監視）。
 
 ## 7. 環境・資源の住処
 
 - 環境: tmux 3.7・claude 2.1.x（既定 Opus 4.8。`config.models.{generator,reviewer}` で role 別上書き可・未指定は既定継承）。
 - **セッションはタブ**: 全ロールは holder `agentops`（`AGENTOPS_TMUX_SESSION` で上書き可）の**ウィンドウ**。ウィンドウ名 generator=`ao-issue-*-s*`・review=`ao-eval-issue-*-s*-<観点>`。
 - `.harness/` は gitignore・ローカル揮発（store・sandbox・worktrees・review-worktrees・evidence）。scaffolder（`real-run-sandbox.ts`）で決定論再生成。store の issue/eval はローカルのみ。
-- skill 著述規約: 正本 `SKILL.md`＋日本語訳 `SKILL.md.ja` 併設・frontmatter `description` は日本語・skill 外へ `../` で登らない・確定処理は `scripts/`（`src/` の vendored lib）へ委譲（詳細は `workflow/CLAUDE.md`）。
+- skill 著述規約: 正本 `SKILL.md`＋日本語訳 `SKILL.md.ja` 併設・frontmatter `description` は日本語・skill 外へ `../` で登らない・確定処理は `scripts/`（`apps/agentops/src/` の vendored lib）へ委譲（詳細は `workflow/CLAUDE.md`）。
 
 ## 8. canonical（深掘り・必要時のみ）
 
 - `docs/NORTH_STAR.md` — 三能力・操舵指標・反証サイン（最上位要求）。
 - `docs/decisions/ADR-0005`（execution premises）・`ADR-0006`（パネル E1-E7・ゲート G1-G3、末尾の実装先 id 表が地図）・`ADR-0007`（③配線 I1-I4・未吸収＝ビュー吸収が残タスク）。
 - `docs/_system/execution/`（ARCH/DOM/DATA/LANG-execution-NNN が実装契約）・同 `evaluation/`。
-- 主要ソース: `src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`src/pipeline/{panel,curator,analyst,adopt,assign,improve,regression,repair,contract-draft}.ts`・`src/planning/planning-tree.ts`・`src/metrics/metrics.ts`・`src/domain/schema.ts`・`src/config.ts`。
-- テスト: `test/{improvement-loop,adopt,assign,metrics,intervention,proposal-lifecycle,grade-env,grade-scoped,scoped-collection-integration,accept,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 441・skip ゼロ）。`test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ帰属宣言付き gating（⑭以降 `describe.skipIf(!acceptsIssue('ISSUE-XXXX'))`・§6）で baseline-red を隔離し、released 後に gating を外して昇格する規約（ADR-0007 I3）。現在の13ファイル全て昇格済み（ゲート条件ピンは各ガードに同居・⑥⑦⑨〜⑭）。~~D3 注意（⑬）~~ **⑭で閉鎖**: 採点は駆動 issue の scoped 活性化を注入するため、複数 issue の同時先置きでも omnibus 強制は起きない（`src/pipeline/execution/accept.ts` が単一の家）。
-- 共有語彙: `src/domain/eval-task.ts`（⑩新設）— active/retired 述語（`isRetired`/`activeEvalTasks`）と EVAL-TASK id 規約（`buildTaskId`/`parseTaskId`）の単一の家。registry を読む/書くコードはここを通す（重複綴りを再導入しない）。
+- 主要ソース: `apps/agentops/src/pipeline/execution/{loop,live,session,perspective-session,tmux,grade,gate}.ts`・`apps/agentops/src/pipeline/{panel,curator,analyst,adopt,assign,improve,regression,repair,contract-draft}.ts`・`apps/agentops/src/planning/planning-tree.ts`・`apps/agentops/src/metrics/metrics.ts`・`apps/agentops/src/domain/schema.ts`・`apps/agentops/src/config.ts`。
+- テスト: `apps/agentops/test/{improvement-loop,adopt,assign,metrics,intervention,proposal-lifecycle,grade-env,grade-scoped,scoped-collection-integration,accept,tdd-enforcement,analyst-granularity,regression-runner,regression-multi-target,curate-backfill,repair-loop,live-repair,panel,contract-draft,planning-tree}.test.ts` ほか（計 441・skip ゼロ）。`apps/agentops/test/acceptance-harness/` は**恒久回帰ガード置き場**（protectedPaths で agent から保護）— released 前の drive 中だけ帰属宣言付き gating（⑭以降 `describe.skipIf(!acceptsIssue('ISSUE-XXXX'))`・§6）で baseline-red を隔離し、released 後に gating を外して昇格する規約（ADR-0007 I3）。現在の13ファイル全て昇格済み（ゲート条件ピンは各ガードに同居・⑥⑦⑨〜⑭）。~~D3 注意（⑬）~~ **⑭で閉鎖**: 採点は駆動 issue の scoped 活性化を注入するため、複数 issue の同時先置きでも omnibus 強制は起きない（`apps/agentops/src/pipeline/execution/accept.ts` が単一の家）。
+- 共有語彙: `apps/agentops/src/domain/eval-task.ts`（⑩新設）— active/retired 述語（`isRetired`/`activeEvalTasks`）と EVAL-TASK id 規約（`buildTaskId`/`parseTaskId`）の単一の家。registry を読む/書くコードはここを通す（重複綴りを再導入しない）。
 - [execution-layer.md](execution-layer.md) — execution 層の grounded 実験の詳細ログ（発火/収束の生データ・過去の不発記録）。**継続に必須ではない**深掘りアーカイブ。

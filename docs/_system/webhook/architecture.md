@@ -7,5 +7,10 @@
 - **ARCH-webhook-005 Consumer Adapters** — `agentops`はIssue intake/PR revision loopをwakeし、`orca-worktree-sync`は既存同期engineへ型付きeventを渡す。adapterだけが各runtimeを知る。
 - **ARCH-webhook-006 Local Control UI** — loopback限定のHTTP UI/APIがRegistration、forwarder health、delivery履歴、failure replayを操作する。任意command入力は提供しない。
 - **ARCH-webhook-007 Go production control** — productionのIngress/Router/Reconciliation/Forwarder Managerは
-  PostgreSQL Registration駆動の`agentops-control`が所有する。旧TypeScript daemonは非永続compatibility oracleであり、
+  PostgreSQL Registration駆動の`apps/control-plane/cmd/agentops-control/`が所有する。
+  `apps/agentops/src/webhook/`の旧TypeScript daemonは非永続compatibility oracleであり、
   production entry pointやdual-write pathではない（ADR-0014）。
+- **ARCH-webhook-008 Application boundary** — webhook delivery、routing outcome、jobはPostgreSQLを介する
+  durable business coordinationである。Go production controlとTypeScript runnerを同じsource treeへ戻さず、
+  root `db/` / `contracts/`をPublished Languageとする。local forwarder process、credential broker HTTP、
+  egress proxyは別runtime seamであり、deliveryの別SoTにしない（ADR-0021）。

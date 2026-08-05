@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:designflow:schema:v1:design-request",
+  "title": "Design Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "sourceRef",
+    "productIntent",
+    "requirements",
+    "constraints",
+    "targetSurfaces",
+    "contextRefs",
+    "existingDesignSystemRef",
+    "requestedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "requestId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "sourceRef": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/externalRef"
+    },
+    "productIntent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primaryOutcome", "users", "usageContext"],
+      "properties": {
+        "primaryOutcome": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "users": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+          }
+        },
+        "usageContext": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        }
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/requirement"
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/constraint"
+      }
+    },
+    "targetSurfaces": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["web", "mobile", "desktop", "terminal", "other"]
+      }
+    },
+    "contextRefs": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/externalRef"
+      }
+    },
+    "existingDesignSystemRef": {
+      "anyOf": [
+        {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/externalRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "requestedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

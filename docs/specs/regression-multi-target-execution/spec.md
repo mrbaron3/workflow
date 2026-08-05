@@ -5,7 +5,8 @@
 >
 > **WHAT/HOW 境界**: 本 spec が定義するのは「Curator が捕捉した回帰 task が、config.target の切替に
 > 生存して**再検証され続ける**、その観測可能な性質」。EvalTask / RegressionRun の型の細部・実装関数の
-> 形は system 層（evaluation コンテキスト）と `src/domain/schema.ts`（Zod SSOT・ADR-0002）が定義する。
+> 形は system 層（evaluation コンテキスト）と `apps/agentops/src/domain/schema.ts`
+> （Zod SSOT・ADR-0002）が定義する。
 >
 > **背景（実測の欠け）**: 現行 v0 の回帰実行者は「現在の config.target に束縛された task」しか実走できず、
 > 別 target（例: `.harness/sandbox`）で捕捉した失敗は target を切り替えた瞬間から死蔵される
@@ -100,7 +101,7 @@
 
 > 実装が絶対にしてはならないこと。
 
-- `test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
+- `apps/agentops/test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
 - 実走できない task を pass / fail として捏造しない（unverified・skip 報告のみが正直な中間）。
 - 既存の RegressionRun / EvalTask の記録を書き換え・削除しない（store は追記の真実・ADR-0001）。
 - 合格基準（既存テスト）を弱体化しない。

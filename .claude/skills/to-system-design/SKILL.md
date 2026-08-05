@@ -46,7 +46,7 @@ view's brief as you reach it:
                                                      └─► data
 ```
 
-| View | Brief (skill `references/…`) | Output template (`assets/…`) | Persona for fan-out (root `agents/…`) |
+| View | Brief (skill `references/…`) | Output template (`assets/…`) | Persona for fan-out (`apps/agentops/agents/…`) |
 | --- | --- | --- | --- |
 | language | `language.md` | `ubiquitous-language.md` | `language-modeler.md` |
 | domain | `domain.md` | `domain-model.md` | `domain-modeler.md` |
@@ -111,5 +111,5 @@ staged proposal into `_system/`).
 ---
 
 Per-view briefs live in `references/` (language / domain / architecture / data + reverse), output templates
-in `assets/`, per-view personas in root `agents/`. Integrity invariants are owned by
-`scripts/check-system-design.ts` (which vendors `src/design/lint.ts`), not by any prose doc.
+in `assets/`, per-view personas in `apps/agentops/agents/`. Integrity invariants are owned by
+`scripts/check-system-design.ts` (which vendors `apps/agentops/src/design/lint.ts`), not by any prose doc.

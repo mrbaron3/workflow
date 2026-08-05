@@ -3,19 +3,22 @@
 # This is a plain multi-stage OCI build — no Apple-Container-specific syntax — so it builds and runs
 # identically under Apple Container, docker, podman, or nerdctl. The runtime adapter, not the image,
 # carries any engine-specific behaviour. Every path here is container-absolute (WORKDIR /app); nothing
-# references a macOS `/Users/...` path, which the host-path scanner (src/runtime/paths.ts) enforces.
+# references a macOS `/Users/...` path, which the host-path scanner
+# (apps/agentops/src/runtime/paths.ts) enforces.
 #
 # Build context is the repository root:
 #   container build -t agentops-app:dev -f deploy/Containerfile .
 #   docker    build -t agentops-app:dev -f deploy/Containerfile .   # standard-OCI portability check
 #
-# Stage boundary keeps the TypeScript runner and Go control-plane release surfaces independent.
+# Stage boundaries consume only one app directory plus the root shared contracts/assets. The final
+# topology is still released together because both apps verify the exact PostgreSQL schema checksum.
 
 # --- deps: resolve the full dependency graph from the lockfile (reproducible) -------------------
 FROM node:24.19.0-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df AS deps
 WORKDIR /app
-# Only the manifest + lockfile, so this layer caches unless dependencies change.
+# Only workspace manifests + lockfile, so this layer caches unless dependencies change.
 COPY package.json package-lock.json ./
+COPY apps/agentops/package.json ./apps/agentops/package.json
 RUN npm install --global npm@12.0.2 \
     && npm --version | grep -qx '12.0.2' \
     && npm ci
@@ -23,23 +26,30 @@ RUN npm install --global npm@12.0.2 \
 # --- build: bring in the source and prove build+typecheck run in-container from container-relative paths -
 FROM deps AS build
 WORKDIR /app
-COPY . .
+# The TypeScript build stage deliberately does not receive Go source. Root-level assets are published
+# contracts, DB migrations, documentation, and topology metadata consumed by the application.
+COPY apps/agentops ./apps/agentops
+COPY contracts ./contracts
+COPY db ./db
+COPY docs ./docs
+COPY evidence ./evidence
+COPY .claude ./.claude
+COPY README.md CLAUDE.md ./
+COPY deploy/Containerfile ./deploy/Containerfile
 # Grounds "build/typecheck grader runs inside the container with no Mac absolute path" (issue #11 AC).
 RUN npm run typecheck && npm run build
 
 # --- control-build: compile and unit-test the Registration-driven Go control plane ----------------
 FROM golang:1.26.5-trixie@sha256:4ee9ffa999b4583ce281939cdff828763083610292f252279a0cee77473bd9a7 AS control-build
-WORKDIR /src
-COPY go.mod go.sum ./
+WORKDIR /src/apps/control-plane
+COPY apps/control-plane/go.mod apps/control-plane/go.sum ./
 RUN go mod download
-COPY cmd ./cmd
-COPY internal ./internal
-COPY contracts ./contracts
-COPY evidence ./evidence
-COPY db ./db
-COPY deploy/gosu ./deploy/gosu
-COPY deploy/gh ./deploy/gh
-COPY docs ./docs
+COPY apps/control-plane/cmd ./cmd
+COPY apps/control-plane/internal ./internal
+COPY contracts /src/contracts
+COPY evidence /src/evidence
+COPY db /src/db
+COPY docs /src/docs
 RUN go test ./... \
     && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
       -o /out/agentops-control ./cmd/agentops-control \
@@ -57,7 +67,7 @@ FROM control-build AS control-test
 CMD ["go", "test", "-race", "./..."]
 
 # --- runtime: the application image ------------------------------------------------------------
-# Runs the harness via the tsx launcher (bin/agentops.mjs). Retains the toolchain so the in-container
+# Runs the harness via the tsx launcher (apps/agentops/bin/agentops.mjs). Retains the toolchain so the in-container
 # graders (typecheck / unit tests) run against container-relative paths; a leaner prod-only split is a
 # later concern (#14) and does not change this image's standard-OCI shape.
 FROM node:24.19.0-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df AS runtime
@@ -82,6 +92,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
 # dependency; here APP_ROOT=/app equals the cwd, so behavior is identical to a bare run.
 ENV NODE_ENV=production \
     YARN_VERSION= \
+    AGENTOPS_REPOSITORY_ROOT=/app \
     AGENTOPS_APP_ROOT=/app \
     AGENTOPS_WORKSPACE_ROOT=/workspace \
     AGENTOPS_STORE_ROOT=/data/store \
@@ -90,11 +101,14 @@ WORKDIR /app
 # The official node image ships a non-root `node` user (uid 1000); run as it, never as root.
 COPY --from=build --chown=node:node /app /app
 USER node
-CMD ["node", "bin/agentops.mjs"]
+CMD ["node", "apps/agentops/bin/agentops.mjs"]
 
 # --- runner: isolated PostgreSQL lease consumer + existing AgentOps toolchain --------------------
 FROM control-build AS runner-tools
-WORKDIR /src/deploy/gh
+WORKDIR /src/deploy/tools/gh
+COPY deploy/tools/gh/go.mod deploy/tools/gh/go.sum ./
+RUN go mod download
+COPY deploy/tools/gh ./
 RUN CGO_ENABLED=0 go build -trimpath \
       -ldflags="-s -w -X github.com/cli/cli/v2/internal/build.Version=2.97.0" \
       -o /out/gh github.com/cli/cli/v2/cmd/gh \
@@ -103,7 +117,7 @@ RUN CGO_ENABLED=0 go build -trimpath \
 
 FROM runtime AS runner
 USER root
-COPY --chown=root:root deploy/provider-cli/package.json deploy/provider-cli/package-lock.json /opt/provider-cli/
+COPY --chown=root:root deploy/tools/provider-cli/package.json deploy/tools/provider-cli/package-lock.json /opt/provider-cli/
 COPY --from=runner-tools /out/gh /usr/local/libexec/agentops-gh-real
 COPY --from=control-build /out/agentops-github-credential-helper /usr/local/bin/agentops-github-credential-helper
 RUN apt-get update \
@@ -131,13 +145,14 @@ RUN apt-get update \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg \
     && rm -rf /var/lib/apt/lists/*
 ENV HOME=/home/agentops \
+    AGENTOPS_REPOSITORY_ROOT=/app \
     AGENTOPS_APP_ROOT=/app \
     AGENTOPS_WORKSPACE_ROOT=/workspace \
     AGENTOPS_STORE_ROOT=/workspace/store \
     AGENTOPS_SYSTEM_DIR=/app/docs/_system
 WORKDIR /app
 USER agentops
-ENTRYPOINT ["node", "dist/src/runner/cli.js"]
+ENTRYPOINT ["node", "apps/agentops/dist/src/runner/cli.js"]
 
 # --- triage-runner: Issue-only broker + provider + comment/label capability ----------------------
 # This image deliberately has no git, ssh, tmux, bubblewrap, checkout volume, or
@@ -145,7 +160,7 @@ ENTRYPOINT ["node", "dist/src/runner/cli.js"]
 # runtime; only /tmp and /home/agentops are tmpfs.
 FROM node:24.19.0-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df AS triage-runner
 USER root
-COPY --chown=root:root deploy/provider-cli/package.json deploy/provider-cli/package-lock.json /opt/provider-cli/
+COPY --chown=root:root deploy/tools/provider-cli/package.json deploy/tools/provider-cli/package-lock.json /opt/provider-cli/
 COPY --from=runner-tools /out/gh /usr/local/libexec/agentops-gh-real
 COPY --from=control-build /out/agentops-github-credential-helper /usr/local/bin/agentops-github-credential-helper
 RUN rm -f /etc/apt/sources.list.d/debian.sources \
@@ -176,10 +191,11 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources \
 COPY --from=build --chown=agentops:agentops /app /app
 ENV HOME=/home/agentops \
     YARN_VERSION= \
+    AGENTOPS_REPOSITORY_ROOT=/app \
     AGENTOPS_APP_ROOT=/app
 WORKDIR /app
 USER agentops
-ENTRYPOINT ["node", "dist/src/triage/cli.js"]
+ENTRYPOINT ["node", "apps/agentops/dist/src/triage/cli.js"]
 
 # --- github-broker: the only process that can read the GitHub App private key -------------------
 # The host never publishes this listener. Workers reach it only over the
@@ -223,7 +239,10 @@ ENTRYPOINT ["/usr/local/bin/agentops-control"]
 
 # --- postgres-tools: rebuild gosu on the current pinned Go security patch -------------------------
 FROM control-build AS postgres-tools
-WORKDIR /src/deploy/gosu
+WORKDIR /src/deploy/tools/gosu
+COPY deploy/tools/gosu/go.mod deploy/tools/gosu/go.sum ./
+RUN go mod download
+COPY deploy/tools/gosu ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
       -o /out/gosu github.com/tianon/gosu \
     && /out/gosu --version

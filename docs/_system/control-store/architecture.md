@@ -30,7 +30,8 @@
 - **ARCH-control-store-014 Recovery Reconciliation** — CLI restartはpersisted mode、active lease、running attempt、
   actual containerを照合し、欠損ACTIVEをDRAININGへ寄せてから安全な復旧経路だけを通す。
 - **ARCH-control-store-015 Explicit Owner Migration** — 通常consumerはschema verify-onlyを保ち、短命なowner-only
-  admin containerだけがadvisory lock下でversion 7までのadditive migrationとleast-privilege role bootstrapを行う。
+  admin containerだけがadvisory lock下でcurrent imageが宣言するexact schema
+  （ADR-0021採択時点はversion 21）までのadditive migrationとleast-privilege role bootstrapを行う。
   commit前failureは旧versionを保持し、commit後はdurable rowを消すdown migrationでなくsafe modeへのcompensationと
   current imageによるforward recoveryを行う。
 - **ARCH-control-store-016 Typed Private Monitor Broker** — credential-free controlはRegistration/version、固定repository、
@@ -51,8 +52,17 @@
   atomic commitする。同一expected-head mergeのrecoveryは冪等、未認可または異なるmergeはfail closedである。
   completed releaseは`evidence:live-release:export`でPostgreSQLだけからv2 certificateへ再構成し、同じsemantic
   certifierを通過しない出力を公開しない。
+- **ARCH-control-store-020 Cross-application durable coordination** —
+  `apps/control-plane`のGo consumerと`apps/agentops`のTypeScript consumerは、root
+  `db/control-store/migrations/`と`contracts/`へ順応し、Registration/lifecycle fence/job/lease/result/progress/receipt/
+  artifact metadataをPostgreSQLだけでdurableに調整する。`LISTEN/NOTIFY`はwakeに限定する。
+  credential broker HTTP、CONNECT egress proxy、runner shared volume、`agentopsctl`のactual container操作は別の
+  security/runtime contractであり、control-storeへ統合しない。`.harness/db.json`はTypeScript evaluation
+  domainの別SoTで、Go consumerは読まない。exact schema gateを保つ間のrelease unitはrepository全体で一体とする
+  （ADR-0021）。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、
 [ADR-0017](../../decisions/ADR-0017-private-repository-monitor-broker.md)、
-[ADR-0020](../../decisions/ADR-0020-release-receipt-evidence.md)
+[ADR-0020](../../decisions/ADR-0020-release-receipt-evidence.md)、
+[ADR-0021](../../decisions/ADR-0021-go-typescript-application-boundaries.md)

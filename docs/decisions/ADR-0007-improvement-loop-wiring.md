@@ -47,13 +47,13 @@
 
 - `type:harness` issue の grounded drive は **`config.target.repo = '.'`**（このリポジトリ自身の worktree）で行う。
   grader はリポジトリ自身の `tsc --noEmit` と `vitest run` — **既存スイート全 green が回帰網そのもの**になる。
-- **env-gate 受け入れテスト規約**: harness 所有の受け入れテストは `test/acceptance-harness/` に置き、
+- **env-gate 受け入れテスト規約**: harness 所有の受け入れテストは `apps/agentops/test/acceptance-harness/` に置き、
   `describe.skipIf(!process.env.ACCEPT_HARNESS)` で覆う。通常の `npm test` では skip（main は常に green）、
   grader コマンドだけが `ACCEPT_HARNESS=1` を立てて実行する（baseline-red を CI に漏らさず sandbox と同じ
   「先に在る独立採点器」構造を成立させる）。この dir は `config.target.protectedPaths` で agent の編集から守る。
 - そのために grader コマンド文字列は **sh 風の先頭 `KEY=VAL` env 代入をサポート**する（`grade.ts` の `run` は
   shell を介さないため、明示的に先頭トークンを env へ剥がす。決定論・テスト付き）。
-- scaffold は `scripts/real-run-self.ts`。sandbox scaffold と違い **store を絶対に wipe しない**
+- scaffold は `apps/agentops/scripts/real-run-self.ts`。sandbox scaffold と違い **store を絶対に wipe しない**
   （失敗履歴・昇格済み EvalTask・adopt 済み issue こそがこの run の入力）。
 
 ### I4 操舵計器: regressionCaptureRate と falsePassTrend
@@ -77,9 +77,9 @@
 
 ## 実装先
 
-- adopt: `src/pipeline/adopt.ts`＋`agentops adopt`（CLI）。
-- 常設配線: `src/pipeline/improve.ts`（`improveTick`）→ `runLoopLive` 末尾。
-- env-gate: `src/pipeline/execution/grade.ts`（`run` の env 代入剥がし）＋ `test/acceptance-harness/`。
-- scaffold: `scripts/real-run-self.ts`・種 contract: `scripts/seeds/scope-exclude.contract.yaml`。
-- 計器: `src/metrics/metrics.ts`（`regressionCaptureRate`・`falsePassTrend`）＋ dashboard / status report。
+- adopt: `apps/agentops/src/pipeline/adopt.ts`＋`agentops adopt`（CLI）。
+- 常設配線: `apps/agentops/src/pipeline/improve.ts`（`improveTick`）→ `runLoopLive` 末尾。
+- env-gate: `apps/agentops/src/pipeline/execution/grade.ts`（`run` の env 代入剥がし）＋ `apps/agentops/test/acceptance-harness/`。
+- scaffold: `apps/agentops/scripts/real-run-self.ts`・種 contract: `apps/agentops/scripts/seeds/scope-exclude.contract.yaml`。
+- 計器: `apps/agentops/src/metrics/metrics.ts`（`regressionCaptureRate`・`falsePassTrend`）＋ dashboard / status report。
 - ゲート CLI: `agentops decide`（`recordHumanDecision` の薄いラッパ）・`agentops status --json`（前後比較スナップショット）。

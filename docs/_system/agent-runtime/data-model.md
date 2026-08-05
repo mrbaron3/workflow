@@ -1,6 +1,6 @@
 # データモデル — agent-runtime コンテキスト
 
-> 構造化正本は `src/domain/schema.ts` のZod schemaと `.harness/db.json`。
+> 構造化正本は `apps/agentops/src/domain/schema.ts` のZod schemaと `.harness/db.json`。
 
 - **DATA-agent-runtime-001 `AgentInvocation`** — `id`, `invocationKey`, `subjectId`, nullable `issueId`/`prId`/
   `sampleIndex`, `attempt`, `role`, nullable `perspective`, `provider`, nullable `model`, `prompt`, `outcome`,

@@ -1,0 +1,224 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:designflow:schema:v1:design-system-delta",
+  "title": "Design System Delta v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "revisionId",
+    "baseRevisionRef",
+    "decisions",
+    "tokenDocuments",
+    "componentDeltas",
+    "patternDeltas"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "1.0"
+    },
+    "requestId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "revisionId": {
+      "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+    },
+    "baseRevisionRef": {
+      "anyOf": [
+        {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/externalRef"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "decisions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/decision"
+      }
+    },
+    "tokenDocuments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "digest", "format", "purpose"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?!/)(?!.*\\.\\./).+$"
+          },
+          "digest": {
+            "$ref": "urn:designflow:schema:v1:common#/$defs/sha256"
+          },
+          "format": {
+            "const": "dtcg-2025.10"
+          },
+          "purpose": {
+            "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+          }
+        }
+      }
+    },
+    "componentDeltas": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/componentDelta"
+      }
+    },
+    "patternDeltas": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/patternDelta"
+      }
+    }
+  },
+  "$defs": {
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "action", "targetType", "targetId", "rationale", "sourceRequirementIds"],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "action": {
+          "enum": ["reuse", "extend", "create", "feature-local"]
+        },
+        "targetType": {
+          "enum": ["token", "component", "pattern"]
+        },
+        "targetId": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "rationale": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "sourceRequirementIds": {
+          "$ref": "#/$defs/idList"
+        }
+      }
+    },
+    "componentDelta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "action",
+        "name",
+        "purpose",
+        "variants",
+        "states",
+        "slots",
+        "keyboardBehavior",
+        "focusBehavior",
+        "responsiveRules",
+        "contentConstraints",
+        "tokenRefs",
+        "sourceRequirementIds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "action": {
+          "enum": ["reuse", "extend", "create", "feature-local"]
+        },
+        "name": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "purpose": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "variants": {
+          "$ref": "#/$defs/stringList"
+        },
+        "states": {
+          "$ref": "#/$defs/stringList"
+        },
+        "slots": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+          }
+        },
+        "keyboardBehavior": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "focusBehavior": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "responsiveRules": {
+          "$ref": "#/$defs/stringList"
+        },
+        "contentConstraints": {
+          "$ref": "#/$defs/stringList"
+        },
+        "tokenRefs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+          }
+        },
+        "sourceRequirementIds": {
+          "$ref": "#/$defs/idList"
+        }
+      }
+    },
+    "patternDelta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "action",
+        "name",
+        "purpose",
+        "compositionRules",
+        "sourceRequirementIds"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+        },
+        "action": {
+          "enum": ["reuse", "extend", "create", "feature-local"]
+        },
+        "name": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "purpose": {
+          "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+        },
+        "compositionRules": {
+          "$ref": "#/$defs/stringList"
+        },
+        "sourceRequirementIds": {
+          "$ref": "#/$defs/idList"
+        }
+      }
+    },
+    "idList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/identifier"
+      }
+    },
+    "stringList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "urn:designflow:schema:v1:common#/$defs/nonEmptyString"
+      }
+    }
+  }
+}

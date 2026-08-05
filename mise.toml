@@ -2,7 +2,7 @@
 #
 # 素で叩くと毎回こうなる:
 #   set -a; . ~/.config/agentops/env; set +a
-#   mise exec go@1.26.5 -- go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build
+#   mise exec go@1.26.5 -- go run ./apps/control-plane/cmd/agentopsctl start --mode MONITOR_ONLY --build
 # 前置の正体は「operator の env を全部 export する」「Go を固定版で解決する」の 2 つで、
 # どちらも mise が持っている機能なので task へ畳む。ツールは [tools] が解決するので
 # `mise exec go@1.26.5 --` は不要になる。
@@ -17,6 +17,14 @@ lockfile = true
 
 [tools]
 go = "1.26.5"
+
+[tasks."test:control-plane"]
+description = "Go control-plane app を単独でテストする"
+run = "go test ./apps/control-plane/..."
+
+[tasks."test:agentops"]
+description = "TypeScript AgentOps app を単独で型検査・テストする"
+run = "npm test --workspace agentops-harness"
 
 # 必要な変数が揃っているかを先に見る。mise.local.toml を置き忘れると全変数が空のまま
 # agentopsctl まで進み、どの層で失敗したのか分かりにくいため、入口で名前を挙げて落とす。
@@ -54,56 +62,56 @@ echo "env: 必須 12 件を解決した"
 [tasks."status"]
 description = "topology の現状を読む（読み取り専用）"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl status"
+run = "go run ./apps/control-plane/cmd/agentopsctl status"
 
 [tasks."status:json"]
 description = "topology の現状を JSON で読む"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl status --json"
+run = "go run ./apps/control-plane/cmd/agentopsctl status --json"
 
 # 例: mise run progress -- mrbaron3/servo#8
 [tasks."progress"]
 description = "Issue 単位の現在工程・worktree・次の gate・blocker を読む"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl progress"
+run = "go run ./apps/control-plane/cmd/agentopsctl progress"
 
 # 例: mise run worktree -- --diff mrbaron3/servo#8
 # 再開/手動修正: mise run worktree -- --shell mrbaron3/servo#8
 [tasks."worktree"]
 description = "Issue の隔離 worktree を確認・再開する（--diff / --shell）"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl worktree"
+run = "go run ./apps/control-plane/cmd/agentopsctl worktree"
 
 # --request-id は渡さない。省略時は commandID() が <operation>-<unixnano>-<pid> を
-# 生成する（cmd/agentopsctl/main.go）。固定値をここへ焼き込むと再実行が前回の要求と
+# 生成する（apps/control-plane/cmd/agentopsctl/main.go）。固定値をここへ焼き込むと再実行が前回の要求と
 # 衝突するので、自動生成に任せるのが正しい。
 [tasks."monitor"]
 description = "MONITOR_ONLY で起動する（観測のみ。AI 分類も label/comment の mutation もしない）"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build"
+run = "go run ./apps/control-plane/cmd/agentopsctl start --mode MONITOR_ONLY --build"
 
 [tasks."active"]
 description = "current job をdrainし、exact HEADをbuild/検証してACTIVEへ段階更新する"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl deploy"
+run = "go run ./apps/control-plane/cmd/agentopsctl deploy"
 
 [tasks."drain"]
 description = "graceful drain（lease と attempt を落としきる）"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl drain"
+run = "go run ./apps/control-plane/cmd/agentopsctl drain"
 
 [tasks."stop"]
 description = "OFF まで落とす"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl stop"
+run = "go run ./apps/control-plane/cmd/agentopsctl stop"
 
 # 追加フラグは `mise run logs -- --component triage --follow` のように -- の後ろへ置く。
 [tasks."logs"]
 description = "コンポーネントのログを読む（既定は control）"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl logs"
+run = "go run ./apps/control-plane/cmd/agentopsctl logs"
 
 [tasks."open"]
 description = "Dashboard を開く"
 depends = ["env:check"]
-run = "go run ./cmd/agentopsctl open"
+run = "go run ./apps/control-plane/cmd/agentopsctl open"

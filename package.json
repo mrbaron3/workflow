@@ -1,61 +1,59 @@
 {
-  "name": "agentops-harness",
+  "name": "servo-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "npm@12.0.2",
-  "description": "AgentOps — a local-first operating harness for running coding agents (Claude Code / Codex / Gemini) through an Issue Contract -> PR -> Eval -> Repair -> Release loop.",
   "engines": {
     "node": ">=24 <25"
   },
-  "bin": {
-    "agentops": "./bin/agentops.mjs"
-  },
-  "scripts": {
-    "harness": "tsx src/cli/index.ts",
-    "demo": "tsx src/cli/index.ts demo",
-    "dashboard": "tsx src/cli/index.ts dashboard --open",
-    "typecheck": "tsc --noEmit",
-    "build": "tsc",
-    "test": "tsc --noEmit && vitest run --configLoader runner",
-    "test:postgres": "node -e \"if (!process.env.AGENTOPS_TEST_DATABASE_URL) { console.error('AGENTOPS_TEST_DATABASE_URL is required'); process.exit(1) }\" && vitest run --configLoader runner --no-file-parallelism test/control-store.integration.test.ts test/release-receipt-store.integration.test.ts test/release-projection.integration.test.ts",
-    "test:dashboard": "playwright test --config playwright.dashboard.config.ts",
-    "smoke:postgres:apple": "tsx scripts/ciso02-postgres-smoke.ts",
-    "smoke:control:apple": "tsx scripts/ciso03-control-smoke.ts",
-    "smoke:dashboard:apple": "tsx scripts/ciso03-control-smoke.ts",
-    "smoke:runner:apple": "tsx scripts/ciso04-runner-smoke.ts",
-    "runner": "tsx src/runner/cli.ts",
-    "triage": "tsx src/triage/cli.ts",
-    "control-store:migrate": "tsx scripts/control-store-migrate.ts",
-    "evidence:ciso07": "tsx scripts/validate-ciso07-release-evidence.ts",
-    "evidence:live-release": "tsx scripts/validate-live-release-evidence.ts",
-    "evidence:live-release:export": "tsx scripts/export-live-release-evidence.ts",
-    "bundle-skills": "tsx scripts/bundle-skills.ts",
-    "prepare": "git config core.hooksPath githooks 2>/dev/null || true"
-  },
-  "dependencies": {
-    "pg": "^8.22.0",
-    "yaml": "^2.9.0",
-    "zod": "^4.4.3"
-  },
-  "overrides": {
-    "esbuild": "0.28.1",
-    "postcss": "8.5.23"
-  },
+  "workspaces": [
+    "apps/agentops"
+  ],
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@types/node": "^24.13.3",
     "@types/pg": "^8.20.3",
     "ajv": "^8.20.0",
-    "ajv-formats": "^3.0.1",
-    "happy-dom": "^20.11.1",
+    "pg": "^8.22.0",
     "tsx": "^4.23.5",
     "typescript": "^7.0.2",
-    "vite": "^8.2.0",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "esbuild": "0.28.1",
+    "postcss": "8.5.23"
   },
   "allowScripts": {
     "esbuild@0.28.1": true,
     "fsevents": false
+  },
+  "scripts": {
+    "harness": "npm run harness --workspace agentops-harness --",
+    "demo": "npm run demo --workspace agentops-harness --",
+    "dashboard": "npm run dashboard --workspace agentops-harness --",
+    "typecheck": "npm run typecheck --workspace agentops-harness --",
+    "build": "npm run build --workspace agentops-harness --",
+    "test": "npm test --workspace agentops-harness --",
+    "typecheck:integration": "tsc --noEmit -p deploy/tsconfig.json",
+    "test:integration": "vitest run --config deploy/vitest.config.ts --configLoader runner",
+    "test:all": "npm test && npm run go:test && npm run typecheck:integration && npm run test:integration",
+    "test:postgres": "npm run test:postgres --workspace agentops-harness --",
+    "test:dashboard": "playwright test --config deploy/playwright.dashboard.config.ts",
+    "smoke:runtime": "tsx deploy/scripts/runtime-smoke.ts",
+    "smoke:postgres:apple": "tsx deploy/scripts/ciso02-postgres-smoke.ts",
+    "smoke:control:apple": "tsx deploy/scripts/ciso03-control-smoke.ts",
+    "smoke:dashboard:apple": "tsx deploy/scripts/ciso03-control-smoke.ts",
+    "smoke:runner:apple": "tsx deploy/scripts/ciso04-runner-smoke.ts",
+    "runner": "npm run runner --workspace agentops-harness --",
+    "triage": "npm run triage --workspace agentops-harness --",
+    "control-store:migrate": "npm run control-store:migrate --workspace agentops-harness --",
+    "evidence:ciso07": "npm run evidence:ciso07 --workspace agentops-harness --",
+    "evidence:live-release": "npm run evidence:live-release --workspace agentops-harness --",
+    "evidence:live-release:export": "npm run evidence:live-release:export --workspace agentops-harness --",
+    "bundle-skills": "npm run bundle-skills --workspace agentops-harness --",
+    "go:test": "go test ./apps/control-plane/...",
+    "go:build": "go build ./apps/control-plane/...",
+    "prepare": "git config core.hooksPath githooks 2>/dev/null || true"
   }
 }

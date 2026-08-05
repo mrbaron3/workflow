@@ -1,6 +1,6 @@
 # ADR-0006: evaluator パネルは観点ごとの独立 tmux セッションで fan-out し決定論コードが集約する。審査ゲートの UI は GitHub PR とする
 
-- 状態: 採択（パネル部 E1-E7・ゲート部 G1-G3 とも `_system/execution` へ吸収済み＋決定論コア実装済み。**GitHub backend seam も実装済み**＝`src/pipeline/execution/gate.ts`：`openGate`（push＋`gh pr create`）／`pollGate`（merge/close→`recordHumanDecision`）・`PR.externalRef`／`config.gate`。既定は `store` 直ゲートで github は opt-in。残: 使い捨て remote での grounded 実走）
+- 状態: 採択（パネル部 E1-E7・ゲート部 G1-G3 とも `_system/execution` へ吸収済み＋決定論コア実装済み。**GitHub backend seam も実装済み**＝`apps/agentops/src/pipeline/execution/gate.ts`：`openGate`（push＋`gh pr create`）／`pollGate`（merge/close→`recordHumanDecision`）・`PR.externalRef`／`config.gate`。既定は `store` 直ゲートで github は opt-in。残: 使い捨て remote での grounded 実走）
 - コンテキスト: execution（evaluation の採点語＝Scorecard/Verdict/grader を参照。再定義しない）
 - 関連: [ADR-0005](ADR-0005-execution-layer-tmux-orchestration.md)（P4 観点パネル・Q3 審査ゲートの premise を実装可能な粒度へ具体化する）、
   [ADR-0003](ADR-0003-hard-gates-before-score.md)（hard-gate-before-score をパネル招集条件へ拡張）、
@@ -15,7 +15,7 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
    サブエージェントにも専用コンテキストウィンドウ自体は与えられる）か、観点ごとの**独立 tmux セッション**か。
 2. **実 backend のコスト構造** — 素朴に回すと 1 issue 最悪 generator 9 セッション＋ evaluator 63 セッション
    （3 samples × 3 attempts × 7 観点）。mock では無料でも実セッションでは時間・費用が成立しない。
-3. **パネル → RepairBrief の集約** — 現 `buildRepairBrief`（`src/pipeline/repair.ts`）は単一 EvalRun 前提。
+3. **パネル → RepairBrief の集約** — 現 `buildRepairBrief`（`apps/agentops/src/pipeline/repair.ts`）は単一 EvalRun 前提。
 4. **審査ゲートの UI** — store 直（CLI/ダッシュボード）か、GitHub PR か。
 
 設計対話（2026-07-05）で人間が確定: 観点セットは P4 の **7 観点のまま**（`LANG-execution-010`。
@@ -37,7 +37,7 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
   - なお**観点セッションの内部**でエージェントが探索のためにサブエージェントを使うのは seam の内側であり
     自由（制御フローは渡さない）。禁じるのは「パネルの編成・集約を LLM に委ねること」。
 - **E2 functionality 観点＝決定論 grader backend（LLM セッション 0 本）**。functionality は hard gates
-  （実 `tsc`/`vitest`）＋ AC 照合の grounded 採点で既に決定論的に出る（`src/graders/index.ts`）。LLM
+  （実 `tsc`/`vitest`）＋ AC 照合の grounded 採点で既に決定論的に出る（`apps/agentops/src/graders/index.ts`）。LLM
   セッションを立てるのは判断を要する **6 観点**（codeQuality / testQuality / ux / accessibility / security /
   type-design）。原則: **観点＝Verdict を出す単位であり、その backend は pluggable**（AgentRunner seam と
   同じ思想。決定論で出せる観点にトークンを使わない）。
@@ -58,10 +58,10 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
   pass@k / pass^k の計測走行）は**計測したい issue にだけ opt-in**。mock backend は従来通り samples=3 全完走
   （無料・決定論・Eval DB の基質）。coordinator の「approve 後も全 sample 完走」は計測モードの挙動であって
   実 backend の既定にしない。
-  **実装済み**（`runBestOfN`＝`src/pipeline/execution/loop.ts`・`driveIssueLive`）: 既定 first-approve-stop（最初の approve で停止）、
+  **実装済み**（`runBestOfN`＝`apps/agentops/src/pipeline/execution/loop.ts`・`driveIssueLive`）: 既定 first-approve-stop（最初の approve で停止）、
   `opts.measure` で全 sample 完走。勝者（最初の approver）を gate へ投影。sample ごとの loop は `manageIssueStatus:false` で回し、
   issue の terminal status は勝者基準で1回だけ適用（last sample でなく winner を映す）。metrics は sampleIndex 別 EvalRun から pass@k/pass^k を既に算出（`perSample`）。
-  操作: `SAMPLES=k MEASURE=1 npx tsx scripts/real-panel-run.ts`。
+  操作: `SAMPLES=k MEASURE=1 npx tsx apps/agentops/scripts/real-panel-run.ts`。
 
 ### 集約と修復
 
@@ -102,15 +102,15 @@ ADR-0005 は「evaluator＝観点パネル（P4・観点ごとの独立セッシ
 
 | premise | 吸収先（system view id） | 実装 |
 | --- | --- | --- |
-| E1 観点＝独立セッション／E2 functionality 決定論・6 観点 LLM／E3 read-only／**E4 並行招集** | `ARCH-execution-004`／`ARCH-execution-006`（注記追加） | `src/pipeline/panel.ts` `runPanel` / `PERSPECTIVES`＋実 backend `src/pipeline/execution/perspective-session.ts` `runPerspectiveSessions`（分離 detached worktree で並行・`mapPool`・`config.panel.maxConcurrent`）＋`worktree.ts` `commitBuild`/`buildChangedFiles`/`createDetachedWorktree` |
+| E1 観点＝独立セッション／E2 functionality 決定論・6 観点 LLM／E3 read-only／**E4 並行招集** | `ARCH-execution-004`／`ARCH-execution-006`（注記追加） | `apps/agentops/src/pipeline/panel.ts` `runPanel` / `PERSPECTIVES`＋実 backend `apps/agentops/src/pipeline/execution/perspective-session.ts` `runPerspectiveSessions`（分離 detached worktree で並行・`mapPool`・`config.panel.maxConcurrent`）＋`worktree.ts` `commitBuild`/`buildChangedFiles`/`createDetachedWorktree` |
 | E4 gate-before-panel | `ARCH-execution-016`（新規不変条件） | `panel.ts` `runPanel` ＋ `graders` `hasBlockingGateFailure` |
 | 集約（blocker 優先・派生・保存しない） | `DOM-execution-004` / `DATA-execution-001` | `panel.ts` `aggregatePanelVerdict` |
 | E3 不正出力の昇格 | `ARCH-execution-015` | `panel.ts` `runPanel`（gradeWithRetry→needs-human-review） |
-| E7 観点横断 repair | `ARCH-execution-006`（注記） | `src/pipeline/repair.ts` `buildPanelRepairBrief` |
-| reader 非二重計上 | `DATA-execution-001` | `src/metrics/metrics.ts` `perSample`（attempt 集約） |
-| G1-G3 審査ゲート（build-approved→承認→released・humanVerdict 収穫） | `ARCH-execution-008` / `DOM-execution-007` / `DATA-execution-005` | `src/pipeline/execution/loop.ts` `applyPanelVerdict`／`recordHumanDecision`＋`states.ts` `build-approved`＋**`gate.ts` `openGate`／`pollGate`／`prStateToDecision`（GitHub backend seam・`PR.externalRef`／`config.gate`。既定 store 直・github opt-in） |
-| L1 watch 常駐（poll→drive→gate） | `ARCH-execution-001` / `ARCH-execution-002` | `src/pipeline/execution/loop.ts` `driveOnce`／`watch` |
+| E7 観点横断 repair | `ARCH-execution-006`（注記） | `apps/agentops/src/pipeline/repair.ts` `buildPanelRepairBrief` |
+| reader 非二重計上 | `DATA-execution-001` | `apps/agentops/src/metrics/metrics.ts` `perSample`（attempt 集約） |
+| G1-G3 審査ゲート（build-approved→承認→released・humanVerdict 収穫） | `ARCH-execution-008` / `DOM-execution-007` / `DATA-execution-005` | `apps/agentops/src/pipeline/execution/loop.ts` `applyPanelVerdict`／`recordHumanDecision`＋`states.ts` `build-approved`＋**`gate.ts` `openGate`／`pollGate`／`prStateToDecision`（GitHub backend seam・`PR.externalRef`／`config.gate`。既定 store 直・github opt-in） |
+| L1 watch 常駐（poll→drive→gate） | `ARCH-execution-001` / `ARCH-execution-002` | `apps/agentops/src/pipeline/execution/loop.ts` `driveOnce`／`watch` |
 
 spec: `docs/specs/evaluator-panel/`（署名済み・9 AC）＋`docs/specs/execution-loop/`（署名済み・8 AC）。
 issues: ISSUE-0003/0004/0005（パネル）・ISSUE-0006/0007（ゲート・watch）＝すべて contract-drafted。
-テスト: `test/panel.test.ts`（12）＋`test/execution-loop.test.ts`（10）＝9＋8 AC を grounding。
+テスト: `apps/agentops/test/panel.test.ts`（12）＋`apps/agentops/test/execution-loop.test.ts`（10）＝9＋8 AC を grounding。

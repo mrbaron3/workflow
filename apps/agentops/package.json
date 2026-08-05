@@ -1,0 +1,46 @@
+{
+  "name": "agentops-harness",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@12.0.2",
+  "description": "AgentOps — a local-first operating harness for running coding agents (Claude Code / Codex / Gemini) through an Issue Contract -> PR -> Eval -> Repair -> Release loop.",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "bin": {
+    "agentops": "./bin/agentops.mjs"
+  },
+  "scripts": {
+    "harness": "cd ../.. && tsx apps/agentops/src/cli/index.ts",
+    "demo": "cd ../.. && tsx apps/agentops/src/cli/index.ts demo",
+    "dashboard": "cd ../.. && tsx apps/agentops/src/cli/index.ts dashboard --open",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "npm run typecheck && cd ../.. && vitest run --config apps/agentops/vitest.config.ts --configLoader runner",
+    "test:postgres": "cd ../.. && node -e \"if (!process.env.AGENTOPS_TEST_DATABASE_URL) { console.error('AGENTOPS_TEST_DATABASE_URL is required'); process.exit(1) }\" && vitest run --config apps/agentops/vitest.config.ts --configLoader runner --no-file-parallelism apps/agentops/test/control-store.integration.test.ts apps/agentops/test/release-receipt-store.integration.test.ts apps/agentops/test/release-projection.integration.test.ts",
+    "runner": "cd ../.. && tsx apps/agentops/src/runner/cli.ts",
+    "triage": "cd ../.. && tsx apps/agentops/src/triage/cli.ts",
+    "control-store:migrate": "tsx scripts/control-store-migrate.ts",
+    "evidence:ciso07": "tsx scripts/validate-ciso07-release-evidence.ts",
+    "evidence:live-release": "tsx scripts/validate-live-release-evidence.ts",
+    "evidence:live-release:export": "tsx scripts/export-live-release-evidence.ts",
+    "bundle-skills": "tsx scripts/bundle-skills.ts"
+  },
+  "dependencies": {
+    "pg": "^8.22.0",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/pg": "^8.20.3",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "happy-dom": "^20.11.1",
+    "tsx": "^4.23.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
+  }
+}

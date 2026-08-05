@@ -5,6 +5,13 @@ Registration であり、process 環境変数の allowlist は使わない。fre
 `mrbaron3/servo` を唯一の enabled Registration として、release receipt policy と
 既定 gate SLA 3600 秒を含めて作成する。
 
+Go control-planeは`apps/control-plane/`、TypeScript AgentOpsは`apps/agentops/`に分離している。
+両者のdurable business coordinationはroot `db/` / `contracts/`に従うPostgreSQLで行う。
+credential broker HTTP、CONNECT egress proxy、runner shared volume、`agentopsctl`のactual container操作は
+別境界（lifecycle mode/drain fenceはDB-backed）だが、
+schema/checksumとimage revisionを揃えるため当面のrelease unitはrepository全体で一体である
+（[ADR-0021](../decisions/ADR-0021-go-typescript-application-boundaries.md)）。
+
 ## 固定 toolchain と更新方針
 
 2026-08-04 時点の production 固定値は Node.js 24.19.0 LTS、npm 12.0.2、
@@ -15,7 +22,8 @@ Codex CLI 0.146.0、Claude Code 2.1.221、gosu 1.19 である。OCI base は ver
 `@types/node` は全 major の最新版ではなく、production Node 24 と一致する 24 系最新版を使う。
 package manager は npm に統一し、Node base image に同梱される未使用の Yarn Classic は production
 image から削除する。
-Go はアプリが直接利用する module と配布 binary 本体を最新版にする。`deploy/gh` の推移依存は
+Go はアプリが直接利用する module と配布 binary 本体を最新版にする。
+`deploy/tools/gh` の推移依存は
 GitHub CLI 2.97.0 が選んだ検証済み MVS graph に従い、`go get -u all` で上流の選択を個別に
 上書きしない。
 
@@ -31,8 +39,8 @@ major-line 例外だけであることを確認する。
 npm outdated
 npm audit
 npm test
-mise exec go@1.26.5 -- go test -race ./...
-mise exec go@1.26.5 -- go vet ./...
+mise exec go@1.26.5 -- go test -race ./apps/control-plane/...
+mise exec go@1.26.5 -- go vet ./apps/control-plane/...
 container build --target runner -t agentops-runner:verify -f deploy/Containerfile .
 container run --rm --entrypoint /bin/sh agentops-runner:verify -c \
   'node --version && git --version && gh --version && codex --version && claude --version'
@@ -52,7 +60,7 @@ deploy/start は origin が `mrbaron3/servo` でない、worktree が dirty、�
 `AGENTOPS_RELEASE_CONSUMER_REVISION` が HEAD と違う場合に停止する。`start` は
 `--build` なしでは停止するため、古い mutable-tag image を新しい commit として起動できない。
 environment reference/digest と provider-default reference/digest は runner image build 後に、
-exact HEAD、image descriptor、`deploy/provider-cli` の exact manifest/lock から自動生成する。
+exact HEAD、image descriptor、`deploy/tools/provider-cli` の exact manifest/lock から自動生成する。
 operator env に残った古い値を release receipt へ持ち込まない。
 
 初回は副作用のない監視 mode から始める。
@@ -138,7 +146,8 @@ schema down migration、volume 削除、実行中 job の強制中断は行わ�
 1. `mise run drain` で current job を保護して DRAINING を完了する。
 2. 現行 schema 21 を理解する revert/forward-fix commit を Servo の別 worktree で用意し、対象 commit、
    migration compatibility、rollback 理由を review する。schema を知らない古い binary は起動しない。
-3. その clean worktree を `AGENTOPSCTL_PROJECT_ROOT` にして `go run ./cmd/agentopsctl deploy` を実行する。
+3. その clean worktree を `AGENTOPSCTL_PROJECT_ROOT` にして
+   `go run ./apps/control-plane/cmd/agentopsctl deploy` を実行する。
 4. `status:json` の provenance、Dashboard health、Servo Registration、直前の terminal/current Issue
    projectionを再確認する。PostgreSQL/runner volume は保存されるので、同じ release/job identity から
    recovery する。

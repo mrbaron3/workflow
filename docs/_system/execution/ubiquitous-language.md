@@ -1,7 +1,7 @@
 # ユビキタス言語 — execution コンテキスト
 
 > execution コンテキストは、**issue queue を唯一の入力**として消費し、issue ごとに実装を役割セッションの
-> オーケストレーションで自律に進める**独立層**を所有する（[ADR-0005](../../../decisions/ADR-0005-execution-layer-tmux-orchestration.md)）。
+> オーケストレーションで自律に進める**独立層**を所有する（[ADR-0005](../../decisions/ADR-0005-execution-layer-tmux-orchestration.md)）。
 > Generator/Evaluator/Scorecard/Verdict といった「何を採点するか」の語は evaluation コンテキスト
 > （`LANG-evaluation-NNN`）を**参照**し再定義しない——本コンテキストは「どう起動し・どう束ねるか」を足す。
 > [context-map.md](../../context-map.md) の境界に従う。追加のみ（`LANG-execution-NNN` は安定）。

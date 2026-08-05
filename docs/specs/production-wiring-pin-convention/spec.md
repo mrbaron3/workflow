@@ -88,7 +88,7 @@
 
 > 実装が絶対にしてはならないこと。
 
-- `test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
+- `apps/agentops/test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
 - 既定値を変えない（本 issue は配線形の REFACTOR — 挙動変更は別 WHAT）。
 - ⑥の既存ピン（REVIEW_LIVENESS / GENERATOR_LIVENESS とその床値ガード）を弱体化しない。
 - 合格基準（既存テスト）を弱体化しない。

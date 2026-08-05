@@ -95,7 +95,7 @@ The human reviews and signs the acceptance criteria (`contract-approved`). You d
 ---
 
 Templates live beside this skill under `assets/` and are self-documenting. The integrity invariants
-are owned by `scripts/check-spec.ts` (which vendors `src/authoring/lint.ts`), not by any prose doc —
+are owned by `scripts/check-spec.ts` (which vendors `apps/agentops/src/authoring/lint.ts`), not by any prose doc —
 so this file never restates the rules. Non-obvious judgment calls the template doesn't cover — spec
 scope (cohesion, not carving), meta-features that define a contract, greenfield forward-references,
 process-vs-AC altitude — live in [references/edge-cases.md](references/edge-cases.md), loaded on demand.

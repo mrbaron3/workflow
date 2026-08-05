@@ -45,7 +45,7 @@ system 層は **spec の delta ではなく state**：境界コンテキスト�
                                                    └─► data
 ```
 
-| ビュー | ブリーフ（skill `references/…`） | 出力テンプレ（`assets/…`） | 分散時のペルソナ（root `agents/…`） |
+| ビュー | ブリーフ（skill `references/…`） | 出力テンプレ（`assets/…`） | 分散時のペルソナ（`apps/agentops/agents/…`） |
 | --- | --- | --- | --- |
 | 言語 | `language.md` | `ubiquitous-language.md` | `language-modeler.md` |
 | ドメイン | `domain.md` | `domain-model.md` | `domain-modeler.md` |
@@ -106,5 +106,5 @@ npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-system-design.ts <proposal-dir> --prop
 ---
 
 観点別ブリーフは `references/`（language / domain / architecture / data ＋ reverse）、出力テンプレは
-`assets/`、観点別ペルソナは root `agents/`。整合の不変条件は `scripts/check-system-design.ts`
-（`src/design/lint.ts` を vendor）が SoT。
+`assets/`、観点別ペルソナは `apps/agentops/agents/`。整合の不変条件は `scripts/check-system-design.ts`
+（`apps/agentops/src/design/lint.ts` を vendor）が SoT。

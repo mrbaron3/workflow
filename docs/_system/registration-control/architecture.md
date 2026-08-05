@@ -67,9 +67,17 @@
   enabled/executionEnabled/version、
   retryable state を同じrow-lock transactionで照合する。accepted/rejected outcome、attempt、audit、idempotent
   replayをdurableに保存し、unknown/disabled/stale/mismatched fenceはjobやretryを作らず理由付き409にする。
+- **ARCH-registration-control-015 Go application ownership** — production Control API、Registration supervisor、
+  monitor/router、credential broker、egress proxy、`agentopsctl`は`apps/control-plane/`が所有する。
+  TypeScript runner/triageは`apps/agentops/`からroot `db/` / `contracts/`へ順応し、PostgreSQLをdurableな
+  business coordination boundaryとして利用する。lifecycle mode/drain fenceはDBへ保存するが、
+  broker/proxy/volume/actual container操作は別のsecurity/runtime contract、
+  `deploy/`は両applicationを組み立てるintegration layerである。directory分離後も当面のrelease unitは一体とする
+  （ADR-0021）。
 
 公開契約は [`contracts/control-api/v1/openapi.yaml`](../../../contracts/control-api/v1/openapi.yaml)、
 Capability trace は [`evidence/ciso-03/design-capability-trace.json`](../../../evidence/ciso-03/design-capability-trace.json)
 と revision-02 の
 [`capability-reconciliation.json`](../../../evidence/ciso-05/design/revision-02/capability-reconciliation.json)。
-根拠: ADR-0010、ADR-0013、ADR-0014。
+根拠: ADR-0010、ADR-0013、ADR-0014、
+[ADR-0021](../../decisions/ADR-0021-go-typescript-application-boundaries.md)。

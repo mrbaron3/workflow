@@ -1,12 +1,12 @@
 # データモデル — workspace コンテキスト
 
-> 永続はJSON storeであり、構造化SSOTは`src/domain/schema.ts`のZod schema。本書は構造を複製せず、
+> 永続はJSON storeであり、構造化SSOTは`apps/agentops/src/domain/schema.ts`のZod schema。本書は構造を複製せず、
 > workspace要素の所有・意味・migrationだけを定める。
 
 ## 論理モデル（コードスキーマ参照）
 
 - **DATA-workspace-001 `DB.targetBinding`** — `DOM-workspace-003`の耐久表現。
-  source: `src/domain/schema.ts` → `DB` / `TargetBinding` (Zod)。owner: workspace。
+  source: `apps/agentops/src/domain/schema.ts` → `DB` / `TargetBinding` (Zod)。owner: workspace。
   `null`は未束縛を表し、空storeかLegacy Unbound Storeかは既存組織状態の有無から決定する。
 
 ## 関係（schemaからの派生）

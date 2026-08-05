@@ -5,6 +5,7 @@
 
 | 探しているもの | 住処 |
 | --- | --- |
+| Go / TypeScript の物理アプリケーション境界、共有DB・contract、release unit | [ADR-0021](decisions/ADR-0021-go-typescript-application-boundaries.md)／[context-map.md](context-map.md#物理アプリケーション境界) |
 | 境界コンテキストの関係（C4 macro・旧 Layers） | [context-map.md](context-map.md) |
 | 中核ループの構造・Data flow・拡張 seam | [`_system/evaluation/architecture.md`](_system/evaluation/architecture.md) |
 | 各境界の構造（planning 等） | [`_system/<ctx>/architecture.md`](_system/planning/architecture.md) |

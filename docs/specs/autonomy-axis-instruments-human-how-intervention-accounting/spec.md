@@ -123,7 +123,7 @@
 
 > 実装が絶対にしてはならないこと。
 
-- `test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
+- `apps/agentops/test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
 - 人間の判断点を消さない・自動化しない: adopt / assign / sign / decide / label の判断点は
   本機能の後も残る（計器は判断点を数えないのであって、無くすのではない）。
 - 介入を推測で自動生成しない: 明示的に attested された記録だけが介入事実（⑦の教訓 —

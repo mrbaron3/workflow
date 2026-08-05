@@ -1,0 +1,51 @@
+# The human-confirmed WHAT for ISSUE-0004 "Make repair briefs more actionable" —
+# sharpened to the mechanically-fixable share of the class: brief FIDELITY (Analyst R1's
+# draft; grounded evidence: buildPanelRepairBrief keeps only requiredFix[0] per criterion).
+#   agentops adopt ISSUE-0004 --contract apps/agentops/scripts/seeds/repair-brief-fidelity.contract.yaml
+# The independent grader is apps/agentops/test/acceptance-harness/repair-brief-fidelity.acceptance.test.ts
+# (env-gated, harness-owned, protected — AC-1 red at baseline until this issue's fix lands).
+
+productGoal: >-
+  Repair briefs forward the FULL fix list: every requiredFix line of a forwarded finding
+  reaches the generator-facing RepairBrief.instructions, not just the first. Today
+  buildPanelRepairBrief keeps only requiredFix[0] per criterion, so a reviewer's
+  multi-step fix arrives truncated and the repair attempt cannot land it (while the
+  single-run buildRepairBrief already forwards every line — the panel path is strictly
+  lossier).
+
+userStory: >-
+  As the harness operator I want the repair router to preserve finding fidelity so a
+  generator can land multi-step fixes in one repair attempt instead of rediscovering the
+  dropped fixes across attempts.
+
+scope:
+  include:
+    - apps/agentops/src/pipeline/repair.ts
+    - apps/agentops/src/domain/artifact.ts
+    - apps/agentops/test/**
+  exclude:
+    - apps/agentops/test/acceptance-harness/**
+
+acceptanceCriteria:
+  - id: AC-1
+    severity: blocker
+    behavior: Every requiredFix line of a forwarded finding appears in the generator-facing RepairBrief.instructions, order preserved within a criterion.
+    verification:
+      method: unit_test
+      expected:
+        - "ACCEPT_HARNESS=1 npx vitest run --config apps/agentops/vitest.config.ts apps/agentops/test/acceptance-harness passes"
+        - "a finding with 3 requiredFix lines yields all 3 lines in toGenerateBrief(buildPanelRepairBrief([run])).instructions"
+  - id: AC-2
+    severity: blocker
+    behavior: Blocker-first forwarding and per-criterion perspective attribution are unchanged, and the whole existing suite stays green.
+    verification:
+      method: unit_test
+      expected:
+        - "blocker findings still suppress non-blockers"
+        - "PanelInstruction.perspectives still names every lens that raised the criterion"
+        - "npm test stays green (the existing suite is the regression net)"
+
+redLines:
+  - Do not modify anything under apps/agentops/test/acceptance-harness/** — it is the independent grader.
+  - Keep the blocker-first policy and the PanelRepairBrief perspective attribution intact.
+  - Do not delete or weaken existing tests to get green.

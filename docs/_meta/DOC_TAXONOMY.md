@@ -180,7 +180,7 @@ micro の AC が macro の ID を `dependsOn` で指すことで、「この機�
 | 永続実体 | 構造化 SSOT（著述） | 理由 |
 |---|---|---|
 | リレーショナル DB | **DBML**（schema DSL） | table/column/型/PK・FK/enum/index を1級で持ち `@dbml/cli` で SQL DDL と相互変換。DB が正本のときに使う |
-| **JSON/ドキュメントストア、またはコード型（Zod/TS・pydantic・JSON Schema）で検証する系** | **そのコードスキーマを参照**（例: `src/domain/schema.ts`） | ライブな正本が既にコードにある。DBML へ書き写すと二重 SSOT になり drift する。data-model.md は `DATA-…` id・所有・不変条件・migration だけ足す |
+| **JSON/ドキュメントストア、またはコード型（Zod/TS・pydantic・JSON Schema）で検証する系** | **そのコードスキーマを参照**（例: `apps/agentops/src/domain/schema.ts`） | ライブな正本が既にコードにある。DBML へ書き写すと二重 SSOT になり drift する。data-model.md は `DATA-…` id・所有・不変条件・migration だけ足す |
 | イベントログ/メッセージバス | **イベント/メッセージスキーマ**（Avro・Protobuf・JSON Schema） | 流れの正本。シーケンス/フロー図を派生 |
 
 > **新規の永続状態を足さない変更（ステータス遷移・フラグだけ）はデータビューを省略**する。スロット埋めの

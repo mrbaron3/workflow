@@ -1,7 +1,7 @@
 # ADR-0004: 決定論を構成で保証し、agent backend を差し替え可能にする
 
 - 状態: 採択
-- コンテキスト: evaluation（`agents/runner.ts`・`agents/mock.ts`・`util/hash.ts`）
+- コンテキスト: evaluation（`apps/agentops/src/agents/runner.ts`・`apps/agentops/src/agents/mock.ts`・`apps/agentops/src/util/hash.ts`）
 
 ## 文脈
 

@@ -50,7 +50,7 @@ role 単位の tmux 対話セッションを fan-out / fan-in するオーケス
 ### オーケストレーション
 
 - **P3 単位＝`role → session → scoped-context`**。coordinator が各ロールのセッションを spawn し fan-in する司令塔。
-  ロールは既存 `AgentRole`／`agents/*.md` をそのまま実体化（新語彙を作らない）。
+  ロールは既存 `AgentRole`／`apps/agentops/agents/*.md` をそのまま実体化（新語彙を作らない）。
 - **P4 evaluator＝観点パネル**。単一 verdict でなく、**観点ごとの独立セッション**が各自 verdict を出し、scorecard が集約する。
   観点セット＝grader 5次元（functionality／codeQuality／testQuality／ux／accessibility）＋ **security** ＋ **type-design** の **7観点**。
 - **P5 context 組み立てを first-class に**。各セッションには role 最適な最小コンテキストだけを渡す。計画の木の
@@ -60,9 +60,9 @@ role 単位の tmux 対話セッションを fan-out / fan-in するオーケス
 
 - **Q1 完了検知＝sentinel**。セッションは完了時に worktree へ sentinel（例 `.agentops/done.json`）を書き、harness が polling で
   検知→grade。tmux 終了検知より頑健で resume と相性が良い。
-- **Q2 headless seam を deprecate**。現 `cli.ts` の `claude -p` パスと README/`agents/*` の「headless print mode」記述は、
+- **Q2 headless seam を deprecate**。現 `cli.ts` の `claude -p` パスと README/`apps/agentops/agents/*` の「headless print mode」記述は、
   本 ADR の tmux orchestration に置換（北極星の非目標との矛盾を解消）。`AgentRunner` seam 自体（ADR-0004）は存置。
-  **実装済み**（`ARCH-execution-003` へ吸収済みの不変条件「`claude -p` を使わない」）: `src/agents/cli.ts`（`CliAgentRunner`）と `config.cli`／`AgentCliConfig` を削除、`makeRunner` は mock 以外で live tmux 経路（`runLoopLive`）へ誘導する throw に。`agents/generator.md`・README の JSON-block/headless 記述も実 tmux 実態（実テストで採点・sentinel で完了）に修正。
+  **実装済み**（`ARCH-execution-003` へ吸収済みの不変条件「`claude -p` を使わない」）: `src/agents/cli.ts`（`CliAgentRunner`）と `config.cli`／`AgentCliConfig` を削除、`makeRunner` は mock 以外で live tmux 経路（`runLoopLive`）へ誘導する throw に。`apps/agentops/agents/generator.md`・README の JSON-block/headless 記述も実 tmux 実態（実テストで採点・sentinel で完了）に修正。
 - **Q3 審査ゲート**。Evaluator パネルが approve した後、`released` の前に**人間審査ゲート**を挿す
   （`needs-human-review` → 人間承認で `released`）。`needs_human` verdict／`needs-human-review` status は schema に既存。
 
@@ -80,7 +80,7 @@ role 単位の tmux 対話セッションを fan-out / fan-in するオーケス
 
 - ＋ 北極星に整合：自律は HOW まで、审查は人間の判断点、headless 非目標を回避。状態は store で resume・監査可能。
 - ＋ 層の独立：実装層は上流の作り方に依存しない。上流（人間の WHAT）と下流（自律 HOW）を差し替え可能に保つ。
-- ＋ 既存資産を活かす：`AgentRole`／`agents/*.md`／grader 次元／`dependsOnSystem`（id 参照）がそのまま土台。
+- ＋ 既存資産を活かす：`AgentRole`／`apps/agentops/agents/*.md`／grader 次元／`dependsOnSystem`（id 参照）がそのまま土台。
 - ＋ レビューが観点別に独立＝コンテキスト汚染を防ぎ、pr-review-toolkit 型の多観点審査を得る。
 - − `coordinator` は「司令塔（fan-out/fan-in・poll）」へ、`evaluate` は「観点集約」へ拡張が要る（単一 evaluator 前提の変更）。
 - − scorecard スキーマに観点別 findings/verdict の集約を足す。

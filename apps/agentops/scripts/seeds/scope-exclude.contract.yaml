@@ -1,0 +1,45 @@
+# The human-confirmed WHAT of the first self-hosted improvement issue (ADR-0007 I1/帰結).
+# Adopt onto an Analyst-proposed harness issue:
+#   agentops adopt <ISSUE-ID> --contract apps/agentops/scripts/seeds/scope-exclude.contract.yaml
+# The independent grader is apps/agentops/test/acceptance-harness/scope-exclude.acceptance.test.ts
+# (env-gated, harness-owned, protected — red at baseline until this issue's fix lands).
+
+productGoal: >-
+  scope_check judges changed files against the WHOLE contract scope: a changed file
+  matching scope.exclude is a scope violation even when scope.include also matches it.
+  Today grade.ts consults include + protectedPaths only, so scope.exclude is decorative.
+
+userStory: >-
+  As the harness operator I want scope.exclude enforced by the deterministic grader, so
+  contracts can carve exceptions out of broad include globs (e.g. include apps/agentops/test/** but
+  exclude apps/agentops/test/acceptance-harness/**) and agents are actually held to them.
+
+scope:
+  include:
+    - apps/agentops/src/pipeline/execution/**
+    - apps/agentops/test/**
+  exclude:
+    - apps/agentops/test/acceptance-harness/**
+
+acceptanceCriteria:
+  - id: AC-1
+    severity: blocker
+    behavior: A changed file matching scope.exclude is reported in scopeViolations even when scope.include matches it.
+    verification:
+      method: unit_test
+      expected:
+        - "ACCEPT_HARNESS=1 npx vitest run --config apps/agentops/vitest.config.ts apps/agentops/test/acceptance-harness passes"
+        - "groundArtifact with scope {include:['src/**'], exclude:['src/generated/**']} and changed ['src/generated/out.ts'] reports the file as a scope violation"
+  - id: AC-2
+    severity: blocker
+    behavior: Files matching include and NOT matching exclude are unaffected, and the whole existing suite stays green (no behaviour regression).
+    verification:
+      method: unit_test
+      expected:
+        - "npm test stays green (the existing suite is the regression net)"
+        - "in-scope, non-excluded changed files still produce no scopeViolations"
+
+redLines:
+  - Do not modify anything under apps/agentops/test/acceptance-harness/** — it is the independent grader.
+  - Keep the fix inside apps/agentops/src/pipeline/execution/grade.ts and its tests; no LLM involvement, no schema changes.
+  - Do not weaken protectedPaths handling — exclude enforcement is ADDITIVE to it.

@@ -1,5 +1,9 @@
 # Designflow consumer実装ハンドオフ
 
+> **2026-08-05 path移設注記**: 本文の旧`src/`は`apps/agentops/src/`、旧`internal/`は
+> `apps/control-plane/internal/`に対応する。歴史的な実装記録は保持し、現在状態は
+> [ADR-0021](../decisions/ADR-0021-go-typescript-application-boundaries.md)とsystem viewを正とする。
+
 - 更新日: 2026-07-28
 - 状態: WF-DF-001..008の汎用workflow consumerを作業ツリー内で実装し、
   CISO golden replayとprovider-neutralな標準intake headless E2Eを完了。
@@ -22,13 +26,13 @@ frontend実装前に承認済みDesign Bundleを読み、UIから導かれたbac
 PR #34の計画後、CISO-03/05が次を`main`へ着地させた。
 
 - `contracts/designflow/contract-v1.0.0-rc.1/`: provider provenance、schema、example、digest fixture。
-- `internal/designgate/`: schema、artifact／bundle digest、human decision、ambiguity、
+- `apps/control-plane/internal/designgate/`: schema、artifact／bundle digest、human decision、ambiguity、
   capability coverage、OpenAPI operation対応を検証するGo gate。
 - `evidence/ciso-05/design/`: Source Issue #15、Design Request、request-changes revision、
   digest-bound approve、7 capability reconciliation、preview、UX/a11y/Playwright evidence。
 
 このbaselineはcontractと判断の実行可能性を証明した。一方、この時点のgateはCISO Dashboard固有の
-approved digest、reconciliation path、Issue/ACをtrust anchorとしており、`src/intake`の標準経路には
+approved digest、reconciliation path、Issue/ACをtrust anchorとしており、`apps/agentops/src/intake`の標準経路には
 接続されていなかった。2026-07-28の汎用実装は既存fixtureとnegative testを共有し、CISO固有定数を
 production経路へコピーせずにこの制約を解消した。
 

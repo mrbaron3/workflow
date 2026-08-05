@@ -133,7 +133,7 @@
 - 帰属を推測しない: ファイル名・テスト名文字列からの暗黙帰属で活性化を決めない
   （帰属は guard 著述時の明示宣言のみ）。
 - 非活性を沈黙 skip にしない（理由なき skip の導入禁止 — `ARCH-execution-015`）。
-- `test/acceptance-harness/**` に generator が触れない（ハーネス所有の独立採点者・
+- `apps/agentops/test/acceptance-harness/**` に generator が触れない（ハーネス所有の独立採点者・
   protectedPaths — 従来どおり）。
 - 全活性（`ACCEPT_HARNESS=1` 相当）の意味を変えない・消さない。
 - 合格基準（既存テスト）を弱体化しない。
