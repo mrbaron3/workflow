@@ -2,7 +2,8 @@
 
 > container-runtime は、標準 OCI アプリケーションイメージと、Apple Container 等の**コンテナ**ランタイム操作を、
 > OS 非依存の core から adapter 境界で隔離する。非決定な**AI**呼出しを扱う `agent-runtime` とは別境界であり、
-> 共有するのは "runtime" の語だけ。採点意味論・queue・liveness は所有しない。追加のみ
+> 翻訳点で共有する語は`runtime`と`Provider`の2つだけである。ここでProviderはagent-runtimeのAI tool familyを指し、
+> Container Runtime engineの別名ではない。採点意味論・queue・liveness は所有しない。追加のみ
 > （`LANG-container-runtime-NNN` は安定）。
 
 | ID | 用語 | 意味 |
@@ -24,4 +25,4 @@
 | LANG-container-runtime-015 | Scoped Compensation | partial startで当該試行が変更したcontainerだけをrollbackし、volumeと既存workを保存する処理。 |
 | LANG-container-runtime-016 | Provider Credential Volume | provider login fileだけをprivate stdinでseedし、ACTIVE workerへread-only mountするnamed volume。 |
 | LANG-container-runtime-017 | Typed Monitor Broker | controlの固定Issue/PR read要求をtriage credential境界内で実行するdurable broker。任意HTTP proxyではない。 |
-| LANG-container-runtime-018 | Isolated Triage | workspace／git／SSHなしでtyped monitor、strict Issue classification、human-ready promotionだけを行うnonroot runtime role。 |
+| LANG-container-runtime-018 | Isolated Triage | workspace／git／SSHなしでtyped monitor、strict Issue classification、human-ready promotionだけを行うnonroot runtime role。role、image、build targetの正典名は`triage`で揃え、security境界が異なる`runner`を名称aliasにしない。現行`deploy/Containerfile`の`triage-runner` targetは既知の互換不一致であり、コード改名とimage consumer更新を同時に行う別Stageまで残る。 |

@@ -46,6 +46,24 @@
   保持する。job/retry順序からreview epochを推測しない。
 - **DATA-control-store-024** `release_artifacts` — release/final head/receipt IDsへ束縛したartifact key、URI、digest、size。
   bytesはDBへ入れず、未知receipt、重複receipt ID、別headをconstraint triggerとstoreで拒否する。
+- **DATA-control-store-025** `development_progress_events` — job/headに束縛したphase、step、state、gate、review、
+  worktree/branch/PR等のcurrent-progress fact。入力契約の正本は
+  `apps/agentops/src/domain/development-progress.ts`の`DevelopmentProgressUpdate`。
+- **DATA-control-store-026** `human_escalations` — gate/headごとに高々1件のSLA超過とhuman actionを保存し、
+  gate進行またはterminal factでresolveする。`gate_key`の値域はzod
+  `DevelopmentProgressUpdate.gateKey`と一致する。独立した全体zod objectは現行実装に存在せず、残りのshapeは
+  `db/control-store/migrations/0019_durable_kanban_gates.sql`と
+  `apps/control-plane/internal/control/store.go`が共有する現行contractである。
+- **DATA-control-store-027** `development_review_rounds` — immutable headに対するround、branch、PR、outcome、
+  start/completionを保持する。入力shapeの正本は
+  `apps/agentops/src/domain/development-review.ts`の`DevelopmentReviewRound`。
+- **DATA-control-store-028** `development_review_perspectives` — round内のperspective、Verdict、finding配列を保持する。
+  正本は同ファイルの`DevelopmentReviewPerspective`と`DevelopmentReviewFinding`。findingの`lineage`は
+  `new|persisted`、`lineageRef`は`finding-origin-v1:<64hex>`の文字列としてmigration 0022が検証する。
+- **DATA-control-store-029** `development_lineage_nodes` — separate-issue child branchのparent/child head、PR、status、
+  source findingを保持するDAG。runnerへ公開するzod投影は
+  `apps/agentops/src/control-store/types.ts`の`RunnerJobPayloadV1Contract.lineage`で、durable全shapeは
+  `db/control-store/migrations/0021_review_rounds_and_branch_dag.sql`が正本である。
 
 根拠: [ADR-0013](../../decisions/ADR-0013-postgresql-control-plane-source-of-truth.md)、
 [ADR-0015](../../decisions/ADR-0015-postgresql-fenced-isolated-runner.md)、

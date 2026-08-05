@@ -383,8 +383,8 @@ async function projectReleaseEvidence(
         headEpoch: epoch,
         findingEpochs,
       }));
-    if ((run.verdict === 'approve') !== (findings.length === 0)) {
-      throw new Error(`review ${run.id} verdict does not agree with its findings`);
+    if (run.verdict === 'approve' && findings.length !== 0) {
+      throw new Error(`review ${run.id} approve verdict cannot contain findings`);
     }
     await input.control.recordReleaseReceipt({
       receiptId: deterministicUuid(input.release.id, key),

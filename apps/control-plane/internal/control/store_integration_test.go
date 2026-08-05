@@ -1880,6 +1880,7 @@ func resetAndMigrate(
 		"0019_durable_kanban_gates.sql",
 		"0020_registration_repository_authority.sql",
 		"0021_review_rounds_and_branch_dag.sql",
+		"0022_review_finding_lineage_validation.sql",
 	} {
 		path := filepath.Join(root, "db", "control-store", "migrations", name)
 		body, err := os.ReadFile(path)

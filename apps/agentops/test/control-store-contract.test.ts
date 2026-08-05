@@ -28,6 +28,8 @@ describe('language-neutral control-store contract', () => {
     expect(migrations[6]?.sql).toContain('p_allowed_repositories text[]');
     expect(migrations[11]?.sql).toContain('observe_release_head(uuid, text, text)');
     expect(migrations[11]?.sql).toContain("'type-design'");
+    expect(migrations[21]?.sql).toContain("finding->>'lineage' NOT IN ('new', 'persisted')");
+    expect(migrations[21]?.sql).toContain("^finding-origin-v1:[0-9a-f]{64}$");
     expect(fs.readFileSync(
       agentopsPackagePath('src', 'control-store', 'store.ts'),
       'utf8',

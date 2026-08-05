@@ -1,9 +1,12 @@
-# AgentOps — coding-agent development & eval harness
+# Servo — coding-agent development & eval harness
 
-A **local-first operating harness** that runs existing coding agents (Claude Code /
+Servo is a **local-first operating harness** that runs existing coding agents (Claude Code /
 Codex / Gemini) through a real development organisation's loop: **Roadmap → Issue
 Contract → Generator PR → Evaluator Scorecard → Repair → Release → Eval-curation →
 Dashboard → harness improvement.**
+
+`agentops` remains the technical prefix for the TypeScript execution subsystem, CLI,
+components, and environment variables; it is not a second product name.
 
 The bet (from the design brief): the leverage is **not more agents** — it's turning
 "planning / implementation / review / QA / release / retro / eval-improvement" into
@@ -200,8 +203,10 @@ npx tsx apps/agentops/scripts/real-panel-run.ts                    # full 6-pers
 
 `config.gate.backend` (`store` | `github`) chooses local/manual vs PR-native delivery.
 `gate.requiredChecks` names GitHub checks that must be green (empty means all visible checks), and
-`gate.mergeMethod` is `squash`, `merge`, or `rebase`. `config.panel.maxConcurrent` bounds the
-review fan-out. The execution layer's design lives in
+`gate.mergeMethod` is `squash`, `merge`, or `rebase` for the legacy TypeScript `github-turn`
+path only. The Go control-plane path currently authorizes `squash` regardless of this workspace
+setting; it does not become authoritative there until Registration gains a versioned integration
+strategy contract. `config.panel.maxConcurrent` bounds the review fan-out. The execution layer's design lives in
 [ADR-0005](docs/decisions/ADR-0005-execution-layer-tmux-orchestration.md) /
 [ADR-0006](docs/decisions/ADR-0006-evaluator-panel-sessions-and-github-pr-gate.md) and the
 [`_system/execution`](docs/_system/execution/) views.

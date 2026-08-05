@@ -255,6 +255,35 @@ integration('production release receipt projection', () => {
         createdAt: at(5),
       }));
     }
+    const emptyRequestKey = 'review-ux-empty-request';
+    invocation(emptyRequestKey, 'reviewer', 'ux');
+    local.addEvalRun(EvalRun.parse({
+      id: 'EVAL-ux-empty-request',
+      issueId: currentPr.issueId,
+      prId: currentPr.id,
+      attempt: 1,
+      sampleIndex: 0,
+      agent: 'codex',
+      verdict: 'request_changes',
+      hardGates: { contracts: 'pass' },
+      findings: [],
+      scores: {
+        functionality: 1,
+        codeQuality: 1,
+        testQuality: 1,
+        ux: 1,
+        accessibility: 1,
+      },
+      overall: 1,
+      evidenceDir: null,
+      cost: { usd: 0, tokens: 1, seconds: 1 },
+      featureArea: 'backend',
+      perspective: 'ux',
+      invocationKey: emptyRequestKey,
+      revisionId: revision.id,
+      headSha: head,
+      createdAt: at(5),
+    }));
     local.save();
 
     const producer = { jobId: queued.job.id, attemptId: lease!.attemptId };
@@ -282,6 +311,10 @@ integration('production release receipt projection', () => {
       ...projectionInput,
       githubChecks: [],
     });
+    expect((await control.listReleaseReceipts(created.release.id))
+      .map((entry) => entry.receipt)
+      .find((receipt) => receipt.kind === 'review' && receipt.perspective === 'ux'))
+      .toMatchObject({ verdict: 'findings', findings: [] });
     expect(await control.getRelease(created.release.id)).toMatchObject({
       status: 'collecting',
       pullRequest: 51,
@@ -343,7 +376,7 @@ integration('production release receipt projection', () => {
       release: { id: created.release.id, finalHead: head, mergeSha },
       result: 'passed',
     });
-    expect(evidence.receipts.runtime[0]?.invocations).toHaveLength(3);
+    expect(evidence.receipts.runtime[0]?.invocations).toHaveLength(4);
     expect(evidence.receipts.grades.map((receipt) => receipt.signal.source).sort())
       .toEqual(['github-check', 'repository-grader']);
   });

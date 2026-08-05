@@ -31,6 +31,18 @@ actual container lifecycle操作は
 topology orchestrationを保つため、当面の release unit は repository 全体で一体とする
 （[ADR-0021](decisions/ADR-0021-go-typescript-application-boundaries.md)）。
 
+### 製品・実行系の正典名
+
+| 対象 | 正典 | 互換名の扱い |
+| --- | --- | --- |
+| 製品、repository、人間向け文書 | **Servo** / `mrbaron3/servo` | `workflow` / `AgentOps`を製品名として新規使用しない |
+| 実行系component、CLI、環境変数 | `agentops` / `agentopsctl` / `AGENTOPS_*` | technical prefixとして維持し、製品名と同一視しない |
+| application root | `apps/control-plane/` / `apps/agentops/` | ADR-0021以前の旧pathは歴史記録に限る |
+| container label | 現行authorityは`com.mrbaron3.workflow.*` | `com.mrbaron3.servo.*`移行は新旧併記→旧掃討→新のみの独立3段階issue。片側変更禁止 |
+| schema `$id` | 現行`mrbaron3/workflow`識別子は互換維持 | versioned consumer確認なしに`servo`へ片側変更しない |
+
+判断根拠は[ADR-0022](decisions/ADR-0022-servo-product-and-agentops-component-naming.md)。
+
 ## 境界コンテキスト一覧
 
 ハーネスを「1つのユビキタス言語が一貫する範囲」で切ると12。技術レイヤー（Product/…）ではなく
@@ -41,17 +53,17 @@ evaluation の採点語（Scorecard・Verdict）は所有せず参照する。
 | コンテキスト | 責務（一文） | 主なコード | system 層 | 代表用語 |
 | --- | --- | --- | --- | --- |
 | **workspace** | 1つの組織storeを1つのtarget repositoryへ耐久的に束縛し、異targetへの状態変更を拒否 | `apps/agentops/src/workspace/`・`apps/agentops/src/store/`・`apps/agentops/src/config.ts` | `_system/workspace/` ✅ | Workspace・Target Identity・Target Binding・Binding Mismatch |
-| **planning** | 製品ゴールを roadmap→epic→feature に分解し永続、各 feature を spec へ materialize | `apps/agentops/src/planning/` | `_system/planning/` ✅ | Roadmap・Epic・Feature・Outcome・取込・spawn |
-| **authoring** | 人間が spec の WHAT（AC）を著述し**署名**、署名後のドリフトを検知 | `apps/agentops/src/authoring/` | `_system/authoring/`（未） | Spec・acceptance.yaml・ApprovedSpecRef・署名・fingerprint・ドリフト |
-| **design** | 署名 spec から system 層（4ビュー）を設計し、PR サイズの Issue 集合へ分解 | `apps/agentops/src/design/`・`planning-tree.ts:spawnIssues` | `_system/design/`（未） | 境界コンテキスト・ドメインモデル・seam・被覆×排他・dependsOnSystem |
+| **planning** | 製品ゴールを roadmap→epic→feature に分解し永続、各 feature を spec へ materialize | `apps/agentops/src/planning/` | `_system/planning/` ✅ | Roadmap・Theme・Epic・Feature・Outcome・取込・spawn |
+| **authoring** | 人間が spec の WHAT（AC）を著述し**署名**、署名後のドリフトを検知 | `apps/agentops/src/authoring/` | `_system/authoring/`（言語のみ） | Spec・acceptance.yaml・ApprovedSpecRef・署名・fingerprint・ドリフト |
+| **design** | 署名 spec から system 層（4ビュー）を設計し、PR サイズの Issue 集合へ分解 | `apps/agentops/src/design/`・`apps/agentops/src/planning/planning-tree.ts:spawnIssues` | `_system/design/`（言語のみ・実装被覆未確認） | 境界コンテキスト・ドメインモデル・seam・被覆×排他・dependsOnSystem |
 | **evaluation** | Issue Contract を生成→評価→修正→リリースし、証拠から指標・回帰・改善を育てる | `apps/agentops/src/pipeline/`・`apps/agentops/src/graders/`・`apps/agentops/src/metrics/`・`apps/agentops/src/agents/`・`apps/agentops/src/resolve/` | `_system/evaluation/`（言語・アーキのみ） | Issue Contract・Generator・PR・Scorecard・EvalRun・pass@k・Repair・Curator・Analyst |
 | **execution** | issue queue を入力に、issue ごとの実装を role-scoped tmux セッションのオーケストレーションで自律に進める独立層 | `apps/agentops/src/pipeline/execution/`・`apps/agentops/src/agents/` | `_system/execution/` ✅ | 実装層・Issue Queue・Orchestrator・Watch・Session・Sentinel・Evaluator Panel・観点・審査ゲート・Scoping Guard |
 | **agent-runtime** | planning/UI-design/generation/reviewのAI呼出しを共通identityで監査し、provider/model固有差をadapterとrouteへ閉じる | `apps/agentops/src/agents/`・`apps/agentops/src/pipeline/execution/` | `_system/agent-runtime/` ✅ | Agent Invocation・Provider・Model・Role・Perspective Route・Provider Adapter |
 | **intake** | target GitHub Issueをclaimし、planningと条件付きUI著述をtrace/provenance gate経由でIssueへ投影する | `apps/agentops/src/intake/` | `_system/intake/` ✅ | Source Issue・Acceptance Trace・UI Design Artifact・Claim・Enrichment |
-| **webhook** | GitHub deliveryをdurable inboxへ受け、複数repoをtransport非依存eventとしてconsumerへrouteし、pollで照合する | `apps/agentops/src/webhook/`（compatibility oracle）・`apps/control-plane/internal/control/`（production） | `_system/webhook/` ✅ | Delivery Envelope・Durable Inbox・Repository Registration・Normalized Event・Reconciliation |
+| **webhook** | GitHub deliveryをdurable inboxへ受け、複数repoをtransport非依存eventとしてconsumerへrouteし、pollで照合する | `apps/agentops/src/webhook/`（compatibility oracle）・`apps/control-plane/internal/control/`（production） | `_system/webhook/` ✅ | Delivery Envelope・Durable Inbox・Signed Webhook Ingress・Normalized Event・Reconciliation |
 | **container-runtime** | 標準OCIアプリイメージをbuildし、Apple Container等の**コンテナ**runtime操作をadapter境界へ隔離、network/volume/port/capabilityを起動前にfail-closed検査する（AC-CISO-011） | `apps/agentops/src/runtime/`・`deploy/Containerfile` | `_system/container-runtime/` ✅ | Container Runtime Adapter・Standard OCI Image・Runtime Preflight・Publish Invariant・Container-Neutral Path |
-| **control-store** | Registration、delivery、job、lease、attempt、audit、build defectをPostgreSQL transactionへ永続化し、queue/single-flight/recoveryを保証 | `apps/agentops/src/control-store/`・`apps/control-plane/internal/control/`・`db/control-store/`・`contracts/control-store/` | `_system/control-store/` ✅ | Registration Version・Idempotency Key・Active Job・Lease・Attempt・Wake・Reconciliation・Escape |
-| **registration-control** | PostgreSQL RegistrationをControl API・Issue/PR monitor・forwarder・durable routerのdesired/actualへ動的収束 | `apps/control-plane/cmd/agentops-control/`・`apps/control-plane/internal/control/`・`apps/control-plane/internal/designgate/` | `_system/registration-control/` ✅ | Desired State・Actual State・Dynamic Supervision・Convergent Work Identity・Experience Design Gate |
+| **control-store** | Registration、delivery、job、lease、attempt、audit、review、release evidenceをPostgreSQL transactionへ永続化し、queue/single-flight/recoveryを保証 | `apps/agentops/src/control-store/`・`apps/control-plane/internal/control/`・`db/control-store/`・`contracts/control-store/` | `_system/control-store/` ✅ | Registration Version・Lifecycle Mode・Monitor Cursor Observation・Development Phase・Receipt |
+| **registration-control** | PostgreSQL RegistrationをControl API・Issue/PR monitor・signed ingress・durable routerのdesired/actualへ動的収束 | `apps/control-plane/cmd/agentops-control/`・`apps/control-plane/internal/control/`・`apps/control-plane/internal/designgate/` | `_system/registration-control/` ✅ | Desired State・Actual State・Startup Mode・Dynamic Supervision・Convergent Work Identity |
 
 **TypeScript 内の共有カーネル（Shared Kernel）**: `apps/agentops/src/domain/`（`schema.ts` の zod 契約 ＋
 `states.ts` の状態機械）と `apps/agentops/src/store/`（Eval Result DB）は AgentOps 内の状態コンテキストが共有する。
@@ -88,7 +100,9 @@ Go application との共有カーネルではない。cross-application の Publ
 - **GitHub → intake → planning**（ACL・Customer-Supplier）: intakeはreadyなGitHub Issueを外部投影としてclaimし、
   immutable原文snapshotをplanningへ供給する。planningがIssue Contract-readyへ昇格するまでexecution queueへ入れない。
 - **GitHub → webhook → intake/execution**（ACL・Published Language）: webhookはdeliveryを保存・重複排除し、
-  Normalized GitHub Eventだけをintake/PR revision loopへ渡す。payloadはtriggerであり真実ではないため、
+  Normalized GitHub Eventだけをintake/PR revision loopへ渡す。productionの翻訳点は
+  **Normalized GitHub Event ≡ `WorkItem` ≡ Convergent Work Item**であり、Go実体は
+  `apps/control-plane/internal/control/model.go`が所有する。payloadはtriggerであり真実ではないため、
   consumerはcurrent snapshotを再取得する。pollは同じseamへreconciliation eventを供給する。
 - **planning → intake UI authoring → execution**（Customer-Supplier・ACL）: frontend/fullstack Candidateだけを専用
   ui-designer sessionへ渡し、AC-traceableなUI Design Artifactを検証する。不在・曖昧・不正はqueueへ投影せず、
@@ -102,13 +116,19 @@ Go application との共有カーネルではない。cross-application の Publ
   `apps/control-plane/internal/designgate`と
   固定Dashboard bundleはこの境界のgrounded bootstrapであり、汎用intake portそのものではない。
 - **evaluation → planning**（改善フィードバック・Customer-Supplier）: Harness Analyst が `type:harness`/`type:eval` の改善 issue を計画の木へ戻し、Curator が失敗を回帰として育てる。北極星の「改善」軸の閉路。
-- **全稼働コンテキスト → container-runtime**（Customer-Supplier・OS非依存port）: 稼働コンテキストは role／topology／container-neutral path 契約を供給し、container-runtime が標準 OCI イメージと Apple Container 等の runtime 操作へ翻訳する。core は Provider CLI 形や macOS 詳細を知らず、Apple Container 固有は adapter 配下のみ（AC-CISO-011）。CISO epic #10 の #12 以降はこの port 越しに runtime を使う。**agent-runtime（AI呼出し）とは別境界**で、共有語は "runtime" のみ。
+- **全稼働コンテキスト → container-runtime**（Customer-Supplier・OS非依存port）: 稼働コンテキストは role／topology／container-neutral path 契約を供給し、container-runtime が標準 OCI イメージと Apple Container 等の runtime 操作へ翻訳する。core は Provider CLI 形や macOS 詳細を知らず、Apple Container 固有は adapter 配下のみ（AC-CISO-011）。CISO epic #10 の #12 以降はこの port 越しに runtime を使う。**agent-runtime（AI呼出し）とは別境界**で、橋に現れる共有語は`runtime`と`Provider`の2つだけ。`Provider`はagent-runtimeのAI tool familyを指し、container runtime engineの別名ではない。
 - **registration-control/runner → control-store**（Customer-Supplier・Published Language）:
   `apps/agentops` のTypeScript runnerと `apps/control-plane` のGo controlは、root `db/` / `contracts/` の
   version付きSQL/JSON Schema契約へ順応し、Registration/cursor/delivery/lifecycle fence/job/lease/result/progress/receipt/
   artifact metadataをPostgreSQL transactionで共有する。これがcross-applicationの唯一のdurable business
   coordinationである。LISTEN/NOTIFYはwakeだけ、periodic reconciliationは真実回収経路として残す
-  （AC-CISO-003〜005、ADR-0021）。
+  （AC-CISO-003〜005、ADR-0021）。運転状態の正本はcontrol-storeのLifecycle Modeであり、
+  registration-controlのStartup Modeは起動時観測に限ってLifecycle Modeを上書きしない。
+- **evaluation ↔ control-store**（Published Language・翻訳）: evaluationのVerdict正典は
+  `approve|request_changes|needs_human`。`development_review_perspectives.verdict`は3値を保持する一方、
+  release receiptの現行`approved|findings`は非approveを`findings`へ畳むlossyなlegacy投影で、Verdictでも
+  finding有無のbooleanでもない。
+  特に`needs_human`と`request_changes`を同じ判断と解釈せず、次期wireで`verdict`＋`hasFindings`へ分離する。
 - **runtime integration（別 security/runtime contract）**: GitHub credential broker HTTP＋credential helper、
   CONNECT egress proxy、runner shared volume、`agentopsctl`のactual container操作はPostgreSQLを迂回する意図的な
   point-to-point境界である。business resultをこれらへ永続化せず、volume artifactのURI/digest/receipt linkだけを
@@ -127,10 +147,10 @@ Go application との共有カーネルではない。cross-application の Publ
 
 | 旧 GLOSSARY 用語 | 移行先 |
 | --- | --- |
-| Roadmap・Theme/Initiative・Epic・Feature・計画の木・planRoadmap/spawnSpecs | `_system/planning/ubiquitous-language.md` ✅（移行済） |
-| Spec・spec.md・acceptance.yaml・ApprovedSpecRef・contract-approved・manual-requirements | `_system/authoring/ubiquitous-language.md`（未） |
-| 被覆×排他・seam・DesignSlice・ArchitectureSpine（※レガシー語は整理）・IssueSpawnOrder | `_system/design/ubiquitous-language.md`（未・陳腐化語は捨てる） |
-| Issue Contract・Agent Work Unit/sample・PR・Eval Run・Scorecard・Repair Loop・Eval Task Registry・Grader・Evidence・pass@k/pass^k・False pass/fail・Harness improvement・build-approved | `_system/evaluation/ubiquitous-language.md`（未） |
+| Roadmap・Theme/Initiative・Epic・Feature・計画の木・planRoadmap/spawnSpecs | `_system/planning/ubiquitous-language.md`（Themeを正典化。Initiativeは実体のないlegacy alias。残りの実装対応は未監査） |
+| Spec・spec.md・acceptance.yaml・ApprovedSpecRef・contract-approved・manual-requirements | `_system/authoring/ubiquitous-language.md`（言語移行済み。manual-requirements/MR-IDは実体がないためManual Verification Exclusionへ是正） |
+| 被覆×排他・seam・DesignSlice・ArchitectureSpine（※レガシー語は整理）・IssueSpawnOrder | `_system/design/ubiquitous-language.md`（言語fileあり。実装被覆と陳腐化語の整理は未監査） |
+| Issue Contract・Agent Work Unit/sample・PR・Eval Run・Scorecard・Repair Loop・Eval Task Registry・Grader・Evidence・pass@k/pass^k・False pass/fail・Harness improvement・build-approved | `_system/evaluation/ubiquitous-language.md`（言語・architectureあり、domain/data viewは未実体化） |
 | Agile Sprint（時間箱）等の横断・翻訳点 | このコンテキストマップ（翻訳点として明記） |
 
 ### `docs/ARCHITECTURE.md` → context-map ＋ per-context architecture ＋ ADR

@@ -505,8 +505,8 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
     || left.receiptId.localeCompare(right.receiptId)
   ));
   for (const review of orderedReviews) {
-    if ((review.verdict === 'findings') !== (review.findings.length > 0)) {
-      errors.push(`${review.receiptKey}.verdict must agree with findings`);
+    if (review.verdict === 'approved' && review.findings.length > 0) {
+      errors.push(`${review.receiptKey}.approved verdict cannot contain findings`);
     }
     const findingIds = review.findings.map((finding) => finding.findingId);
     if (new Set(findingIds).size !== findingIds.length) {

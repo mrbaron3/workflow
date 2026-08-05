@@ -15,4 +15,4 @@
 | LANG-authoring-007 | fingerprint | AC の内容ハッシュ。署名時に AC 単位で pin し、後の内容変更（ドリフト）を AC 粒度で検知する鍵。 |
 | LANG-authoring-008 | ドリフト / deriveStatus | 署名後に AC が変わったか。status は保存せず、署名 `approvedAcIds` が現在 AC 集合を覆うかから**派生**する。 |
 | LANG-authoring-009 | supersedes | この spec の AC が置換する過去 AC-ID。現在仕様を畳む鍵（DOC_LIFECYCLE）。 |
-| LANG-authoring-010 | manual-requirements | 自動採点できない要件（`MR-ID`）を tier 別に分離した要審査票。AC にはしない。 |
+| LANG-authoring-010 | Manual Verification Exclusion | `verification.method: manual`は署名gateで拒否し、signed ACにも別建て`manual-requirements`／`MR-ID` fileにも変換しない。人間のWHAT判断は`LANG-authoring-005`署名として、実装不能・機械判定不能は明示的なhuman gate/escalationとして扱う。現行判定は`apps/agentops/src/authoring/lint.ts`の`checkManualAbsence`が正本。 |

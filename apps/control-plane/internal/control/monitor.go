@@ -70,9 +70,9 @@ type ProductionRunner struct {
 	TransientRetry time.Duration
 	ForwarderRetry time.Duration
 	HealthInterval time.Duration
-	// SignedWebhookIngressOnly makes the HTTP webhook endpoint the forwarder
-	// health boundary. The credential-free control container must never spawn
-	// the credential-bearing `gh webhook forward` process.
+	// SignedWebhookIngressOnly disables the legacy CLI forwarder. The signed
+	// HTTP ingress has no active reachability probe here, so this runner must
+	// neither spawn `gh webhook forward` nor project forwarder health.
 	SignedWebhookIngressOnly bool
 	Command                  CommandFactory
 	Log                      *slog.Logger
@@ -219,17 +219,8 @@ func (runner *ProductionRunner) runForwarder(
 		return nil
 	}
 	if runner.SignedWebhookIngressOnly {
-		if err := runner.Store.UpsertActualState(
-			ctx,
-			registration,
-			ComponentForwarder,
-			"running",
-			runner.SupervisorID,
-			nil,
-		); err != nil {
-			return err
-		}
-		return runner.heartbeatForwarder(ctx, registration)
+		<-ctx.Done()
+		return nil
 	}
 	commandFactory := runner.Command
 	if commandFactory == nil {

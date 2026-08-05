@@ -1,7 +1,7 @@
 # Servo 自律開発パイプライン運用
 
 対象は `mrbaron3/servo` だけである。repository authority は PostgreSQL の
-Registration であり、process 環境変数の allowlist は使わない。fresh schema 21 は
+Registration であり、process 環境変数の allowlist は使わない。fresh schema 22 は
 `mrbaron3/servo` を唯一の enabled Registration として、release receipt policy と
 既定 gate SLA 3600 秒を含めて作成する。
 
@@ -72,8 +72,9 @@ mise run open
 
 Dashboard の既定 URL は `http://127.0.0.1:8080/` である。認証済み URL は一回限りの
 bootstrap token を含むため、ログや文書へ貼らず `mise run open` で開く。Registration
-一覧が `mrbaron3/servo` 一件だけ、Issue/PR Monitor と Execution が enabled、実際の
-GitHub 到達性が running であることを確認する。permission 不足、repository 不達、
+一覧が `mrbaron3/servo` 一件だけ、Issue/PR Monitor と Execution が enabledで、poll attemptと
+brokerの実観測が更新されることを確認する。Signed Webhook Ingressはactive probeを持たないため、deliveryがない期間に
+`forwarder: running`をGitHub到達性の証拠として要求しない。permission 不足、repository 不達、
 broker/configuration error は Registration card の actual state と last error に表示される。
 
 ## staged ACTIVE deployment
@@ -108,9 +109,11 @@ mise run worktree -- --diff mrbaron3/servo#<issue-number>
 mise run logs -- --component runner
 ```
 
-Dashboard の repository 別 Kanban は `ready`、`intake/planning`、`design`、
-`implementation`、`review round N`、`repair`、`gate wait`、`human escalated`、
-`merge ready`、`released`、`failed` を分ける。card には job/attempt、lease owner、
+Dashboardのrepository別Kanban（`LANG-execution-025`）は、表示labelとして`ready`、`intake / planning`、
+`design`、`implementation`、`review`（card内にround N）、`repair`、`gate wait`、`human escalated`、
+`merge ready`、`released`、`failed`を分ける。filter/APIが使うlane idは
+`ready|intake-planning|design|implementation|review|repair|gate-wait|human-escalated|merge-ready|released|failed`で、
+表示labelをidとして保存しない。card には job/attempt、lease owner、
 worktree、branch、PR、current head、開始/更新時刻、gate と待機秒、review perspective と
 finding、child lineage を表示する。current 表示は最新 log event ではなく、job/lease/release
 の terminal fact を優先する durable projector である。
@@ -144,7 +147,7 @@ schema down migration、volume 削除、実行中 job の強制中断は行わ�
 次の順で戻す。
 
 1. `mise run drain` で current job を保護して DRAINING を完了する。
-2. 現行 schema 21 を理解する revert/forward-fix commit を Servo の別 worktree で用意し、対象 commit、
+2. 現行 schema 22 を理解する revert/forward-fix commit を Servo の別 worktree で用意し、対象 commit、
    migration compatibility、rollback 理由を review する。schema を知らない古い binary は起動しない。
 3. その clean worktree を `AGENTOPSCTL_PROJECT_ROOT` にして
    `go run ./apps/control-plane/cmd/agentopsctl deploy` を実行する。

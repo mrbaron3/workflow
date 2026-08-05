@@ -303,6 +303,21 @@ describe('release receipt evidence v2', () => {
     expect(liveReleaseReceiptSemanticErrors(value)).toEqual([]);
   });
 
+  it('allows a changes-requested review without findings but keeps approvals empty', () => {
+    const emptyRequest = evidence();
+    emptyRequest.receipts.reviews[1].verdict = 'findings';
+    expect(liveReleaseReceiptSemanticErrors(emptyRequest)).toEqual([]);
+
+    const invalidApproval = evidence();
+    invalidApproval.receipts.reviews[1].findings = [{
+      findingId: 'finding-on-approved-review',
+      lineage: 'new',
+    }];
+    expect(liveReleaseReceiptSemanticErrors(invalidApproval)).toContain(
+      'review:1:codeQuality.approved verdict cannot contain findings',
+    );
+  });
+
   it('continues to validate immutable legacy v2 evidence without requirements authority', () => {
     const current = evidence();
     const { requirementsAuthority, ...legacyReceipts } = current.receipts;
