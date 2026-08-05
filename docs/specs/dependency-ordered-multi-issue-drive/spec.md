@@ -121,7 +121,7 @@
 
 > 実装が絶対にしてはならないこと。
 
-- `test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
+- `apps/agentops/test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
 - 人間ゲートを跨いで自動 release しない: 依存解除を早めるために live 経路の released を
   自動化しない（DOM-execution-007 不変・判断点は消さない）。
 - ブロックを状態遷移にしない: ブロック中の issue の status は変えない（contract-drafted の

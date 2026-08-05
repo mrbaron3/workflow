@@ -94,7 +94,7 @@
 
 > 実装が絶対にしてはならないこと。
 
-- `test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
+- `apps/agentops/test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
 - escalate を消さない: stuck / timeout の store 昇格・人間への顕在化（kept-alive）は本機能の後も残る。
 - 無限待ちを導入しない: 活動天井は必ず有限（既定値を持ち・設定可能）。
 - sentinel 以外で完了を確定しない（`DOM-execution-005`: pane の見た目を完了判定に使わない）。

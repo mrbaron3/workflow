@@ -3,6 +3,18 @@
 CISO-01（Issue #11・親 #10）が確立する **標準 OCI ランタイム基盤** の配布物一式。Apple Container 固有形式を使わず、
 `container` / `docker` / `podman` のいずれでも同一に build・run できる（AC-CISO-011）。
 
+`deploy/`はapplication sourceではなくintegration layerである。Go applicationは
+`apps/control-plane/`、TypeScript applicationは`apps/agentops/`に分離し、この層が両者とPostgreSQLを
+同じOCI topologyへ組み立てる。root `db/` / `contracts/`を介するPostgreSQLがdurable business coordinationの
+正本だが、credential broker HTTP、CONNECT egress proxy、runner shared volume、`agentopsctl`のactual
+container操作は別のsecurity/runtime contractである（lifecycle mode/drain fenceはDBへ残す）。
+当面はschema/checksumとimage revisionを揃え、repository全体を一つの
+release unitとして扱う（[ADR-0021](../docs/decisions/ADR-0021-go-typescript-application-boundaries.md)）。
+image構成だけに使う`provider-cli`・`gh`・`gosu`のmodule/packageは`deploy/tools/`が所有し、
+application sourceへ混在させない。
+cross-application smokeと構造/E2E検査も`deploy/scripts/`・`deploy/test/`が所有し、
+各applicationのunit testとは`npm run test:integration`で分離する。
+
 ## Containerfile
 
 `deploy/Containerfile` は multi-stage の標準 OCI ビルド（`deps → build → runtime`）。
@@ -14,7 +26,7 @@ docker    build -t agentops-app:dev -f deploy/Containerfile .   # 可搬性（�
 ```
 
 - 全 path はコンテナ絶対（`WORKDIR /app`）。macOS の `/Users/...` を一切参照しない
-  （`src/runtime/paths.ts` の scanner が build/runtime surface を静的検査して保証する）。
+  （`apps/agentops/src/runtime/paths.ts` の scanner が build/runtime surface を静的検査して保証する）。
 - `runtime` stage は非 root（`node` uid 1000）で動く。productionの`runner`と
   `triage-runner`はuid 65532で動く。
 - `build` stage で `npm run typecheck` を通し、「build/typecheck grader がコンテナ内・コンテナ相対 path で走る」ことを
@@ -27,7 +39,8 @@ docker    build -t agentops-app:dev -f deploy/Containerfile .   # 可搬性（�
 
 ## runtime adapter 境界
 
-`src/runtime/` が OS 非依存の core。Apple Container / macOS 固有処理は `apple-container.ts` だけに閉じ、
+`apps/agentops/src/runtime/` が OS 非依存の core。Apple Container / macOS 固有処理は
+`apple-container.ts` だけに閉じ、
 `oci-cli.ts`（docker/podman 互換）は同じ port を実装して境界が本当に runtime 中立であることを接地する。
 preflight・publish invariant・container-neutral path は runtime 実装に依存しない。詳細は
 [`docs/_system/container-runtime/`](../docs/_system/container-runtime/architecture.md) と
@@ -35,13 +48,13 @@ preflight・publish invariant・container-neutral path は runtime 実装に依�
 
 ## grounded smoke
 
-`scripts/runtime-smoke.ts` は実エンジンで topology を一気通貫に立ち上げ、全 AC を接地する。捏造 pass をせず、
+`deploy/scripts/runtime-smoke.ts` は実エンジンで topology を一気通貫に立ち上げ、全 AC を接地する。捏造 pass をせず、
 preflight 不成立や検査不成立では非 0 で終了し、JSON 証跡を出力する。
 
 ```sh
-npx tsx scripts/runtime-smoke.ts                  # Apple Container（既定・#11 の必須接地）
-npx tsx scripts/runtime-smoke.ts --runtime=docker # 標準 OCI 可搬性の補助証跡
-npx tsx scripts/runtime-smoke.ts --keep           # 調査用に topology を残す
+npx tsx deploy/scripts/runtime-smoke.ts                  # Apple Container（既定・#11 の必須接地）
+npx tsx deploy/scripts/runtime-smoke.ts --runtime=docker # 標準 OCI 可搬性の補助証跡
+npx tsx deploy/scripts/runtime-smoke.ts --keep           # 調査用に topology を残す
 ```
 
 検査項目: preflight（fail-closed）→ 標準 OCI build → publish invariant（静的）→ 内部 network＋永続 volume →
@@ -92,7 +105,8 @@ host loopbackへpublishする。PostgreSQL/runnerはpublishしない。browser�
 CSRF proofだけを使う。host側portが8080以外なら`AGENTOPS_DASHBOARD_ORIGIN`もそのexact loopback originへ合わせる。
 root filesystemはread-only、capabilityはALL drop、writable領域は`/tmp`のtmpfsだけとし、host filesystemや
 container runtime socketはmount/publishしない。
-通常起動はDDLを変更せずschema version 7と
+通常起動はDDLを変更せず、current imageが宣言するexact schema
+（ADR-0021採択時点はversion 21）と
 全migration checksumをverifyする。起動前にpinned Experience Design Bundleのapproval/revision/digest/capability
 coverageも検証し、不一致ならHTTP serverを開始しない。
 
@@ -167,14 +181,14 @@ export AGENTOPS_GITHUB_APP_PRIVATE_KEY_FILE='<absolute mode-0600 .pem path>'
 export AGENTOPS_RUNNER_PROVIDER=codex
 export OPENAI_API_KEY='<ACTIVE triage/development provider credential>'
 
-go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build --request-id operator-start-001
-go run ./cmd/agentopsctl deploy --request-id operator-active-001
-go run ./cmd/agentopsctl status --json
-go run ./cmd/agentopsctl logs --component triage --lines 200
-go run ./cmd/agentopsctl logs --component runner --lines 200
-go run ./cmd/agentopsctl open
-go run ./cmd/agentopsctl drain --timeout 10m --request-id operator-drain-001
-go run ./cmd/agentopsctl stop --timeout 10m --request-id operator-stop-001
+go run ./apps/control-plane/cmd/agentopsctl start --mode MONITOR_ONLY --build --request-id operator-start-001
+go run ./apps/control-plane/cmd/agentopsctl deploy --request-id operator-active-001
+go run ./apps/control-plane/cmd/agentopsctl status --json
+go run ./apps/control-plane/cmd/agentopsctl logs --component triage --lines 200
+go run ./apps/control-plane/cmd/agentopsctl logs --component runner --lines 200
+go run ./apps/control-plane/cmd/agentopsctl open
+go run ./apps/control-plane/cmd/agentopsctl drain --timeout 10m --request-id operator-drain-001
+go run ./apps/control-plane/cmd/agentopsctl stop --timeout 10m --request-id operator-stop-001
 ```
 
 監視・実行対象は環境変数ではなく control store の `registrations` が唯一の authority である。

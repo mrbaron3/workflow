@@ -1,17 +1,19 @@
 # データモデル — planning コンテキスト
 
 > 構造化 SSOT は**実際の永続実体に合わせる**（DOC_TAXONOMY §データビューの実体化）。このハーネスの永続は
-> **JSON ストア（`.harness/db.json`）**で、その形は既に **Zod schema（`src/domain/schema.ts`）が単一正本**。
+> **JSON ストア（`.harness/db.json`）**で、その形は既に
+> **Zod schema（`apps/agentops/src/domain/schema.ts`）が単一正本**。
 > よって本ファイルは schema を**参照**するだけで、テーブル（DBML）へ書き写さない（二重 SSOT は drift する）。
 > ここに足すのは `DATA-planning-NNN` の id・所有・不変条件・migration の判断のみ。図は schema から派生。
 > エンティティは [domain-model.md](domain-model.md)（`DOM-planning-NNN`）を実体化する。追加のみ。
 
 ## 論理モデル（構造化 SSOT＝コードスキーマ参照）
 
-正本は `src/domain/schema.ts` の Zod 型。下記は id 付けと意味の付与のみ（フィールドは正本を参照、再掲しない）。
+正本は `apps/agentops/src/domain/schema.ts` の Zod 型。下記は id 付けと意味の付与のみ
+（フィールドは正本を参照、再掲しない）。
 
 - **DATA-planning-001 `Roadmap`** — 計画の木の根（store につき単一）; 実体化 DOM-planning-001。
-  source: `src/domain/schema.ts` → `Roadmap`（Zod）。owner: store。形: `vision` / `principles[]` / 順序付き `epicIds[]`。
+  source: `apps/agentops/src/domain/schema.ts` → `Roadmap`（Zod）。owner: store。形: `vision` / `principles[]` / 順序付き `epicIds[]`。
 - **DATA-planning-002 `Epic`** — feature の粗いまとまり; 実体化 DOM-planning-002。
   source: `schema.ts` → `Epic`。owner: store。形: `id`（`EPIC-NN`）/ `title` / `theme` / `status` / 順序付き `featureIds[]`。
 - **DATA-planning-003 `Feature`** — 計画の木の葉＝署名可能な能力; 実体化 DOM-planning-003。

@@ -7,44 +7,44 @@
   "contractPath": "contracts/v1",
   "sourceTree": "git-sha1:2cc524f43dbea6f99f830c80768baee083a7edcc",
   "digestAlgorithm": "sha256-rfc8785-lock-input-v1",
-  "contractDigest": "sha256:08f202e048bc73cbe5a7d720a55d7479072a0097aa8ee70093b8028e884116b0",
+  "contractDigest": "sha256:72be2a2eb13ae7dbb02c89ee2f3a9b9d581b7a0c2210a4ad6aab1b9d89fb2c83",
   "provenance": {
     "contract": {
       "localPath": "contracts/designflow/contract-v1.0.0-rc.1/PROVENANCE.json",
       "digest": "sha256:fa6d2af25a0204a78e2a957eda54f4b940e056f81b5d2d85c265f63b9715609b"
     },
     "schemas": {
-      "localPath": "internal/designgate/schemas/PROVENANCE.json",
+      "localPath": "contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/PROVENANCE.json",
       "digest": "sha256:105e8f0c469dfcac701db837af5d10f1085cd91c9c7e1fa79eca2174e9142e45"
     }
   },
   "files": {
     "contracts/v1/capability-requirements.schema.json": {
-      "localPath": "internal/designgate/schemas/capability-requirements.schema.json",
+      "localPath": "contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/capability-requirements.schema.json",
       "digest": "sha256:a8c2f5270b1839fdd81c701b25ee3e09ad2e93c43850d55bfcea91093ee71622"
     },
     "contracts/v1/common.schema.json": {
-      "localPath": "internal/designgate/schemas/common.schema.json",
+      "localPath": "contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/common.schema.json",
       "digest": "sha256:81f243e22e1cf01491748ef2bd819d1827de2dbbb28b895f54e2b0c69f97c86f"
     },
     "contracts/v1/design-bundle-manifest.schema.json": {
-      "localPath": "internal/designgate/schemas/design-bundle-manifest.schema.json",
+      "localPath": "contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/design-bundle-manifest.schema.json",
       "digest": "sha256:dcd52f3402483d1e00d27ec45f619dc2b1006d1c99f2c6fc5e910407ddba42aa"
     },
     "contracts/v1/design-request.schema.json": {
-      "localPath": "internal/designgate/schemas/design-request.schema.json",
+      "localPath": "contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/design-request.schema.json",
       "digest": "sha256:581241ace55da2b2570375a365dcc897d45d2cf32475458fb8f9aae30835256a"
     },
     "contracts/v1/design-system-delta.schema.json": {
-      "localPath": "internal/designgate/schemas/design-system-delta.schema.json",
+      "localPath": "contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/design-system-delta.schema.json",
       "digest": "sha256:849bd066c52acee07736c9f6de4cf6f2661875199d440ccf29704dba3d57c3fa"
     },
     "contracts/v1/experience-contract.schema.json": {
-      "localPath": "internal/designgate/schemas/experience-contract.schema.json",
+      "localPath": "contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/experience-contract.schema.json",
       "digest": "sha256:2c59fb85b8dfbce406b0d1b84bd4a5f0b711171eea2dc53b14f7dcb9c8d1861f"
     },
     "contracts/v1/human-design-decision.schema.json": {
-      "localPath": "internal/designgate/schemas/human-design-decision.schema.json",
+      "localPath": "contracts/designflow/contract-v1.0.0-rc.1/contracts/v1/human-design-decision.schema.json",
       "digest": "sha256:943e60948feffc2c6dd82568a30cc8618407aac275e33581065037dec5f24f01"
     },
     "contracts/v1/examples/capability-requirements.example.json": {

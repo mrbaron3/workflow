@@ -94,7 +94,7 @@ npx tsx ${CLAUDE_SKILL_DIR}/scripts/check-spec.ts <spec-dir>
 ---
 
 テンプレートは本 skill 直下の `assets/` にあり、自己説明的。整合の不変条件は `scripts/check-spec.ts`
-（`src/authoring/lint.ts` を vendor）が SoT であり、散文 doc には置かない。
+（`apps/agentops/src/authoring/lint.ts` を vendor）が SoT であり、散文 doc には置かない。
 テンプレートが扱わない非自明な判断 — spec の scope（凝集・carving しない）・契約/形式そのものを定義するメタ機能・
 greenfield の前方参照・プロセス vs AC の altitude — は [references/edge-cases.md](references/edge-cases.md) に置き、
 必要時に読み込む。

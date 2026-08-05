@@ -6,7 +6,7 @@
 > **WHAT/HOW 境界**: 本 spec が定義するのは「コマンド未捕捉（legacy）の回帰 task が、curate の機会に
 > 実行可能性を後付け獲得する、その観測可能な性質と非破壊ゲート」。EvalTask の型・捕捉写像
 > （検証メソッド→config.target.graders）の細部は FEAT-001（regression-multi-target-execution）と
-> `src/domain/schema.ts`（Zod SSOT・ADR-0002）が既に定義済み — 本機能は**新しい捕捉規則を発明しない**。
+> `apps/agentops/src/domain/schema.ts`（Zod SSOT・ADR-0002）が既に定義済み — 本機能は**新しい捕捉規則を発明しない**。
 >
 > **背景（実測の欠け）**: FEAT-001 で curate は新規 task に grader コマンドを捕捉するようになったが、
 > curate は task id 冪等（既存 id は触らない）ため、**FEAT-001 以前の既存 6 task は永久に legacy のまま**。
@@ -73,7 +73,7 @@
 
 > 実装が絶対にしてはならないこと。
 
-- `test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
+- `apps/agentops/test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
 - 既存 task の id・記録済みフィールド（userGoal / steps / expected / severity / target / createdAt /
   捕捉済み graderCommands）を書き換え・削除しない（enrichment は**空欄を埋める**ことだけができる）。
 - config に無いコマンドを捏造しない（FEAT-001 のレッドラインを継承）。

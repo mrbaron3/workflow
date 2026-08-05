@@ -112,7 +112,7 @@
 
 > 実装が絶対にしてはならないこと。
 
-- `test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
+- `apps/agentops/test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
 - 依存 DAG の尊重を並行度のために緩めない（FEAT-007 の保証は不変条件）。
 - 人間ゲートを消さない・自動化しない（並行化は build までの並行であり、released は
   変わらず人間の判断点 — DOM-execution-007）。

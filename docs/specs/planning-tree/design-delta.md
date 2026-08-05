@@ -5,7 +5,7 @@
 - summary: 署名済み planning-tree spec から `planning` 境界コンテキストの 4 ビューを seed。spec の前方参照
   （AC-PLAN-008）を解消する——計画の木のスキーマ（Roadmap/Epic/Feature/SpecState/ApprovedSpecRef・id・
   リンク・取込/spawn seam）が、spec ではなく system 層に住む。データビューの構造化 SSOT は Zod schema
-  （`src/domain/schema.ts`）を参照し、テーブル（DBML）へ二重化しない。
+  （`apps/agentops/src/domain/schema.ts`）を参照し、テーブル（DBML）へ二重化しない。
 
 ```yaml
 # Greenfield: this is the first bounded context, so nothing pre-exists to read.
@@ -101,10 +101,12 @@ extends:
   配置は `docs/specs/_system/planning/`——3 つの決定論 check が一致する場所（`check-system-design` は上方向に
   辿って到達; `check-detail-design` と `spawnIssues` は `<spec-dir>/../_system` を既定参照）。
 - **何を解消するか。** spec は計画の木の*スキーマ*を意図的に system 層へ委ねた（レッドラインが Feature/Epic/Spec
-  型の `spec.md` 埋め込みを禁じる）。`data-model.md` がそのスキーマを **Zod schema（`src/domain/schema.ts`）参照**
+  型の `spec.md` 埋め込みを禁じる）。`data-model.md` がそのスキーマを
+  **Zod schema（`apps/agentops/src/domain/schema.ts`）参照**
   として持ち、spec の前方参照（AC-PLAN-008）を閉じる。
 - **lazy boundary。** execution コンテキスト（署名 spec → Issue → PR → EvalRun）は境界として参照するだけで、ここでは
   設計しない: `Issue` スキーマは planning コンテキストの外。planning の AC が要する分だけ設計し、下流は AC が要求する
   まで遅延する。
-- **永続実体に忠実。** 永続は JSON ストアで、データの正本は既に `src/domain/schema.ts`（Zod）。データビューは
+- **永続実体に忠実。** 永続は JSON ストアで、データの正本は既に
+  `apps/agentops/src/domain/schema.ts`（Zod）。データビューは
   それを**参照**し、テーブルとして再モデル化しない（二重 SSOT を作らない＝ハーネスが自分自身を設計する）。

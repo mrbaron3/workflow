@@ -63,7 +63,7 @@ build/runtime surface（src ＋ build 設定）に hardcode された Mac 絶対
 ### 6. 永続しない
 
 このコンテキストは `.harness/db.json` へ書かない。preflight/topology/capability は起動ごとに計算する揮発値であり、
-唯一の cross-boundary 語彙は `src/runtime/schema.ts` の runtime-neutral な Zod 契約である。
+唯一の cross-boundary 語彙は `apps/agentops/src/runtime/schema.ts` の runtime-neutral な Zod 契約である。
 
 ## 帰結
 

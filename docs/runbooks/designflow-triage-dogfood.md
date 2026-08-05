@@ -10,9 +10,13 @@ DesignflowをWorkflowの最初のmulti-repository dogfood対象にする。た�
 metadataから決める。
 
 monitor／triageはdevelopment runnerから分離した専用containerで動かす。一方、このcontainerのcodeは現時点では
-別repositoryへ分けない。control-store schema、DB capability、lifecycle、OCI topologyと同じreleaseで互換性を
-保つ必要があり、Workflowが所有するconsumer-side concernだからである。独立した運用主体、release cadence、
-public protocolが必要になった時だけ抽出する。
+`apps/agentops/`に、Go control/broker/lifecycleは`apps/control-plane/`に置き、application sourceを混在させない。
+root `db/` / `contracts/`のPostgreSQL contractがdurable business coordinationを担う一方、credential broker
+HTTP、CONNECT proxy、shared volume、actual container lifecycle操作は別境界である
+（lifecycle mode/drain fenceはDB-backed）。別repositoryへは分けず、control-store schema、
+DB capability、lifecycle、OCI topologyと同じreleaseで互換性を保つ。当面はrepository全体が一つのrelease unitであり、
+独立した運用主体、release cadence、compatibility protocolが必要になった時だけ抽出する
+（[ADR-0021](../decisions/ADR-0021-go-typescript-application-boundaries.md)）。
 
 ```text
 GitHub Issue
@@ -76,7 +80,7 @@ development runner（別capability、private workspace、ACTIVEだけ）
    repositoryのまま静かに動く事故を入口で見せるため）。素で叩くなら次と等価:
 
    ```sh
-   go run ./cmd/agentopsctl start --mode MONITOR_ONLY --build
+   go run ./apps/control-plane/cmd/agentopsctl start --mode MONITOR_ONLY --build
    ```
 
    `--request-id`は渡していない。省略時は`commandID()`が
@@ -226,7 +230,8 @@ CISO-07の`ciso-07-release-evidence.schema.json`はPR 41・`mrbaron3/workflow`�
 `blockingReviewThreads: 0`、`issueState: CLOSED`など）。したがって2件目以降の外部targetでも同じ契約を使う。
 
 schemaは形状と個別の不変条件だけを見る。**独立に観測した各セクションを1つのrelease revisionへ束縛する**のは
-`src/evidence/live-release.ts`の意味検証で、別々の実走から集めた断片を合格の証拠へ組み立てられないようにする。
+`apps/agentops/src/evidence/live-release.ts`の意味検証で、別々の実走から集めた断片を合格の証拠へ
+組み立てられないようにする。
 主な束縛は次のとおり。
 
 - `target.repository`は`consumer.repository`と異なること（自repo cutoverは外部target実証にならない）。

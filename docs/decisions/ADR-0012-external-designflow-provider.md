@@ -90,7 +90,7 @@ CISO-03/05は本ADRの標準intake配線より先に、固定contractをControl 
 grounded実走した。これは後続taskが再実装せず再利用するbaselineである。
 
 - `contracts/designflow/contract-v1.0.0-rc.1/`にprovider provenance、schema、example、digest fixtureをpinした。
-- `internal/designgate/`がschema、artifact／bundle digest、human decision、ambiguity、
+- `apps/control-plane/internal/designgate/`がschema、artifact／bundle digest、human decision、ambiguity、
   Capability RequirementsとOpenAPI operationの完全性をfail-closedで検証する。
 - CISO-05はDesign Request→request-changes→revision 2のdigest-bound approve→7 capabilityの
   reconciliation→Dashboard実装→Playwright／UX／a11y evidenceを同一lineageで実証した。

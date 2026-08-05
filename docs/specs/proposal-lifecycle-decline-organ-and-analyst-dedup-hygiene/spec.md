@@ -123,7 +123,7 @@
 
 > 実装が絶対にしてはならないこと。
 
-- `test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
+- `apps/agentops/test/acceptance-harness/**` に触れない（ハーネス所有の独立採点者・protectedPaths）。
 - decline / retire を自動化しない: Analyst・improveTick・ループのどこからも自動で close/retire を
   発火させない（判断点は人間のもの。提案と確定を分ける — ADR-0007 I1 と同じ境界）。
 - decline / retire を介入語彙（INTERVENTION_KINDS）に入れない（判断点は介入ではない —

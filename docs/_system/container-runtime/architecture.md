@@ -2,7 +2,8 @@
 
 > OS 非依存の port と、Apple Container/macOS 固有処理を閉じ込める adapter 境界だけを定義する。
 > 各 id は [ADR-0011](../../decisions/ADR-0011-standard-oci-image-and-container-runtime-adapter.md)（AC-CISO-011）を
-> 根拠とする。追加のみ。
+> 根拠とする。application compositionは
+> [ADR-0021](../../decisions/ADR-0021-go-typescript-application-boundaries.md)を根拠とする。追加のみ。
 
 - **ARCH-container-runtime-001 runtime-neutral port** — publicな形: `ContainerRuntime`（`capability` の非 mutating
   観測、`buildImage`／`createNetwork`／`removeNetwork`／`createVolume`／`removeVolume`／`runContainer`／
@@ -27,8 +28,11 @@
   既定を env で上書き可能にしつつ Mac home path を fail-closed 拒否、`scanForHostPathDependencies(root)` が build/runtime
   surface の hardcoded Mac 絶対 path を回帰検査する。
 - **ARCH-container-runtime-007 standard OCI build seam** — publicな形: `deploy/Containerfile` の multi-stage
-  （`deps → build → runtime`）。Apple 専用構文なし、`build` stage の in-container typecheck、Go control builder stage を
-  後から差し込む seam。標準 OCI なので docker/podman でも同一に build/run できる。
+  build。rootのintegration layerとして`apps/agentops`を`deps → build → runtime/runner/triage-runner`へ、
+  `apps/control-plane`を`control-build → github-broker/control/credential-helper/agentopsctl`へ組み立てる。
+  image構成専用の`provider-cli`・`gh`・`gosu`は`deploy/tools/`からだけ取り込む。
+  Apple 専用構文なし、`build` stage の in-container typecheck、`control-build` stageのGo test/buildを持つ。
+  標準 OCI なので docker/podman でも同一に build/run できる。
 - **ARCH-container-runtime-008 isolated runner stage** — standard OCIの`runner` stageはuid 65532、専用HOME、
   `/workspace` private volume、zero host ports、read-only root/capability dropの起動契約でlease consumerを実行する。
 - **ARCH-container-runtime-009 startup isolation proof** — runnerはHOME/cwd/mount/publish/outboundとcredential/socket不在を
@@ -52,6 +56,12 @@
   credential-redacted canonical spec digestへsealし、credential値はactual比較とauthentication probeだけで検証する。
   driftはrunningのまま受理せず、DRAINING・zero workでtransactionalにadmin credentialを変更・新旧authenticationを
   検証し、OFF後にnamed volumeを保持したspec-consistent restartを行う。
+- **ARCH-container-runtime-017 Application composition boundary** — `apps/control-plane`と`apps/agentops`は
+  別application source root、`deploy/`は両者とPostgreSQLを組み立てるintegration layerである。
+  credential broker HTTP、CONNECT proxy、runner shared volume、`agentopsctl`のactual container操作を明示的な
+  security/runtime seamとして保ち、PostgreSQLのdurable business coordinationと同一視しない。
+  exact schema/checksumと同一revision topologyを保つ間、image群のrelease unitはrepository全体で一体とする
+  （ADR-0021）。
 
 ## 段階導入
 
@@ -60,10 +70,13 @@
 - #16（CISO-06）: `agentopsctl` lifecycleとactual publish/compensationを`ARCH-container-runtime-011`〜`014`で追加する。
 - #17（CISO-07）: private monitor credential boundaryとsealed PostgreSQL rotationを
   `ARCH-container-runtime-015`〜`016`で追加する。
+- ADR-0021: application sourceとimage composition toolの所有を
+  `ARCH-container-runtime-017`で明示する。
 
 ## grounded smoke
 
-`scripts/runtime-smoke.ts` が実 engine で全 ARCH を一気通貫に接地する。preflight（003）→ 標準 OCI build（007）→
+`deploy/scripts/runtime-smoke.ts` が実 engine で全 ARCH を一気通貫に接地する。preflight（003）→
+標準 OCI build（007）→
 publish invariant 静的（004）→ 内部 network＋永続 volume → topology 起動 → publish invariant grounded（005）→
 container-neutral path（006）を検査し、捏造 pass をせず JSON 証跡を出す。Apple Container での実施が #11 の必須接地、
 docker 実行は標準 OCI 可搬性の補助証跡。

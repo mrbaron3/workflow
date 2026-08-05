@@ -9,39 +9,43 @@
 control、capability-limited triage、isolated runner、PR-native review/release を対象にする。
 外部製品の issue、PR、実行履歴、設定、repository は入力にも検証 oracle にもしない。
 
+現在の物理配置はGoが`apps/control-plane/`、TypeScriptが`apps/agentops/`である。root `db/` /
+`contracts/`のPostgreSQL contractがdurable business coordinationを担い、`deploy/`が両applicationを
+同一release unitへ組み立てる（ADR-0021）。
+
 ## 実装前チェックポイント
 
 ### 実際の状態遷移
 
 | 区間 | durable state / 遷移 | 実装とテスト |
 | --- | --- | --- |
-| ready 観測 | enabled Registration の Issue monitor が GitHub snapshot を poll し、`agentops.triage` job を冪等 enqueue | `internal/control/monitor.go`, `internal/control/router.go`, `src/runner/monitor-broker.ts`, `internal/control/monitor_test.go` |
-| ready 判定と claim | triage が current Issue を再取得し、人間が付けた exact ready label を確認する。`promote_triage_job` が triage lease 完了、claim、ready-time Source Issue snapshot、release authority、`agentops.runner` job を同一 transaction で確定 | `src/triage/service.ts`, `src/control-store/store.ts`, `db/control-store/migrations/0007_multi_repository_triage.sql`, `test/control-store.integration.test.ts` |
-| runner claim | ACTIVE lifecycle と current Registration version を再検証し、single-flight job lease と attempt を取得。heartbeat、expiry reclaim、有限 retry を PostgreSQL に記録 | `src/runner/service.ts`, `src/control-store/store.ts`, `db/control-store/migrations/0003_isolated_runner.sql`, `test/runner-service.test.ts`, `test/control-store.integration.test.ts` |
-| planning | job-scoped isolated checkout/store 上で Source Issue を claim 済みとして intake し、planning session を実行。`claimed → planning → accepted / awaiting-design / needs-human-review` をローカル store、operator progress を PostgreSQL に記録 | `src/runner/adapter.ts`, `src/intake/development-turn.ts`, `src/intake/planning-enrichment.ts`, `test/runner-adapter.test.ts` |
-| conditional design | planning candidate が UI design authority を要求した場合だけ design resolution と deterministic acceptance gate を通す。不成立は human review へ fail closed | `src/intake/development-turn.ts`, `src/designflow/decision-gate.ts`, `src/designflow/contract-consumer.ts` |
-| implementation / PR | generator の隔離 worktree/branch で commit を作り、external work identity を検証して push、PR を作成または exact-correlated PR を再利用。`PRRevision(pr, head SHA)` を生成 | `src/pipeline/execution/live.ts`, `src/pipeline/execution/gate.ts`, `src/pipeline/execution/worktree.ts`, `src/pipeline/execution/work-identity.ts`, `test/execution-worktree.test.ts`, `test/external-work-identity.test.ts` |
-| validation / review round | repository grader 後、current head の detached read-only worktree で perspective ごとの review を実行。local JSON store の `PrRevision.ordinal`, `EvalRun.attempt/perspective/headSha`, `AgentInvocation` と PostgreSQL release receipt に証拠を保持 | `src/pipeline/execution/live.ts`, `src/pipeline/execution/repository-pr.ts`, `src/pipeline/execution/perspective-session.ts`, `src/evidence/release-projection.ts`, `test/runner-adapter.test.ts`, `test/finding-lineage.test.ts` |
-| repair / re-review | request changes を Repair Brief に正規化し、同じ PR branch に次 commit を作る。新 head は旧 approval を stale にし、全 perspective を再実行。process 内 loop は `maxRepairs + 1` で停止 | `src/pipeline/execution/loop.ts`, `src/pipeline/repair.ts`, `src/domain/pr-lifecycle.ts`, `test/repair-loop.test.ts`, `test/pr-lifecycle-immutability.test.ts` |
-| merge | current head の required perspective、grader/check、blocking thread、mergeability を fresh snapshot で再検証し、expected SHA 付き merge。release receipt の merge intent を先に durable 化 | `src/pipeline/execution/pr-native.ts`, `src/evidence/release-projection.ts`, `test/pr-native-gate.test.ts`, `test/release-projection.integration.test.ts` |
-| release | GitHub の merged head、merge SHA、Issue completion、default branch reachability を観測し、release を `merged`、job/attempt/lease を terminal にする。親 Epic close は frozen Source Issue から冪等 reconcile | `src/runner/adapter.ts`, `src/runner/service.ts`, `src/control-store/store.ts`, `src/evidence/release-projection.ts`, `test/release-receipt-store.integration.test.ts` |
+| ready 観測 | enabled Registration の Issue monitor が GitHub snapshot を poll し、`agentops.triage` job を冪等 enqueue | `apps/control-plane/internal/control/monitor.go`, `apps/control-plane/internal/control/router.go`, `apps/agentops/src/runner/monitor-broker.ts`, `apps/control-plane/internal/control/monitor_test.go` |
+| ready 判定と claim | triage が current Issue を再取得し、人間が付けた exact ready label を確認する。`promote_triage_job` が triage lease 完了、claim、ready-time Source Issue snapshot、release authority、`agentops.runner` job を同一 transaction で確定 | `apps/agentops/src/triage/service.ts`, `apps/agentops/src/control-store/store.ts`, `db/control-store/migrations/0007_multi_repository_triage.sql`, `apps/agentops/test/control-store.integration.test.ts` |
+| runner claim | ACTIVE lifecycle と current Registration version を再検証し、single-flight job lease と attempt を取得。heartbeat、expiry reclaim、有限 retry を PostgreSQL に記録 | `apps/agentops/src/runner/service.ts`, `apps/agentops/src/control-store/store.ts`, `db/control-store/migrations/0003_isolated_runner.sql`, `apps/agentops/test/runner-service.test.ts`, `apps/agentops/test/control-store.integration.test.ts` |
+| planning | job-scoped isolated checkout/store 上で Source Issue を claim 済みとして intake し、planning session を実行。`claimed → planning → accepted / awaiting-design / needs-human-review` をローカル store、operator progress を PostgreSQL に記録 | `apps/agentops/src/runner/adapter.ts`, `apps/agentops/src/intake/development-turn.ts`, `apps/agentops/src/intake/planning-enrichment.ts`, `apps/agentops/test/runner-adapter.test.ts` |
+| conditional design | planning candidate が UI design authority を要求した場合だけ design resolution と deterministic acceptance gate を通す。不成立は human review へ fail closed | `apps/agentops/src/intake/development-turn.ts`, `apps/agentops/src/designflow/decision-gate.ts`, `apps/agentops/src/designflow/contract-consumer.ts` |
+| implementation / PR | generator の隔離 worktree/branch で commit を作り、external work identity を検証して push、PR を作成または exact-correlated PR を再利用。`PRRevision(pr, head SHA)` を生成 | `apps/agentops/src/pipeline/execution/live.ts`, `apps/agentops/src/pipeline/execution/gate.ts`, `apps/agentops/src/pipeline/execution/worktree.ts`, `apps/agentops/src/pipeline/execution/work-identity.ts`, `apps/agentops/test/execution-worktree.test.ts`, `apps/agentops/test/external-work-identity.test.ts` |
+| validation / review round | repository grader 後、current head の detached read-only worktree で perspective ごとの review を実行。local JSON store の `PrRevision.ordinal`, `EvalRun.attempt/perspective/headSha`, `AgentInvocation` と PostgreSQL release receipt に証拠を保持 | `apps/agentops/src/pipeline/execution/live.ts`, `apps/agentops/src/pipeline/execution/repository-pr.ts`, `apps/agentops/src/pipeline/execution/perspective-session.ts`, `apps/agentops/src/evidence/release-projection.ts`, `apps/agentops/test/runner-adapter.test.ts`, `apps/agentops/test/finding-lineage.test.ts` |
+| repair / re-review | request changes を Repair Brief に正規化し、同じ PR branch に次 commit を作る。新 head は旧 approval を stale にし、全 perspective を再実行。process 内 loop は `maxRepairs + 1` で停止 | `apps/agentops/src/pipeline/execution/loop.ts`, `apps/agentops/src/pipeline/repair.ts`, `apps/agentops/src/domain/pr-lifecycle.ts`, `apps/agentops/test/repair-loop.test.ts`, `apps/agentops/test/pr-lifecycle-immutability.test.ts` |
+| merge | current head の required perspective、grader/check、blocking thread、mergeability を fresh snapshot で再検証し、expected SHA 付き merge。release receipt の merge intent を先に durable 化 | `apps/agentops/src/pipeline/execution/pr-native.ts`, `apps/agentops/src/evidence/release-projection.ts`, `apps/agentops/test/pr-native-gate.test.ts`, `apps/agentops/test/release-projection.integration.test.ts` |
+| release | GitHub の merged head、merge SHA、Issue completion、default branch reachability を観測し、release を `merged`、job/attempt/lease を terminal にする。親 Epic close は frozen Source Issue から冪等 reconcile | `apps/agentops/src/runner/adapter.ts`, `apps/agentops/src/runner/service.ts`, `apps/agentops/src/control-store/store.ts`, `apps/agentops/src/evidence/release-projection.ts`, `apps/agentops/test/release-receipt-store.integration.test.ts` |
 
 ### Dashboard / progress / lineage / merge の現状と不足
 
 | 関心 | 既存実装 | 不足 |
 | --- | --- | --- |
-| 監視 repository 登録 | `internal/control/api.go`, `internal/control/store.go`, `internal/control/dashboard/{index.html,dashboard.js}` は PostgreSQL Registration の create/list/version-fenced update/disable/re-enable と command idempotency を持つ | create 時は canonical shape しか検証せず、GitHub App の到達性・repository access・required permission を表示しない。monitor/triage/credential broker は `AGENTOPS_MONITOR_REPOSITORIES`、runner credential は `AGENTOPS_RUNNER_REPOSITORIES` にも拘束され、durable Registration が単独の運転 SoT になっていない |
-| Issue 進捗 | migration 14/15 の `development_progress_events`、`internal/control/store.go`、`cmd/agentopsctl progress`、dashboard の Issue section が durable history を表示 | event log の最新 timestamp を current とみなす。terminal job/release から canonical current state を投影せず、表示語彙も requested Kanban lane より粗い |
+| 監視 repository 登録 | `apps/control-plane/internal/control/api.go`, `apps/control-plane/internal/control/store.go`, `apps/control-plane/internal/control/dashboard/{index.html,dashboard.js}` は PostgreSQL Registration の create/list/version-fenced update/disable/re-enable と command idempotency を持つ | create 時は canonical shape しか検証せず、GitHub App の到達性・repository access・required permission を表示しない。monitor/triage/credential broker は `AGENTOPS_MONITOR_REPOSITORIES`、runner credential は `AGENTOPS_RUNNER_REPOSITORIES` にも拘束され、durable Registration が単独の運転 SoT になっていない |
+| Issue 進捗 | migration 14/15 の `development_progress_events`、`apps/control-plane/internal/control/store.go`、`apps/control-plane/cmd/agentopsctl progress`、dashboard の Issue section が durable history を表示 | event log の最新 timestamp を current とみなす。terminal job/release から canonical current state を投影せず、表示語彙も requested Kanban lane より粗い |
 | review round | local store の `PrRevision.ordinal`, `EvalRun.attempt/perspective`, release review receipts は head-bound で再起動後も job state volume から復元 | PostgreSQL operator projection に round、perspective outcome、finding count、repair/re-review 関係が first-class field として無く、dashboard だけでは review round を復元できない |
 | gate 滞留時間 | event の `occurred_at` と lease heartbeat はある | gate entered/left/deadline/SLA を durable に持たず、待機時間は導出も表示もされない。timeout policy も Registration ごとに設定できない |
 | human escalation | planning ambiguity、stuck generator、review exhaustion は progress blocker/next gate と `needs-human-review` に写る | SLA 超過 escalation の one-shot identity、target SHA、evidence、required human action が無い。通知 dedup も無い |
 | worktree / branch lineage | progress に worktree/branch/PR、release head に parent head、local PR revision に head lineage がある | review finding から分離した child issue/worktree/branch/PR の親 head、integration base、DAG、cycle/orphan guard が無い |
-| merge 条件 | `src/pipeline/execution/pr-native.ts` と release receipts が current expected SHA、全 review/check/thread、mergeability、merge intent/receipt を fail closed で検証 | child DAG を含む累積 branch の完了条件、全 child 統合後の current expected SHA による root merge は未実装 |
+| merge 条件 | `apps/agentops/src/pipeline/execution/pr-native.ts` と release receipts が current expected SHA、全 review/check/thread、mergeability、merge intent/receipt を fail closed で検証 | child DAG を含む累積 branch の完了条件、全 child 統合後の current expected SHA による root merge は未実装 |
 | release provenance / rollout | release receipt は consumer revision と runtime environment を保持し、`agentopsctl drain` は current attempt を保護 | dashboard/runner の同一 commit を operator view で比較できない。versioned staged rollout、health promotion、automatic rollback receipt が無い |
 
 ### 誤表示と取り残しの実装前証拠
 
-1. `internal/control/store.go` の `DevelopmentProgress` と `Projections` は
+1. `apps/control-plane/internal/control/store.go` の `DevelopmentProgress` と `Projections` は
    `occurred_at DESC, id DESC` の先頭 event を current にする。
 2. terminal job に既存 progress event が一件でもあると migration 15 の terminal backfill 対象外になる。
    そのため最後の event が `generation/running` のまま job が `failed` になると、CLI/dashboard は badge/state
@@ -53,7 +57,9 @@ control、capability-limited triage、isolated runner、PR-native review/release
    でなく progress event に依存する。runner crash/restart の間、claimed 表示を期限付き lease/recovery state に
    置き換える仕組みが無い。
 
-実装前対象テストは `go test ./internal/control ./cmd/agentopsctl` と runner/service/release の Vitest が成功した。
+実装前対象テストは
+`go test ./apps/control-plane/internal/control ./apps/control-plane/cmd/agentopsctl` と
+runner/service/release の Vitest が成功した。
 PostgreSQL integration と Playwright dashboard は `AGENTOPS_TEST_DATABASE_URL` 未設定のため実行前チェックでは
 skip / fail-fast になった。実装後は throwaway PostgreSQL を用意して migration/restart と headless E2E を実行する。
 
