@@ -29,7 +29,7 @@ import {
   releasePreMergeSemanticErrors,
   type DurableReleaseReceipt,
   type HistoricalDurableReleaseReceipt,
-  type LiveReleaseReceiptEvidenceV2,
+  type PersistedLiveReleaseReceiptEvidence,
   type ReleaseArtifact,
   type ReleaseMergeIntentReceipt,
   type ReleaseMergeReceipt,
@@ -161,6 +161,10 @@ interface MonitorBrokerRequestRow extends QueryResultRow {
   lease_token: string;
 }
 
+function persistedRegistrationConfiguration(value: unknown) {
+  return HistoricalRepositoryRegistrationConfigurationContract.parse(value);
+}
+
 function registration(row: RegistrationRow): RepositoryRegistration {
   return {
     id: row.id,
@@ -169,9 +173,7 @@ function registration(row: RegistrationRow): RepositoryRegistration {
     issueMonitorEnabled: row.issue_monitor_enabled,
     prMonitorEnabled: row.pr_monitor_enabled,
     executionEnabled: row.execution_enabled,
-    configuration: HistoricalRepositoryRegistrationConfigurationContract.parse(
-      row.configuration,
-    ),
+    configuration: persistedRegistrationConfiguration(row.configuration),
     version: Number(row.version),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -841,7 +843,9 @@ export class PostgresControlStore {
   }
 
   /** Assemble and independently certify one completed release from durable records only. */
-  async exportReleaseEvidence(releaseId: string): Promise<LiveReleaseReceiptEvidenceV2> {
+  async exportReleaseEvidence(
+    releaseId: string,
+  ): Promise<PersistedLiveReleaseReceiptEvidence> {
     const parsedId = z.string().uuid().parse(releaseId);
     return transaction(this.pool, async (client) => {
       await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
@@ -2601,7 +2605,7 @@ export class PostgresControlStore {
               issueMonitorEnabled: row.issue_monitor_enabled!,
               prMonitorEnabled: row.pr_monitor_enabled!,
               executionEnabled: row.execution_enabled!,
-              configuration: row.configuration ?? {},
+              configuration: persistedRegistrationConfiguration(row.configuration ?? {}),
               version: Number(row.current_version),
               createdAt: row.created_at!.toISOString(),
               updatedAt: row.updated_at!.toISOString(),

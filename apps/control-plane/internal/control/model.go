@@ -207,6 +207,16 @@ func validJSONObject(raw json.RawMessage) bool {
 	if decoder.Decode(&value) != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return false
 	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return false
+	}
+	for _, key := range []string{"releaseEvidence", "gateTimeoutSeconds"} {
+		member, present := members[key]
+		if present && bytes.Equal(bytes.TrimSpace(member), []byte("null")) {
+			return false
+		}
+	}
 	allowedGateKeys := map[string]struct{}{
 		"default": {}, "planning": {}, "design": {},
 		"repository-graders": {}, "review": {}, "merge": {},

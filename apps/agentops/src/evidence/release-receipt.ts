@@ -272,6 +272,11 @@ const RequiredReviewPerspectivesContract = z.array(z.enum(REVIEW_PERSPECTIVE_KEY
     });
   });
 
+const HistoricalRequiredReviewPerspectivesContract = z
+  .array(z.enum(REVIEW_PERSPECTIVE_KEYS))
+  .min(2)
+  .max(REVIEW_PERSPECTIVE_KEYS.length);
+
 export const ReleasePolicyContract = z.object({
   authority: z.enum(['human-ready-allowed', 'ai-triage-required']),
   requiredGateSignals: z.array(ReleaseGateSignalContract).min(1).max(64)
@@ -294,25 +299,14 @@ export const ReleasePolicyContract = z.object({
 }).strict();
 export type ReleasePolicy = z.infer<typeof ReleasePolicyContract>;
 
-/** Decode-only persisted policy; repository-grader names were historically open strings. */
+/**
+ * Decode-only persisted policy; grader names and requirement-array uniqueness
+ * were historically looser. New writers use ReleasePolicyContract above.
+ */
 export const HistoricalReleasePolicyContract = z.object({
   authority: z.enum(['human-ready-allowed', 'ai-triage-required']),
-  requiredGateSignals: z.array(HistoricalReleaseGateSignalContract).min(1).max(64)
-    .superRefine((signals, context) => {
-      const seen = new Set<string>();
-      signals.forEach((signal, index) => {
-        const key = `${signal.source}:${signal.name}`;
-        if (seen.has(key)) {
-          context.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: [index],
-            message: 'required gate signals must be unique by source and name',
-          });
-        }
-        seen.add(key);
-      });
-    }),
-  requiredReviewPerspectives: RequiredReviewPerspectivesContract,
+  requiredGateSignals: z.array(HistoricalReleaseGateSignalContract).min(1).max(64),
+  requiredReviewPerspectives: HistoricalRequiredReviewPerspectivesContract,
   minimumHeadEpochs: z.number().int().positive().max(32),
 }).strict();
 export type HistoricalReleasePolicy = z.infer<
@@ -378,19 +372,25 @@ const HistoricalLiveReleaseReceiptEvidenceV3Contract = z.object({
   }).strict(),
 }).strict();
 
-export const LiveReleaseReceiptEvidenceV2Contract = z.discriminatedUnion(
+export const PersistedLiveReleaseReceiptEvidenceContract = z.discriminatedUnion(
   'schemaVersion',
   [
     HistoricalLiveReleaseReceiptEvidenceV2Contract,
     HistoricalLiveReleaseReceiptEvidenceV3Contract,
   ],
 );
-export type LiveReleaseReceiptEvidenceV2 = z.infer<
-  typeof LiveReleaseReceiptEvidenceV2Contract
+export type PersistedLiveReleaseReceiptEvidence = z.infer<
+  typeof PersistedLiveReleaseReceiptEvidenceContract
 >;
 
+/** @deprecated Use the version-neutral persisted evidence decoder. */
+export const LiveReleaseReceiptEvidenceV2Contract =
+  PersistedLiveReleaseReceiptEvidenceContract;
+/** @deprecated Use PersistedLiveReleaseReceiptEvidence. */
+export type LiveReleaseReceiptEvidenceV2 = PersistedLiveReleaseReceiptEvidence;
+
 function receiptList(
-  evidence: LiveReleaseReceiptEvidenceV2,
+  evidence: PersistedLiveReleaseReceiptEvidence,
 ): HistoricalDurableReleaseReceipt[] {
   return [
     evidence.receipts.authority,
@@ -412,7 +412,7 @@ function signalKey(signal: { source: string; name: string }): string {
   return `${signal.source}:${signal.name}`;
 }
 
-function invocationById(evidence: LiveReleaseReceiptEvidenceV2) {
+function invocationById(evidence: PersistedLiveReleaseReceiptEvidence) {
   return new Map(
     evidence.receipts.runtime.flatMap((receipt) => receipt.invocations).map((invocation) => [
       invocation.invocationId,
@@ -427,7 +427,7 @@ function invocationById(evidence: LiveReleaseReceiptEvidenceV2) {
  * as release identity.
  */
 export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
-  const parsed = LiveReleaseReceiptEvidenceV2Contract.safeParse(input);
+  const parsed = PersistedLiveReleaseReceiptEvidenceContract.safeParse(input);
   if (!parsed.success) {
     return parsed.error.issues.map((issue) => (
       `${issue.path.join('.') || '$'}: ${issue.message}`
@@ -563,9 +563,6 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
   if (!finalBuild) errors.push('release.finalHead must have a build receipt');
 
   const requiredSignals = evidence.policy.requiredGateSignals.map(signalKey);
-  if (new Set(requiredSignals).size !== requiredSignals.length) {
-    errors.push('policy.requiredGateSignals must be unique by source and name');
-  }
   const finalGrades = new Map<string, HistoricalReleaseGradeReceipt>();
   for (const grade of evidence.receipts.grades) {
     const build = buildsByHead.get(grade.head);
@@ -658,9 +655,6 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
     errors.push('review evidence has fewer head epochs than policy requires');
   }
   const requiredPerspectives = evidence.policy.requiredReviewPerspectives;
-  if (new Set(requiredPerspectives).size !== requiredPerspectives.length) {
-    errors.push('policy.requiredReviewPerspectives must be unique');
-  }
   const finalEpoch = epochByHead.get(release.finalHead);
   if (
     finalEpoch === undefined
@@ -793,7 +787,9 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
   return [...new Set(errors)];
 }
 
-export function assertLiveReleaseReceiptEvidence(input: unknown): asserts input is LiveReleaseReceiptEvidenceV2 {
+export function assertLiveReleaseReceiptEvidence(
+  input: unknown,
+): asserts input is PersistedLiveReleaseReceiptEvidence {
   const errors = liveReleaseReceiptSemanticErrors(input);
   if (errors.length > 0) {
     throw new Error(`live release receipt semantics failed: ${errors.join('; ')}`);

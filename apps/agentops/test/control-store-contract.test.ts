@@ -130,6 +130,28 @@ describe('language-neutral control-store contract', () => {
     expect(HistoricalRepositoryRegistrationConfigurationContract.safeParse(
       historical.configuration,
     ).success).toBe(true);
+    const historicalDuplicates = {
+      ...fixture,
+      configuration: {
+        releaseEvidence: {
+          authority: 'human-ready-allowed',
+          requiredGateSignals: [
+            { source: 'repository-grader', name: 'unit_tests' },
+            { source: 'repository-grader', name: 'unit_tests' },
+          ],
+          requiredReviewPerspectives: ['security', 'security'],
+          minimumHeadEpochs: 1,
+        },
+      },
+    };
+    expect(validate(historicalDuplicates), validate.errors?.map(
+      (error) => error.message,
+    ).join(', ')).toBe(true);
+    expect(RepositoryRegistrationInput.safeParse(historicalDuplicates).success)
+      .toBe(false);
+    expect(HistoricalRepositoryRegistrationConfigurationContract.safeParse(
+      historicalDuplicates.configuration,
+    ).success).toBe(true);
     const unsafeConfiguration = {
       ...fixture,
       configuration: { command: 'host-native-daemon' },

@@ -187,8 +187,11 @@ integration('PostgreSQL control store', () => {
     const historicalConfiguration = {
       releaseEvidence: {
         authority: 'human-ready-allowed',
-        requiredGateSignals: [{ source: 'repository-grader', name: 'contracts' }],
-        requiredReviewPerspectives: ['security', 'codeQuality'],
+        requiredGateSignals: [
+          { source: 'repository-grader', name: 'contracts' },
+          { source: 'repository-grader', name: 'contracts' },
+        ],
+        requiredReviewPerspectives: ['security', 'security'],
         minimumHeadEpochs: 1,
       },
     };
@@ -213,6 +216,20 @@ integration('PostgreSQL control store', () => {
         configuration: historicalConfiguration,
       }),
     );
+    await enqueueRunner(store, created.id, created.version, '-historical-policy');
+    const lease = await store.acquireLease({
+      workerId: 'runner-historical-policy',
+      durationMs: 10_000,
+    });
+    expect(lease).not.toBeNull();
+    await expect(store.assertExecutionGuard({
+      token: lease!.token,
+      workerId: 'runner-historical-policy',
+      boundary: 'provider',
+    })).resolves.toMatchObject({
+      ok: true,
+      registration: { configuration: historicalConfiguration },
+    });
   });
 
   it('atomically fences racing enqueue and lease acquisition when drain commits', async () => {

@@ -31,6 +31,14 @@ describe('Hard Gate Signal Name published language', () => {
     expect(openapi.components.schemas.HistoricalReleaseEvidencePolicy.properties
       .requiredGateSignals.items.properties.name)
       .toEqual({ type: 'string', minLength: 1, maxLength: 128 });
+    expect(openapi.components.schemas.ReleaseEvidencePolicy.properties
+      .requiredGateSignals.uniqueItems).toBe(true);
+    expect(openapi.components.schemas.ReleaseEvidencePolicy.properties
+      .requiredReviewPerspectives.uniqueItems).toBe(true);
+    expect(openapi.components.schemas.HistoricalReleaseEvidencePolicy.properties
+      .requiredGateSignals.uniqueItems).toBeUndefined();
+    expect(openapi.components.schemas.HistoricalReleaseEvidencePolicy.properties
+      .requiredReviewPerspectives.uniqueItems).toBeUndefined();
   });
 
   it('closes EvalRun hard-gate keys over the canonical namespace', () => {

@@ -85,7 +85,7 @@ export type RepositoryRegistrationConfiguration = z.infer<
   typeof RepositoryRegistrationConfigurationContract
 >;
 
-/** Decode-only configuration for immutable Registration versions written before Stage 2. */
+/** Decode-only configuration for immutable versions with historical policy rules. */
 export const HistoricalRepositoryRegistrationConfigurationContract = z.object({
   releaseEvidence: HistoricalReleasePolicyContract.optional(),
   gateTimeoutSeconds: RegistrationGateTimeoutSecondsContract.optional(),

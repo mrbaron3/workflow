@@ -257,6 +257,63 @@ func TestRegistrationCommandsCarryStrictReleaseEvidenceConfiguration(t *testing.
 	}
 }
 
+func TestRegistrationCommandsRejectExplicitNullConfigurationMembers(t *testing.T) {
+	for _, member := range []string{"releaseEvidence", "gateTimeoutSeconds"} {
+		configuration := `{"` + member + `":null}`
+		t.Run(member+"/create", func(t *testing.T) {
+			store := &fakeAPIStore{}
+			request := httptest.NewRequest(
+				http.MethodPost,
+				"/v1/registrations",
+				bytes.NewBufferString(
+					`{"repository":"owner/null-create","configuration":`+configuration+`}`,
+				),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer control-token")
+			request.Header.Set("Idempotency-Key", "registration-null-create-"+member)
+			response := httptest.NewRecorder()
+			testAPI(store).Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest || store.creates != 0 ||
+				!bytes.Contains(response.Body.Bytes(), []byte(`"invalid_registration_input"`)) {
+				t.Fatalf(
+					"explicit null create member %s status=%d creates=%d body=%s",
+					member,
+					response.Code,
+					store.creates,
+					response.Body,
+				)
+			}
+		})
+
+		t.Run(member+"/patch", func(t *testing.T) {
+			store := &fakeAPIStore{}
+			request := httptest.NewRequest(
+				http.MethodPatch,
+				"/v1/registrations/"+testRegistrationID,
+				bytes.NewBufferString(`{"configuration":`+configuration+`}`),
+			)
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Authorization", "Bearer control-token")
+			request.Header.Set("If-Match", `"1"`)
+			request.Header.Set("Idempotency-Key", "registration-null-patch-"+member)
+			response := httptest.NewRecorder()
+			testAPI(store).Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusBadRequest ||
+				len(store.updatedPatch.Configuration) != 0 ||
+				!bytes.Contains(response.Body.Bytes(), []byte(`"invalid_registration_patch"`)) {
+				t.Fatalf(
+					"explicit null patch member %s status=%d configuration=%s body=%s",
+					member,
+					response.Code,
+					store.updatedPatch.Configuration,
+					response.Body,
+				)
+			}
+		})
+	}
+}
+
 func TestWebhookPersistsOnlyAfterValidSignatureAndIdentity(t *testing.T) {
 	store := &fakeAPIStore{}
 	handler := testAPI(store).Handler()
@@ -486,8 +543,9 @@ func TestStatusQueryFiltersAndFailsClosedWithLastSuccessfulTime(t *testing.T) {
 func TestStatusProjectionPreservesHistoricalRegistrationConfiguration(t *testing.T) {
 	configuration := json.RawMessage(`{"releaseEvidence":{` +
 		`"authority":"human-ready-allowed",` +
-		`"requiredGateSignals":[{"source":"repository-grader","name":"contracts"}],` +
-		`"requiredReviewPerspectives":["security","codeQuality"],` +
+		`"requiredGateSignals":[{"source":"repository-grader","name":"contracts"},` +
+		`{"source":"repository-grader","name":"contracts"}],` +
+		`"requiredReviewPerspectives":["security","security"],` +
 		`"minimumHeadEpochs":1}}`)
 	store := &fakeAPIStore{projections: []RegistrationProjection{{
 		Registration: Registration{

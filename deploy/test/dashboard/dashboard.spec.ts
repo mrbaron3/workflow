@@ -100,17 +100,20 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
     id: '00000000-0000-4000-8000-000000000016',
     mode: 'MONITOR_ONLY',
     ignoredReason: 'lifecycle_monitor_only',
-    recovery: 'agentopsctl start --mode ACTIVE',
+    recovery: 'agentopsctl start --mode ACTIVE --build',
   }, {
     id: '00000000-0000-4000-8000-000000000017',
     mode: 'OFF',
     ignoredReason: 'lifecycle_off',
-    recovery: 'agentopsctl start --mode MONITOR_ONLY',
+    recovery: 'agentopsctl start --mode MONITOR_ONLY --build',
+    alternative: 'agentopsctl start --mode ACTIVE --build',
   }, {
     id: '00000000-0000-4000-8000-000000000018',
     mode: 'DRAINING',
     ignoredReason: 'lifecycle_draining',
-    recovery: 'agentopsctl status で排出完了を確認してから agentopsctl start --mode ACTIVE',
+    recovery: 'agentopsctl start --mode ACTIVE --build',
+    status: 'active-leases=0 / in-flight-attempts=0',
+    persists: '排出完了後も DRAINING は維持されます',
   }] as const;
   const targetItem = snapshot.items.find((item) =>
     (item.registration as Record<string, unknown>).repository === 'example/browser-control')!;
@@ -371,7 +374,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(page.getByRole('alert')).toContainText('ページsnapshot');
   await expect(card.getByRole('button', { name: '編集' })).toBeEnabled();
   await card.getByText('配送・ジョブ詳細', { exact: true }).click();
-  await expect(card.getByRole('list', { name: '最近の配送結果' })).toBeVisible();
+  await expect(card.getByRole('list', { name: '最近の失敗・無視配送' })).toBeVisible();
   await expect(card).toContainText('Issue cursor advanced');
   await expect(card).toContainText('PR cursor advanced');
   await expect(card).not.toContainText('Issue poll');
@@ -403,6 +406,15 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
     await expect(page.locator('#delivery-title')).toBeFocused();
     await expect(page.locator('#delivery-detail')).toContainText(lifecycleDelivery.mode);
     await expect(page.locator('#delivery-detail')).toContainText(lifecycleDelivery.recovery);
+    if ('alternative' in lifecycleDelivery) {
+      await expect(page.locator('#delivery-detail')).toContainText(lifecycleDelivery.alternative);
+    }
+    if ('status' in lifecycleDelivery) {
+      await expect(page.locator('#delivery-detail')).toContainText(lifecycleDelivery.status);
+    }
+    if ('persists' in lifecycleDelivery) {
+      await expect(page.locator('#delivery-detail')).toContainText(lifecycleDelivery.persists);
+    }
     await expect(page.locator('#retry-delivery')).toBeDisabled();
     await page.locator('#delivery-dialog [data-delivery-close]').last().click();
   }

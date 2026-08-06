@@ -49,10 +49,10 @@
     return `${outcome.outcome}${outcome.reason ? ` (${outcome.reason})` : ''}${recoverability}`;
   };
   const deliveryRecoveryReason = (reason) => ({
-    monitor_only: 'MONITOR_ONLY: 監視は継続していますが実行キューは停止中です。実行を再開するには agentopsctl start --mode ACTIVE を実行してください。',
-    lifecycle_monitor_only: 'MONITOR_ONLY: 監視は継続していますが実行キューは停止中です。実行を再開するには agentopsctl start --mode ACTIVE を実行してください。',
-    lifecycle_draining: 'DRAINING: 既存処理の排出中のため新規実行を開始しません。agentopsctl status で排出完了を確認してから agentopsctl start --mode ACTIVE を実行してください。',
-    lifecycle_off: 'OFF: 監視と実行を停止しています。agentopsctl start --mode MONITOR_ONLY または agentopsctl start --mode ACTIVE を実行してください。',
+    monitor_only: 'MONITOR_ONLY: 監視は継続していますが実行キューは停止中です。実行を再開するには agentopsctl start --mode ACTIVE --build を実行してください。',
+    lifecycle_monitor_only: 'MONITOR_ONLY: 監視は継続していますが実行キューは停止中です。実行を再開するには agentopsctl start --mode ACTIVE --build を実行してください。',
+    lifecycle_draining: 'DRAINING: 既存処理の排出中のため新規実行を開始しません。agentopsctl status で active-leases=0 / in-flight-attempts=0 を確認してください。排出完了後も DRAINING は維持されます。ACTIVE へ復旧するには agentopsctl start --mode ACTIVE --build を実行してください。',
+    lifecycle_off: 'OFF: 監視と実行を停止しています。agentopsctl start --mode MONITOR_ONLY --build または agentopsctl start --mode ACTIVE --build を実行してください。',
   }[reason] || reason || '—');
   const showDialogError = (id, error) => {
     const summary = byId(id);
@@ -376,7 +376,7 @@
           <span>Active job<br><strong>${escapeHTML(item.activeJobId || '—')} / ${escapeHTML(item.activeJobState || '—')} / version ${escapeHTML(item.activeJobRegistrationVersion || '—')}</strong></span>
           <span>Last error<br><strong>${escapeHTML(item.lastJobFailure?.lastError || '—')}</strong></span>
           <span>Gate SLA<br><strong>${Number(r.configuration?.gateTimeoutSeconds?.default || 3600)} seconds default</strong></span>
-          <ul class="delivery-list" aria-label="最近の配送結果">${deliveries || '<li>配送結果はありません</li>'}</ul>
+          <ul class="delivery-list" aria-label="最近の失敗・無視配送">${deliveries || '<li>失敗・無視配送はありません</li>'}</ul>
         </div>
       </details>
     </article>`;
