@@ -24,6 +24,13 @@ describe('Hard Gate Signal Name published language', () => {
     expect(openapi.components.schemas.ReleaseEvidencePolicy.properties
       .requiredGateSignals.items.oneOf[0].properties.name.enum)
       .toEqual(HARD_GATE_SIGNAL_NAMES);
+    expect(openapi.components.schemas.RegistrationInput.properties.configuration.$ref)
+      .toBe('#/components/schemas/RegistrationConfiguration');
+    expect(openapi.components.schemas.Registration.properties.configuration.$ref)
+      .toBe('#/components/schemas/HistoricalRegistrationConfiguration');
+    expect(openapi.components.schemas.HistoricalReleaseEvidencePolicy.properties
+      .requiredGateSignals.items.properties.name)
+      .toEqual({ type: 'string', minLength: 1, maxLength: 128 });
   });
 
   it('closes EvalRun hard-gate keys over the canonical namespace', () => {

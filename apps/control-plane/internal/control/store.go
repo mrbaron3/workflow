@@ -42,11 +42,12 @@ const (
 
 // ManagesComponent reports whether this topology owns a runtime component.
 func (topology RuntimeTopology) ManagesComponent(component string) bool {
-	switch topology {
-	case RuntimeTopologyLegacyCLIForwarder:
-		return true
-	case RuntimeTopologySignedWebhookIngress:
-		return component != ComponentForwarder
+	switch component {
+	case ComponentIssueMonitor, ComponentPRMonitor, ComponentExecution, ComponentQueue:
+		return topology == RuntimeTopologyLegacyCLIForwarder ||
+			topology == RuntimeTopologySignedWebhookIngress
+	case ComponentForwarder:
+		return topology == RuntimeTopologyLegacyCLIForwarder
 	default:
 		return false
 	}

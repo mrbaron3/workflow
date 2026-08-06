@@ -483,6 +483,32 @@ func TestStatusQueryFiltersAndFailsClosedWithLastSuccessfulTime(t *testing.T) {
 	}
 }
 
+func TestStatusProjectionPreservesHistoricalRegistrationConfiguration(t *testing.T) {
+	configuration := json.RawMessage(`{"releaseEvidence":{` +
+		`"authority":"human-ready-allowed",` +
+		`"requiredGateSignals":[{"source":"repository-grader","name":"contracts"}],` +
+		`"requiredReviewPerspectives":["security","codeQuality"],` +
+		`"minimumHeadEpochs":1}}`)
+	store := &fakeAPIStore{projections: []RegistrationProjection{{
+		Registration: Registration{
+			ID:            testRegistrationID,
+			Repository:    "owner/historical",
+			Configuration: configuration,
+			Version:       1,
+		},
+		Mode:       lifecycle.ModeMonitorOnly,
+		Components: map[string]ComponentProjection{},
+	}}}
+	request := httptest.NewRequest(http.MethodGet, "/v1/registrations", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"name":"contracts"`)) {
+		t.Fatalf("historical Registration response = %d: %s", response.Code, response.Body)
+	}
+}
+
 func TestMonitorOnlyModeDoesNotMaskStaleExecutionEvidence(t *testing.T) {
 	store := &fakeAPIStore{projections: []RegistrationProjection{{
 		Registration: Registration{

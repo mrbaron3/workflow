@@ -39,6 +39,7 @@ import {
   CanonicalRepository,
   EnqueueJobInput,
   GitHubLabelNameContract,
+  HistoricalRepositoryRegistrationConfigurationContract,
   IdempotencyConflictError,
   LeaseRejectedError,
   MonitorBrokerCursor,
@@ -168,7 +169,9 @@ function registration(row: RegistrationRow): RepositoryRegistration {
     issueMonitorEnabled: row.issue_monitor_enabled,
     prMonitorEnabled: row.pr_monitor_enabled,
     executionEnabled: row.execution_enabled,
-    configuration: row.configuration,
+    configuration: HistoricalRepositoryRegistrationConfigurationContract.parse(
+      row.configuration,
+    ),
     version: Number(row.version),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
@@ -214,7 +217,7 @@ function releaseRecordBase(row: ReleaseRow): Omit<ReleaseRecord, 'policy'> {
 function releaseRecord(row: ReleaseRow): ReleaseRecord {
   return {
     ...releaseRecordBase(row),
-    // Persisted v2 policies are immutable history. Every writer remains on
+    // Persisted v2/v3 policies are immutable history. Every writer remains on
     // ReleasePolicyContract, while every row reader accepts the historical
     // repository-grader namespace so upgrades cannot strand active recovery.
     policy: HistoricalReleasePolicyContract.parse(row.policy),

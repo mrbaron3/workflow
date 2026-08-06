@@ -31,6 +31,14 @@ func TestRuntimeTopologiesMakeLegacyForwarderOwnershipExplicit(t *testing.T) {
 	if !RuntimeTopologySignedWebhookIngress.ManagesComponent(ComponentIssueMonitor) {
 		t.Fatal("signed-ingress topology omitted the Issue Monitor")
 	}
+	for _, topology := range []RuntimeTopology{
+		RuntimeTopologyLegacyCLIForwarder,
+		RuntimeTopologySignedWebhookIngress,
+	} {
+		if topology.ManagesComponent("future_component") {
+			t.Fatalf("topology %q silently managed an unknown component", topology)
+		}
+	}
 }
 
 func TestOpenStoreRejectsImplicitTopologyBeforeConnecting(t *testing.T) {

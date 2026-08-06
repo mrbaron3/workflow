@@ -62,8 +62,10 @@ type Registration struct {
 	IssueMonitorEnabled bool   `json:"issueMonitorEnabled"`
 	PRMonitorEnabled    bool   `json:"prMonitorEnabled"`
 	ExecutionEnabled    bool   `json:"executionEnabled"`
-	// Configuration is a strict desired-state contract; arbitrary commands,
-	// credentials, paths, and environment remain unrepresentable.
+	// Configuration is persisted desired state. Readers preserve bounded
+	// historical grader aliases; create and patch writers enforce the current
+	// canonical contract, so arbitrary commands, credentials, paths, and
+	// environment remain unrepresentable.
 	Configuration json.RawMessage `json:"configuration"`
 	Version       int64           `json:"version"`
 	CreatedAt     time.Time       `json:"createdAt"`

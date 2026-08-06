@@ -100,17 +100,17 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
     id: '00000000-0000-4000-8000-000000000016',
     mode: 'MONITOR_ONLY',
     ignoredReason: 'lifecycle_monitor_only',
-    recovery: '実行を再開するには Operating Mode を ACTIVE に変更してください。',
+    recovery: 'agentopsctl start --mode ACTIVE',
   }, {
     id: '00000000-0000-4000-8000-000000000017',
     mode: 'OFF',
     ignoredReason: 'lifecycle_off',
-    recovery: 'Operating Mode を MONITOR_ONLY または ACTIVE に変更してください。',
+    recovery: 'agentopsctl start --mode MONITOR_ONLY',
   }, {
     id: '00000000-0000-4000-8000-000000000018',
     mode: 'DRAINING',
     ignoredReason: 'lifecycle_draining',
-    recovery: '排出完了を確認してから Operating Mode を ACTIVE に変更してください。',
+    recovery: 'agentopsctl status で排出完了を確認してから agentopsctl start --mode ACTIVE',
   }] as const;
   const targetItem = snapshot.items.find((item) =>
     (item.registration as Record<string, unknown>).repository === 'example/browser-control')!;
@@ -371,6 +371,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(page.getByRole('alert')).toContainText('ページsnapshot');
   await expect(card.getByRole('button', { name: '編集' })).toBeEnabled();
   await card.getByText('配送・ジョブ詳細', { exact: true }).click();
+  await expect(card.getByRole('list', { name: '最近の配送結果' })).toBeVisible();
   await expect(card).toContainText('Issue cursor advanced');
   await expect(card).toContainText('PR cursor advanced');
   await expect(card).not.toContainText('Issue poll');
@@ -394,8 +395,12 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
     }];
     await page.getByRole('button', { name: '再取得' }).click();
     await expect(page.locator('#mode')).toHaveText(lifecycleDelivery.mode);
+    await expect(page.locator('#live')).toContainText(
+      `Operating Mode ${lifecycleDelivery.mode}`,
+    );
     await card.getByText('配送・ジョブ詳細', { exact: true }).click();
     await card.locator(`[data-delivery="${lifecycleDelivery.id}"]`).click();
+    await expect(page.locator('#delivery-title')).toBeFocused();
     await expect(page.locator('#delivery-detail')).toContainText(lifecycleDelivery.mode);
     await expect(page.locator('#delivery-detail')).toContainText(lifecycleDelivery.recovery);
     await expect(page.locator('#retry-delivery')).toBeDisabled();

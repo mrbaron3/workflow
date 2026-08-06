@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { createHash } from 'node:crypto';
 
 import {
+  HistoricalReleasePolicyContract,
   ProviderModelSelectionContract,
   ReleaseRuntimeConsumerContract,
   ReleaseRuntimeEnvironmentContract,
@@ -65,6 +66,34 @@ export const MonitorBrokerResponse = z.object({
 }).strict();
 export type MonitorBrokerResponse = z.infer<typeof MonitorBrokerResponse>;
 
+const RegistrationGateTimeoutSecondsContract = z.object({
+  default: z.number().int().min(60).max(2_592_000).optional(),
+  planning: z.number().int().min(60).max(2_592_000).optional(),
+  design: z.number().int().min(60).max(2_592_000).optional(),
+  'repository-graders': z.number().int().min(60).max(2_592_000).optional(),
+  review: z.number().int().min(60).max(2_592_000).optional(),
+  merge: z.number().int().min(60).max(2_592_000).optional(),
+  'lease-recovery': z.number().int().min(60).max(2_592_000).optional(),
+}).strict();
+
+/** Canonical create/patch configuration for every new Registration version. */
+export const RepositoryRegistrationConfigurationContract = z.object({
+  releaseEvidence: ReleasePolicyContract.optional(),
+  gateTimeoutSeconds: RegistrationGateTimeoutSecondsContract.optional(),
+}).strict();
+export type RepositoryRegistrationConfiguration = z.infer<
+  typeof RepositoryRegistrationConfigurationContract
+>;
+
+/** Decode-only configuration for immutable Registration versions written before Stage 2. */
+export const HistoricalRepositoryRegistrationConfigurationContract = z.object({
+  releaseEvidence: HistoricalReleasePolicyContract.optional(),
+  gateTimeoutSeconds: RegistrationGateTimeoutSecondsContract.optional(),
+}).strict();
+export type HistoricalRepositoryRegistrationConfiguration = z.infer<
+  typeof HistoricalRepositoryRegistrationConfigurationContract
+>;
+
 export const RepositoryRegistrationInput = z.object({
   repository: z.string().trim().toLowerCase()
     .pipe(CanonicalRepository),
@@ -72,18 +101,7 @@ export const RepositoryRegistrationInput = z.object({
   issueMonitorEnabled: z.boolean().default(true),
   prMonitorEnabled: z.boolean().default(true),
   executionEnabled: z.boolean().default(true),
-  configuration: z.object({
-    releaseEvidence: ReleasePolicyContract.optional(),
-    gateTimeoutSeconds: z.object({
-      default: z.number().int().min(60).max(2_592_000).optional(),
-      planning: z.number().int().min(60).max(2_592_000).optional(),
-      design: z.number().int().min(60).max(2_592_000).optional(),
-      'repository-graders': z.number().int().min(60).max(2_592_000).optional(),
-      review: z.number().int().min(60).max(2_592_000).optional(),
-      merge: z.number().int().min(60).max(2_592_000).optional(),
-      'lease-recovery': z.number().int().min(60).max(2_592_000).optional(),
-    }).strict().optional(),
-  }).strict().default({}),
+  configuration: RepositoryRegistrationConfigurationContract.default({}),
 });
 export type RepositoryRegistrationInput = z.infer<typeof RepositoryRegistrationInput>;
 // Build the patch schema from the same leaf validators without carrying the
@@ -106,12 +124,14 @@ export const RepositoryRegistrationPatch = z.object({
 );
 export type RepositoryRegistrationPatch = z.infer<typeof RepositoryRegistrationPatch>;
 
-export interface RepositoryRegistration extends RepositoryRegistrationInput {
+export type RepositoryRegistration = Omit<RepositoryRegistrationInput, 'configuration'> & {
+  /** Persisted configuration; new create/patch writers remain canonical. */
+  configuration: HistoricalRepositoryRegistrationConfiguration;
   id: string;
   version: number;
   createdAt: string;
   updatedAt: string;
-}
+};
 
 export const JobSource = z.object({
   kind: z.enum(['webhook', 'poll', 'manual', 'recovery']),
