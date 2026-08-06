@@ -39,7 +39,100 @@
     },
     "configuration": {
       "type": "object",
-      "maxProperties": 0
+      "additionalProperties": false,
+      "properties": {
+        "mergeMethod": {
+          "enum": ["squash", "merge", "rebase"],
+          "default": "squash"
+        },
+        "releaseEvidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "authority",
+            "requiredGateSignals",
+            "requiredReviewPerspectives",
+            "minimumHeadEpochs"
+          ],
+          "properties": {
+            "authority": {
+              "enum": ["human-ready-allowed", "ai-triage-required"]
+            },
+            "requiredGateSignals": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["source", "name"],
+                    "properties": {
+                      "source": { "const": "repository-grader" },
+                      "name": {
+                        "enum": [
+                          "build",
+                          "typecheck",
+                          "unit_tests",
+                          "api_tests",
+                          "grader_profile",
+                          "secrets_scan",
+                          "scope_check",
+                          "playwright"
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["source", "name"],
+                    "properties": {
+                      "source": { "const": "github-check" },
+                      "name": { "type": "string", "minLength": 1, "maxLength": 128 }
+                    }
+                  }
+                ]
+              }
+            },
+            "requiredReviewPerspectives": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 7,
+              "items": {
+                "enum": [
+                  "functionality",
+                  "codeQuality",
+                  "testQuality",
+                  "ux",
+                  "accessibility",
+                  "security",
+                  "type-design"
+                ]
+              }
+            },
+            "minimumHeadEpochs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            }
+          }
+        },
+        "gateTimeoutSeconds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": { "type": "integer", "minimum": 60, "maximum": 2592000 },
+            "planning": { "type": "integer", "minimum": 60, "maximum": 2592000 },
+            "design": { "type": "integer", "minimum": 60, "maximum": 2592000 },
+            "repository-graders": { "type": "integer", "minimum": 60, "maximum": 2592000 },
+            "review": { "type": "integer", "minimum": 60, "maximum": 2592000 },
+            "merge": { "type": "integer", "minimum": 60, "maximum": 2592000 },
+            "lease-recovery": { "type": "integer", "minimum": 60, "maximum": 2592000 }
+          }
+        }
+      }
     },
     "version": {
       "type": "integer",

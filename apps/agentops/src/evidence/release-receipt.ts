@@ -14,6 +14,191 @@ const Timestamp = z.string().datetime({ offset: true });
 const ReceiptKey = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
 const BoundedName = z.string().min(1).max(128);
 
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Read legacy v2/v3 receipts through one explicit anti-corruption layer. New
+ * writes are canonical v4. A legacy invocation without the additive key can
+ * only fall back to its opaque ref; the original provider key is not claimed
+ * to be recoverable.
+ */
+function normalizeDurableReceipt(input: unknown): unknown {
+  const value = record(input);
+  if (!value) return input;
+  if (value.kind === 'authority' && value.route === 'ai-triage-then-human-ready'
+    && value.triageInvocationRef === undefined && value.triageInvocationId !== undefined) {
+    const { triageInvocationId, ...rest } = value;
+    return { ...rest, triageInvocationRef: triageInvocationId };
+  }
+  if ((value.kind === 'build' || value.kind === 'review')
+    && value.invocationRef === undefined && value.invocationId !== undefined) {
+    const { invocationId, ...rest } = value;
+    return normalizeDurableReceipt({ ...rest, invocationRef: invocationId });
+  }
+  if (value.kind === 'runtime-provenance' && Array.isArray(value.invocations)) {
+    return {
+      ...value,
+      invocations: value.invocations.map((candidate) => {
+        const invocation = record(candidate);
+        if (!invocation || invocation.invocationRef !== undefined) return candidate;
+        const { invocationId, ...rest } = invocation;
+        return {
+          ...rest,
+          invocationKey: invocation.invocationKey ?? invocationId,
+          invocationRef: invocationId,
+        };
+      }),
+    };
+  }
+  if (value.kind === 'review') {
+    const findings = Array.isArray(value.findings) ? value.findings : [];
+    const legacyVerdict = value.verdict === 'approved'
+      ? 'approve'
+      : value.verdict === 'findings'
+        ? 'request_changes'
+        : value.verdict;
+    return {
+      ...value,
+      verdict: legacyVerdict,
+      hasFindings: value.hasFindings ?? findings.length > 0,
+    };
+  }
+  if ((value.kind === 'merge-intent' || value.kind === 'merge')
+    && value.pullRequestNumber === undefined && value.pullRequest !== undefined) {
+    const { pullRequest, ...rest } = value;
+    return normalizeDurableReceipt({ ...rest, pullRequestNumber: pullRequest });
+  }
+  if (value.kind === 'merge' && value.sourceIssueClosure === undefined
+    && value.issueState === 'CLOSED' && value.issueStateReason === 'COMPLETED') {
+    const { issueState: _issueState, issueStateReason: _issueStateReason, ...rest } = value;
+    return { ...rest, sourceIssueClosure: 'completed' };
+  }
+  return value;
+}
+
+function normalizeLiveReleaseEvidence(input: unknown): unknown {
+  const value = record(input);
+  const release = record(value?.release);
+  const receipts = record(value?.receipts);
+  if (!value || !release || !receipts) return input;
+  const canonicalRelease = release.pullRequestNumber === undefined
+    && release.pullRequest !== undefined
+    ? (() => {
+      const { pullRequest, ...rest } = release;
+      return { ...rest, pullRequestNumber: pullRequest };
+    })()
+    : release;
+  return {
+    ...value,
+    release: canonicalRelease,
+    receipts: {
+      ...receipts,
+      authority: normalizeDurableReceipt(receipts.authority),
+      requirementsAuthority: receipts.requirementsAuthority === undefined
+        ? undefined
+        : normalizeDurableReceipt(receipts.requirementsAuthority),
+      runtime: Array.isArray(receipts.runtime)
+        ? receipts.runtime.map(normalizeDurableReceipt)
+        : receipts.runtime,
+      builds: Array.isArray(receipts.builds)
+        ? receipts.builds.map(normalizeDurableReceipt)
+        : receipts.builds,
+      grades: Array.isArray(receipts.grades)
+        ? receipts.grades.map(normalizeDurableReceipt)
+        : receipts.grades,
+      reviews: Array.isArray(receipts.reviews)
+        ? receipts.reviews.map(normalizeDurableReceipt)
+        : receipts.reviews,
+      findingResolutions: Array.isArray(receipts.findingResolutions)
+        ? receipts.findingResolutions.map(normalizeDurableReceipt)
+        : receipts.findingResolutions,
+      mergeIntent: normalizeDurableReceipt(receipts.mergeIntent),
+      merge: normalizeDurableReceipt(receipts.merge),
+      interventions: Array.isArray(receipts.interventions)
+        ? receipts.interventions.map(normalizeDurableReceipt)
+        : receipts.interventions,
+    },
+  };
+}
+
+/**
+ * Serialize a canonical in-memory certificate back to the immutable v2 wire.
+ * This is used only for releases that predate frozen requirements authority.
+ * The old two-valued review field cannot preserve `needs_human`; that loss is
+ * a property of the historical wire and is never used for new v4 evidence.
+ */
+export function legacyLiveReleaseReceiptEvidenceWire(
+  evidence: LiveReleaseReceiptEvidence,
+): unknown {
+  const legacyReceipt = (receipt: DurableReleaseReceipt): unknown => {
+    if (receipt.kind === 'authority'
+      && receipt.route === 'ai-triage-then-human-ready') {
+      const { triageInvocationRef, ...rest } = receipt;
+      return { ...rest, triageInvocationId: triageInvocationRef };
+    }
+    if (receipt.kind === 'build') {
+      const { invocationRef, ...rest } = receipt;
+      return { ...rest, invocationId: invocationRef };
+    }
+    if (receipt.kind === 'review') {
+      const { invocationRef, hasFindings: _hasFindings, ...rest } = receipt;
+      return {
+        ...rest,
+        invocationId: invocationRef,
+        verdict: receipt.verdict === 'approve' ? 'approved' : 'findings',
+      };
+    }
+    if (receipt.kind === 'runtime-provenance') {
+      return {
+        ...receipt,
+        invocations: receipt.invocations.map((invocation) => {
+          const { invocationRef, ...rest } = invocation;
+          return { ...rest, invocationId: invocationRef };
+        }),
+      };
+    }
+    if (receipt.kind === 'merge-intent') {
+      const { pullRequestNumber, ...rest } = receipt;
+      return { ...rest, pullRequest: pullRequestNumber };
+    }
+    if (receipt.kind === 'merge') {
+      const {
+        pullRequestNumber,
+        sourceIssueClosure: _sourceIssueClosure,
+        ...rest
+      } = receipt;
+      return {
+        ...rest,
+        pullRequest: pullRequestNumber,
+        issueState: 'CLOSED',
+        issueStateReason: 'COMPLETED',
+      };
+    }
+    return receipt;
+  };
+  const { pullRequestNumber, ...release } = evidence.release;
+  return {
+    ...evidence,
+    schemaVersion: '2.0',
+    release: { ...release, pullRequest: pullRequestNumber },
+    receipts: {
+      authority: legacyReceipt(evidence.receipts.authority),
+      runtime: evidence.receipts.runtime.map(legacyReceipt),
+      builds: evidence.receipts.builds.map(legacyReceipt),
+      grades: evidence.receipts.grades.map(legacyReceipt),
+      reviews: evidence.receipts.reviews.map(legacyReceipt),
+      findingResolutions: evidence.receipts.findingResolutions.map(legacyReceipt),
+      mergeIntent: legacyReceipt(evidence.receipts.mergeIntent),
+      merge: legacyReceipt(evidence.receipts.merge),
+      interventions: evidence.receipts.interventions.map(legacyReceipt),
+    },
+  };
+}
+
 const ReceiptBase = z.object({
   receiptId: Uuid,
   receiptKey: ReceiptKey,
@@ -47,7 +232,7 @@ const AiTriageAuthority = ReceiptBase.extend({
   actor: HumanActor,
   readyLabel: BoundedName,
   readyAt: Timestamp,
-  triageInvocationId: BoundedName,
+  triageInvocationRef: BoundedName,
   triageCompletedAt: Timestamp,
   sourceDigest: Sha256,
   decision: z.object({
@@ -66,21 +251,25 @@ export type ReleaseRequirementsAuthorityReceipt = z.infer<
   typeof ReleaseRequirementsAuthorityReceiptContract
 >;
 
-export const ReleaseAuthorityReceiptContract = z.discriminatedUnion('route', [
-  HumanReadyAuthority,
-  AiTriageAuthority,
-]);
+export const ReleaseAuthorityReceiptContract = z.preprocess(
+  normalizeDurableReceipt,
+  z.discriminatedUnion('route', [HumanReadyAuthority, AiTriageAuthority]),
+);
 export type ReleaseAuthorityReceipt = z.infer<
   typeof ReleaseAuthorityReceiptContract
 >;
 
-export const ReleaseBuildReceiptContract = ReceiptBase.extend({
+const CanonicalReleaseBuildReceiptContract = ReceiptBase.extend({
   kind: z.literal('build'),
   head: Head,
   parentHead: Head.nullable(),
-  invocationId: BoundedName,
+  invocationRef: BoundedName,
   role: z.enum(['generator', 'repair']),
 }).strict();
+export const ReleaseBuildReceiptContract = z.preprocess(
+  normalizeDurableReceipt,
+  CanonicalReleaseBuildReceiptContract,
+);
 export type ReleaseBuildReceipt = z.infer<typeof ReleaseBuildReceiptContract>;
 
 export const ReleaseGradeReceiptContract = ReceiptBase.extend({
@@ -95,18 +284,38 @@ export const ReleaseGradeReceiptContract = ReceiptBase.extend({
 }).strict();
 export type ReleaseGradeReceipt = z.infer<typeof ReleaseGradeReceiptContract>;
 
-export const ReleaseReviewReceiptContract = ReceiptBase.extend({
+const CanonicalReleaseReviewReceiptContract = ReceiptBase.extend({
   kind: z.literal('review'),
   head: Head,
   headEpoch: z.number().int().positive().max(1_024),
   perspective: BoundedName,
-  invocationId: BoundedName,
-  verdict: z.enum(['approved', 'findings']),
+  invocationRef: BoundedName,
+  verdict: z.enum(['approve', 'request_changes', 'needs_human']),
+  hasFindings: z.boolean(),
   findings: z.array(z.object({
     findingId: BoundedName,
     lineage: z.enum(['new', 'persisted']),
   }).strict()).max(1_024),
-}).strict();
+}).strict().superRefine((review, context) => {
+  if (review.hasFindings !== (review.findings.length > 0)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['hasFindings'],
+      message: 'hasFindings must agree with findings',
+    });
+  }
+  if (review.verdict === 'approve' && review.hasFindings) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['findings'],
+      message: 'approve verdict cannot contain findings',
+    });
+  }
+});
+export const ReleaseReviewReceiptContract = z.preprocess(
+  normalizeDurableReceipt,
+  CanonicalReleaseReviewReceiptContract,
+);
 export type ReleaseReviewReceipt = z.infer<typeof ReleaseReviewReceiptContract>;
 
 export const ReleaseFindingResolutionReceiptContract = ReceiptBase.extend({
@@ -143,42 +352,54 @@ export const ReleaseRuntimeEnvironmentContract = z.object({
   digest: Digest,
 }).strict();
 
-export const ReleaseRuntimeReceiptContract = ReceiptBase.extend({
+const CanonicalReleaseRuntimeReceiptContract = ReceiptBase.extend({
   kind: z.literal('runtime-provenance'),
   consumer: ReleaseRuntimeConsumerContract,
   environment: ReleaseRuntimeEnvironmentContract,
   invocations: z.array(z.object({
-    invocationId: BoundedName,
+    invocationKey: BoundedName,
+    invocationRef: BoundedName,
     role: z.enum(['triage', 'planning', 'ui-design', 'generator', 'repair', 'reviewer']),
     provider: BoundedName,
     model: ProviderModelSelectionContract,
     head: Head.optional(),
   }).strict()).min(1).max(512),
 }).strict();
+export const ReleaseRuntimeReceiptContract = z.preprocess(
+  normalizeDurableReceipt,
+  CanonicalReleaseRuntimeReceiptContract,
+);
 export type ReleaseRuntimeReceipt = z.infer<typeof ReleaseRuntimeReceiptContract>;
 
-export const ReleaseMergeIntentReceiptContract = ReceiptBase.extend({
+const CanonicalReleaseMergeIntentReceiptContract = ReceiptBase.extend({
   kind: z.literal('merge-intent'),
-  pullRequest: z.number().int().positive().max(2_147_483_647),
+  pullRequestNumber: z.number().int().positive().max(2_147_483_647),
   expectedHead: Head,
   observedPrHead: Head,
 }).strict();
+export const ReleaseMergeIntentReceiptContract = z.preprocess(
+  normalizeDurableReceipt,
+  CanonicalReleaseMergeIntentReceiptContract,
+);
 export type ReleaseMergeIntentReceipt = z.infer<
   typeof ReleaseMergeIntentReceiptContract
 >;
 
-export const ReleaseMergeReceiptContract = ReceiptBase.extend({
+const CanonicalReleaseMergeReceiptContract = ReceiptBase.extend({
   kind: z.literal('merge'),
-  pullRequest: z.number().int().positive().max(2_147_483_647),
+  pullRequestNumber: z.number().int().positive().max(2_147_483_647),
   expectedHead: Head,
   observedPrHead: Head,
   mergeSha: Head,
   actor: BoundedName,
-  issueState: z.literal('CLOSED'),
-  issueStateReason: z.literal('COMPLETED'),
+  sourceIssueClosure: z.literal('completed'),
   mergeReachableFromDefaultBranch: z.literal(true),
   mergedAt: Timestamp,
 }).strict();
+export const ReleaseMergeReceiptContract = z.preprocess(
+  normalizeDurableReceipt,
+  CanonicalReleaseMergeReceiptContract,
+);
 export type ReleaseMergeReceipt = z.infer<typeof ReleaseMergeReceiptContract>;
 
 export const ReleaseInterventionReceiptContract = ReceiptBase.extend({
@@ -191,8 +412,7 @@ export type ReleaseInterventionReceipt = z.infer<
 >;
 
 export const DurableReleaseReceiptContract = z.union([
-  HumanReadyAuthority,
-  AiTriageAuthority,
+  ReleaseAuthorityReceiptContract,
   ReleaseRequirementsAuthorityReceiptContract,
   ReleaseBuildReceiptContract,
   ReleaseGradeReceiptContract,
@@ -235,13 +455,13 @@ export const ReleaseArtifactContract = z.object({
 }).strict();
 export type ReleaseArtifact = z.infer<typeof ReleaseArtifactContract>;
 
-export const LiveReleaseReceiptEvidenceV2Contract = z.object({
-  schemaVersion: z.enum(['2.0', '3.0']),
+const CanonicalLiveReleaseReceiptEvidenceContract = z.object({
+  schemaVersion: z.enum(['2.0', '3.0', '4.0']),
   release: z.object({
     id: Uuid,
     repository: Repository,
     issueNumber: z.number().int().positive().max(2_147_483_647),
-    pullRequest: z.number().int().positive().max(2_147_483_647),
+    pullRequestNumber: z.number().int().positive().max(2_147_483_647),
     finalHead: Head,
     mergeSha: Head,
     createdAt: Timestamp,
@@ -263,11 +483,11 @@ export const LiveReleaseReceiptEvidenceV2Contract = z.object({
   artifacts: z.array(ReleaseArtifactContract).min(1).max(256),
   result: z.enum(['passed', 'passed-with-interventions']),
 }).strict().superRefine((value, context) => {
-  if (value.schemaVersion === '3.0' && !value.receipts.requirementsAuthority) {
+  if (value.schemaVersion !== '2.0' && !value.receipts.requirementsAuthority) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['receipts', 'requirementsAuthority'],
-      message: 'requirementsAuthority is required for release evidence v3',
+      message: 'requirementsAuthority is required for release evidence v3+',
     });
   }
   if (value.schemaVersion === '2.0' && value.receipts.requirementsAuthority) {
@@ -278,11 +498,19 @@ export const LiveReleaseReceiptEvidenceV2Contract = z.object({
     });
   }
 });
-export type LiveReleaseReceiptEvidenceV2 = z.infer<
-  typeof LiveReleaseReceiptEvidenceV2Contract
+export const LiveReleaseReceiptEvidenceContract = z.preprocess(
+  normalizeLiveReleaseEvidence,
+  CanonicalLiveReleaseReceiptEvidenceContract,
+);
+/** @deprecated Use LiveReleaseReceiptEvidenceContract. */
+export const LiveReleaseReceiptEvidenceV2Contract = LiveReleaseReceiptEvidenceContract;
+export type LiveReleaseReceiptEvidence = z.infer<
+  typeof LiveReleaseReceiptEvidenceContract
 >;
+/** @deprecated Use LiveReleaseReceiptEvidence. */
+export type LiveReleaseReceiptEvidenceV2 = LiveReleaseReceiptEvidence;
 
-function receiptList(evidence: LiveReleaseReceiptEvidenceV2): DurableReleaseReceipt[] {
+function receiptList(evidence: LiveReleaseReceiptEvidence): DurableReleaseReceipt[] {
   return [
     evidence.receipts.authority,
     ...(evidence.receipts.requirementsAuthority
@@ -303,10 +531,10 @@ function signalKey(signal: { source: string; name: string }): string {
   return `${signal.source}:${signal.name}`;
 }
 
-function invocationById(evidence: LiveReleaseReceiptEvidenceV2) {
+function invocationByRef(evidence: LiveReleaseReceiptEvidence) {
   return new Map(
     evidence.receipts.runtime.flatMap((receipt) => receipt.invocations).map((invocation) => [
-      invocation.invocationId,
+      invocation.invocationRef,
       invocation,
     ]),
   );
@@ -318,7 +546,7 @@ function invocationById(evidence: LiveReleaseReceiptEvidenceV2) {
  * as release identity.
  */
 export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
-  const parsed = LiveReleaseReceiptEvidenceV2Contract.safeParse(input);
+  const parsed = LiveReleaseReceiptEvidenceContract.safeParse(input);
   if (!parsed.success) {
     return parsed.error.issues.map((issue) => (
       `${issue.path.join('.') || '$'}: ${issue.message}`
@@ -399,19 +627,25 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
     errors.push('AI-triage-required policy needs an AI triage authority receipt');
   }
 
-  const invocations = invocationById(evidence);
+  const invocations = invocationByRef(evidence);
   const invocationCount = evidence.receipts.runtime.reduce(
     (count, receipt) => count + receipt.invocations.length,
     0,
   );
   if (invocations.size !== invocationCount) {
-    errors.push('runtime invocationId must be unique');
+    errors.push('runtime invocationRef must be unique');
+  }
+  const invocationKeys = evidence.receipts.runtime.flatMap(
+    (receipt) => receipt.invocations.map((invocation) => invocation.invocationKey),
+  );
+  if (new Set(invocationKeys).size !== invocationKeys.length) {
+    errors.push('runtime invocationKey must be unique');
   }
   if (authority.route === 'ai-triage-then-human-ready') {
     if (Date.parse(authority.triageCompletedAt) > Date.parse(authority.readyAt)) {
       errors.push('AI triage authority must complete before the human ready event');
     }
-    const invocation = invocations.get(authority.triageInvocationId);
+    const invocation = invocations.get(authority.triageInvocationRef);
     if (!invocation || invocation.role !== 'triage' || invocation.head !== undefined) {
       errors.push('AI triage authority must reference one headless triage invocation');
     }
@@ -434,7 +668,7 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
     if (!build.causes.includes(authority.receiptId)) {
       errors.push(`${build.receiptKey} must be caused by the authority receipt`);
     }
-    const invocation = invocations.get(build.invocationId);
+    const invocation = invocations.get(build.invocationRef);
     if (
       !invocation
       || invocation.role !== build.role
@@ -495,11 +729,11 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
     if (!build || !review.causes.includes(build.receiptId)) {
       errors.push(`${review.receiptKey} must be caused by the build receipt for its head`);
     }
-    const invocation = invocations.get(review.invocationId);
+    const invocation = invocations.get(review.invocationRef);
     if (!invocation || invocation.role !== 'reviewer' || invocation.head !== review.head) {
       errors.push(`${review.receiptKey} must reference a reviewer invocation for its head`);
     }
-    if (review.head === release.finalHead && review.verdict === 'approved') {
+    if (review.head === release.finalHead && review.verdict === 'approve') {
       if (finalApprovedPerspectives.has(review.perspective)) {
         errors.push(`final review perspective ${review.perspective} must be unique`);
       }
@@ -512,8 +746,8 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
     || left.receiptId.localeCompare(right.receiptId)
   ));
   for (const review of orderedReviews) {
-    if (review.verdict === 'approved' && review.findings.length > 0) {
-      errors.push(`${review.receiptKey}.approved verdict cannot contain findings`);
+    if (review.verdict === 'approve' && review.hasFindings) {
+      errors.push(`${review.receiptKey}.approve verdict cannot contain findings`);
     }
     const findingIds = review.findings.map((finding) => finding.findingId);
     if (new Set(findingIds).size !== findingIds.length) {
@@ -611,7 +845,7 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
 
   const mergeIntent = evidence.receipts.mergeIntent;
   if (
-    mergeIntent.pullRequest !== release.pullRequest
+    mergeIntent.pullRequestNumber !== release.pullRequestNumber
     || mergeIntent.expectedHead !== release.finalHead
     || mergeIntent.observedPrHead !== release.finalHead
   ) {
@@ -642,7 +876,7 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
 
   const merge = evidence.receipts.merge;
   if (
-    merge.pullRequest !== release.pullRequest
+    merge.pullRequestNumber !== release.pullRequestNumber
     || merge.expectedHead !== release.finalHead
     || merge.observedPrHead !== release.finalHead
     || merge.mergeSha !== release.mergeSha
@@ -684,7 +918,7 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
   return [...new Set(errors)];
 }
 
-export function assertLiveReleaseReceiptEvidence(input: unknown): asserts input is LiveReleaseReceiptEvidenceV2 {
+export function assertLiveReleaseReceiptEvidence(input: unknown): asserts input is LiveReleaseReceiptEvidence {
   const errors = liveReleaseReceiptSemanticErrors(input);
   if (errors.length > 0) {
     throw new Error(`live release receipt semantics failed: ${errors.join('; ')}`);
@@ -695,7 +929,7 @@ export function releasePreMergeSemanticErrors(input: {
   releaseId: string;
   repository: string;
   issueNumber: number;
-  pullRequest: number;
+  pullRequestNumber: number;
   expectedHead: string;
   policy: ReleasePolicy;
   receipts: readonly DurableReleaseReceipt[];
@@ -736,7 +970,7 @@ export function releasePreMergeSemanticErrors(input: {
     if (!reviews.some((receipt) => (
       receipt.head === input.expectedHead
       && receipt.perspective === perspective
-      && receipt.verdict === 'approved'
+      && receipt.verdict === 'approve'
     ))) {
       errors.push(`expected head is missing approved review perspective ${perspective}`);
     }
@@ -792,18 +1026,18 @@ export function releasePreMergeSemanticErrors(input: {
     causes: input.receipts.map((receipt) => receipt.receiptId),
     recordedAt: completedAt,
     kind: 'merge-intent',
-    pullRequest: input.pullRequest,
+    pullRequestNumber: input.pullRequestNumber,
     expectedHead: input.expectedHead,
     observedPrHead: input.expectedHead,
   };
   const mergedAt = new Date(Date.parse(completedAt) + 1).toISOString();
   const fullErrors = liveReleaseReceiptSemanticErrors({
-    schemaVersion: '3.0',
+    schemaVersion: '4.0',
     release: {
       id: input.releaseId,
       repository: input.repository,
       issueNumber: input.issueNumber,
-      pullRequest: input.pullRequest,
+      pullRequestNumber: input.pullRequestNumber,
       finalHead: input.expectedHead,
       mergeSha: syntheticMergeSha,
       createdAt: authority[0]!.recordedAt,
@@ -829,13 +1063,12 @@ export function releasePreMergeSemanticErrors(input: {
         causes: [syntheticIntentId],
         recordedAt: mergedAt,
         kind: 'merge',
-        pullRequest: input.pullRequest,
+        pullRequestNumber: input.pullRequestNumber,
         expectedHead: input.expectedHead,
         observedPrHead: input.expectedHead,
         mergeSha: syntheticMergeSha,
         actor: 'pre-merge-certifier',
-        issueState: 'CLOSED',
-        issueStateReason: 'COMPLETED',
+        sourceIssueClosure: 'completed',
         mergeReachableFromDefaultBranch: true,
         mergedAt,
       },

@@ -43,6 +43,10 @@ func TestRegistrationPublishedFixtureMatchesGoModel(t *testing.T) {
 	if !validJSONObject(registration.Configuration) {
 		t.Fatal("configuration did not remain a JSON object")
 	}
+	if registration.MergeMethod() != "rebase" ||
+		(Registration{Configuration: json.RawMessage(`{}`)}).MergeMethod() != "squash" {
+		t.Fatal("Registration integration strategy did not preserve explicit/default values")
+	}
 }
 
 func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
@@ -63,10 +67,10 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 		{
 			name: "repository event",
 			item: WorkItem{
-				Repository: "owner/repo",
-				Kind:       WorkItemKindRepositoryHead,
+				Repository:  "owner/repo",
+				Kind:        WorkItemKindRepositoryHead,
 				SourceEvent: "push",
-				Identity:   strings.Repeat("a", 40),
+				Identity:    strings.Repeat("a", 40),
 				Payload: map[string]any{
 					"ref":              "refs/heads/main",
 					"after":            strings.Repeat("a", 40),
@@ -79,7 +83,7 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			payload, err := test.item.RunnerPayload("webhook")
+			payload, err := test.item.RunnerPayload("webhook", "rebase")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +93,8 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 				event["kind"] != test.kind ||
 				execution["mode"] != test.mode ||
 				execution["readyLabel"] != "ready" ||
-				execution["claimedLabel"] != "agent-claimed" {
+				execution["claimedLabel"] != "agent-claimed" ||
+				execution["mergeMethod"] != "rebase" {
 				t.Fatalf("unexpected runner payload: %#v", payload)
 			}
 			body, err := json.Marshal(payload)
@@ -156,7 +161,7 @@ func TestIssueWorkProjectsOnlyVersionedTriagePayload(t *testing.T) {
 			"untrustedCommand": "curl attacker.invalid",
 		},
 	}
-	jobType, payload, err := item.QueuedJob("webhook")
+	jobType, payload, err := item.QueuedJob("webhook", "merge")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,9 +194,14 @@ func TestWorkItemRunnerPayloadFailsClosed(t *testing.T) {
 		},
 		{Repository: "owner/repo", Kind: "workflow_dispatch"},
 	} {
-		if _, err := item.RunnerPayload("poll"); err == nil {
+		if _, err := item.RunnerPayload("poll", "squash"); err == nil {
 			t.Fatalf("RunnerPayload(%#v) unexpectedly succeeded", item)
 		}
+	}
+	if _, err := (WorkItem{
+		Repository: "owner/repo", Kind: WorkItemKindPullRequest, Number: 1,
+	}).RunnerPayload("poll", "octopus"); err == nil {
+		t.Fatal("RunnerPayload accepted an unsupported integration strategy")
 	}
 }
 
