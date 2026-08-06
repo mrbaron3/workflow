@@ -31,5 +31,12 @@ describe('Servo contract naming', () => {
       'contracts', 'control-api', 'v1', 'openapi.yaml',
     ), 'utf8')) as { info: { title: string } };
     expect(openapi.info.title).toBe('Servo Registration Control API');
+
+    const dashboard = fs.readFileSync(repositoryPath(
+      'apps', 'control-plane', 'internal', 'control', 'dashboard', 'index.html',
+    ), 'utf8');
+    expect(dashboard).toContain('<title>Servo Control</title>');
+    expect(dashboard).toContain('<h1>Servo Control</h1>');
+    expect(dashboard).not.toContain('AgentOps Control');
   });
 });

@@ -31,9 +31,8 @@ type Store struct {
 }
 
 // RuntimeTopology is the immutable authority for the components managed by one
-// control-plane process. The zero value preserves compatibility for callers
-// that construct a Store directly; standard production selects signed ingress
-// explicitly when it opens the Store.
+// control-plane process. Its zero value manages no components so omission
+// cannot silently activate the credential-bearing legacy forwarder.
 type RuntimeTopology string
 
 const (
@@ -43,18 +42,35 @@ const (
 
 // ManagesComponent reports whether this topology owns a runtime component.
 func (topology RuntimeTopology) ManagesComponent(component string) bool {
-	return component != ComponentForwarder ||
-		topology != RuntimeTopologySignedWebhookIngress
+	switch topology {
+	case RuntimeTopologyLegacyCLIForwarder:
+		return true
+	case RuntimeTopologySignedWebhookIngress:
+		return component != ComponentForwarder
+	default:
+		return false
+	}
 }
 
 // ManagesComponent reports whether this control-store instance exposes a
-// component in its runtime topology. The legacy default remains enabled for
-// compatibility callers that construct Store directly.
+// component in its explicitly selected runtime topology.
 func (store *Store) ManagesComponent(component string) bool {
 	return store.topology.ManagesComponent(component)
 }
 
 func OpenStore(ctx context.Context, databaseURL, migrationRoot string) (*Store, error) {
+	return nil, fmt.Errorf(
+		"runtime topology is required; use OpenStoreWithTopology or " +
+			"OpenLegacyCLIForwarderStore explicitly",
+	)
+}
+
+// OpenLegacyCLIForwarderStore is the explicit compatibility-oracle boundary.
+// Standard production must use RuntimeTopologySignedWebhookIngress instead.
+func OpenLegacyCLIForwarderStore(
+	ctx context.Context,
+	databaseURL, migrationRoot string,
+) (*Store, error) {
 	return OpenStoreWithTopology(
 		ctx,
 		databaseURL,

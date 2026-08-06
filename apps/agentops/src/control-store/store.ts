@@ -29,7 +29,6 @@ import {
   releasePreMergeSemanticErrors,
   type DurableReleaseReceipt,
   type HistoricalDurableReleaseReceipt,
-  type HistoricalReleasePolicy,
   type LiveReleaseReceiptEvidenceV2,
   type ReleaseArtifact,
   type ReleaseMergeIntentReceipt,
@@ -215,15 +214,9 @@ function releaseRecordBase(row: ReleaseRow): Omit<ReleaseRecord, 'policy'> {
 function releaseRecord(row: ReleaseRow): ReleaseRecord {
   return {
     ...releaseRecordBase(row),
-    policy: ReleasePolicyContract.parse(row.policy),
-  };
-}
-
-function historicalReleaseRecord(
-  row: ReleaseRow,
-): Omit<ReleaseRecord, 'policy'> & { policy: HistoricalReleasePolicy } {
-  return {
-    ...releaseRecordBase(row),
+    // Persisted v2 policies are immutable history. Every writer remains on
+    // ReleasePolicyContract, while every row reader accepts the historical
+    // repository-grader namespace so upgrades cannot strand active recovery.
     policy: HistoricalReleasePolicyContract.parse(row.policy),
   };
 }
@@ -355,28 +348,8 @@ async function releaseReceipts(
     [releaseId, includeMergeIntent],
   );
   return result.rows.map((row) => ({
-    receipt: DurableReleaseReceiptContract.parse(row.payload),
-    publishedAt: row.published_at?.toISOString() ?? null,
-  }));
-}
-
-async function historicalReleaseReceipts(
-  client: PoolClient,
-  releaseId: string,
-  includeMergeIntent: boolean,
-): Promise<Array<{
-  receipt: HistoricalDurableReleaseReceipt;
-  publishedAt: string | null;
-}>> {
-  const result = await client.query<ReleaseReceiptRow>(
-    `SELECT payload, published_at
-       FROM agentops_control.release_receipt_outbox
-      WHERE release_id = $1
-        AND ($2::boolean OR kind <> 'merge-intent')
-      ORDER BY recorded_at, receipt_id`,
-    [releaseId, includeMergeIntent],
-  );
-  return result.rows.map((row) => ({
+    // Historical grade aliases are accepted only while decoding durable rows.
+    // recordReleaseReceipt below continues to enforce the canonical contract.
     receipt: HistoricalDurableReleaseReceiptContract.parse(row.payload),
     publishedAt: row.published_at?.toISOString() ?? null,
   }));
@@ -875,7 +848,7 @@ export class PostgresControlStore {
       );
       const row = selected.rows[0];
       if (!row) throw new Error(`no such release: ${parsedId}`);
-      const release = historicalReleaseRecord(row);
+      const release = releaseRecord(row);
       if (
         release.status !== 'merged'
         || release.pullRequest === null
@@ -885,7 +858,7 @@ export class PostgresControlStore {
       ) {
         throw new ReleaseCertificationError('only a completed release can be exported');
       }
-      const entries = await historicalReleaseReceipts(client, release.id, true);
+      const entries = await releaseReceipts(client, release.id, true);
       const receipts = entries.map((entry) => entry.receipt);
       const one = <K extends HistoricalDurableReleaseReceipt['kind']>(kind: K) =>
         receipts.find((receipt) => receipt.kind === kind);

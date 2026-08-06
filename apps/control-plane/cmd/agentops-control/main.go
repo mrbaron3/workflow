@@ -26,6 +26,20 @@ import (
 // Supervisor, and ProductionRunner. GitHub credentials and gh remain runner-only.
 const standardRuntimeTopology = control.RuntimeTopologySignedWebhookIngress
 
+var openControlStoreWithTopology = control.OpenStoreWithTopology
+
+func openStandardControlStore(
+	ctx context.Context,
+	databaseURL, root string,
+) (*control.Store, error) {
+	return openControlStoreWithTopology(
+		ctx,
+		databaseURL,
+		root,
+		standardRuntimeTopology,
+	)
+}
+
 func main() {
 	if err := runCommand(os.Args[1:]); err != nil {
 		slog.Error("agentops-control failed closed", "error", err)
@@ -110,11 +124,10 @@ func run() error {
 	defer stop()
 	startupContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	store, err := control.OpenStoreWithTopology(
+	store, err := openStandardControlStore(
 		startupContext,
 		databaseURL,
 		root,
-		standardRuntimeTopology,
 	)
 	if err != nil {
 		return err

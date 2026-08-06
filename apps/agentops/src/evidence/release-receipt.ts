@@ -255,12 +255,41 @@ export type HistoricalDurableReleaseReceipt = z.infer<
   typeof HistoricalDurableReleaseReceiptContract
 >;
 
+const RequiredReviewPerspectivesContract = z.array(z.enum(REVIEW_PERSPECTIVE_KEYS))
+  .min(2)
+  .max(REVIEW_PERSPECTIVE_KEYS.length)
+  .superRefine((perspectives, context) => {
+    const seen = new Set<string>();
+    perspectives.forEach((perspective, index) => {
+      if (seen.has(perspective)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [index],
+          message: 'required review perspectives must be unique',
+        });
+      }
+      seen.add(perspective);
+    });
+  });
+
 export const ReleasePolicyContract = z.object({
   authority: z.enum(['human-ready-allowed', 'ai-triage-required']),
-  requiredGateSignals: z.array(ReleaseGateSignalContract).min(1).max(64),
-  requiredReviewPerspectives: z.array(z.enum(REVIEW_PERSPECTIVE_KEYS))
-    .min(2)
-    .max(REVIEW_PERSPECTIVE_KEYS.length),
+  requiredGateSignals: z.array(ReleaseGateSignalContract).min(1).max(64)
+    .superRefine((signals, context) => {
+      const seen = new Set<string>();
+      signals.forEach((signal, index) => {
+        const key = `${signal.source}:${signal.name}`;
+        if (seen.has(key)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index],
+            message: 'required gate signals must be unique by source and name',
+          });
+        }
+        seen.add(key);
+      });
+    }),
+  requiredReviewPerspectives: RequiredReviewPerspectivesContract,
   minimumHeadEpochs: z.number().int().positive().max(32),
 }).strict();
 export type ReleasePolicy = z.infer<typeof ReleasePolicyContract>;
@@ -268,10 +297,22 @@ export type ReleasePolicy = z.infer<typeof ReleasePolicyContract>;
 /** Decode-only v2 policy; repository-grader names were historically open strings. */
 export const HistoricalReleasePolicyContract = z.object({
   authority: z.enum(['human-ready-allowed', 'ai-triage-required']),
-  requiredGateSignals: z.array(HistoricalReleaseGateSignalContract).min(1).max(64),
-  requiredReviewPerspectives: z.array(z.enum(REVIEW_PERSPECTIVE_KEYS))
-    .min(2)
-    .max(REVIEW_PERSPECTIVE_KEYS.length),
+  requiredGateSignals: z.array(HistoricalReleaseGateSignalContract).min(1).max(64)
+    .superRefine((signals, context) => {
+      const seen = new Set<string>();
+      signals.forEach((signal, index) => {
+        const key = `${signal.source}:${signal.name}`;
+        if (seen.has(key)) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [index],
+            message: 'required gate signals must be unique by source and name',
+          });
+        }
+        seen.add(key);
+      });
+    }),
+  requiredReviewPerspectives: RequiredReviewPerspectivesContract,
   minimumHeadEpochs: z.number().int().positive().max(32),
 }).strict();
 export type HistoricalReleasePolicy = z.infer<
@@ -765,8 +806,8 @@ export function releasePreMergeSemanticErrors(input: {
   issueNumber: number;
   pullRequest: number;
   expectedHead: string;
-  policy: ReleasePolicy;
-  receipts: readonly DurableReleaseReceipt[];
+  policy: HistoricalReleasePolicy;
+  receipts: readonly HistoricalDurableReleaseReceipt[];
 }): string[] {
   const errors: string[] = [];
   const authority = input.receipts.filter((receipt) => receipt.kind === 'authority');

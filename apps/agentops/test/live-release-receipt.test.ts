@@ -3,6 +3,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 import { INTERVENTION_KINDS } from '../src/domain/schema.js';
 import {
+  HistoricalReleasePolicyContract,
   LiveReleaseReceiptEvidenceV2Contract,
   ReleaseGradeReceiptContract,
   ReleasePolicyContract,
@@ -311,6 +312,39 @@ describe('release receipt evidence v2', () => {
     expect(compiled()(invalidGradeEvidence)).toBe(false);
   });
 
+  it('rejects duplicate policy requirements at every TypeScript write boundary', () => {
+    const canonical = {
+      authority: 'human-ready-allowed' as const,
+      requiredGateSignals: [
+        { source: 'repository-grader' as const, name: 'unit_tests' as const },
+        { source: 'repository-grader' as const, name: 'unit_tests' as const },
+      ],
+      requiredReviewPerspectives: ['security' as const, 'codeQuality' as const],
+      minimumHeadEpochs: 1,
+    };
+    expect(ReleasePolicyContract.safeParse(canonical).success).toBe(false);
+
+    const historical = {
+      ...canonical,
+      requiredGateSignals: [
+        { source: 'repository-grader' as const, name: 'contracts' },
+        { source: 'repository-grader' as const, name: 'contracts' },
+      ],
+    };
+    expect(HistoricalReleasePolicyContract.safeParse(historical).success).toBe(false);
+
+    expect(ReleasePolicyContract.safeParse({
+      ...canonical,
+      requiredGateSignals: canonical.requiredGateSignals.slice(0, 1),
+      requiredReviewPerspectives: ['security', 'security'],
+    }).success).toBe(false);
+    expect(HistoricalReleasePolicyContract.safeParse({
+      ...historical,
+      requiredGateSignals: historical.requiredGateSignals.slice(0, 1),
+      requiredReviewPerspectives: ['security', 'security'],
+    }).success).toBe(false);
+  });
+
   it('accepts only review perspectives the production panel can emit', () => {
     expect(ReleasePolicyContract.safeParse(evidence().policy).success).toBe(true);
     const unsupported = evidence();
@@ -481,9 +515,9 @@ describe('release receipt evidence v2', () => {
   it('requires distinct perspectives and the final head to be the latest epoch', () => {
     const duplicate = evidence();
     duplicate.policy.requiredReviewPerspectives = ['security', 'security'];
-    expect(liveReleaseReceiptSemanticErrors(duplicate)).toContain(
-      'policy.requiredReviewPerspectives must be unique',
-    );
+    expect(liveReleaseReceiptSemanticErrors(duplicate).some(
+      (error) => error.includes('required review perspectives must be unique'),
+    )).toBe(true);
 
     const staleFinal = evidence();
     staleFinal.receipts.reviews[0].verdict = 'approved';

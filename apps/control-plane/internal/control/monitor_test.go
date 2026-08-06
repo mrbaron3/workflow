@@ -569,7 +569,7 @@ func (command *fakeCommand) Start() error                       { return nil }
 func (command *fakeCommand) Wait() error                        { return command.wait }
 
 func TestForwarderRestartsAndPersistsBeforeContinuing(t *testing.T) {
-	store := &fakeMonitorStore{}
+	store := &fakeMonitorStore{topology: RuntimeTopologyLegacyCLIForwarder}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	commands := 0
@@ -699,6 +699,7 @@ func TestForwarderStopsWhenHeartbeatCannotBePersisted(t *testing.T) {
 	store := &fakeMonitorStore{
 		actualError:  persistError,
 		failActualAt: 2,
+		topology:     RuntimeTopologyLegacyCLIForwarder,
 	}
 	commandCancelled := make(chan struct{})
 	factory := func(ctx context.Context, _ string, _ ...string) Command {

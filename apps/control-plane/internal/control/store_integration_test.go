@@ -847,7 +847,12 @@ func TestPostgresLegacyWorkItemReplayConvergesOnCanonicalJobs(t *testing.T) {
 	}
 	defer pool.Close()
 	resetAndMigrate(t, ctx, pool, root)
-	store, err := OpenStore(ctx, databaseURL, root)
+	store, err := OpenStoreWithTopology(
+		ctx,
+		databaseURL,
+		root,
+		RuntimeTopologySignedWebhookIngress,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -956,7 +961,7 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 	}
 	defer pool.Close()
 	resetAndMigrate(t, ctx, pool, root)
-	store, err := OpenStore(ctx, databaseURL, root)
+	store, err := OpenLegacyCLIForwarderStore(ctx, databaseURL, root)
 	if err != nil {
 		t.Fatal(err)
 	}

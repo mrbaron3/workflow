@@ -48,6 +48,12 @@
     const recoverability = outcome.recoverability ? ` / 復旧: ${outcome.recoverability}` : '';
     return `${outcome.outcome}${outcome.reason ? ` (${outcome.reason})` : ''}${recoverability}`;
   };
+  const deliveryRecoveryReason = (reason) => ({
+    monitor_only: 'MONITOR_ONLY: 監視は継続していますが実行キューは停止中です。実行を再開するには Operating Mode を ACTIVE に変更してください。',
+    lifecycle_monitor_only: 'MONITOR_ONLY: 監視は継続していますが実行キューは停止中です。実行を再開するには Operating Mode を ACTIVE に変更してください。',
+    lifecycle_draining: 'DRAINING: 既存処理の排出中のため新規実行を開始しません。排出完了を確認してから Operating Mode を ACTIVE に変更してください。',
+    lifecycle_off: 'OFF: 監視と実行を停止しています。必要な境界を確認し、Operating Mode を MONITOR_ONLY または ACTIVE に変更してください。',
+  }[reason] || reason || '—');
   const showDialogError = (id, error) => {
     const summary = byId(id);
     const structured = outcomeText(error.body);
@@ -634,7 +640,7 @@
         <dt>State</dt><dd>${escapeHTML(delivery.status)}</dd>
         <dt>Attempts</dt><dd>${Number(delivery.routeAttempts || 0)}</dd>
         <dt>Registration</dt><dd>${escapeHTML(delivery.registrationId || '—')} / version ${escapeHTML(delivery.registrationVersion || '—')}</dd>
-        <dt>Last error</dt><dd>${escapeHTML(delivery.lastError || delivery.ignoredReason || '—')}</dd>
+        <dt>Last error / recovery</dt><dd>${escapeHTML(delivery.lastError || deliveryRecoveryReason(delivery.ignoredReason))}</dd>
         <dt>Updated</dt><dd>${formatTime(delivery.updatedAt)}</dd>`;
       const retryable = delivery.status === 'failed'
         && delivery.registrationId === item.registration.id

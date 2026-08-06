@@ -19,6 +19,42 @@ func TestStandardRuntimeTopologyExcludesLegacyForwarder(t *testing.T) {
 	}
 }
 
+func TestOpenStandardControlStoreWiresSignedIngressTopology(t *testing.T) {
+	original := openControlStoreWithTopology
+	t.Cleanup(func() { openControlStoreWithTopology = original })
+	wantError := errors.New("constructor observed")
+	var observedDatabaseURL, observedRoot string
+	var observedTopology control.RuntimeTopology
+	openControlStoreWithTopology = func(
+		_ context.Context,
+		databaseURL, root string,
+		topology control.RuntimeTopology,
+	) (*control.Store, error) {
+		observedDatabaseURL = databaseURL
+		observedRoot = root
+		observedTopology = topology
+		return nil, wantError
+	}
+
+	_, err := openStandardControlStore(
+		context.Background(),
+		"postgresql://control.example/servo",
+		"/application/root",
+	)
+	if !errors.Is(err, wantError) ||
+		observedDatabaseURL != "postgresql://control.example/servo" ||
+		observedRoot != "/application/root" ||
+		observedTopology != control.RuntimeTopologySignedWebhookIngress {
+		t.Fatalf(
+			"standard store wiring error=%v databaseURL=%q root=%q topology=%q",
+			err,
+			observedDatabaseURL,
+			observedRoot,
+			observedTopology,
+		)
+	}
+}
+
 func TestLoopbackPublishProxyRequiresLoopbackBackendAndExactHost(t *testing.T) {
 	if _, err := loopbackPublishProxy(
 		"0.0.0.0:8080",

@@ -6,8 +6,8 @@ import {
   ReleaseRuntimeConsumerContract,
   ReleaseRuntimeEnvironmentContract,
   ReleasePolicyContract,
-  type DurableReleaseReceipt,
-  type ReleasePolicy,
+  type HistoricalDurableReleaseReceipt,
+  type HistoricalReleasePolicy,
 } from '../evidence/release-receipt.js';
 
 export const CONTROL_SCHEMA_VERSION = 22;
@@ -623,7 +623,8 @@ export interface ReleaseRecord {
   releaseKey: string;
   repository: string;
   issueNumber: number;
-  policy: ReleasePolicy;
+  /** Persisted policy; historical v2 grader aliases remain decode-only readable. */
+  policy: HistoricalReleasePolicy;
   status: 'collecting' | 'merge-authorized' | 'merged' | 'abandoned';
   pullRequest: number | null;
   finalHead: string | null;
@@ -635,7 +636,8 @@ export interface ReleaseRecord {
 }
 
 export interface ReleaseReceiptOutboxEntry {
-  receipt: DurableReleaseReceipt;
+  /** Persisted receipt; new writes are still restricted to the canonical contract. */
+  receipt: HistoricalDurableReleaseReceipt;
   publishedAt: string | null;
 }
 
