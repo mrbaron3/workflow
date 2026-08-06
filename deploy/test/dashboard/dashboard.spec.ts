@@ -122,15 +122,13 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   Object.assign(healthyComponents.pr_monitor!, {
     desired: false, actual: 'stopped', freshness: 'fresh', recoveryState: 'none',
   });
-  Object.assign(healthyComponents.forwarder!, {
-    desired: true, actual: 'running', freshness: 'fresh', recoveryState: 'none',
-  });
   Object.assign(healthyComponents.execution!, {
     desired: true, actual: 'running', freshness: 'fresh', recoveryState: 'in_progress',
   });
   Object.assign(healthyComponents.queue!, {
     desired: true, actual: 'leased', freshness: 'fresh', recoveryState: 'in_progress',
   });
+  delete components.forwarder;
   healthyQueueItem.recentDeliveryFailures = [];
   snapshot.items.push(healthyQueueItem);
   snapshot.nextPageToken = 'expired-snapshot';
@@ -297,6 +295,7 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(card.getByRole('region', {
     name: 'example/browser-control#8 の実装進捗',
   })).toContainText('generation / generator session attempt 1/3');
+  await expect(card.locator('[aria-label="Forwarder"]')).toHaveCount(0);
   await expect(card.getByRole('region', {
     name: 'example/browser-control#8 の実装進捗',
   })).toContainText('/workspace/registrations/browser/jobs/issue-8/attempt-1/worktree');
@@ -336,6 +335,9 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   await expect(page.getByRole('alert')).toContainText('ページsnapshot');
   await expect(card.getByRole('button', { name: '編集' })).toBeEnabled();
   await card.getByText('配送・ジョブ詳細', { exact: true }).click();
+  await expect(card).toContainText('Issue cursor advanced');
+  await expect(card).toContainText('PR cursor advanced');
+  await expect(card).not.toContainText('Issue poll');
   await card.getByRole('button', { name: '確認・再試行' }).click();
   await expect(page.locator('#retry-delivery')).toBeDisabled();
   await page.locator('#delivery-dialog [data-delivery-close]').last().click();

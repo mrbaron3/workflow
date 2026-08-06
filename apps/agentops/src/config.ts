@@ -9,7 +9,6 @@ import path from 'node:path';
 import type {
   AgentProvider,
   DesignContractProvider,
-  GeneratorAgent,
   VerificationMethod,
 } from './domain/schema.js';
 
@@ -115,7 +114,7 @@ export interface IntakeConfig {
 
 export interface HarnessConfig {
   /** Active generator backend. "mock" runs fully offline; others shell out. */
-  generator: GeneratorAgent;
+  generator: AgentProvider;
   baseBranch: string;
   /** Independent best-of-N samples per issue. Drives pass@k / pass^k. */
   samples: number;

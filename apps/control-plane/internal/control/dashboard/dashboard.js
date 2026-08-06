@@ -334,7 +334,12 @@
   }
   function card(item) {
     const r = item.registration;
-    const components = ['issue_monitor', 'pr_monitor', 'forwarder', 'execution', 'queue']
+    const componentNames = ['issue_monitor', 'pr_monitor'];
+    if (Object.prototype.hasOwnProperty.call(item.components, 'forwarder')) {
+      componentNames.push('forwarder');
+    }
+    componentNames.push('execution', 'queue');
+    const components = componentNames
       .map((name) => component(name, item.components[name] || {
         desired: false, actual: 'unknown', freshness: 'unknown', recoveryState: 'unknown',
       })).join('');
@@ -358,8 +363,8 @@
       <details class="details">
         <summary>配送・ジョブ詳細</summary>
         <div class="details-grid">
-          <span>Issue poll<br><strong>${formatTime(item.lastPoll?.issue)}</strong></span>
-          <span>PR poll<br><strong>${formatTime(item.lastPoll?.pull_request)}</strong></span>
+          <span>Issue cursor advanced<br><strong>${formatTime(item.lastPoll?.issue)}</strong></span>
+          <span>PR cursor advanced<br><strong>${formatTime(item.lastPoll?.pull_request)}</strong></span>
           <span>Last delivery<br><strong>${formatTime(item.lastDelivery)}</strong></span>
           <span>Queue depth<br><strong>${Number(item.queueDepth || 0)}</strong></span>
           <span>Active job<br><strong>${escapeHTML(item.activeJobId || '—')} / ${escapeHTML(item.activeJobState || '—')} / version ${escapeHTML(item.activeJobRegistrationVersion || '—')}</strong></span>

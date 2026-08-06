@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mrbaron3/workflow/contracts/live-release-receipt.schema.json",
+  "$id": "https://github.com/mrbaron3/servo/contracts/live-release-receipt.schema.json",
   "title": "Release receipt evidence v2/v3",
   "description": "A job-topology-neutral release certificate. Every fact is bound to a durable release identity and explicit receipt causality; job and attempt IDs are optional provenance only.",
   "type": "object",
@@ -210,13 +210,37 @@
       "unevaluatedProperties": false
     },
     "gateSignal": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["source", "name"],
-      "properties": {
-        "source": { "enum": ["repository-grader", "github-check"] },
-        "name": { "$ref": "#/$defs/name" }
-      }
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "name"],
+          "properties": {
+            "source": { "const": "repository-grader" },
+            "name": {
+              "enum": [
+                "build",
+                "typecheck",
+                "unit_tests",
+                "api_tests",
+                "grader_profile",
+                "secrets_scan",
+                "scope_check",
+                "playwright"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "name"],
+          "properties": {
+            "source": { "const": "github-check" },
+            "name": { "$ref": "#/$defs/name" }
+          }
+        }
+      ]
     },
     "grade": {
       "allOf": [

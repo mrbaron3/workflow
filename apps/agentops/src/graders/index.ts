@@ -13,16 +13,17 @@
  */
 
 import type { BuildArtifact } from '../domain/artifact.js';
-import type {
-  AcceptanceCriterion,
-  Finding,
-  GateResult,
-  IssueContract,
-  Scores,
-  Severity,
-  Verdict,
+import {
+  type AcceptanceCriterion,
+  type Finding,
+  type GateResult,
+  type IssueContract,
+  type Scores,
+  type Severity,
+  type Verdict,
 } from '../domain/schema.js';
 import type { HarnessConfig } from '../config.js';
+import { HARD_GATE_SIGNAL_NAMES } from './gate-names.js';
 
 export interface GradeResult {
   hardGates: Record<string, GateResult>;
@@ -36,15 +37,7 @@ export interface GradeResult {
 const SEVERITY_WEIGHT: Record<Severity, number> = { blocker: 3, major: 2, minor: 1 };
 
 /** Blocking global gates (playwright is handled via per-criterion findings). */
-const BLOCKING_GATES = [
-  'build',
-  'typecheck',
-  'unit_tests',
-  'api_tests',
-  'grader_profile',
-  'secrets_scan',
-  'scope_check',
-] as const;
+const BLOCKING_GATES = HARD_GATE_SIGNAL_NAMES.filter((gate) => gate !== 'playwright');
 
 function acFinding(ac: AcceptanceCriterion): Finding {
   return {

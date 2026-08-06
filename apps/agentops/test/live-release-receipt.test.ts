@@ -64,7 +64,7 @@ function evidence(): any {
     policy: {
       authority: 'human-ready-allowed',
       requiredGateSignals: [
-        { source: 'repository-grader', name: 'contracts' },
+        { source: 'repository-grader', name: 'unit_tests' },
         { source: 'github-check', name: 'contracts' },
       ],
       requiredReviewPerspectives: ['security', 'codeQuality'],
@@ -160,10 +160,10 @@ function evidence(): any {
       ],
       grades: [
         {
-          ...base(repositoryGradeId, 'grade:repository:contracts', '2026-08-01T00:05:00Z', [build2Id]),
+          ...base(repositoryGradeId, 'grade:repository:unit_tests', '2026-08-01T00:05:00Z', [build2Id]),
           kind: 'grade',
           head: finalHead,
-          signal: { source: 'repository-grader', name: 'contracts' },
+          signal: { source: 'repository-grader', name: 'unit_tests' },
           status: 'passed',
           detailsDigest: digest,
         },
@@ -281,6 +281,33 @@ function compiled() {
 }
 
 describe('release receipt evidence v2', () => {
+  it('validates gate names according to their source namespace', () => {
+    const basePolicy = {
+      authority: 'human-ready-allowed' as const,
+      requiredReviewPerspectives: ['security', 'codeQuality'] as const,
+      minimumHeadEpochs: 1,
+    };
+    expect(ReleasePolicyContract.safeParse({
+      ...basePolicy,
+      requiredGateSignals: [{ source: 'repository-grader', name: 'contracts' }],
+    }).success).toBe(false);
+    expect(ReleasePolicyContract.safeParse({
+      ...basePolicy,
+      requiredGateSignals: [{ source: 'repository-grader', name: 'unit_tests' }],
+    }).success).toBe(true);
+    expect(ReleasePolicyContract.safeParse({
+      ...basePolicy,
+      requiredGateSignals: [{ source: 'github-check', name: 'ci/custom' }],
+    }).success).toBe(true);
+
+    const invalidPublishedEvidence = evidence();
+    invalidPublishedEvidence.policy.requiredGateSignals[0].name = 'contracts';
+    invalidPublishedEvidence.receipts.grades[0].signal.name = 'contracts';
+    expect(LiveReleaseReceiptEvidenceV2Contract.safeParse(invalidPublishedEvidence).success)
+      .toBe(false);
+    expect(compiled()(invalidPublishedEvidence)).toBe(false);
+  });
+
   it('accepts only review perspectives the production panel can emit', () => {
     expect(ReleasePolicyContract.safeParse(evidence().policy).success).toBe(true);
     const unsupported = evidence();

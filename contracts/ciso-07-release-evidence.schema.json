@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mrbaron3/workflow/contracts/ciso-07-release-evidence.schema.json",
+  "$id": "https://github.com/mrbaron3/servo/contracts/ciso-07-release-evidence.schema.json",
   "title": "CISO-07 integrated dogfood release evidence",
   "type": "object",
   "additionalProperties": false,

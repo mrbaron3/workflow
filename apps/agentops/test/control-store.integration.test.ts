@@ -901,7 +901,7 @@ integration('PostgreSQL control store', () => {
     const policy = {
       authority: 'human-ready-allowed' as const,
       requiredGateSignals: [
-        { source: 'repository-grader' as const, name: 'test' },
+        { source: 'repository-grader' as const, name: 'unit_tests' as const },
       ],
       requiredReviewPerspectives: ['security' as const, 'codeQuality' as const],
       minimumHeadEpochs: 1,

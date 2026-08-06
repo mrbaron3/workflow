@@ -132,7 +132,7 @@ func (manager *manager) Start(
 		if err := manager.runtime.BuildImage(
 			ctx,
 			manager.config.TriageImage,
-			"triage-runner",
+			"triage",
 			filepath.Join(manager.config.ProjectRoot, "deploy", "Containerfile"),
 			manager.config.ProjectRoot,
 		); err != nil {

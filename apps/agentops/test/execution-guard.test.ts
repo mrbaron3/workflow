@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Store } from '../src/store/store.js';
 import { DEFAULT_CONFIG } from '../src/config.js';
-import { Issue, type GeneratorAgent } from '../src/domain/schema.js';
+import { Issue, type AgentProvider } from '../src/domain/schema.js';
 import { pollable, isAiManaged } from '../src/pipeline/execution/guard.js';
 
 function tmpStore(name: string): Store {
@@ -13,7 +13,7 @@ function tmpStore(name: string): Store {
   return new Store(dir);
 }
 
-function issue(id: string, status: string, assignedAgent: GeneratorAgent | null): Issue {
+function issue(id: string, status: string, assignedAgent: AgentProvider | null): Issue {
   return Issue.parse({
     id,
     type: 'story',
@@ -27,7 +27,7 @@ function issue(id: string, status: string, assignedAgent: GeneratorAgent | null)
 }
 
 describe('execution scoping guard (ARCH-execution-002 / DOM-execution-006)', () => {
-  const config = { ...DEFAULT_CONFIG, generator: 'claude' as GeneratorAgent };
+  const config = { ...DEFAULT_CONFIG, generator: 'claude' as AgentProvider };
 
   it('polls only contract-drafted issues assigned to the running agent (opt-in)', () => {
     const store = tmpStore('guard');

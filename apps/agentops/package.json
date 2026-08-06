@@ -25,7 +25,8 @@
     "evidence:ciso07": "tsx scripts/validate-ciso07-release-evidence.ts",
     "evidence:live-release": "tsx scripts/validate-live-release-evidence.ts",
     "evidence:live-release:export": "tsx scripts/export-live-release-evidence.ts",
-    "bundle-skills": "tsx scripts/bundle-skills.ts"
+    "bundle-skills": "tsx scripts/bundle-skills.ts",
+    "sync-hard-gates": "tsx scripts/sync-hard-gate-signals.ts"
   },
   "dependencies": {
     "pg": "^8.22.0",

@@ -22,7 +22,7 @@ import {
   type RevisionGateSnapshot as RevisionGateSnapshotType,
 } from '../../domain/schema.js';
 import { Store, nowISO } from '../../store/store.js';
-import { linkedParentIssueNumber } from '../../domain/development-progress.js';
+import { linkedParentIssueNumber } from '../../intake/parent-link.js';
 export {
   BLOCKING_REVIEW_COMMENT,
   GhPrListResponse,

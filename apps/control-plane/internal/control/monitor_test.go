@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
 
 func TestMonitorBrokerProductionBoundaries(t *testing.T) {
@@ -45,6 +47,18 @@ type fakeMonitorStore struct {
 	actualStates int
 	actualError  error
 	failActualAt int
+	currentMode  lifecycle.Mode
+	lifecycleErr error
+}
+
+func (store *fakeMonitorStore) LifecycleMode(context.Context) (lifecycle.Mode, error) {
+	if store.lifecycleErr != nil {
+		return "", store.lifecycleErr
+	}
+	if store.currentMode == "" {
+		return lifecycle.ModeActive, nil
+	}
+	return store.currentMode, nil
 }
 
 func (store *fakeMonitorStore) MonitorCursor(
@@ -149,7 +163,6 @@ func TestMonitorRetriesOneTransientBrokerProviderFailureWithoutAdvancingCursor(t
 			calls:  &polls,
 			errors: []error{ErrMonitorBrokerTransientProvider},
 		},
-		Mode:           ModeActive,
 		SupervisorID:   "test",
 		PollInterval:   time.Hour,
 		TransientRetry: time.Millisecond,
@@ -187,7 +200,6 @@ func TestMonitorSurfacesRepeatedTransientBrokerProviderFailure(t *testing.T) {
 				ErrMonitorBrokerTransientProvider,
 			},
 		},
-		Mode:           ModeMonitorOnly,
 		SupervisorID:   "test",
 		PollInterval:   time.Hour,
 		TransientRetry: time.Millisecond,
@@ -233,7 +245,6 @@ func TestMonitorDoesNotAdvanceCursorWhenSingleFlightIsBusy(t *testing.T) {
 	store := &fakeMonitorStore{enqueueError: ErrRepositoryBusy}
 	runner := &ProductionRunner{
 		Store: store,
-		Mode:  ModeActive,
 		Source: fakeMonitorSource{items: []WorkItem{{
 			Repository: "owner/repo",
 			Kind:       "issue",
@@ -265,7 +276,6 @@ func TestPRIntentActiveStartupFenceDoesNotFailOrAdvanceMonitor(t *testing.T) {
 	store := &fakeMonitorStore{enqueueError: ErrOperatingMode}
 	runner := &ProductionRunner{
 		Store: store,
-		Mode:  ModeActive,
 		Source: fakeMonitorSource{items: []WorkItem{{
 			Repository: "owner/repo",
 			Kind:       "pull_request",
@@ -333,7 +343,7 @@ func TestExecutionDisabledMonitorPersistsObservationWithoutEnqueue(t *testing.T)
 }
 
 func TestMonitorOnlyPersistsObservationWithoutEnqueue(t *testing.T) {
-	store := &fakeMonitorStore{}
+	store := &fakeMonitorStore{currentMode: lifecycle.ModeMonitorOnly}
 	polls := 0
 	runner := &ProductionRunner{
 		Store: store,
@@ -346,7 +356,6 @@ func TestMonitorOnlyPersistsObservationWithoutEnqueue(t *testing.T) {
 				UpdatedAt:  time.Now(),
 			}},
 		},
-		Mode:         ModeMonitorOnly,
 		SupervisorID: "test",
 	}
 	err := runner.pollOnce(context.Background(), Registration{
@@ -373,7 +382,7 @@ func TestMonitorOnlyPersistsObservationWithoutEnqueue(t *testing.T) {
 }
 
 func TestMonitorOnlyObservationIsReplayedAfterActiveCutover(t *testing.T) {
-	store := &fakeMonitorStore{}
+	store := &fakeMonitorStore{currentMode: lifecycle.ModeMonitorOnly}
 	polls := 0
 	runner := &ProductionRunner{
 		Store: store,
@@ -386,7 +395,6 @@ func TestMonitorOnlyObservationIsReplayedAfterActiveCutover(t *testing.T) {
 				UpdatedAt:  time.Now(),
 			}},
 		},
-		Mode:         ModeMonitorOnly,
 		SupervisorID: "test",
 	}
 	registration := Registration{
@@ -405,7 +413,7 @@ func TestMonitorOnlyObservationIsReplayedAfterActiveCutover(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	runner.Mode = ModeActive
+	store.currentMode = lifecycle.ModeActive
 	if err := runner.pollOnce(
 		context.Background(),
 		registration,
@@ -419,6 +427,39 @@ func TestMonitorOnlyObservationIsReplayedAfterActiveCutover(t *testing.T) {
 		t.Fatalf(
 			"polls=%d enqueued=%d cursors=%d actual=%d",
 			polls,
+			store.enqueued,
+			store.savedCursors,
+			store.actualStates,
+		)
+	}
+}
+
+func TestDrainingLifecyclePausesActiveStartupWithoutAdvancingCursor(t *testing.T) {
+	store := &fakeMonitorStore{currentMode: lifecycle.ModeDraining}
+	runner := &ProductionRunner{
+		Store: store,
+		Source: fakeMonitorSource{items: []WorkItem{{
+			Repository: "owner/repo",
+			Kind:       "issue",
+			Number:     9,
+			UpdatedAt:  time.Now(),
+		}}},
+		SupervisorID: "test",
+	}
+	err := runner.pollOnce(context.Background(), Registration{
+		ID:                  "registration-1",
+		Repository:          "owner/repo",
+		Enabled:             true,
+		IssueMonitorEnabled: true,
+		ExecutionEnabled:    true,
+		Version:             1,
+	}, "issue", ComponentIssueMonitor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.enqueued != 0 || store.savedCursors != 0 || store.actualStates != 1 {
+		t.Fatalf(
+			"DRAINING lifecycle enqueued=%d cursors=%d actual=%d",
 			store.enqueued,
 			store.savedCursors,
 			store.actualStates,

@@ -154,11 +154,11 @@ WORKDIR /app
 USER agentops
 ENTRYPOINT ["node", "apps/agentops/dist/src/runner/cli.js"]
 
-# --- triage-runner: Issue-only broker + provider + comment/label capability ----------------------
+# --- triage: Issue-only broker + provider + comment/label capability -----------------------------
 # This image deliberately has no git, ssh, tmux, bubblewrap, checkout volume, or
 # development GitHub credential. The root filesystem is made read-only by the
 # runtime; only /tmp and /home/agentops are tmpfs.
-FROM node:24.19.0-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df AS triage-runner
+FROM node:24.19.0-trixie-slim@sha256:85498d7fd8e2bc0b02abb1792ef27341559836236dd0b1af160fa66bb85148df AS triage
 USER root
 COPY --chown=root:root deploy/tools/provider-cli/package.json deploy/tools/provider-cli/package-lock.json /opt/provider-cli/
 COPY --from=runner-tools /out/gh /usr/local/libexec/agentops-gh-real

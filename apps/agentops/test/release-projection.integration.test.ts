@@ -68,7 +68,7 @@ integration('production release receipt projection', () => {
       policy: {
         authority: 'human-ready-allowed',
         requiredGateSignals: [
-          { source: 'repository-grader', name: 'contracts' },
+          { source: 'repository-grader', name: 'unit_tests' },
           { source: 'github-check', name: 'ci' },
         ],
         requiredReviewPerspectives: ['security', 'codeQuality'],
@@ -235,7 +235,7 @@ integration('production release receipt projection', () => {
         sampleIndex: 0,
         agent: 'codex',
         verdict: 'approve',
-        hardGates: { contracts: 'pass' },
+        hardGates: { unit_tests: 'pass' },
         findings: [],
         scores: {
           functionality: 1,
@@ -265,7 +265,7 @@ integration('production release receipt projection', () => {
       sampleIndex: 0,
       agent: 'codex',
       verdict: 'request_changes',
-      hardGates: { contracts: 'pass' },
+      hardGates: { unit_tests: 'pass' },
       findings: [],
       scores: {
         functionality: 1,

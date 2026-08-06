@@ -39,8 +39,8 @@ writerとselectorの片側だけを変更すると既存containerが孤児化し
    | component・CLI・env | `agentops*` / `AGENTOPS_*` | technical prefixとして維持 |
    | PostgreSQL schema | `agentops_control` | published DB contractとして維持 |
    | container label | `com.mrbaron3.workflow.*` | 独立issueで`com.mrbaron3.servo.*`へ3段階移行 |
-   | JSON Schema `$id` | `mrbaron3/workflow`を含む既存ID | consumer確認を伴うversioned changeで`mrbaron3/servo`へ移行 |
-   | schema title・人間向け表示 | legacy `AgentOps`を含む | behavior-neutralな変更で`Servo`へ統一 |
+   | JSON Schema `$id` | `https://github.com/mrbaron3/servo/contracts/**` | repository内consumer照合後に旧`workflow`IDから移行済み。値域・schema versionは不変 |
+   | schema title・人間向け表示 | `Servo` | legacy `AgentOps` titleから統一済み |
 
 5. **container labelはこのADRの実装PRで変更しない。** 専用issueは必ず次の3段階を別々に検証する。
    1. writerが新旧両labelを付け、reader/selectorが両方を認識する。
@@ -54,7 +54,7 @@ writerとselectorの片側だけを変更すると既存containerが孤児化し
 
 - README、runbook、context mapはServoを一つの製品として説明できる。
 - `agentops` prefixを直ちに破壊せず、人間向けrenameとmachine compatibility migrationを分離できる。
-- 旧`workflow` labelとschema IDが残っていても、未整理ではなく明示したcompatibility identifierとして扱える。
+- 旧`workflow`はcontainer labelだけに残る明示的なcompatibility identifierで、JSON Schema IDとは移行速度を分離する。
 - label移行完了までは新旧どちらか片側だけの実装を受け入れられない。
 - この判断は未監査領域の語彙整合やApple Container上の移行完了を主張しない。
 

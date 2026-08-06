@@ -28,9 +28,9 @@ import {
 } from './policy.js';
 import type { TriageProvider } from './provider.js';
 import {
-  linkedParentIssueNumber,
   type DevelopmentProgressUpdate,
 } from '../domain/development-progress.js';
+import { linkedParentIssueNumber } from '../intake/parent-link.js';
 
 // GitHub's REST Issue and Issue-event timestamps have only second precision,
 // and the Issue updated_at produced by a label mutation can become visible one

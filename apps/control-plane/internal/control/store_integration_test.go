@@ -297,9 +297,27 @@ func TestQueuedReadyIssueProjectsBeforeTheFirstWorkerEvent(t *testing.T) {
 	}
 	projections, err := store.Projections(ctx, time.Minute)
 	if err != nil || len(projections) != 1 ||
+		projections[0].Mode != lifecyclestore.ModeActive ||
 		len(projections[0].DevelopmentProgress) != 1 ||
 		projections[0].DevelopmentProgress[0].Current.KanbanLane != "ready" {
 		t.Fatalf("pre-event dashboard projection = %#v, %v", projections, err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE agentops_control.lifecycle_state
+		   SET mode = 'DRAINING', generation = generation + 1,
+		       updated_at = clock_timestamp()
+		 WHERE singleton`); err != nil {
+		t.Fatal(err)
+	}
+	standardStore := &Store{pool: pool}
+	standardStore.DisableLegacyForwarder()
+	projections, err = standardStore.Projections(ctx, time.Minute)
+	if err != nil || len(projections) != 1 ||
+		projections[0].Mode != lifecyclestore.ModeDraining {
+		t.Fatalf("draining dashboard projection = %#v, %v", projections, err)
+	}
+	if _, present := projections[0].Components[ComponentForwarder]; present {
+		t.Fatalf("standard signed-ingress projection exposed legacy forwarder: %#v", projections[0])
 	}
 }
 
@@ -1367,7 +1385,7 @@ func TestPostgresRegistrationControlIntegration(t *testing.T) {
 		t.Fatal("expected a pending delivery")
 	}
 	// The first claim can be the registered delivery. Process claims until the unknown one is ignored.
-	router := &Router{Store: store, Mode: ModeActive}
+	router := &Router{Store: store}
 	for claim != nil {
 		if err := router.route(ctx, *claim); err != nil {
 			_ = store.FinishWebhook(ctx, *claim, "failed", err.Error())

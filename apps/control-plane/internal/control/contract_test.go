@@ -55,7 +55,7 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 		{
 			name: "pull request",
 			item: WorkItem{
-				Repository: "owner/repo", Kind: "pull_request", Number: 38,
+				Repository: "owner/repo", Kind: WorkItemKindPullRequest, Number: 38,
 			},
 			kind: "pull_request",
 			mode: "pr_reconciliation",
@@ -64,7 +64,8 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 			name: "repository event",
 			item: WorkItem{
 				Repository: "owner/repo",
-				Kind:       "push",
+				Kind:       WorkItemKindRepositoryHead,
+				SourceEvent: "push",
 				Identity:   strings.Repeat("a", 40),
 				Payload: map[string]any{
 					"ref":              "refs/heads/main",
@@ -106,6 +107,44 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 	}
 }
 
+func TestWorkItemCanonicalKindsPreserveLegacyIdempotencyKeys(t *testing.T) {
+	updatedAt := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		legacy    WorkItem
+		canonical WorkItem
+	}{
+		{
+			legacy: WorkItem{
+				Repository: "owner/repo", Kind: "pull_request", Number: 42,
+				UpdatedAt: updatedAt,
+			},
+			canonical: WorkItem{
+				Repository: "owner/repo", Kind: WorkItemKindPullRequest, Number: 42,
+				UpdatedAt: updatedAt,
+			},
+		},
+		{
+			legacy: WorkItem{
+				Repository: "owner/repo", Kind: "push", Identity: "head-identity",
+				UpdatedAt: updatedAt,
+			},
+			canonical: WorkItem{
+				Repository: "owner/repo", Kind: WorkItemKindRepositoryHead,
+				SourceEvent: "push", Identity: "head-identity", UpdatedAt: updatedAt,
+			},
+		},
+	}
+	for _, test := range tests {
+		if test.legacy.IdempotencyKey() != test.canonical.IdempotencyKey() {
+			t.Fatalf(
+				"legacy key %q != canonical key %q",
+				test.legacy.IdempotencyKey(),
+				test.canonical.IdempotencyKey(),
+			)
+		}
+	}
+}
+
 func TestIssueWorkProjectsOnlyVersionedTriagePayload(t *testing.T) {
 	item := WorkItem{
 		Repository: "owner/repo",
@@ -143,6 +182,11 @@ func TestWorkItemRunnerPayloadFailsClosed(t *testing.T) {
 		{Repository: "Owner/repo", Kind: "issue", Number: 1},
 		{Repository: "owner/repo", Kind: "issue", Number: 0},
 		{Repository: "owner/repo", Kind: "pull_request", Number: 0},
+		{Repository: "owner/repo", Kind: WorkItemKindRepositoryHead},
+		{
+			Repository: "owner/repo", Kind: WorkItemKindRepositoryHead,
+			SourceEvent: "workflow_dispatch",
+		},
 		{Repository: "owner/repo", Kind: "workflow_dispatch"},
 	} {
 		if _, err := item.RunnerPayload("poll"); err == nil {

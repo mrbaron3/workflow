@@ -25,6 +25,10 @@ type gateEscalationStore interface {
 	ReconcileGateEscalations(context.Context, time.Time) (int64, error)
 }
 
+type componentTopology interface {
+	ManagesComponent(string) bool
+}
+
 type ComponentRunner interface {
 	Run(context.Context, Registration, string) error
 }
@@ -109,6 +113,10 @@ func (supervisor *Supervisor) Reconcile(ctx context.Context) error {
 			ComponentPRMonitor,
 			ComponentForwarder,
 		} {
+			if topology, supported := supervisor.store.(componentTopology); supported &&
+				!topology.ManagesComponent(component) {
+				continue
+			}
 			if registration.Desired(component) {
 				key := componentKey(registration.ID, component)
 				desired[key] = runningComponent{

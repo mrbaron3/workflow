@@ -1,6 +1,6 @@
 openapi: 3.1.0
 info:
-  title: AgentOps Registration Control API
+  title: Servo Registration Control API
   version: 1.3.0
   description: >-
     mrbaron3/workflow#15 のloopback dashboardとPostgreSQL Registration駆動Control API。
@@ -428,16 +428,33 @@ components:
           maxItems: 64
           uniqueItems: true
           items:
-            type: object
-            additionalProperties: false
-            required: [source, name]
-            properties:
-              source:
-                enum: [repository-grader, github-check]
-              name:
-                type: string
-                minLength: 1
-                maxLength: 128
+            oneOf:
+              - type: object
+                additionalProperties: false
+                required: [source, name]
+                properties:
+                  source:
+                    enum: [repository-grader]
+                  name:
+                    enum:
+                      - build
+                      - typecheck
+                      - unit_tests
+                      - api_tests
+                      - grader_profile
+                      - secrets_scan
+                      - scope_check
+                      - playwright
+              - type: object
+                additionalProperties: false
+                required: [source, name]
+                properties:
+                  source:
+                    enum: [github-check]
+                  name:
+                    type: string
+                    minLength: 1
+                    maxLength: 128
         requiredReviewPerspectives:
           type: array
           minItems: 2
@@ -523,7 +540,6 @@ components:
           required:
             - issue_monitor
             - pr_monitor
-            - forwarder
             - execution
             - queue
           properties:
@@ -750,8 +766,10 @@ components:
     OperatingMode:
       type: string
       enum:
+        - OFF
         - MONITOR_ONLY
         - ACTIVE
+        - DRAINING
     Registration:
       type: object
       additionalProperties: false

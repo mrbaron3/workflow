@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
 
 const (
@@ -25,7 +26,22 @@ const (
 )
 
 type Store struct {
-	pool *pgxpool.Pool
+	pool                    *pgxpool.Pool
+	legacyForwarderDisabled bool
+}
+
+// DisableLegacyForwarder removes the compatibility-only CLI forwarder from
+// supervision and status projection. It must be configured before the store
+// is shared with long-running control-plane goroutines.
+func (store *Store) DisableLegacyForwarder() {
+	store.legacyForwarderDisabled = true
+}
+
+// ManagesComponent reports whether this control-store instance exposes a
+// component in its runtime topology. The legacy default remains enabled for
+// compatibility callers that construct Store directly.
+func (store *Store) ManagesComponent(component string) bool {
+	return component != ComponentForwarder || !store.legacyForwarderDisabled
 }
 
 func OpenStore(ctx context.Context, databaseURL, migrationRoot string) (*Store, error) {
@@ -984,7 +1000,7 @@ func (store *Store) EnqueueWork(
 	`).Scan(&lifecycleMode); err != nil {
 		return "", false, unavailable(err)
 	}
-	if lifecycleMode != string(ModeActive) {
+	if lifecycleMode != string(lifecycle.ModeActive) {
 		return "", false, ErrOperatingMode
 	}
 	var existingID, existingStatus string
@@ -2573,6 +2589,23 @@ func (store *Store) DevelopmentProgress(
 	return events, nil
 }
 
+func (store *Store) LifecycleMode(ctx context.Context) (lifecycle.Mode, error) {
+	var mode lifecycle.Mode
+	if err := store.pool.QueryRow(ctx, `
+		SELECT mode
+		  FROM agentops_control.lifecycle_state
+		 WHERE singleton
+	`).Scan(&mode); err != nil {
+		return "", unavailable(err)
+	}
+	switch mode {
+	case lifecycle.ModeOff, lifecycle.ModeMonitorOnly, lifecycle.ModeActive, lifecycle.ModeDraining:
+		return mode, nil
+	default:
+		return "", unavailable(fmt.Errorf("unsupported lifecycle mode %q", mode))
+	}
+}
+
 func (store *Store) Projections(
 	ctx context.Context,
 	_ time.Duration,
@@ -2588,6 +2621,19 @@ func (store *Store) Projections(
 	var databaseNow time.Time
 	if err := transaction.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&databaseNow); err != nil {
 		return nil, unavailable(err)
+	}
+	var lifecycleMode lifecycle.Mode
+	if err := transaction.QueryRow(ctx, `
+		SELECT mode
+		  FROM agentops_control.lifecycle_state
+		 WHERE singleton
+	`).Scan(&lifecycleMode); err != nil {
+		return nil, unavailable(err)
+	}
+	switch lifecycleMode {
+	case lifecycle.ModeOff, lifecycle.ModeMonitorOnly, lifecycle.ModeActive, lifecycle.ModeDraining:
+	default:
+		return nil, unavailable(fmt.Errorf("unsupported lifecycle mode %q", lifecycleMode))
 	}
 	registrationRows, err := transaction.Query(ctx, registrationSelect+` ORDER BY repository`)
 	if err != nil {
@@ -2644,7 +2690,7 @@ func (store *Store) Projections(
 	for _, registration := range registrations {
 		projection := RegistrationProjection{
 			Registration:           registration,
-			Mode:                   ModeActive,
+			Mode:                   lifecycleMode,
 			Components:             make(map[string]ComponentProjection),
 			LastPoll:               map[string]*time.Time{"issue": nil, "pull_request": nil},
 			RecentDeliveryFailures: make([]DeliveryFailureProjection, 0),
@@ -2655,27 +2701,26 @@ func (store *Store) Projections(
 			ComponentPRMonitor,
 			ComponentForwarder,
 		} {
+			if !store.ManagesComponent(component) {
+				continue
+			}
 			observed, present := actual[registration.ID][component]
 			componentProjection := ComponentProjection{
 				Desired:       registration.Desired(component),
 				Actual:        "unknown",
-				State:         "unknown",
 				Freshness:     "unknown",
 				RecoveryState: "unknown",
-				Stale:         true,
 			}
 			if present {
 				componentProjection.Actual = observed.State
-				componentProjection.State = observed.State
 				componentProjection.ObservedAt = &observed.ObservedAt
 				componentProjection.LastGoodAt = observed.LastHealthyAt
-				componentProjection.LastHealthyAt = observed.LastHealthyAt
 				componentProjection.LastError = observed.LastError
-				componentProjection.Stale =
+				stale :=
 					observed.RegistrationVersion != registration.Version ||
 						databaseNow.Sub(observed.ObservedAt) >
 							componentFreshnessBudget(component)
-				if componentProjection.Stale {
+				if stale {
 					componentProjection.Freshness = "stale"
 					reason := "freshness_budget_exceeded"
 					if observed.RegistrationVersion != registration.Version {
@@ -2806,15 +2851,12 @@ func (store *Store) Projections(
 		execution := ComponentProjection{
 			Desired:       registration.Desired(ComponentExecution),
 			Actual:        "unknown",
-			State:         "unknown",
 			Freshness:     "unknown",
 			RecoveryState: "unknown",
-			Stale:         true,
 		}
 		queue := ComponentProjection{
 			Desired:       registration.Desired(ComponentQueue),
 			Actual:        "idle",
-			State:         "idle",
 			ObservedAt:    &databaseNow,
 			Freshness:     "fresh",
 			RecoveryState: "none",
@@ -2823,14 +2865,13 @@ func (store *Store) Projections(
 			latestJobVersion != nil &&
 			*latestJobVersion != registration.Version {
 			reason := "registration_version_mismatch"
-			execution.Actual, execution.State = "stale", "stale"
+			execution.Actual = "stale"
 			execution.ObservedAt = latestJobUpdatedAt
 			execution.Freshness = "stale"
 			execution.StaleReason = &reason
 			execution.LastError = &reason
 			execution.RecoveryState = "blocked"
-			execution.Stale = true
-			queue.Actual, queue.State = "blocked_by_mode", "blocked_by_mode"
+			queue.Actual = "blocked_by_mode"
 			queue.ObservedAt = latestJobUpdatedAt
 			queue.Freshness = "stale"
 			queue.StaleReason = &reason
@@ -2838,11 +2879,10 @@ func (store *Store) Projections(
 			queue.RecoveryState = "blocked"
 		} else if activeJobStatus != nil {
 			execution.ObservedAt = activeJobUpdatedAt
-			execution.Stale = false
 			if activeJobRegistrationVersion == nil ||
 				*activeJobRegistrationVersion != registration.Version {
 				reason := "registration_version_mismatch"
-				execution.Actual, execution.State = "stale", "stale"
+				execution.Actual = "stale"
 				execution.Freshness = "stale"
 				execution.StaleReason = &reason
 				execution.LastError = &reason
@@ -2865,24 +2905,24 @@ func (store *Store) Projections(
 			}
 			if *activeJobStatus == "leased" {
 				if execution.Actual != "stale" {
-					execution.Actual, execution.State = "running", "running"
+					execution.Actual = "running"
 					if execution.RecoveryState != "blocked" {
 						execution.RecoveryState = "in_progress"
 					}
 					execution.LastGoodAt = activeJobUpdatedAt
 				}
-				queue.Actual, queue.State = "leased", "leased"
+				queue.Actual = "leased"
 				if queue.RecoveryState != "blocked" {
 					queue.RecoveryState = "in_progress"
 				}
 			} else {
 				if execution.Actual != "stale" {
-					execution.Actual, execution.State = "waiting", "waiting"
+					execution.Actual = "waiting"
 					if execution.RecoveryState != "blocked" {
 						execution.RecoveryState = "scheduled"
 					}
 				}
-				queue.Actual, queue.State = "queued", "queued"
+				queue.Actual = "queued"
 				if queue.RecoveryState != "blocked" {
 					queue.RecoveryState = "scheduled"
 				}
@@ -2899,7 +2939,6 @@ func (store *Store) Projections(
 			latestJobVersion != nil &&
 			*latestJobVersion == registration.Version {
 			execution.ObservedAt = latestJobUpdatedAt
-			execution.Stale = false
 			if latestJobUpdatedAt != nil &&
 				databaseNow.Sub(*latestJobUpdatedAt) > 30*time.Second {
 				reason := "freshness_budget_exceeded"
@@ -2909,16 +2948,16 @@ func (store *Store) Projections(
 				execution.Freshness = "fresh"
 			}
 			if *latestJobStatus == "succeeded" {
-				execution.Actual, execution.State = "idle", "idle"
+				execution.Actual = "idle"
 				execution.LastGoodAt = latestJobUpdatedAt
 				execution.RecoveryState = "recovered"
 			} else if *latestJobStatus == "failed" ||
 				*latestJobStatus == "cancelled" ||
 				*latestJobStatus == "rejected" {
-				execution.Actual, execution.State = "failed", "failed"
+				execution.Actual = "failed"
 				execution.LastError = latestJobError
 				execution.RecoveryState = "scheduled"
-				queue.Actual, queue.State = "failed", "failed"
+				queue.Actual = "failed"
 				queue.ObservedAt = latestJobUpdatedAt
 				queue.LastError = latestJobError
 				queue.RecoveryState = "scheduled"

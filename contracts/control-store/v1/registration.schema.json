@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://mrbaron3.github.io/workflow/contracts/control-store/v1/registration.schema.json",
+  "$id": "https://github.com/mrbaron3/servo/contracts/control-store/v1/registration.schema.json",
   "title": "Repository Registration v1",
   "type": "object",
   "additionalProperties": false,

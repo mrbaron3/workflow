@@ -63,13 +63,3 @@ export type DevelopmentProgressUpdate = z.infer<typeof DevelopmentProgressUpdate
 export type DevelopmentProgressReporter = (
   update: DevelopmentProgressUpdate,
 ) => Promise<void>;
-
-/** Exact, immutable body link used for Epic progress and completion. */
-export function linkedParentIssueNumber(
-  body: string,
-  subjectIssueNumber?: number,
-): number | null {
-  const match = body.match(/^Parent:\s*#([1-9][0-9]*)\s*$/im);
-  const parent = match ? Number(match[1]) : null;
-  return parent !== null && parent !== subjectIssueNumber ? parent : null;
-}

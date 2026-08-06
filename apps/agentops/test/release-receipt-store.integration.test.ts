@@ -93,7 +93,7 @@ integration('PostgreSQL release receipt outbox', () => {
     const policy = {
       authority: 'human-ready-allowed' as const,
       requiredGateSignals: [
-        { source: 'repository-grader' as const, name: 'contracts' },
+        { source: 'repository-grader' as const, name: 'unit_tests' as const },
         { source: 'github-check' as const, name: 'contracts' },
       ],
       requiredReviewPerspectives: ['security' as const, 'codeQuality' as const],
@@ -208,10 +208,10 @@ integration('PostgreSQL release receipt outbox', () => {
         role: 'generator',
       },
       {
-        ...common(repositoryGradeId, 'grade:repository:contracts', at(3), [buildId], jobIds[1]!),
+        ...common(repositoryGradeId, 'grade:repository:unit_tests', at(3), [buildId], jobIds[1]!),
         kind: 'grade',
         head,
-        signal: { source: 'repository-grader', name: 'contracts' },
+        signal: { source: 'repository-grader', name: 'unit_tests' },
         status: 'passed',
         detailsDigest: digest,
       },

@@ -1,0 +1,10 @@
+[
+  "build",
+  "typecheck",
+  "unit_tests",
+  "api_tests",
+  "grader_profile",
+  "secrets_scan",
+  "scope_check",
+  "playwright"
+]

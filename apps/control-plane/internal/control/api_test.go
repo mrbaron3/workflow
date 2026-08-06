@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
 
 type fakeAPIStore struct {
@@ -25,6 +27,8 @@ type fakeAPIStore struct {
 	created         CreateRegistration
 	projections     []RegistrationProjection
 	projectionError error
+	currentMode     lifecycle.Mode
+	lifecycleError  error
 	retryError      error
 	updateError     error
 	updateDuplicate bool
@@ -43,6 +47,16 @@ const (
 )
 
 func (store *fakeAPIStore) Ping(context.Context) error { return nil }
+
+func (store *fakeAPIStore) LifecycleMode(context.Context) (lifecycle.Mode, error) {
+	if store.lifecycleError != nil {
+		return "", store.lifecycleError
+	}
+	if store.currentMode == "" {
+		return lifecycle.ModeMonitorOnly, nil
+	}
+	return store.currentMode, nil
+}
 
 func (store *fakeAPIStore) CreateRegistration(
 	_ context.Context,
@@ -180,7 +194,7 @@ func TestControlAPIRequiresAuthorizationAndOptimisticContractHeaders(t *testing.
 
 func TestRegistrationCommandsCarryStrictReleaseEvidenceConfiguration(t *testing.T) {
 	configuration := `{"releaseEvidence":{"authority":"ai-triage-required",` +
-		`"requiredGateSignals":[{"source":"repository-grader","name":"api_test"}],` +
+		`"requiredGateSignals":[{"source":"repository-grader","name":"api_tests"}],` +
 		`"requiredReviewPerspectives":["functionality","security"],` +
 		`"minimumHeadEpochs":1},"gateTimeoutSeconds":{"default":3600,"review":600}}`
 	store := &fakeAPIStore{}
@@ -222,6 +236,20 @@ func TestRegistrationCommandsCarryStrictReleaseEvidenceConfiguration(t *testing.
 		`"minimumHeadEpochs":1}}`
 	if validJSONObject(json.RawMessage(unsupported)) {
 		t.Fatal("unsupported review perspective passed the control contract")
+	}
+	invalidRepositoryGrader := `{"releaseEvidence":{"authority":"human-ready-allowed",` +
+		`"requiredGateSignals":[{"source":"repository-grader","name":"contracts"}],` +
+		`"requiredReviewPerspectives":["security","codeQuality"],` +
+		`"minimumHeadEpochs":1}}`
+	if validJSONObject(json.RawMessage(invalidRepositoryGrader)) {
+		t.Fatal("unknown repository grader signal passed the control contract")
+	}
+	customGitHubCheck := `{"releaseEvidence":{"authority":"human-ready-allowed",` +
+		`"requiredGateSignals":[{"source":"github-check","name":"ci/custom"}],` +
+		`"requiredReviewPerspectives":["security","codeQuality"],` +
+		`"minimumHeadEpochs":1}}`
+	if !validJSONObject(json.RawMessage(customGitHubCheck)) {
+		t.Fatal("repository-defined GitHub check was rejected by the control contract")
 	}
 	if validJSONObject(json.RawMessage(`{"gateTimeoutSeconds":{"unknown":60}}`)) ||
 		validJSONObject(json.RawMessage(`{"gateTimeoutSeconds":{"review":59}}`)) {
@@ -420,8 +448,8 @@ func TestEmptyRegistrationPatchReturnsStructuredRejection(t *testing.T) {
 
 func TestStatusQueryFiltersAndFailsClosedWithLastSuccessfulTime(t *testing.T) {
 	store := &fakeAPIStore{projections: []RegistrationProjection{
-		{Registration: Registration{Repository: "owner/one"}},
-		{Registration: Registration{Repository: "owner/two"}},
+		{Registration: Registration{Repository: "owner/one"}, Mode: lifecycle.ModeMonitorOnly},
+		{Registration: Registration{Repository: "owner/two"}, Mode: lifecycle.ModeMonitorOnly},
 	}}
 	api := testAPI(store)
 	request := httptest.NewRequest(
@@ -462,6 +490,7 @@ func TestMonitorOnlyModeDoesNotMaskStaleExecutionEvidence(t *testing.T) {
 			ExecutionEnabled: true,
 			Enabled:          true,
 		},
+		Mode: lifecycle.ModeMonitorOnly,
 		Components: map[string]ComponentProjection{
 			ComponentExecution: {
 				Desired: true, Actual: "stale", Freshness: "stale",
@@ -484,10 +513,72 @@ func TestMonitorOnlyModeDoesNotMaskStaleExecutionEvidence(t *testing.T) {
 	}
 }
 
+func TestStatusProjectionPreservesAuthoritativeLifecycleMode(t *testing.T) {
+	store := &fakeAPIStore{projections: []RegistrationProjection{{
+		Registration: Registration{Repository: "owner/draining"},
+		Mode:         lifecycle.ModeDraining,
+		Components:   map[string]ComponentProjection{},
+	}}}
+	request := httptest.NewRequest(http.MethodGet, "/v1/registrations", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status query = %d: %s", response.Code, response.Body)
+	}
+	var page struct {
+		Items []RegistrationProjection `json:"items"`
+		Mode  lifecycle.Mode           `json:"mode"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &page); err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Items) != 1 || page.Items[0].Mode != lifecycle.ModeDraining ||
+		page.Mode != lifecycle.ModeDraining {
+		t.Fatalf("lifecycle mode was overwritten: %#v", page.Items)
+	}
+}
+
+func TestEmptyStatusProjectionStillUsesAuthoritativeLifecycleMode(t *testing.T) {
+	store := &fakeAPIStore{currentMode: lifecycle.ModeDraining}
+	request := httptest.NewRequest(http.MethodGet, "/v1/registrations", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"mode":"DRAINING"`)) {
+		t.Fatalf("empty lifecycle projection = %d: %s", response.Code, response.Body)
+	}
+}
+
+func TestOffModeProjectsExecutionAndQueueAsBlockedByMode(t *testing.T) {
+	store := &fakeAPIStore{projections: []RegistrationProjection{{
+		Registration: Registration{
+			Repository:       "owner/off",
+			Enabled:          true,
+			ExecutionEnabled: true,
+		},
+		Mode: lifecycle.ModeOff,
+		Components: map[string]ComponentProjection{
+			ComponentExecution: {Desired: true, Actual: "unknown", Freshness: "unknown"},
+			ComponentQueue:     {Desired: true, Actual: "unknown", Freshness: "unknown"},
+		},
+	}}}
+	request := httptest.NewRequest(http.MethodGet, "/v1/registrations", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"actual":"paused_by_mode"`)) ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"actual":"blocked_by_mode"`)) {
+		t.Fatalf("OFF lifecycle projection = %d: %s", response.Code, response.Body)
+	}
+}
+
 func TestOpaqueContinuationRemainsBoundToFirstSnapshot(t *testing.T) {
 	store := &fakeAPIStore{projections: []RegistrationProjection{
-		{Registration: Registration{Repository: "owner/one"}},
-		{Registration: Registration{Repository: "owner/two"}},
+		{Registration: Registration{Repository: "owner/one"}, Mode: lifecycle.ModeDraining},
+		{Registration: Registration{Repository: "owner/two"}, Mode: lifecycle.ModeDraining},
 	}}
 	api := testAPI(store)
 	request := httptest.NewRequest(http.MethodGet, "/v1/registrations?limit=1", nil)
@@ -498,6 +589,7 @@ func TestOpaqueContinuationRemainsBoundToFirstSnapshot(t *testing.T) {
 		Items         []RegistrationProjection `json:"items"`
 		NextPageToken string                   `json:"nextPageToken"`
 		ObservedAt    time.Time                `json:"observedAt"`
+		Mode          lifecycle.Mode           `json:"mode"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &first); err != nil ||
 		len(first.Items) != 1 ||
@@ -506,8 +598,8 @@ func TestOpaqueContinuationRemainsBoundToFirstSnapshot(t *testing.T) {
 	}
 
 	store.projections = []RegistrationProjection{
-		{Registration: Registration{Repository: "owner/one"}},
-		{Registration: Registration{Repository: "owner/replaced"}},
+		{Registration: Registration{Repository: "owner/one"}, Mode: lifecycle.ModeActive},
+		{Registration: Registration{Repository: "owner/replaced"}, Mode: lifecycle.ModeActive},
 	}
 	request = httptest.NewRequest(
 		http.MethodGet,
@@ -520,10 +612,14 @@ func TestOpaqueContinuationRemainsBoundToFirstSnapshot(t *testing.T) {
 	var second struct {
 		Items      []RegistrationProjection `json:"items"`
 		ObservedAt time.Time                `json:"observedAt"`
+		Mode       lifecycle.Mode           `json:"mode"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &second); err != nil ||
 		len(second.Items) != 1 ||
 		second.Items[0].Registration.Repository != "owner/two" ||
+		second.Items[0].Mode != lifecycle.ModeDraining ||
+		second.Mode != lifecycle.ModeDraining ||
+		first.Mode != lifecycle.ModeDraining ||
 		!second.ObservedAt.Equal(first.ObservedAt) {
 		t.Fatalf("second page escaped snapshot = %#v error=%v body=%s", second, err, response.Body)
 	}

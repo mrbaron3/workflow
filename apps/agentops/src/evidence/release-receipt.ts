@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { REVIEW_PERSPECTIVE_KEYS } from '../domain/review-perspectives.js';
 import { INTERVENTION_KINDS } from '../domain/schema.js';
+import { HARD_GATE_SIGNAL_NAMES } from '../graders/gate-names.js';
 
 const Repository = z.string().regex(
   /^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?\/(?!\.{1,2}$)[a-z0-9_.-]{1,100}$/,
@@ -206,10 +207,16 @@ export type DurableReleaseReceipt = z.infer<typeof DurableReleaseReceiptContract
 
 export const ReleasePolicyContract = z.object({
   authority: z.enum(['human-ready-allowed', 'ai-triage-required']),
-  requiredGateSignals: z.array(z.object({
-    source: z.enum(['repository-grader', 'github-check']),
-    name: BoundedName,
-  }).strict()).min(1).max(64),
+  requiredGateSignals: z.array(z.discriminatedUnion('source', [
+    z.object({
+      source: z.literal('repository-grader'),
+      name: z.enum(HARD_GATE_SIGNAL_NAMES),
+    }).strict(),
+    z.object({
+      source: z.literal('github-check'),
+      name: BoundedName,
+    }).strict(),
+  ])).min(1).max(64),
   requiredReviewPerspectives: z.array(z.enum(REVIEW_PERSPECTIVE_KEYS))
     .min(2)
     .max(REVIEW_PERSPECTIVE_KEYS.length),

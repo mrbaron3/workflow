@@ -28,7 +28,7 @@
   既定を env で上書き可能にしつつ Mac home path を fail-closed 拒否、`scanForHostPathDependencies(root)` が build/runtime
   surface の hardcoded Mac 絶対 path を回帰検査する。
 - **ARCH-container-runtime-007 standard OCI build seam** — publicな形: `deploy/Containerfile` の multi-stage
-  build。rootのintegration layerとして`apps/agentops`を`deps → build → runtime/runner/triage-runner`へ、
+  build。rootのintegration layerとして`apps/agentops`を`deps → build → runtime/runner/triage`へ、
   `apps/control-plane`を`control-build → github-broker/control/credential-helper/agentopsctl`へ組み立てる。
   image構成専用の`provider-cli`・`gh`・`gosu`は`deploy/tools/`からだけ取り込む。
   Apple 専用構文なし、`build` stage の in-container typecheck、`control-build` stageのGo test/buildを持つ。
@@ -48,7 +48,7 @@
 - **ARCH-container-runtime-014 Scoped compensation** — partial startは当該試行が変更したcontainerだけを停止・削除し、
   named volumeと既存in-flight topologyを保存する。
 - **ARCH-container-runtime-015 Triage-only monitor credential boundary** — private repository monitor／Issue triageを
-  専用`triage-runner` image、DB role、GitHub credentialへ閉じる。controlのGitHub credentialは空のまま、
+  専用`triage` image、DB role、GitHub credentialへ閉じる。controlのGitHub credentialは空のまま、
   triageはinternal network上のcontrol egress allowlist経由で固定typed GitHub operationへ出るが、workspace、
   git／SSH、runtime socket、host path／portを持たない。MONITOR_ONLYはbrokerだけを動かしprovider credentialを
   渡さない。ACTIVEだけproviderによるstrict triageと、別credential／workspaceを持つdevelopment runnerを追加する。

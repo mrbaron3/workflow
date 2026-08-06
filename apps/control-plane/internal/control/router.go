@@ -9,11 +9,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
 
 var commitSHAPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 
 type RouterStore interface {
+	LifecycleMode(context.Context) (lifecycle.Mode, error)
 	ClaimWebhook(context.Context, time.Duration) (*ClaimedDelivery, error)
 	RegistrationByRepository(context.Context, string) (Registration, error)
 	BindWebhook(context.Context, ClaimedDelivery, Registration) error
@@ -30,7 +33,6 @@ type RouterStore interface {
 
 type Router struct {
 	Store    RouterStore
-	Mode     OperatingMode
 	Interval time.Duration
 	Lease    time.Duration
 	Wake     chan struct{}
@@ -148,7 +150,11 @@ func (router *Router) route(ctx context.Context, claim ClaimedDelivery) error {
 			"execution_disabled",
 		)
 	}
-	if router.Mode != ModeActive {
+	mode, err := router.Store.LifecycleMode(ctx)
+	if err != nil {
+		return err
+	}
+	if mode != lifecycle.ModeActive {
 		return router.Store.FinishWebhook(
 			ctx,
 			claim,
@@ -182,10 +188,10 @@ func workItemFromWebhook(claim ClaimedDelivery) (WorkItem, bool) {
 	var entity map[string]any
 	switch claim.Event {
 	case "issues", "issue_comment":
-		kind = "issue"
+		kind = WorkItemKindIssue
 		entity, _ = claim.Payload["issue"].(map[string]any)
 	case "pull_request", "pull_request_review", "pull_request_review_comment":
-		kind = "pull_request"
+		kind = WorkItemKindPullRequest
 		entity, _ = claim.Payload["pull_request"].(map[string]any)
 	case "check_run", "check_suite":
 		entity, _ = claim.Payload[claim.Event].(map[string]any)
@@ -202,10 +208,11 @@ func workItemFromWebhook(claim ClaimedDelivery) (WorkItem, bool) {
 			return WorkItem{}, false
 		}
 		return WorkItem{
-			Repository: claim.Repository,
-			Kind:       claim.Event,
-			Identity:   strconv.FormatInt(identity, 10),
-			UpdatedAt:  updatedAt,
+			Repository:  claim.Repository,
+			Kind:        WorkItemKindRepositoryHead,
+			SourceEvent: claim.Event,
+			Identity:    strconv.FormatInt(identity, 10),
+			UpdatedAt:   updatedAt,
 			Payload: map[string]any{
 				"action": optionalStringValue(claim.Action),
 			},
@@ -225,8 +232,9 @@ func workItemFromWebhook(claim ClaimedDelivery) (WorkItem, bool) {
 			updatedAt, _ = time.Parse(time.RFC3339, timestamp)
 		}
 		return WorkItem{
-			Repository: claim.Repository,
-			Kind:       "push",
+			Repository:  claim.Repository,
+			Kind:        WorkItemKindRepositoryHead,
+			SourceEvent: "push",
 			// GitHub can push the same commit to multiple branches. Include a
 			// length-framed ref so each branch remains a distinct logical event.
 			Identity:  fmt.Sprintf("%d:%s:%s", len(ref), ref, after),
@@ -251,10 +259,11 @@ func workItemFromWebhook(claim ClaimedDelivery) (WorkItem, bool) {
 		return WorkItem{}, false
 	}
 	return WorkItem{
-		Repository: claim.Repository,
-		Kind:       kind,
-		Number:     number,
-		UpdatedAt:  updatedAt,
+		Repository:  claim.Repository,
+		Kind:        kind,
+		SourceEvent: claim.Event,
+		Number:      number,
+		UpdatedAt:   updatedAt,
 	}, true
 }
 

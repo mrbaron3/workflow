@@ -15,7 +15,6 @@ import { ISSUE_STATUSES } from './states.js';
 import { VERIFICATION_METHODS } from '../authoring/lint.js';
 import {
   AgentProvider,
-  GeneratorAgent,
   InvocationOutcome,
   InvocationRole,
   Verdict,
@@ -28,6 +27,7 @@ import {
   RevisionGateSnapshot,
 } from './pr-schema.js';
 import { FindingLineageRef } from './finding-lineage.js';
+import { HARD_GATE_SIGNAL_NAMES } from '../graders/gate-names.js';
 export * from './agent-runtime.js';
 export * from './pr-schema.js';
 export * from './revision-gate.js';
@@ -61,6 +61,10 @@ export const IssueStatus = z.enum(ISSUE_STATUSES);
 
 export const GateResult = z.enum(['pass', 'fail', 'skip']);
 export type GateResult = z.infer<typeof GateResult>;
+
+export { HARD_GATE_SIGNAL_NAMES } from '../graders/gate-names.js';
+export const HardGateSignalName = z.enum(HARD_GATE_SIGNAL_NAMES);
+export type HardGateSignalName = z.infer<typeof HardGateSignalName>;
 
 // --- the Issue Contract ----------------------------------------------------
 
@@ -235,7 +239,7 @@ const IssueFields = z.object({
   specPath: z.string().nullable().default(null), // signed spec dir this issue decomposes — the coverage-set key
   sprint: z.string().nullable().default(null), // e.g. 2026-W24
   status: IssueStatus.default('planned'),
-  assignedAgent: GeneratorAgent.nullable().default(null),
+  assignedAgent: AgentProvider.nullable().default(null),
   contract: IssueContract.nullable().default(null), // null until contract-drafted
   // Nano decomposition (to-detail-design; replaces the old slice .md — DOC_TAXONOMY §NANO).
   // coversAcIds is the 被覆×排他 unit: every spec AC must be covered by exactly one issue in the set.
@@ -860,7 +864,7 @@ const EvalRunRecord = z.object({
   prId: z.string(),
   attempt: z.number().int().positive(), // 1-based attempt within this sample
   sampleIndex: z.number().int().nonnegative(), // which independent best-of-N sample
-  agent: GeneratorAgent,
+  agent: AgentProvider,
   promptVersion: z.string().default('v0'),
   graderVersion: z.string().default('v0'),
   verdict: Verdict,
@@ -963,7 +967,7 @@ export const PromptRecord = z.object({
   attempt: z.number().int().positive(), // 1-based; > 1 carries the repair brief
   role: z.enum(['generator', 'reviewer']).default('generator'),
   perspective: z.string().nullable().default(null), // reviewer lens; null for the generator
-  agent: GeneratorAgent,
+  agent: AgentProvider,
   model: z.string().nullable().default(null), // resolved --model; null = user default
   outcome: z.string().nullable().default(null), // completed | stuck | timeout; null = not captured
   prompt: z.string(),

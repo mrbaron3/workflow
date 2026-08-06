@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mrbaron3/workflow/contracts/live-release-evidence.schema.json",
+  "$id": "https://github.com/mrbaron3/servo/contracts/live-release-evidence.schema.json",
   "title": "Live external-target release evidence",
   "description": "One live GitHub round trip against an external target repository: triage decision, human ready promotion, claim, PR, two current-head review rounds, required checks, expected-head merge, Issue close. Identity (repository, Issue, PR, SHA) is validated but never pinned, so the same contract accepts any target. Only the invariants being asserted are pinned with const.",
   "type": "object",

@@ -1,0 +1,27 @@
+import fs from 'node:fs';
+import { parse as parseYaml } from 'yaml';
+import { describe, expect, it } from 'vitest';
+import { HARD_GATE_SIGNAL_NAMES } from '../src/graders/gate-names.js';
+import { repositoryPath } from '../src/runtime/roots.js';
+
+describe('Hard Gate Signal Name published language', () => {
+  it('keeps generated Go, JSON Schema, and OpenAPI mirrors aligned', () => {
+    const generatedGoNames = JSON.parse(fs.readFileSync(repositoryPath(
+      'apps', 'control-plane', 'internal', 'control',
+      'hard_gate_signal_names.generated.json',
+    ), 'utf8')) as string[];
+    const receiptSchema = JSON.parse(fs.readFileSync(repositoryPath(
+      'contracts', 'live-release-receipt.schema.json',
+    ), 'utf8')) as any;
+    const openapi = parseYaml(fs.readFileSync(repositoryPath(
+      'contracts', 'control-api', 'v1', 'openapi.yaml',
+    ), 'utf8')) as any;
+
+    expect(generatedGoNames).toEqual(HARD_GATE_SIGNAL_NAMES);
+    expect(receiptSchema.$defs.gateSignal.oneOf[0].properties.name.enum)
+      .toEqual(HARD_GATE_SIGNAL_NAMES);
+    expect(openapi.components.schemas.ReleaseEvidencePolicy.properties
+      .requiredGateSignals.items.oneOf[0].properties.name.enum)
+      .toEqual(HARD_GATE_SIGNAL_NAMES);
+  });
+});
