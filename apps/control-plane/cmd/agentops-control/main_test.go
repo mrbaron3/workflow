@@ -55,6 +55,83 @@ func TestOpenStandardControlStoreWiresSignedIngressTopology(t *testing.T) {
 	}
 }
 
+func TestRunCallsStandardControlStoreBoundary(t *testing.T) {
+	original := openStandardControlStore
+	t.Cleanup(func() { openStandardControlStore = original })
+	wantError := errors.New("run standard store boundary observed")
+	databaseURL := "http://invalid.example"
+	root, err := applicationRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	openStandardControlStore = func(
+		_ context.Context,
+		observedDatabaseURL, observedRoot string,
+	) (*control.Store, error) {
+		called = true
+		if observedDatabaseURL != databaseURL || observedRoot != root {
+			t.Fatalf(
+				"run standard store coordinates databaseURL=%q root=%q",
+				observedDatabaseURL,
+				observedRoot,
+			)
+		}
+		return nil, wantError
+	}
+	t.Setenv("AGENTOPS_APP_ROOT", root)
+	t.Setenv("AGENTOPS_DATABASE_URL", databaseURL)
+	t.Setenv("AGENTOPS_CONTROL_TOKEN", strings.Repeat("c", 32))
+	t.Setenv("AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN", strings.Repeat("d", 32))
+
+	if err := run(); !errors.Is(err, wantError) {
+		t.Fatalf("run did not propagate the standard store boundary: %v", err)
+	}
+	if !called {
+		t.Fatal("run bypassed the standard store boundary")
+	}
+}
+
+func TestProgressCommandCallsStandardControlStoreBoundary(t *testing.T) {
+	original := openStandardControlStore
+	t.Cleanup(func() { openStandardControlStore = original })
+	wantError := errors.New("admin standard store boundary observed")
+	databaseURL := "http://invalid.example"
+	root, err := applicationRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	openStandardControlStore = func(
+		_ context.Context,
+		observedDatabaseURL, observedRoot string,
+	) (*control.Store, error) {
+		called = true
+		if observedDatabaseURL != databaseURL || observedRoot != root {
+			t.Fatalf(
+				"admin standard store coordinates databaseURL=%q root=%q",
+				observedDatabaseURL,
+				observedRoot,
+			)
+		}
+		return nil, wantError
+	}
+	t.Setenv("AGENTOPS_APP_ROOT", root)
+	t.Setenv("AGENTOPS_DATABASE_URL", databaseURL)
+
+	err = runAdministrativeCommand([]string{
+		"progress",
+		"--repository",
+		"sample/repository",
+	})
+	if !errors.Is(err, wantError) {
+		t.Fatalf("progress did not propagate the standard store boundary: %v", err)
+	}
+	if !called {
+		t.Fatal("progress bypassed the standard store boundary")
+	}
+}
+
 func TestLoopbackPublishProxyRequiresLoopbackBackendAndExactHost(t *testing.T) {
 	if _, err := loopbackPublishProxy(
 		"0.0.0.0:8080",

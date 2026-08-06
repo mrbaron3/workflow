@@ -3,6 +3,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 import { INTERVENTION_KINDS } from '../src/domain/schema.js';
 import {
+  HistoricalReleaseGradeReceiptContract,
   HistoricalReleasePolicyContract,
   LiveReleaseReceiptEvidenceV2Contract,
   ReleaseGradeReceiptContract,
@@ -24,6 +25,7 @@ const finalCorrectnessId = '50000000-0000-4000-8000-000000000004';
 const resolutionId = '60000000-0000-4000-8000-000000000000';
 const repositoryGradeId = '70000000-0000-4000-8000-000000000001';
 const githubCheckId = '70000000-0000-4000-8000-000000000002';
+const historicalGradeId = '70000000-0000-4000-8000-000000000003';
 const mergeIntentId = '75000000-0000-4000-8000-000000000000';
 const mergeId = '80000000-0000-4000-8000-000000000000';
 const firstHead = 'b'.repeat(40);
@@ -302,14 +304,36 @@ describe('release receipt evidence v2', () => {
       requiredGateSignals: [{ source: 'github-check', name: 'ci/custom' }],
     }).success).toBe(true);
 
-    const invalidGradeEvidence = evidence();
-    invalidGradeEvidence.receipts.grades[0].signal.name = 'contracts';
+    const invalidCanonicalGrade = {
+      ...evidence().receipts.grades[0],
+      signal: { source: 'repository-grader', name: 'contracts' },
+    };
     expect(ReleaseGradeReceiptContract.safeParse(
-      invalidGradeEvidence.receipts.grades[0],
+      invalidCanonicalGrade,
     ).success).toBe(false);
-    expect(LiveReleaseReceiptEvidenceV2Contract.safeParse(invalidGradeEvidence).success)
-      .toBe(false);
-    expect(compiled()(invalidGradeEvidence)).toBe(false);
+    expect(HistoricalReleaseGradeReceiptContract.safeParse(
+      invalidCanonicalGrade,
+    ).success).toBe(true);
+  });
+
+  it('keeps historical v3 grade aliases decode-only while canonical writers stay strict', () => {
+    const persistedV3 = evidence();
+    const historicalGrade = {
+      ...persistedV3.receipts.grades[0],
+      receiptId: historicalGradeId,
+      receiptKey: 'grade:repository:lint',
+      recordedAt: '2026-08-01T00:05:05Z',
+      signal: { source: 'repository-grader', name: 'lint' },
+    };
+    persistedV3.receipts.grades.push(historicalGrade);
+
+    expect(ReleaseGradeReceiptContract.safeParse(historicalGrade).success).toBe(false);
+    expect(HistoricalReleaseGradeReceiptContract.safeParse(historicalGrade).success)
+      .toBe(true);
+    expect(LiveReleaseReceiptEvidenceV2Contract.safeParse(persistedV3).success)
+      .toBe(true);
+    expect(compiled()(persistedV3)).toBe(true);
+    expect(liveReleaseReceiptSemanticErrors(persistedV3)).toEqual([]);
   });
 
   it('rejects duplicate policy requirements at every TypeScript write boundary', () => {
@@ -343,6 +367,21 @@ describe('release receipt evidence v2', () => {
       requiredGateSignals: historical.requiredGateSignals.slice(0, 1),
       requiredReviewPerspectives: ['security', 'security'],
     }).success).toBe(false);
+
+    expect(ReleasePolicyContract.safeParse({
+      ...canonical,
+      requiredGateSignals: [
+        { source: 'repository-grader', name: 'unit_tests' },
+        { source: 'github-check', name: 'unit_tests' },
+      ],
+    }).success).toBe(true);
+    expect(HistoricalReleasePolicyContract.safeParse({
+      ...historical,
+      requiredGateSignals: [
+        { source: 'repository-grader', name: 'contracts' },
+        { source: 'github-check', name: 'contracts' },
+      ],
+    }).success).toBe(true);
   });
 
   it('accepts only review perspectives the production panel can emit', () => {

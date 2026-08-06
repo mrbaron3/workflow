@@ -115,7 +115,7 @@ export const ReleaseGradeReceiptContract = ReceiptBase.extend({
 }).strict();
 export type ReleaseGradeReceipt = z.infer<typeof ReleaseGradeReceiptContract>;
 
-/** Decode-only grade receipt for immutable v2 evidence written before Stage 2. */
+/** Decode-only grade receipt for immutable v2/v3 evidence written before Stage 2. */
 export const HistoricalReleaseGradeReceiptContract = ReceiptBase.extend({
   kind: z.literal('grade'),
   head: Head,
@@ -294,7 +294,7 @@ export const ReleasePolicyContract = z.object({
 }).strict();
 export type ReleasePolicy = z.infer<typeof ReleasePolicyContract>;
 
-/** Decode-only v2 policy; repository-grader names were historically open strings. */
+/** Decode-only persisted policy; repository-grader names were historically open strings. */
 export const HistoricalReleasePolicyContract = z.object({
   authority: z.enum(['human-ready-allowed', 'ai-triage-required']),
   requiredGateSignals: z.array(HistoricalReleaseGateSignalContract).min(1).max(64)
@@ -367,14 +367,14 @@ const HistoricalLiveReleaseReceiptEvidenceV2Contract = z.object({
   }).strict(),
 }).strict();
 
-const LiveReleaseReceiptEvidenceV3Contract = z.object({
+const HistoricalLiveReleaseReceiptEvidenceV3Contract = z.object({
   ...ReleaseEvidenceEnvelope,
   schemaVersion: z.literal('3.0'),
-  policy: ReleasePolicyContract,
+  policy: HistoricalReleasePolicyContract,
   receipts: z.object({
     ...ReleaseReceiptCollection,
     requirementsAuthority: ReleaseRequirementsAuthorityReceiptContract,
-    grades: z.array(ReleaseGradeReceiptContract).min(1).max(256),
+    grades: z.array(HistoricalReleaseGradeReceiptContract).min(1).max(256),
   }).strict(),
 }).strict();
 
@@ -382,7 +382,7 @@ export const LiveReleaseReceiptEvidenceV2Contract = z.discriminatedUnion(
   'schemaVersion',
   [
     HistoricalLiveReleaseReceiptEvidenceV2Contract,
-    LiveReleaseReceiptEvidenceV3Contract,
+    HistoricalLiveReleaseReceiptEvidenceV3Contract,
   ],
 );
 export type LiveReleaseReceiptEvidenceV2 = z.infer<

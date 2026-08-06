@@ -623,7 +623,7 @@ export interface ReleaseRecord {
   releaseKey: string;
   repository: string;
   issueNumber: number;
-  /** Persisted policy; historical v2 grader aliases remain decode-only readable. */
+  /** Persisted policy; historical v2/v3 grader aliases remain decode-only readable. */
   policy: HistoricalReleasePolicy;
   status: 'collecting' | 'merge-authorized' | 'merged' | 'abandoned';
   pullRequest: number | null;
@@ -636,7 +636,7 @@ export interface ReleaseRecord {
 }
 
 export interface ReleaseReceiptOutboxEntry {
-  /** Persisted receipt; new writes are still restricted to the canonical contract. */
+  /** Persisted v2/v3 receipt; new writes remain restricted to the canonical contract. */
   receipt: HistoricalDurableReleaseReceipt;
   publishedAt: string | null;
 }

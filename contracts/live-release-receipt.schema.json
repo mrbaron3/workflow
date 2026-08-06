@@ -40,18 +40,9 @@
       "if": { "properties": { "schemaVersion": { "const": "3.0" } } },
       "then": {
         "properties": {
-          "policy": { "$ref": "#/$defs/policy" },
           "receipts": {
             "type": "object",
-            "properties": {
-              "requirementsAuthority": {},
-              "grades": {
-                "type": "array",
-                "minItems": 1,
-                "maxItems": 256,
-                "items": { "$ref": "#/$defs/grade" }
-              }
-            },
+            "properties": { "requirementsAuthority": {} },
             "required": ["requirementsAuthority"]
           }
         }

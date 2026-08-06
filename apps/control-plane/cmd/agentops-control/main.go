@@ -28,7 +28,7 @@ const standardRuntimeTopology = control.RuntimeTopologySignedWebhookIngress
 
 var openControlStoreWithTopology = control.OpenStoreWithTopology
 
-func openStandardControlStore(
+var openStandardControlStore = func(
 	ctx context.Context,
 	databaseURL, root string,
 ) (*control.Store, error) {

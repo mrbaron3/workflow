@@ -97,6 +97,11 @@ test('CRUD, desired/actual divergence, announcements, and same-origin network bo
   };
   const deliveryId = '00000000-0000-4000-8000-000000000015';
   const lifecycleDeliveries = [{
+    id: '00000000-0000-4000-8000-000000000016',
+    mode: 'MONITOR_ONLY',
+    ignoredReason: 'lifecycle_monitor_only',
+    recovery: '実行を再開するには Operating Mode を ACTIVE に変更してください。',
+  }, {
     id: '00000000-0000-4000-8000-000000000017',
     mode: 'OFF',
     ignoredReason: 'lifecycle_off',
