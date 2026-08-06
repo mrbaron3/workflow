@@ -13,8 +13,8 @@
 | LANG-registration-control-009 | Manual Retry Attempt | observed route-attemptに束縛され、idempotentかつ監査可能なoperator command。 |
 | LANG-registration-control-010 | Compatibility Oracle | PR #9由来のTypeScript registry/router/forwarder/poll behaviorを回帰比較する非永続model。 |
 | LANG-registration-control-011 | Startup Mode | control processが起動時に`AGENTOPS_OPERATING_MODE`から読む`MONITOR_ONLY\|ACTIVE\|DRAINING`の観測値。運転状態の権威ではなく、正本はcontrol-storeのLifecycle Mode（`LANG-control-store-016`）。drain等で乖離する期間の表示・判定はLifecycle Modeへ従う。 |
-| LANG-registration-control-012 | Component Freshness | component自身のobservedAtと300/300/60/30/15秒budgetから決める`fresh\|stale\|unknown`。query成功時刻はlast-goodではない。 |
-| LANG-registration-control-013 | Last Good | 同componentが過去にauthoritativeに正常だったhistorical evidence。現在failureをhealthyに塗り替えない。component projectionの正典fieldは`Actual` / `LastGoodAt` / `Freshness`。現行Go内の`State` / `LastHealthyAt` / `Stale`はJSON非公開のlegacy aliasで、新規consumerや文書語彙に使わない。 |
+| LANG-registration-control-012 | Component Freshness | component自身のobservedAtとIssue/PR=300秒、compatibility Forwarder=60秒、Execution=30秒、Queue=15秒のbudgetから決める`fresh\|stale\|unknown`。query成功時刻はlast-goodではない。 |
+| LANG-registration-control-013 | Last Good | 同componentが過去にauthoritativeに正常だったhistorical evidence。現在failureをhealthyに塗り替えない。component projectionの正典fieldは`Actual` / `LastGoodAt` / `Freshness`。旧Go内の`State` / `LastHealthyAt` / `Stale` aliasは削除済みであり、再導入しない。 |
 | LANG-registration-control-014 | Recovery State | `none\|scheduled\|in_progress\|blocked\|recovered\|unknown` の明示的な回復進行度。新しいauthoritative snapshot前にrecoveredとしない。 |
 | LANG-registration-control-015 | Browser Operator Session | exact loopback originから一回限りbootstrapで得るserver-side session。browserはHttpOnly cookieとmemory-only CSRF proofだけを持つ。 |
 | LANG-registration-control-016 | Command Outcome | idempotency identity、observed/current fence、`applied\|duplicate\|version_conflict\|rejected\|indeterminate`、recorded timeを持つdurable command結果。 |

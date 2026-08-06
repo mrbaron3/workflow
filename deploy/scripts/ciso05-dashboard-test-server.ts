@@ -18,7 +18,7 @@ try {
   await migrateControlSchema(pool);
   await pool.query(
     `UPDATE agentops_control.lifecycle_state
-        SET mode = 'ACTIVE', generation = generation + 1,
+        SET mode = 'MONITOR_ONLY', generation = generation + 1,
             updated_at = clock_timestamp()
       WHERE singleton`,
   );

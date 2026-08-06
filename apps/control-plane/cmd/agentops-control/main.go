@@ -19,7 +19,26 @@ import (
 
 	"github.com/mrbaron3/servo/apps/control-plane/internal/control"
 	"github.com/mrbaron3/servo/apps/control-plane/internal/designgate"
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
+
+// The standard OCI deployment has one topology authority shared by Store,
+// Supervisor, and ProductionRunner. GitHub credentials and gh remain runner-only.
+const standardRuntimeTopology = control.RuntimeTopologySignedWebhookIngress
+
+var openControlStoreWithTopology = control.OpenStoreWithTopology
+
+var openStandardControlStore = func(
+	ctx context.Context,
+	databaseURL, root string,
+) (*control.Store, error) {
+	return openControlStoreWithTopology(
+		ctx,
+		databaseURL,
+		root,
+		standardRuntimeTopology,
+	)
+}
 
 func main() {
 	if err := runCommand(os.Args[1:]); err != nil {
@@ -85,10 +104,14 @@ func run() error {
 	if len(controlToken) < 32 || len(controlToken) > 512 {
 		return fmt.Errorf("AGENTOPS_CONTROL_TOKEN must be 32..512 bytes")
 	}
-	mode, err := control.ParseOperatingMode(environment("AGENTOPS_OPERATING_MODE", "MONITOR_ONLY"))
+	startupMode, err := lifecycle.ParseMode(environment(
+		"AGENTOPS_OPERATING_MODE",
+		string(lifecycle.ModeMonitorOnly),
+	))
 	if err != nil {
 		return err
 	}
+	log.Info("control startup mode observed", "startupMode", startupMode)
 	canonicalOrigin := environment("AGENTOPS_DASHBOARD_ORIGIN", "http://127.0.0.1:8080")
 	bootstrapToken := strings.TrimSpace(os.Getenv("AGENTOPS_DASHBOARD_BOOTSTRAP_TOKEN"))
 	if bootstrapToken == "" {
@@ -101,12 +124,15 @@ func run() error {
 	defer stop()
 	startupContext, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	store, err := control.OpenStore(startupContext, databaseURL, root)
+	store, err := openStandardControlStore(
+		startupContext,
+		databaseURL,
+		root,
+	)
 	if err != nil {
 		return err
 	}
 	defer store.Close()
-
 	supervisorID := environment("AGENTOPS_SUPERVISOR_ID", hostname())
 	reconciliationInterval := durationEnvironment(
 		"AGENTOPS_RECONCILIATION_INTERVAL",
@@ -137,16 +163,12 @@ func run() error {
 	runner := &control.ProductionRunner{
 		Store:          store,
 		Source:         monitorSource,
-		Mode:           mode,
 		SupervisorID:   supervisorID,
 		PollInterval:   pollInterval,
 		TransientRetry: 2 * time.Second,
 		ForwarderRetry: 2 * time.Second,
 		HealthInterval: reconciliationInterval,
-		// Webhook ingress is the signed HTTP API in the standard OCI
-		// topology. GitHub credentials and gh remain runner-only.
-		SignedWebhookIngressOnly: true,
-		Log:                      log,
+		Log:            log,
 	}
 	supervisor := control.NewSupervisor(
 		store,
@@ -157,7 +179,6 @@ func run() error {
 	)
 	router := &control.Router{
 		Store:    store,
-		Mode:     mode,
 		Interval: reconciliationInterval,
 		Lease:    30 * time.Second,
 		Wake:     make(chan struct{}, 1),
@@ -168,7 +189,6 @@ func run() error {
 		ControlToken:    controlToken,
 		WebhookSecret:   strings.TrimSpace(os.Getenv("AGENTOPS_GITHUB_WEBHOOK_SECRET")),
 		StaleAfter:      max(3*reconciliationInterval, 3*pollInterval, time.Minute),
-		Mode:            mode,
 		CanonicalOrigin: canonicalOrigin,
 		BootstrapToken:  bootstrapToken,
 		ReleaseRepository: strings.TrimSpace(
@@ -229,7 +249,7 @@ func run() error {
 		log.Info(
 			"agentops-control listening",
 			"address", server.Addr,
-			"operatingMode", mode,
+			"startupMode", startupMode,
 			"dashboardBootstrapUrl",
 			canonicalOrigin+"/dashboard/bootstrap?token="+url.QueryEscape(bootstrapToken),
 		)

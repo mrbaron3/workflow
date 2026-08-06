@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mrbaron3/workflow/contracts/github-credential/v1/token-response.schema.json",
-  "title": "AgentOps ephemeral GitHub installation credential response v1",
+  "$id": "https://github.com/mrbaron3/servo/contracts/github-credential/v1/token-response.schema.json",
+  "title": "Servo ephemeral GitHub installation credential response v1",
   "description": "Secret response that must remain in process memory and must never be persisted or logged.",
   "type": "object",
   "additionalProperties": false,

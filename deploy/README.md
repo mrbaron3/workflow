@@ -28,13 +28,13 @@ docker    build -t agentops-app:dev -f deploy/Containerfile .   # 可搬性（�
 - 全 path はコンテナ絶対（`WORKDIR /app`）。macOS の `/Users/...` を一切参照しない
   （`apps/agentops/src/runtime/paths.ts` の scanner が build/runtime surface を静的検査して保証する）。
 - `runtime` stage は非 root（`node` uid 1000）で動く。productionの`runner`と
-  `triage-runner`はuid 65532で動く。
+  `triage`はuid 65532で動く。
 - `build` stage で `npm run typecheck` を通し、「build/typecheck grader がコンテナ内・コンテナ相対 path で走る」ことを
   ビルド時に接地する。
 - `control-build` はGo unit test後に静的`agentops-control`をbuildし、`control-test`はrace/integration用、
   `control`は非rootのproduction imageである。TypeScript `runtime`とは独立したstageなのでrunner release surfaceを
   変更しない。
-- `triage-runner`はIssue/PR観測とIssue triage専用で、git／SSH／workspace／container socketを含まない。
+- `triage`はIssue/PR観測とIssue triage専用で、git／SSH／workspace／container socketを含まない。
   `runner`は開発実行専用で、triageとは別image・DB role・GitHub credentialとして起動する。
 
 ## runtime adapter 境界
@@ -123,10 +123,10 @@ Issue #15 dashboard boundaryまで含む証跡は`npm run smoke:dashboard:apple`
 ## Capability-limited triage runner
 
 ```sh
-container build --target triage-runner -t agentops-triage:dev -f deploy/Containerfile .
+container build --target triage -t agentops-triage:dev -f deploy/Containerfile .
 ```
 
-`triage-runner`はprivate Issue/PRのtyped monitor brokerを両modeで処理する。`MONITOR_ONLY`では
+`triage`はprivate Issue/PRのtyped monitor brokerを両modeで処理する。`MONITOR_ONLY`では
 AI providerを呼ばず、観測結果だけをcontrolへ返す。`ACTIVE`ではIssue本文、bounded comment、
 repositoryのNorth Star/roadmap文書、近傍Issue titleだけを読み、strict JSON判定から管理対象ラベルと
 marker付きcommentだけを書ける。人間がexact ready labelを付けた場合だけ、DBの

@@ -5,8 +5,9 @@
   repeatable-read snapshot から任意repository filter付きでanomaly-first に射影する。DB 不達時に cache を
   healthy として返さず、503へ最終正常取得時刻とbounded-retry hintだけを含める。
 - **ARCH-registration-control-002 Registration supervisor** — Go `agentops-control` は enabled な
-  Registration の version ごとに Issue monitor、PR monitor、local forwarder を動的に起動・停止・再起動する。
-  desired state は毎回 PostgreSQL から再構成し、process 内 registry を正本にしない。
+  Registration の version ごとに Issue monitor、PR monitor を動的に起動・停止・再起動する。Legacy CLI
+  Forwarder はcompatibility topologyでだけ同じ監督対象へ加える。desired state は毎回 PostgreSQL から再構成し、
+  process 内 registry を正本にしない。
 - **ARCH-registration-control-003 DB fail-closed boundary** — schema/checksum 不一致または起動時 DB 不達では
   HTTP server、monitor、routerを開始しない。稼働中の Registration reconciliation が失敗した場合は全 component を
   停止し、status query は 503 にする。
@@ -45,8 +46,9 @@
   Origin の byte-exact 一致、`Sec-Fetch-Site: same-origin`、session-bound `X-CSRF-Token` の全てを要求する。
   CSRF proof は session 確立時に生成して memory だけに保持し、logout/expiry で失効する。CSP、no-store、
   no-referrer、nosniff、frame denial を全 response に適用し、CORS は開かない。
-- **ARCH-registration-control-011 Authoritative five-component truth** — `GET /v1/registrations` は
-  `MONITOR_ONLY|ACTIVE` mode と Issue Monitor、PR Monitor、Forwarder、Execution、Queue の desired / actual /
+- **ARCH-registration-control-011 Authoritative topology-aware component truth** — `GET /v1/registrations` は
+  lifecycleの `OFF|MONITOR_ONLY|ACTIVE|DRAINING` mode と Issue Monitor、PR Monitor、Execution、Queue、および
+  compatibility topologyで実processを監督するときだけForwarderの desired / actual /
   observedAt / freshness / staleReason / lastGoodAt / lastError / recoveryState を Registration version-bound
   repeatable-read snapshot から返す。MONITOR_ONLY は monitor observation を継続するが enqueue/lease/execution を
   fail-closed で阻止し、DB/API 切断を cached success に置換しない。leased Execution/QueueのobservedAtは

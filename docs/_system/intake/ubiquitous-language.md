@@ -24,4 +24,4 @@
 | LANG-intake-017 | Capability Requirement | UI/UXが必要とするquery/command、認可、freshness、idempotency、failure semantics等の能力要求。endpointや実装方式はplanning/designが決める。 |
 | LANG-intake-018 | Human Design Decision | 人間が特定`revisionId`＋`bundleDigest`へ与えるapprove/request-changes/reject。artifact変更後へ持ち越せない。 |
 | LANG-intake-019 | Planning Human Review Outcome | planning gateの未解決点をSource Issueへ戻し、人間のWHAT判断までretryせず終端する正常系outcome。provider failureやHOW介入ではない。 |
-| LANG-intake-020 | Parent Link | child Issue本文の先頭blockに置く`Parent: #NNN`形式の、同repository内parent Issueへの明示link。現行readerは`apps/agentops/src/domain/development-progress.ts`の`linkedParentIssueNumber`で、production writerは未接続である。引用や本文中の偶然一致を関係として捏造せず、writer・厳格parser・intake所有への移設が揃うまで休眠互換機能として扱う。 |
+| LANG-intake-020 | Parent Link | child Issue本文のbyte 0から始まる独立した先頭blockに、case-sensitiveな`Parent: #NNN`形式で置く同repository内parent Issueへの明示link。readerはintake所有の`apps/agentops/src/intake/parent-link.ts`に置き、triage progressとEpic completionが手動または外部生成されたlinkを読む一方、production writerは未接続である。後続本文、引用、fenced code、大小文字違い、self-link、重複markerは関係を作らず、外部Issue mutationへ使わない。 |

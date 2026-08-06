@@ -10,14 +10,14 @@
 
 import type { AgentRunner } from './runner.js';
 import type { BuildArtifact, GenerateInput } from '../domain/artifact.js';
-import type { GeneratorAgent } from '../domain/schema.js';
+import type { AgentProvider } from '../domain/schema.js';
 import { hashUnit } from '../util/hash.js';
 
 /** Base per-criterion success probability for the mock "agent". */
 const BASE_COMPETENCE = 0.8;
 
 export class MockAgentRunner implements AgentRunner {
-  readonly agent: GeneratorAgent = 'mock';
+  readonly agent: AgentProvider = 'mock';
 
   async generate(input: GenerateInput): Promise<BuildArtifact> {
     const { issue, contract, sampleIndex, attempt, repairBrief } = input;

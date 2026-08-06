@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,11 +20,22 @@ type fakeSupervisionStore struct {
 	upsertErrorState     string
 }
 
+type filteredSupervisionStore struct {
+	*fakeSupervisionStore
+	unmanaged map[string]bool
+}
+
+func (store *filteredSupervisionStore) ManagesComponent(component string) bool {
+	return !store.unmanaged[component]
+}
+
 func (store *fakeSupervisionStore) ListRegistrations(context.Context) ([]Registration, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	return append([]Registration(nil), store.registrations...), store.listError
 }
+
+func (store *fakeSupervisionStore) ManagesComponent(string) bool { return true }
 
 func (store *fakeSupervisionStore) UpsertActualState(
 	_ context.Context,
@@ -129,6 +141,43 @@ func TestSupervisorDynamicallyReconfiguresAndFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertStops(t, runner.stopped, 2)
+}
+
+func TestSupervisorExcludesComponentsOutsideRuntimeTopology(t *testing.T) {
+	baseStore := &fakeSupervisionStore{registrations: []Registration{{
+		ID: "registration-1", Repository: "owner/repo", Enabled: true,
+		IssueMonitorEnabled: true, Version: 1,
+	}}}
+	store := &filteredSupervisionStore{
+		fakeSupervisionStore: baseStore,
+		unmanaged:            map[string]bool{ComponentForwarder: true},
+	}
+	runner := &fakeComponentRunner{
+		started: make(chan string, 20),
+		stopped: make(chan string, 20),
+	}
+	supervisor := NewSupervisor(
+		store,
+		runner,
+		"test",
+		time.Hour,
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+	)
+	if err := supervisor.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertStarts(t, runner.started, 1)
+	assertNoStart(t, runner.started)
+	baseStore.mu.Lock()
+	states := append([]string(nil), baseStore.states...)
+	baseStore.mu.Unlock()
+	for _, state := range states {
+		if strings.Contains(state, ":"+ComponentForwarder+":") {
+			t.Fatalf("unmanaged forwarder received actual-state projection: %s", state)
+		}
+	}
+	supervisor.stopAll()
+	assertStops(t, runner.stopped, 1)
 }
 
 func assertNoStart(t *testing.T, channel <-chan string) {

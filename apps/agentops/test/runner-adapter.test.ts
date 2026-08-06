@@ -772,7 +772,7 @@ describe('existing AgentOps isolated-runner adapter', () => {
       repository: 'mrbaron3/servo',
       number: 14,
       title: '[DF-002] Add safe path',
-      body: 'Users need the safe path.\n\nParent: #1',
+      body: 'Parent: #1\n\nUsers need the safe path.',
       url: 'https://github.com/mrbaron3/servo/issues/14',
       labels: ['human-approved'],
       comments: [],

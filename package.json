@@ -52,6 +52,7 @@
     "evidence:live-release": "npm run evidence:live-release --workspace agentops-harness --",
     "evidence:live-release:export": "npm run evidence:live-release:export --workspace agentops-harness --",
     "bundle-skills": "npm run bundle-skills --workspace agentops-harness --",
+    "sync-hard-gates": "npm run sync-hard-gates --workspace agentops-harness --",
     "go:test": "go test ./apps/control-plane/...",
     "go:build": "go build ./apps/control-plane/...",
     "prepare": "git config core.hooksPath githooks 2>/dev/null || true"

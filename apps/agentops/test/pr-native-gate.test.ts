@@ -377,6 +377,33 @@ describe('external epic completion', () => {
     expect(closes).toBe(0);
   });
 
+  it.each([
+    'Context before the marker.\n\nParent: #1',
+    '> Parent: #1',
+    '```text\nParent: #1\n```',
+    'parent: #1',
+  ])('never closes an Epic for a non-canonical Parent Link: %s', (body) => {
+    let inventories = 0;
+    let closes = 0;
+    const result = reconcileExternalEpicClosure(
+      {
+        viewRevision: () => greenGithub(),
+        merge: () => {},
+        closeIssue: () => { closes += 1; },
+        listRepositoryIssues: () => {
+          inventories += 1;
+          return issues;
+        },
+      },
+      '/repo',
+      'acme/theme',
+      { number: 8, body },
+    );
+    expect(result).toMatchObject({ parentIssueNumber: null, closed: false });
+    expect(inventories).toBe(0);
+    expect(closes).toBe(0);
+  });
+
   it('rejects a spoof child that is neither a GitHub sub-issue nor parent-authored', () => {
     const inventory: GithubRepositoryIssue[] = [
       {

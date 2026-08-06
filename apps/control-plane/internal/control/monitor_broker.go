@@ -97,6 +97,10 @@ func (source BrokeredGitHubSource) Poll(
 		return nil, nil, time.Time{}, err
 	}
 	items := make([]WorkItem, 0, len(response.Items))
+	entityKind, supported := canonicalWorkItemKind(kind)
+	if !supported {
+		return nil, nil, time.Time{}, fmt.Errorf("unsupported monitor entity kind %q", kind)
+	}
 	for _, item := range response.Items {
 		if item.Repository != registration.Repository ||
 			item.Kind != kind ||
@@ -108,7 +112,7 @@ func (source BrokeredGitHubSource) Poll(
 		}
 		items = append(items, WorkItem{
 			Repository: item.Repository,
-			Kind:       item.Kind,
+			Kind:       entityKind,
 			Number:     item.Number,
 			UpdatedAt:  item.UpdatedAt.UTC(),
 		})

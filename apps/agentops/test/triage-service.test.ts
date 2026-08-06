@@ -263,8 +263,8 @@ describe('capability-limited Issue triage runner', () => {
   ) => {
     const initial = snapshot(repository);
     const current = snapshot(repository);
-    initial.issue.body += '\n\nParent: #1';
-    current.issue.body += '\n\nParent: #1';
+    initial.issue.body = `Parent: #1\n\n${initial.issue.body}`;
+    current.issue.body = `Parent: #1\n\n${current.issue.body}`;
     const { service, store, github, provider } = setup(
       repository,
       [initial, current],
@@ -305,7 +305,7 @@ describe('capability-limited Issue triage runner', () => {
   it('promotes an exact human ready label without invoking the model or mutating GitHub', async () => {
     const repository = 'acme/widgets';
     const ready = snapshot(repository, [policy.readyLabel]);
-    ready.issue.body += '\n\nParent: #1';
+    ready.issue.body = `Parent: #1\n\n${ready.issue.body}`;
     ready.comments = [{
       id: 7,
       body: 'The compatibility floor is Node 22.',

@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
 
 const (
@@ -30,6 +32,7 @@ const (
 
 type APIStore interface {
 	Ping(context.Context) error
+	LifecycleMode(context.Context) (lifecycle.Mode, error)
 	CreateRegistration(
 		context.Context,
 		CreateRegistration,
@@ -80,7 +83,6 @@ type API struct {
 	ControlToken      string
 	WebhookSecret     string
 	StaleAfter        time.Duration
-	Mode              OperatingMode
 	CanonicalOrigin   string
 	BootstrapToken    string
 	ReleaseRepository string
@@ -102,6 +104,7 @@ type API struct {
 
 type registrationPageSnapshot struct {
 	Items      []RegistrationProjection
+	Mode       lifecycle.Mode
 	Repository string
 	Offset     int
 	ObservedAt time.Time
@@ -237,6 +240,10 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	projections, err := api.Store.Projections(request.Context(), api.StaleAfter)
+	responseMode := lifecycle.Mode("")
+	if err == nil && len(projections) == 0 {
+		responseMode, err = api.Store.LifecycleMode(request.Context())
+	}
 	if err != nil {
 		if errors.Is(err, ErrStoreUnavailable) {
 			api.Log.Error("status projection failed closed", "error", err)
@@ -260,16 +267,19 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 		api.respondError(writer, err)
 		return
 	}
-	mode := api.Mode
-	if mode == "" {
-		mode = ModeMonitorOnly
-	}
 	for index := range projections {
-		projections[index].Mode = mode
+		mode := projections[index].Mode
+		if mode == "" {
+			api.respondError(writer, fmt.Errorf("status projection omitted lifecycle mode"))
+			return
+		}
+		if index == 0 {
+			responseMode = mode
+		}
 		if projections[index].DevelopmentProgress == nil {
 			projections[index].DevelopmentProgress = make([]DevelopmentIssueProgress, 0)
 		}
-		if mode != ModeMonitorOnly {
+		if mode != lifecycle.ModeMonitorOnly && mode != lifecycle.ModeOff {
 			continue
 		}
 		execution := projections[index].Components[ComponentExecution]
@@ -280,11 +290,9 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 			execution.Actual != "disconnected" {
 			now := time.Now().UTC()
 			execution.Actual = "paused_by_mode"
-			execution.State = execution.Actual
 			execution.ObservedAt = &now
 			execution.Freshness = "fresh"
 			execution.RecoveryState = "blocked"
-			execution.Stale = false
 			projections[index].Components[ComponentExecution] = execution
 		}
 		queue := projections[index].Components[ComponentQueue]
@@ -295,11 +303,9 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 			queue.Actual != "disconnected" {
 			now := time.Now().UTC()
 			queue.Actual = "blocked_by_mode"
-			queue.State = queue.Actual
 			queue.ObservedAt = &now
 			queue.Freshness = "fresh"
 			queue.RecoveryState = "blocked"
-			queue.Stale = false
 			projections[index].Components[ComponentQueue] = queue
 		}
 	}
@@ -335,6 +341,7 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 			return
 		}
 		projections = snapshot.Items
+		responseMode = snapshot.Mode
 		offset = snapshot.Offset
 		observedAt = snapshot.ObservedAt
 		if offset < 0 || offset > len(projections) {
@@ -371,6 +378,7 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 		}
 		api.pages[nextToken] = registrationPageSnapshot{
 			Items:      projections,
+			Mode:       responseMode,
 			Repository: repository,
 			Offset:     end,
 			ObservedAt: observedAt,
@@ -384,7 +392,7 @@ func (api *API) listRegistrations(writer http.ResponseWriter, request *http.Requ
 		"nextPageToken":    nextToken,
 		"observedAt":       observedAt,
 		"lastSuccessfulAt": observedAt,
-		"mode":             mode,
+		"mode":             responseMode,
 		"provenance":       api.releaseProvenance(),
 	})
 }

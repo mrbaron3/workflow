@@ -56,9 +56,9 @@ import type { RunnerLeaseFence } from './guard.js';
 import { isolatedGraderEnvironment } from './security.js';
 import type { PreparedRunnerWorkspace } from './workspace.js';
 import {
-  linkedParentIssueNumber,
   type DevelopmentProgressUpdate,
 } from '../domain/development-progress.js';
+import { linkedParentIssueNumber } from '../intake/parent-link.js';
 import {
   RUNNER_DEPENDENCY_PATH,
   RUNNER_DEPENDENCY_ROOT,

@@ -3,6 +3,7 @@ import { gradeBuild } from '../src/graders/index.js';
 import { DEFAULT_CONFIG } from '../src/config.js';
 import type { IssueContract } from '../src/domain/schema.js';
 import type { BuildArtifact } from '../src/domain/artifact.js';
+import { HARD_GATE_SIGNAL_NAMES } from '../src/graders/gate-names.js';
 
 const contract: IssueContract = {
   productGoal: 'g',
@@ -35,6 +36,11 @@ function artifact(over: Partial<BuildArtifact> = {}): BuildArtifact {
 }
 
 describe('gradeBuild', () => {
+  it('emits every accepted repository-grader signal and no undeclared names', () => {
+    const names = Object.keys(gradeBuild(contract, artifact(), DEFAULT_CONFIG).hardGates).sort();
+    expect(names).toEqual([...HARD_GATE_SIGNAL_NAMES].sort());
+  });
+
   it('approves when all criteria + gates pass and score clears threshold', () => {
     const g = gradeBuild(contract, artifact(), DEFAULT_CONFIG);
     expect(g.verdict).toBe('approve');

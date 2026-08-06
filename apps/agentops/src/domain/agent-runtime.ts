@@ -4,10 +4,6 @@ import { z } from 'zod';
 export const AgentProvider = z.enum(['claude', 'codex', 'gemini', 'mock']);
 export type AgentProvider = z.infer<typeof AgentProvider>;
 
-/** Which coding agent backend produced an artifact (legacy generator-facing name). */
-export const GeneratorAgent = AgentProvider;
-export type GeneratorAgent = z.infer<typeof GeneratorAgent>;
-
 export const AgentRole = z.enum([
   'roadmap-planner',
   'issue-planner',

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mrbaron3/workflow/contracts/control-store/v1/runner-job.schema.json",
-  "title": "AgentOps isolated runner job payload v1",
+  "$id": "https://github.com/mrbaron3/servo/contracts/control-store/v1/runner-job.schema.json",
+  "title": "Servo isolated runner job payload v1",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "repository", "event", "target", "execution", "artifacts"],

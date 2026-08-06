@@ -93,7 +93,7 @@ integration('PostgreSQL release receipt outbox', () => {
     const policy = {
       authority: 'human-ready-allowed' as const,
       requiredGateSignals: [
-        { source: 'repository-grader' as const, name: 'contracts' },
+        { source: 'repository-grader' as const, name: 'unit_tests' as const },
         { source: 'github-check' as const, name: 'contracts' },
       ],
       requiredReviewPerspectives: ['security' as const, 'codeQuality' as const],
@@ -208,10 +208,10 @@ integration('PostgreSQL release receipt outbox', () => {
         role: 'generator',
       },
       {
-        ...common(repositoryGradeId, 'grade:repository:contracts', at(3), [buildId], jobIds[1]!),
+        ...common(repositoryGradeId, 'grade:repository:unit_tests', at(3), [buildId], jobIds[1]!),
         kind: 'grade',
         head,
-        signal: { source: 'repository-grader', name: 'contracts' },
+        signal: { source: 'repository-grader', name: 'unit_tests' },
         status: 'passed',
         detailsDigest: digest,
       },
@@ -468,6 +468,516 @@ integration('PostgreSQL release receipt outbox', () => {
     expect((await store.listReleaseReceipts(releaseId, {
       includeMergeIntent: true,
     }))[0]?.publishedAt).not.toBeNull();
+  });
+
+  it('reads, recovers, and exports a persisted v2 grader policy without rewriting it', async () => {
+    const registration = await store.createRegistration({
+      repository: 'sample/historical-release',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: {},
+    });
+    const created = await store.createRelease({
+      registrationId: registration.id,
+      registrationVersion: registration.version,
+      releaseKey: 'issue:70:release:v2',
+      repository: registration.repository,
+      issueNumber: 70,
+      policy: {
+        authority: 'human-ready-allowed',
+        requiredGateSignals: [{ source: 'repository-grader', name: 'unit_tests' }],
+        requiredReviewPerspectives: ['security', 'codeQuality'],
+        minimumHeadEpochs: 1,
+      },
+    });
+    const legacyPolicy = {
+      authority: 'human-ready-allowed',
+      requiredGateSignals: [{ source: 'repository-grader', name: 'contracts' }],
+      requiredReviewPerspectives: ['security', 'codeQuality'],
+      minimumHeadEpochs: 1,
+    };
+    await pool.query(
+      'UPDATE agentops_control.releases SET policy = $2 WHERE id = $1',
+      [created.release.id, legacyPolicy],
+    );
+
+    await expect(store.getRelease(created.release.id)).resolves.toMatchObject({
+      id: created.release.id,
+      policy: legacyPolicy,
+    });
+    await expect(store.findReleaseForRunnerEvent({
+      registrationId: registration.id,
+      issueNumber: 70,
+    })).resolves.toMatchObject({
+      id: created.release.id,
+      policy: legacyPolicy,
+    });
+
+    const releaseId = created.release.id;
+    const repository = registration.repository;
+    const head = '1'.repeat(40);
+    const mergeSha = '2'.repeat(40);
+    const digest = `sha256:${'3'.repeat(64)}`;
+    const at = (seconds: number) => new Date(
+      Date.parse(created.release.createdAt) + seconds * 1_000,
+    ).toISOString();
+    const authorityId = randomUUID();
+    const runtimeId = randomUUID();
+    const buildId = randomUUID();
+    const gradeId = randomUUID();
+    const securityReviewId = randomUUID();
+    const codeQualityReviewId = randomUUID();
+    const intentId = randomUUID();
+    const common = (
+      receiptId: string,
+      receiptKey: string,
+      recordedAt: string,
+      causes: string[],
+    ) => ({
+      receiptId,
+      receiptKey,
+      releaseId,
+      repository,
+      issueNumber: 70,
+      producer: {},
+      causes,
+      recordedAt,
+    });
+    const authority = {
+      ...common(authorityId, 'authority:historical-human-ready', at(1), []),
+      kind: 'authority' as const,
+      route: 'human-ready' as const,
+      actor: { type: 'human' as const, login: 'maintainer' },
+      readyLabel: 'ready',
+      readyAt: at(1),
+    };
+    const runtime = {
+      ...common(runtimeId, 'runtime:historical-v2', at(2), [authorityId]),
+      kind: 'runtime-provenance' as const,
+      consumer: { repository: 'mrbaron3/servo', revision: '4'.repeat(40) },
+      environment: {
+        kind: 'container' as const,
+        reference: 'runner@historical-v2',
+        digest,
+      },
+      invocations: [{
+        invocationId: 'historical-generator',
+        role: 'generator' as const,
+        provider: 'codex',
+        model: { kind: 'explicit' as const, name: 'historical-generator' },
+        head,
+      }, {
+        invocationId: 'historical-security-review',
+        role: 'reviewer' as const,
+        provider: 'claude',
+        model: { kind: 'explicit' as const, name: 'historical-reviewer' },
+        head,
+      }, {
+        invocationId: 'historical-code-quality-review',
+        role: 'reviewer' as const,
+        provider: 'claude',
+        model: { kind: 'explicit' as const, name: 'historical-reviewer' },
+        head,
+      }],
+    };
+    const build = {
+      ...common(buildId, 'build:historical-final', at(3), [authorityId]),
+      kind: 'build' as const,
+      head,
+      parentHead: null,
+      invocationId: 'historical-generator',
+      role: 'generator' as const,
+    };
+    const grade = {
+      ...common(gradeId, 'grade:repository:contracts', at(4), [buildId]),
+      kind: 'grade' as const,
+      head,
+      signal: { source: 'repository-grader' as const, name: 'contracts' },
+      status: 'passed' as const,
+      detailsDigest: digest,
+    };
+    const securityReview = {
+      ...common(securityReviewId, 'review:1:security', at(5), [buildId]),
+      kind: 'review' as const,
+      head,
+      headEpoch: 1,
+      perspective: 'security',
+      invocationId: 'historical-security-review',
+      verdict: 'approved' as const,
+      findings: [],
+    };
+    const codeQualityReview = {
+      ...common(codeQualityReviewId, 'review:1:codeQuality', at(6), [buildId]),
+      kind: 'review' as const,
+      head,
+      headEpoch: 1,
+      perspective: 'codeQuality',
+      invocationId: 'historical-code-quality-review',
+      verdict: 'approved' as const,
+      findings: [],
+    };
+    for (const receipt of [authority, runtime, build, securityReview, codeQualityReview]) {
+      await store.recordReleaseReceipt(receipt);
+    }
+
+    const insertHistoricalReceipt = async (
+      receipt: Record<string, unknown> & {
+        receiptId: string;
+        receiptKey: string;
+        kind: string;
+        causes: string[];
+        recordedAt: string;
+      },
+      receiptHead: string | null,
+    ) => {
+      await pool.query(
+        `INSERT INTO agentops_control.release_receipt_outbox(
+           receipt_id, release_id, receipt_key, kind, repository, issue_number,
+           head_sha, causes, payload, recorded_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          receipt.receiptId,
+          releaseId,
+          receipt.receiptKey,
+          receipt.kind,
+          repository,
+          70,
+          receiptHead,
+          receipt.causes,
+          receipt,
+          receipt.recordedAt,
+        ],
+      );
+    };
+    await insertHistoricalReceipt(grade, head);
+    expect((await store.listReleaseReceipts(releaseId)).find(
+      (entry) => entry.receipt.kind === 'grade',
+    )?.receipt).toMatchObject({
+      signal: { source: 'repository-grader', name: 'contracts' },
+    });
+
+    const intent = {
+      ...common(intentId, 'merge-intent:70:historical', at(7), [
+        authorityId,
+        runtimeId,
+        buildId,
+        gradeId,
+        securityReviewId,
+        codeQualityReviewId,
+      ]),
+      kind: 'merge-intent' as const,
+      pullRequest: 70,
+      expectedHead: head,
+      observedPrHead: head,
+    };
+    await insertHistoricalReceipt(intent, head);
+    await pool.query(
+      `UPDATE agentops_control.releases
+          SET status = 'merge-authorized', pull_request_number = 70,
+              final_head = $2, updated_at = clock_timestamp()
+        WHERE id = $1`,
+      [releaseId, head],
+    );
+    const merge = {
+      ...common(randomUUID(), 'merge:70:historical', at(8), [intentId]),
+      kind: 'merge' as const,
+      pullRequest: 70,
+      expectedHead: head,
+      observedPrHead: head,
+      mergeSha,
+      actor: 'workflow-app[bot]',
+      issueState: 'CLOSED' as const,
+      issueStateReason: 'COMPLETED' as const,
+      mergeReachableFromDefaultBranch: true as const,
+      mergedAt: at(8),
+    };
+    await expect(store.completeReleaseMerge({ releaseId, receipt: merge }))
+      .resolves.toMatchObject({ status: 'merged', policy: legacyPolicy });
+    await expect(store.findReleaseForRunnerEvent({
+      registrationId: registration.id,
+      issueNumber: 70,
+      includeMerged: true,
+    })).resolves.toMatchObject({ id: releaseId, policy: legacyPolicy });
+
+    const receiptIds = (await store.listReleaseReceipts(releaseId, {
+      includeMergeIntent: true,
+    })).map((entry) => entry.receipt.receiptId);
+    const artifact = {
+      kind: 'runner-result',
+      uri: `volume://historical/${releaseId}/runner-result.json`,
+      sha256: '5'.repeat(64),
+      sizeBytes: 512,
+      releaseId,
+      sourceHead: head,
+      receiptIds,
+    };
+    await store.recordReleaseArtifact({
+      artifactKey: 'runner-result:historical-v2',
+      artifact,
+    });
+    await expect(store.exportReleaseEvidence(releaseId)).resolves.toMatchObject({
+      schemaVersion: '2.0',
+      policy: legacyPolicy,
+      receipts: {
+        grades: [{ signal: { source: 'repository-grader', name: 'contracts' } }],
+      },
+      artifacts: [artifact],
+    });
+  });
+
+  it('authorizes and exports persisted v3 grader aliases without rewriting them', async () => {
+    const registration = await store.createRegistration({
+      repository: 'sample/historical-release-v3',
+      enabled: true,
+      issueMonitorEnabled: true,
+      prMonitorEnabled: true,
+      executionEnabled: true,
+      configuration: {},
+    });
+    const created = await store.createRelease({
+      registrationId: registration.id,
+      registrationVersion: registration.version,
+      releaseKey: 'issue:71:release:v3',
+      repository: registration.repository,
+      issueNumber: 71,
+      policy: {
+        authority: 'human-ready-allowed',
+        requiredGateSignals: [{ source: 'repository-grader', name: 'unit_tests' }],
+        requiredReviewPerspectives: ['security', 'codeQuality'],
+        minimumHeadEpochs: 1,
+      },
+    });
+    const historicalPolicy = {
+      authority: 'human-ready-allowed',
+      requiredGateSignals: [{ source: 'repository-grader', name: 'contracts' }],
+      requiredReviewPerspectives: ['security', 'codeQuality'],
+      minimumHeadEpochs: 1,
+    };
+    await pool.query(
+      'UPDATE agentops_control.releases SET policy = $2 WHERE id = $1',
+      [created.release.id, historicalPolicy],
+    );
+
+    const releaseId = created.release.id;
+    const repository = registration.repository;
+    const head = '6'.repeat(40);
+    const mergeSha = '7'.repeat(40);
+    const digest = `sha256:${'8'.repeat(64)}`;
+    const at = (seconds: number) => new Date(
+      Date.parse(created.release.createdAt) + seconds * 1_000,
+    ).toISOString();
+    const authorityId = randomUUID();
+    const requirementsAuthorityId = randomUUID();
+    const runtimeId = randomUUID();
+    const buildId = randomUUID();
+    const gradeId = randomUUID();
+    const securityReviewId = randomUUID();
+    const codeQualityReviewId = randomUUID();
+    const common = (
+      receiptId: string,
+      receiptKey: string,
+      recordedAt: string,
+      causes: string[],
+    ) => ({
+      receiptId,
+      receiptKey,
+      releaseId,
+      repository,
+      issueNumber: 71,
+      producer: {},
+      causes,
+      recordedAt,
+    });
+    const authority = {
+      ...common(authorityId, 'authority:historical-v3', at(1), []),
+      kind: 'authority' as const,
+      route: 'human-ready' as const,
+      actor: { type: 'human' as const, login: 'maintainer' },
+      readyLabel: 'ready',
+      readyAt: at(1),
+    };
+    const requirementsAuthority = {
+      ...common(
+        requirementsAuthorityId,
+        'requirements-authority:historical-v3',
+        at(2),
+        [authorityId],
+      ),
+      kind: 'requirements-authority' as const,
+      sourceIssueDigest: '9'.repeat(64),
+      sourceUpdatedAt: at(1),
+      capturedAt: at(2),
+    };
+    const runtime = {
+      ...common(runtimeId, 'runtime:historical-v3', at(3), [authorityId]),
+      kind: 'runtime-provenance' as const,
+      consumer: { repository: 'mrbaron3/servo', revision: 'a'.repeat(40) },
+      environment: {
+        kind: 'container' as const,
+        reference: 'runner@historical-v3',
+        digest,
+      },
+      invocations: [{
+        invocationId: 'historical-v3-generator',
+        role: 'generator' as const,
+        provider: 'codex',
+        model: { kind: 'explicit' as const, name: 'historical-v3-generator' },
+        head,
+      }, {
+        invocationId: 'historical-v3-security-review',
+        role: 'reviewer' as const,
+        provider: 'claude',
+        model: { kind: 'explicit' as const, name: 'historical-v3-reviewer' },
+        head,
+      }, {
+        invocationId: 'historical-v3-code-quality-review',
+        role: 'reviewer' as const,
+        provider: 'claude',
+        model: { kind: 'explicit' as const, name: 'historical-v3-reviewer' },
+        head,
+      }],
+    };
+    const build = {
+      ...common(buildId, 'build:historical-v3', at(4), [authorityId]),
+      kind: 'build' as const,
+      head,
+      parentHead: null,
+      invocationId: 'historical-v3-generator',
+      role: 'generator' as const,
+    };
+    const historicalGrade = {
+      ...common(gradeId, 'grade:repository:contracts:v3', at(5), [buildId]),
+      kind: 'grade' as const,
+      head,
+      signal: { source: 'repository-grader' as const, name: 'contracts' },
+      status: 'passed' as const,
+      detailsDigest: digest,
+    };
+    const securityReview = {
+      ...common(securityReviewId, 'review:v3:security', at(6), [buildId]),
+      kind: 'review' as const,
+      head,
+      headEpoch: 1,
+      perspective: 'security',
+      invocationId: 'historical-v3-security-review',
+      verdict: 'approved' as const,
+      findings: [],
+    };
+    const codeQualityReview = {
+      ...common(codeQualityReviewId, 'review:v3:codeQuality', at(7), [buildId]),
+      kind: 'review' as const,
+      head,
+      headEpoch: 1,
+      perspective: 'codeQuality',
+      invocationId: 'historical-v3-code-quality-review',
+      verdict: 'approved' as const,
+      findings: [],
+    };
+    for (const receipt of [authority, runtime, build, securityReview, codeQualityReview]) {
+      await store.recordReleaseReceipt(receipt);
+    }
+    await expect(store.recordReleaseReceipt(historicalGrade)).rejects.toThrow();
+
+    const insertHistoricalReceipt = async (
+      receipt: Record<string, unknown> & {
+        receiptId: string;
+        receiptKey: string;
+        kind: string;
+        causes: string[];
+        recordedAt: string;
+      },
+      receiptHead: string | null,
+    ) => {
+      await pool.query(
+        `INSERT INTO agentops_control.release_receipt_outbox(
+           receipt_id, release_id, receipt_key, kind, repository, issue_number,
+           head_sha, causes, payload, recorded_at
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          receipt.receiptId,
+          releaseId,
+          receipt.receiptKey,
+          receipt.kind,
+          repository,
+          71,
+          receiptHead,
+          receipt.causes,
+          receipt,
+          receipt.recordedAt,
+        ],
+      );
+    };
+    await insertHistoricalReceipt(requirementsAuthority, null);
+    await insertHistoricalReceipt(historicalGrade, head);
+
+    await expect(store.getRelease(releaseId)).resolves.toMatchObject({
+      id: releaseId,
+      policy: historicalPolicy,
+    });
+    const intent = {
+      ...common(randomUUID(), 'merge-intent:71:historical-v3', at(8), [
+        authorityId,
+        requirementsAuthorityId,
+        runtimeId,
+        buildId,
+        gradeId,
+        securityReviewId,
+        codeQualityReviewId,
+      ]),
+      kind: 'merge-intent' as const,
+      pullRequest: 71,
+      expectedHead: head,
+      observedPrHead: head,
+    };
+    await expect(store.authorizeReleaseMerge({ releaseId, intent }))
+      .resolves.toMatchObject({
+        id: releaseId,
+        status: 'merge-authorized',
+        policy: historicalPolicy,
+      });
+    const merge = {
+      ...common(randomUUID(), 'merge:71:historical-v3', at(9), [intent.receiptId]),
+      kind: 'merge' as const,
+      pullRequest: 71,
+      expectedHead: head,
+      observedPrHead: head,
+      mergeSha,
+      actor: 'workflow-app[bot]',
+      issueState: 'CLOSED' as const,
+      issueStateReason: 'COMPLETED' as const,
+      mergeReachableFromDefaultBranch: true as const,
+      mergedAt: at(9),
+    };
+    await expect(store.completeReleaseMerge({ releaseId, receipt: merge }))
+      .resolves.toMatchObject({ status: 'merged', policy: historicalPolicy });
+
+    const receiptIds = (await store.listReleaseReceipts(releaseId, {
+      includeMergeIntent: true,
+    })).map((entry) => entry.receipt.receiptId);
+    const artifact = {
+      kind: 'runner-result',
+      uri: `volume://historical/${releaseId}/runner-result-v3.json`,
+      sha256: 'b'.repeat(64),
+      sizeBytes: 768,
+      releaseId,
+      sourceHead: head,
+      receiptIds,
+    };
+    await store.recordReleaseArtifact({
+      artifactKey: 'runner-result:historical-v3',
+      artifact,
+    });
+    await expect(store.exportReleaseEvidence(releaseId)).resolves.toMatchObject({
+      schemaVersion: '3.0',
+      policy: historicalPolicy,
+      receipts: {
+        requirementsAuthority: { receiptId: requirementsAuthorityId },
+        grades: [{ signal: { source: 'repository-grader', name: 'contracts' } }],
+      },
+      artifacts: [artifact],
+    });
   });
 
   it('fails closed for a required AI authority and for mixed release identity', async () => {

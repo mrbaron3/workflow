@@ -4,6 +4,7 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 import {
   CONTROL_SCHEMA_VERSION,
+  HistoricalRepositoryRegistrationConfigurationContract,
   JobEnvelopeContract,
   RepositoryRegistrationInput,
   loadControlMigrations,
@@ -112,6 +113,45 @@ describe('language-neutral control-store contract', () => {
     });
     expect(validate({ ...fixture, version: 0 })).toBe(false);
     expect(validate({ ...fixture, repository: 'UNKNOWN/Repo' })).toBe(false);
+    const historical = {
+      ...fixture,
+      configuration: {
+        releaseEvidence: {
+          authority: 'human-ready-allowed',
+          requiredGateSignals: [{ source: 'repository-grader', name: 'contracts' }],
+          requiredReviewPerspectives: ['security', 'codeQuality'],
+          minimumHeadEpochs: 1,
+        },
+      },
+    };
+    expect(validate(historical), validate.errors?.map((error) => error.message).join(', '))
+      .toBe(true);
+    expect(RepositoryRegistrationInput.safeParse(historical).success).toBe(false);
+    expect(HistoricalRepositoryRegistrationConfigurationContract.safeParse(
+      historical.configuration,
+    ).success).toBe(true);
+    const historicalDuplicates = {
+      ...fixture,
+      configuration: {
+        releaseEvidence: {
+          authority: 'human-ready-allowed',
+          requiredGateSignals: [
+            { source: 'repository-grader', name: 'unit_tests' },
+            { source: 'repository-grader', name: 'unit_tests' },
+          ],
+          requiredReviewPerspectives: ['security', 'security'],
+          minimumHeadEpochs: 1,
+        },
+      },
+    };
+    expect(validate(historicalDuplicates), validate.errors?.map(
+      (error) => error.message,
+    ).join(', ')).toBe(true);
+    expect(RepositoryRegistrationInput.safeParse(historicalDuplicates).success)
+      .toBe(false);
+    expect(HistoricalRepositoryRegistrationConfigurationContract.safeParse(
+      historicalDuplicates.configuration,
+    ).success).toBe(true);
     const unsafeConfiguration = {
       ...fixture,
       configuration: { command: 'host-native-daemon' },

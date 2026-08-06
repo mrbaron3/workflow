@@ -3,7 +3,10 @@ import { Ajv2020 } from 'ajv/dist/2020.js';
 import { describe, expect, it } from 'vitest';
 import { INTERVENTION_KINDS } from '../src/domain/schema.js';
 import {
-  LiveReleaseReceiptEvidenceV2Contract,
+  HistoricalReleaseGradeReceiptContract,
+  HistoricalReleasePolicyContract,
+  PersistedLiveReleaseReceiptEvidenceContract,
+  ReleaseGradeReceiptContract,
   ReleasePolicyContract,
   liveReleaseReceiptSemanticErrors,
   releasePreMergeSemanticErrors,
@@ -22,6 +25,7 @@ const finalCorrectnessId = '50000000-0000-4000-8000-000000000004';
 const resolutionId = '60000000-0000-4000-8000-000000000000';
 const repositoryGradeId = '70000000-0000-4000-8000-000000000001';
 const githubCheckId = '70000000-0000-4000-8000-000000000002';
+const historicalGradeId = '70000000-0000-4000-8000-000000000003';
 const mergeIntentId = '75000000-0000-4000-8000-000000000000';
 const mergeId = '80000000-0000-4000-8000-000000000000';
 const firstHead = 'b'.repeat(40);
@@ -64,7 +68,7 @@ function evidence(): any {
     policy: {
       authority: 'human-ready-allowed',
       requiredGateSignals: [
-        { source: 'repository-grader', name: 'contracts' },
+        { source: 'repository-grader', name: 'unit_tests' },
         { source: 'github-check', name: 'contracts' },
       ],
       requiredReviewPerspectives: ['security', 'codeQuality'],
@@ -160,10 +164,10 @@ function evidence(): any {
       ],
       grades: [
         {
-          ...base(repositoryGradeId, 'grade:repository:contracts', '2026-08-01T00:05:00Z', [build2Id]),
+          ...base(repositoryGradeId, 'grade:repository:unit_tests', '2026-08-01T00:05:00Z', [build2Id]),
           kind: 'grade',
           head: finalHead,
-          signal: { source: 'repository-grader', name: 'contracts' },
+          signal: { source: 'repository-grader', name: 'unit_tests' },
           status: 'passed',
           detailsDigest: digest,
         },
@@ -281,6 +285,116 @@ function compiled() {
 }
 
 describe('release receipt evidence v2', () => {
+  it('validates gate names according to their source namespace', () => {
+    const basePolicy = {
+      authority: 'human-ready-allowed' as const,
+      requiredReviewPerspectives: ['security', 'codeQuality'] as const,
+      minimumHeadEpochs: 1,
+    };
+    expect(ReleasePolicyContract.safeParse({
+      ...basePolicy,
+      requiredGateSignals: [{ source: 'repository-grader', name: 'contracts' }],
+    }).success).toBe(false);
+    expect(ReleasePolicyContract.safeParse({
+      ...basePolicy,
+      requiredGateSignals: [{ source: 'repository-grader', name: 'unit_tests' }],
+    }).success).toBe(true);
+    expect(ReleasePolicyContract.safeParse({
+      ...basePolicy,
+      requiredGateSignals: [{ source: 'github-check', name: 'ci/custom' }],
+    }).success).toBe(true);
+
+    const invalidCanonicalGrade = {
+      ...evidence().receipts.grades[0],
+      signal: { source: 'repository-grader', name: 'contracts' },
+    };
+    expect(ReleaseGradeReceiptContract.safeParse(
+      invalidCanonicalGrade,
+    ).success).toBe(false);
+    expect(HistoricalReleaseGradeReceiptContract.safeParse(
+      invalidCanonicalGrade,
+    ).success).toBe(true);
+  });
+
+  it('keeps historical v3 grade aliases decode-only while canonical writers stay strict', () => {
+    const persistedV3 = evidence();
+    const historicalGrade = {
+      ...persistedV3.receipts.grades[0],
+      receiptId: historicalGradeId,
+      receiptKey: 'grade:repository:lint',
+      recordedAt: '2026-08-01T00:05:05Z',
+      signal: { source: 'repository-grader', name: 'lint' },
+    };
+    persistedV3.receipts.grades.push(historicalGrade);
+
+    expect(ReleaseGradeReceiptContract.safeParse(historicalGrade).success).toBe(false);
+    expect(HistoricalReleaseGradeReceiptContract.safeParse(historicalGrade).success)
+      .toBe(true);
+    expect(PersistedLiveReleaseReceiptEvidenceContract.safeParse(persistedV3).success)
+      .toBe(true);
+    expect(compiled()(persistedV3)).toBe(true);
+    expect(liveReleaseReceiptSemanticErrors(persistedV3)).toEqual([]);
+  });
+
+  it('rejects duplicate policy requirements on writes while preserving historical reads', () => {
+    const canonical = {
+      authority: 'human-ready-allowed' as const,
+      requiredGateSignals: [
+        { source: 'repository-grader' as const, name: 'unit_tests' as const },
+        { source: 'repository-grader' as const, name: 'unit_tests' as const },
+      ],
+      requiredReviewPerspectives: ['security' as const, 'codeQuality' as const],
+      minimumHeadEpochs: 1,
+    };
+    expect(ReleasePolicyContract.safeParse(canonical).success).toBe(false);
+
+    const historical = {
+      ...canonical,
+      requiredGateSignals: [
+        { source: 'repository-grader' as const, name: 'contracts' },
+        { source: 'repository-grader' as const, name: 'contracts' },
+      ],
+    };
+    expect(HistoricalReleasePolicyContract.safeParse(historical).success).toBe(true);
+
+    expect(ReleasePolicyContract.safeParse({
+      ...canonical,
+      requiredGateSignals: canonical.requiredGateSignals.slice(0, 1),
+      requiredReviewPerspectives: ['security', 'security'],
+    }).success).toBe(false);
+    expect(HistoricalReleasePolicyContract.safeParse({
+      ...historical,
+      requiredGateSignals: historical.requiredGateSignals.slice(0, 1),
+      requiredReviewPerspectives: ['security', 'security'],
+    }).success).toBe(true);
+
+    expect(ReleasePolicyContract.safeParse({
+      ...canonical,
+      requiredGateSignals: [
+        { source: 'repository-grader', name: 'unit_tests' },
+        { source: 'github-check', name: 'unit_tests' },
+      ],
+    }).success).toBe(true);
+    expect(HistoricalReleasePolicyContract.safeParse({
+      ...historical,
+      requiredGateSignals: [
+        { source: 'repository-grader', name: 'contracts' },
+        { source: 'github-check', name: 'contracts' },
+      ],
+    }).success).toBe(true);
+
+    const persisted = evidence();
+    persisted.policy.requiredGateSignals = [
+      { source: 'repository-grader', name: 'unit_tests' },
+      { source: 'repository-grader', name: 'unit_tests' },
+    ];
+    persisted.policy.requiredReviewPerspectives = ['security', 'security'];
+    expect(PersistedLiveReleaseReceiptEvidenceContract.safeParse(persisted).success)
+      .toBe(true);
+    expect(compiled()(persisted)).toBe(true);
+    expect(liveReleaseReceiptSemanticErrors(persisted)).toEqual([]);
+  });
+
   it('accepts only review perspectives the production panel can emit', () => {
     expect(ReleasePolicyContract.safeParse(evidence().policy).success).toBe(true);
     const unsupported = evidence();
@@ -297,7 +411,7 @@ describe('release receipt evidence v2', () => {
     value.receipts.merge.producer = {
       jobId: '90000000-0000-4000-8000-000000000002',
     };
-    expect(LiveReleaseReceiptEvidenceV2Contract.parse(value)).toEqual(value);
+    expect(PersistedLiveReleaseReceiptEvidenceContract.parse(value)).toEqual(value);
     const validate = compiled();
     expect(validate(value), JSON.stringify(validate.errors)).toBe(true);
     expect(liveReleaseReceiptSemanticErrors(value)).toEqual([]);
@@ -329,8 +443,10 @@ describe('release receipt evidence v2', () => {
       schemaVersion: '2.0' as const,
       receipts: legacyReceipts,
     };
+    legacy.policy.requiredGateSignals[0].name = 'contracts';
+    legacy.receipts.grades[0].signal.name = 'contracts';
 
-    expect(LiveReleaseReceiptEvidenceV2Contract.parse(legacy)).toEqual(legacy);
+    expect(PersistedLiveReleaseReceiptEvidenceContract.parse(legacy)).toEqual(legacy);
     const validate = compiled();
     expect(validate(legacy), JSON.stringify(validate.errors)).toBe(true);
     expect(liveReleaseReceiptSemanticErrors(legacy)).toEqual([]);
@@ -385,7 +501,10 @@ describe('release receipt evidence v2', () => {
 
   it('keeps repository graders and GitHub checks as distinct gate sources', () => {
     const value = evidence();
-    value.receipts.grades[1].signal.source = 'repository-grader';
+    value.receipts.grades[1].signal = {
+      source: 'repository-grader',
+      name: 'unit_tests',
+    };
     expect(liveReleaseReceiptSemanticErrors(value)).toContain(
       'final head is missing required gate signal github-check:contracts',
     );
@@ -443,12 +562,13 @@ describe('release receipt evidence v2', () => {
     expect(liveReleaseReceiptSemanticErrors(value).length).toBeGreaterThan(0);
   });
 
-  it('requires distinct perspectives and the final head to be the latest epoch', () => {
+  it('keeps writer uniqueness while requiring the final head to be the latest epoch', () => {
     const duplicate = evidence();
     duplicate.policy.requiredReviewPerspectives = ['security', 'security'];
-    expect(liveReleaseReceiptSemanticErrors(duplicate)).toContain(
-      'policy.requiredReviewPerspectives must be unique',
-    );
+    expect(ReleasePolicyContract.safeParse(duplicate.policy).success).toBe(false);
+    expect(PersistedLiveReleaseReceiptEvidenceContract.safeParse(duplicate).success)
+      .toBe(true);
+    expect(liveReleaseReceiptSemanticErrors(duplicate)).toEqual([]);
 
     const staleFinal = evidence();
     staleFinal.receipts.reviews[0].verdict = 'approved';
@@ -466,7 +586,7 @@ describe('release receipt evidence v2', () => {
   it('rejects an unknown model instead of inventing a concrete name', () => {
     const value = evidence();
     value.receipts.runtime[0].invocations[0].model = null;
-    expect(LiveReleaseReceiptEvidenceV2Contract.safeParse(value).success).toBe(false);
+    expect(PersistedLiveReleaseReceiptEvidenceContract.safeParse(value).success).toBe(false);
     expect(compiled()(value)).toBe(false);
   });
 
@@ -503,7 +623,10 @@ describe('release receipt evidence v2', () => {
   });
 
   it('authorizes pre-merge state without requiring a completed merge receipt', () => {
-    const value = LiveReleaseReceiptEvidenceV2Contract.parse(evidence());
+    const value = PersistedLiveReleaseReceiptEvidenceContract.parse(evidence());
+    if (value.schemaVersion !== '3.0') {
+      throw new Error('fixture must decode as canonical release evidence v3');
+    }
     const receipts = [
       value.receipts.authority,
       value.receipts.requirementsAuthority!,

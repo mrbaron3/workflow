@@ -22,7 +22,6 @@ func browserTestAPI(store APIStore) *API {
 		ControlToken:    "control-token",
 		WebhookSecret:   "webhook-secret",
 		StaleAfter:      time.Minute,
-		Mode:            ModeMonitorOnly,
 		CanonicalOrigin: "http://127.0.0.1:8080",
 		BootstrapToken:  "one-time-bootstrap-token-with-enough-entropy",
 		SessionTTL:      time.Hour,

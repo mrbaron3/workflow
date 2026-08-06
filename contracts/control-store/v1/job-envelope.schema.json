@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/mrbaron3/workflow/contracts/control-store/v1/job-envelope.schema.json",
-  "title": "AgentOps control-store job envelope v1",
+  "$id": "https://github.com/mrbaron3/servo/contracts/control-store/v1/job-envelope.schema.json",
+  "title": "Servo control-store job envelope v1",
   "type": "object",
   "additionalProperties": false,
   "required": [

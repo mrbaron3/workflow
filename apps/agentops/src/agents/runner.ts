@@ -9,12 +9,12 @@
  */
 
 import type { HarnessConfig } from '../config.js';
-import type { GeneratorAgent } from '../domain/schema.js';
+import type { AgentProvider } from '../domain/schema.js';
 import type { BuildArtifact, GenerateInput } from '../domain/artifact.js';
 import { MockAgentRunner } from './mock.js';
 
 export interface AgentRunner {
-  readonly agent: GeneratorAgent;
+  readonly agent: AgentProvider;
   /** Produce a build artifact for the given issue contract (and optional repair brief). */
   generate(input: GenerateInput): Promise<BuildArtifact>;
 }

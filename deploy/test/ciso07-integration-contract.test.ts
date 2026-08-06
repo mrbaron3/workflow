@@ -30,7 +30,7 @@ describe('CISO-07 integrated release source contracts', () => {
       }
       if (current) stages.get(current)!.push(line);
     }
-    for (const stage of ['control', 'runner', 'triage-runner', 'github-broker']) {
+    for (const stage of ['control', 'runner', 'triage', 'github-broker']) {
       const body = stages.get(stage);
       expect(body, `stage ${stage} is missing`).toBeDefined();
       expect(
@@ -45,7 +45,7 @@ describe('CISO-07 integrated release source contracts', () => {
   // spawn — the holder's home tab dies, the last session closes, the server exits, and
   // the next new-window fails with "no server running". DF-006's first live claim burned
   // all three attempts exactly this way, so the runner user must keep a real shell.
-  // triage-runner deliberately ships no tmux, so nologin stays correct there.
+  // triage deliberately ships no tmux, so nologin stays correct there.
   it('gives the runner user a real login shell for tmux sessions', () => {
     const containerfile = read('deploy/Containerfile');
     const stages = new Map<string, string[]>();
@@ -76,7 +76,7 @@ describe('CISO-07 integrated release source contracts', () => {
     }
     expect(containerfile).toContain(' AS control');
     expect(containerfile).toContain(' AS runner');
-    expect(containerfile).toContain(' AS triage-runner');
+    expect(containerfile).toContain(' AS triage');
     expect(containerfile).toContain(' AS github-broker');
     expect(containerfile).toContain(' AS postgres');
     expect(containerfile).toContain('git=1:2.47.3-0+deb13u1');
@@ -122,15 +122,18 @@ describe('CISO-07 integrated release source contracts', () => {
       }));
 
     const manager = read('apps/control-plane/cmd/agentopsctl/manager.go');
-    for (const target of [
-      'postgres',
-      'control',
-      'github-broker',
-      'triage-runner',
-      'runner',
+    for (const [image, target] of [
+      ['PostgresImage', 'postgres'],
+      ['ControlImage', 'control'],
+      ['GitHubBrokerImage', 'github-broker'],
+      ['TriageImage', 'triage'],
+      ['RunnerImage', 'runner'],
     ]) {
-      expect(manager).toMatch(new RegExp(`BuildImage\\([\\s\\S]*?"${target}"`));
+      expect(manager).toMatch(new RegExp(
+        `BuildImage\\(\\s*ctx,\\s*manager\\.config\\.${image},\\s*"${target}",`,
+      ));
     }
+    expect(manager).not.toContain('"triage-runner"');
   });
 
   it('vendors the direct Node contract checker dependencies into the runner root', () => {

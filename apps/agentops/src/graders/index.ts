@@ -13,19 +13,23 @@
  */
 
 import type { BuildArtifact } from '../domain/artifact.js';
-import type {
-  AcceptanceCriterion,
-  Finding,
-  GateResult,
-  IssueContract,
-  Scores,
-  Severity,
-  Verdict,
+import {
+  type AcceptanceCriterion,
+  type Finding,
+  type GateResult,
+  type IssueContract,
+  type Scores,
+  type Severity,
+  type Verdict,
 } from '../domain/schema.js';
 import type { HarnessConfig } from '../config.js';
+import {
+  HARD_GATE_SIGNAL_NAMES,
+  type HardGateSignalName,
+} from './gate-names.js';
 
 export interface GradeResult {
-  hardGates: Record<string, GateResult>;
+  hardGates: Partial<Record<HardGateSignalName, GateResult>>;
   findings: Finding[];
   scores: Scores;
   overall: number;
@@ -36,15 +40,7 @@ export interface GradeResult {
 const SEVERITY_WEIGHT: Record<Severity, number> = { blocker: 3, major: 2, minor: 1 };
 
 /** Blocking global gates (playwright is handled via per-criterion findings). */
-const BLOCKING_GATES = [
-  'build',
-  'typecheck',
-  'unit_tests',
-  'api_tests',
-  'grader_profile',
-  'secrets_scan',
-  'scope_check',
-] as const;
+const BLOCKING_GATES = HARD_GATE_SIGNAL_NAMES.filter((gate) => gate !== 'playwright');
 
 function acFinding(ac: AcceptanceCriterion): Finding {
   return {
@@ -115,7 +111,7 @@ export function gradeBuild(
   const playwright: GateResult =
     pwAcs.length === 0 ? 'skip' : pwAcs.every((a) => artifact.satisfied[a.id]) ? 'pass' : 'fail';
 
-  const hardGates: Record<string, GateResult> = {
+  const hardGates: Record<HardGateSignalName, GateResult> = {
     build: artifact.buildPasses ? 'pass' : 'fail',
     typecheck: artifact.typecheckPasses ? 'pass' : 'fail',
     unit_tests: artifact.unitTestsPass ? 'pass' : 'fail',
@@ -172,7 +168,9 @@ export function gradeBuild(
  * hard-gate-before-score). Playwright is excluded here: it is handled per-criterion,
  * not as a pre-panel gate. Reuses the single BLOCKING_GATES list — no duplication.
  */
-export function hasBlockingGateFailure(hardGates: Record<string, GateResult>): boolean {
+export function hasBlockingGateFailure(
+  hardGates: Partial<Record<HardGateSignalName, GateResult>>,
+): boolean {
   return BLOCKING_GATES.some((g) => hardGates[g] === 'fail');
 }
 

@@ -48,6 +48,12 @@
     const recoverability = outcome.recoverability ? ` / 復旧: ${outcome.recoverability}` : '';
     return `${outcome.outcome}${outcome.reason ? ` (${outcome.reason})` : ''}${recoverability}`;
   };
+  const deliveryRecoveryReason = (reason) => ({
+    monitor_only: 'MONITOR_ONLY: 監視は継続していますが実行キューは停止中です。実行を再開するには agentopsctl start --mode ACTIVE --build を実行してください。',
+    lifecycle_monitor_only: 'MONITOR_ONLY: 監視は継続していますが実行キューは停止中です。実行を再開するには agentopsctl start --mode ACTIVE --build を実行してください。',
+    lifecycle_draining: 'DRAINING: 既存処理の排出中のため新規実行を開始しません。agentopsctl status で active-leases=0 / in-flight-attempts=0 を確認してください。排出完了後も DRAINING は維持されます。ACTIVE へ復旧するには agentopsctl start --mode ACTIVE --build を実行してください。',
+    lifecycle_off: 'OFF: 監視と実行を停止しています。agentopsctl start --mode MONITOR_ONLY --build または agentopsctl start --mode ACTIVE --build を実行してください。',
+  }[reason] || reason || '—');
   const showDialogError = (id, error) => {
     const summary = byId(id);
     const structured = outcomeText(error.body);
@@ -334,7 +340,12 @@
   }
   function card(item) {
     const r = item.registration;
-    const components = ['issue_monitor', 'pr_monitor', 'forwarder', 'execution', 'queue']
+    const componentNames = ['issue_monitor', 'pr_monitor'];
+    if (Object.prototype.hasOwnProperty.call(item.components, 'forwarder')) {
+      componentNames.push('forwarder');
+    }
+    componentNames.push('execution', 'queue');
+    const components = componentNames
       .map((name) => component(name, item.components[name] || {
         desired: false, actual: 'unknown', freshness: 'unknown', recoveryState: 'unknown',
       })).join('');
@@ -358,14 +369,14 @@
       <details class="details">
         <summary>配送・ジョブ詳細</summary>
         <div class="details-grid">
-          <span>Issue poll<br><strong>${formatTime(item.lastPoll?.issue)}</strong></span>
-          <span>PR poll<br><strong>${formatTime(item.lastPoll?.pull_request)}</strong></span>
+          <span>Issue cursor advanced<br><strong>${formatTime(item.lastPoll?.issue)}</strong></span>
+          <span>PR cursor advanced<br><strong>${formatTime(item.lastPoll?.pull_request)}</strong></span>
           <span>Last delivery<br><strong>${formatTime(item.lastDelivery)}</strong></span>
           <span>Queue depth<br><strong>${Number(item.queueDepth || 0)}</strong></span>
           <span>Active job<br><strong>${escapeHTML(item.activeJobId || '—')} / ${escapeHTML(item.activeJobState || '—')} / version ${escapeHTML(item.activeJobRegistrationVersion || '—')}</strong></span>
           <span>Last error<br><strong>${escapeHTML(item.lastJobFailure?.lastError || '—')}</strong></span>
           <span>Gate SLA<br><strong>${Number(r.configuration?.gateTimeoutSeconds?.default || 3600)} seconds default</strong></span>
-          <ul class="delivery-list" aria-label="最近の配送失敗">${deliveries || '<li>配送失敗はありません</li>'}</ul>
+          <ul class="delivery-list" aria-label="最近の失敗・無視配送">${deliveries || '<li>失敗・無視配送はありません</li>'}</ul>
         </div>
       </details>
     </article>`;
@@ -418,7 +429,9 @@
       byId('load-more').hidden = !state.nextPageToken;
       byId('load-more').disabled = false;
       render();
-      if (announce) live(`${state.items.length} 件の Registration を取得しました`);
+      if (announce) {
+        live(`Operating Mode ${page.mode}、${state.items.length} 件の Registration を取得しました`);
+      }
       return page;
     } catch (error) {
       if (generation !== state.requestGeneration) throw error;
@@ -629,7 +642,7 @@
         <dt>State</dt><dd>${escapeHTML(delivery.status)}</dd>
         <dt>Attempts</dt><dd>${Number(delivery.routeAttempts || 0)}</dd>
         <dt>Registration</dt><dd>${escapeHTML(delivery.registrationId || '—')} / version ${escapeHTML(delivery.registrationVersion || '—')}</dd>
-        <dt>Last error</dt><dd>${escapeHTML(delivery.lastError || delivery.ignoredReason || '—')}</dd>
+        <dt>Last error / recovery</dt><dd>${escapeHTML(delivery.lastError || deliveryRecoveryReason(delivery.ignoredReason))}</dd>
         <dt>Updated</dt><dd>${formatTime(delivery.updatedAt)}</dd>`;
       const retryable = delivery.status === 'failed'
         && delivery.registrationId === item.registration.id
@@ -638,7 +651,7 @@
         && item.registration.executionEnabled;
       byId('retry-delivery').disabled = !retryable;
       byId('delivery-dialog').showModal();
-      (retryable ? byId('retry-delivery') : byId('delivery-dialog').querySelector('[data-delivery-close]')).focus();
+      (retryable ? byId('retry-delivery') : byId('delivery-title')).focus();
     } catch (error) {
       handleOperationalFailure(error);
       live(`Delivery 取得失敗: ${error.message}`);

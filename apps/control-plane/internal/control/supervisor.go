@@ -11,6 +11,7 @@ import (
 
 type SupervisionStore interface {
 	ListRegistrations(context.Context) ([]Registration, error)
+	ManagesComponent(string) bool
 	UpsertActualState(
 		context.Context,
 		Registration,
@@ -109,6 +110,9 @@ func (supervisor *Supervisor) Reconcile(ctx context.Context) error {
 			ComponentPRMonitor,
 			ComponentForwarder,
 		} {
+			if !supervisor.store.ManagesComponent(component) {
+				continue
+			}
 			if registration.Desired(component) {
 				key := componentKey(registration.ID, component)
 				desired[key] = runningComponent{

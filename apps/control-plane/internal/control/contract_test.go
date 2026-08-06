@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -55,7 +56,7 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 		{
 			name: "pull request",
 			item: WorkItem{
-				Repository: "owner/repo", Kind: "pull_request", Number: 38,
+				Repository: "owner/repo", Kind: WorkItemKindPullRequest, Number: 38,
 			},
 			kind: "pull_request",
 			mode: "pr_reconciliation",
@@ -63,9 +64,10 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 		{
 			name: "repository event",
 			item: WorkItem{
-				Repository: "owner/repo",
-				Kind:       "push",
-				Identity:   strings.Repeat("a", 40),
+				Repository:  "owner/repo",
+				Kind:        WorkItemKindRepositoryHead,
+				SourceEvent: "push",
+				Identity:    strings.Repeat("a", 40),
 				Payload: map[string]any{
 					"ref":              "refs/heads/main",
 					"after":            strings.Repeat("a", 40),
@@ -106,6 +108,96 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 	}
 }
 
+func TestWorkItemCanonicalKindsPreserveLegacyIdempotencyKeys(t *testing.T) {
+	updatedAt := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		legacy    WorkItem
+		canonical WorkItem
+	}{
+		{
+			name: "pull request",
+			legacy: WorkItem{
+				Repository: "owner/repo", Kind: "pull_request", Number: 42,
+				UpdatedAt: updatedAt,
+			},
+			canonical: WorkItem{
+				Repository: "owner/repo", Kind: WorkItemKindPullRequest, Number: 42,
+				UpdatedAt: updatedAt,
+			},
+		},
+		{
+			name: "push",
+			legacy: WorkItem{
+				Repository: "owner/repo", Kind: "push", Identity: "head-identity",
+				UpdatedAt: updatedAt,
+			},
+			canonical: WorkItem{
+				Repository: "owner/repo", Kind: WorkItemKindRepositoryHead,
+				SourceEvent: "push", Identity: "head-identity", UpdatedAt: updatedAt,
+			},
+		},
+		{
+			name: "check run",
+			legacy: WorkItem{
+				Repository: "owner/repo", Kind: "check_run", Identity: "123",
+				UpdatedAt: updatedAt,
+			},
+			canonical: WorkItem{
+				Repository: "owner/repo", Kind: WorkItemKindRepositoryHead,
+				SourceEvent: "check_run", Identity: "123", UpdatedAt: updatedAt,
+			},
+		},
+		{
+			name: "check suite",
+			legacy: WorkItem{
+				Repository: "owner/repo", Kind: "check_suite", Identity: "456",
+				UpdatedAt: updatedAt,
+			},
+			canonical: WorkItem{
+				Repository: "owner/repo", Kind: WorkItemKindRepositoryHead,
+				SourceEvent: "check_suite", Identity: "456", UpdatedAt: updatedAt,
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.legacy.IdempotencyKey() != test.canonical.IdempotencyKey() {
+				t.Fatalf(
+					"legacy key %q != canonical key %q",
+					test.legacy.IdempotencyKey(),
+					test.canonical.IdempotencyKey(),
+				)
+			}
+			legacyType, legacyPayload, legacyErr := test.legacy.QueuedJob("webhook")
+			canonicalType, canonicalPayload, canonicalErr :=
+				test.canonical.QueuedJob("webhook")
+			if legacyErr != nil || canonicalErr != nil ||
+				legacyType != canonicalType ||
+				!jsonEqual(legacyPayload, canonicalPayload) {
+				t.Fatalf(
+					"legacy job = %s %#v %v; canonical job = %s %#v %v",
+					legacyType,
+					legacyPayload,
+					legacyErr,
+					canonicalType,
+					canonicalPayload,
+					canonicalErr,
+				)
+			}
+		})
+	}
+}
+
+func TestComponentProjectionDoesNotReintroduceLegacyAliases(t *testing.T) {
+	projection := reflect.TypeOf(ComponentProjection{})
+	for _, name := range []string{"State", "LastHealthyAt", "Stale"} {
+		if _, present := projection.FieldByName(name); present {
+			t.Fatalf("ComponentProjection reintroduced legacy field %s", name)
+		}
+	}
+}
+
 func TestIssueWorkProjectsOnlyVersionedTriagePayload(t *testing.T) {
 	item := WorkItem{
 		Repository: "owner/repo",
@@ -143,6 +235,11 @@ func TestWorkItemRunnerPayloadFailsClosed(t *testing.T) {
 		{Repository: "Owner/repo", Kind: "issue", Number: 1},
 		{Repository: "owner/repo", Kind: "issue", Number: 0},
 		{Repository: "owner/repo", Kind: "pull_request", Number: 0},
+		{Repository: "owner/repo", Kind: WorkItemKindRepositoryHead},
+		{
+			Repository: "owner/repo", Kind: WorkItemKindRepositoryHead,
+			SourceEvent: "workflow_dispatch",
+		},
 		{Repository: "owner/repo", Kind: "workflow_dispatch"},
 	} {
 		if _, err := item.RunnerPayload("poll"); err == nil {

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
 
 type fakeRouterStore struct {
@@ -16,6 +18,18 @@ type fakeRouterStore struct {
 	bound        int
 	bindError    error
 	enqueueError error
+	currentMode  lifecycle.Mode
+	lifecycleErr error
+}
+
+func (store *fakeRouterStore) LifecycleMode(context.Context) (lifecycle.Mode, error) {
+	if store.lifecycleErr != nil {
+		return "", store.lifecycleErr
+	}
+	if store.currentMode == "" {
+		return lifecycle.ModeActive, nil
+	}
+	return store.currentMode, nil
 }
 
 func (store *fakeRouterStore) ClaimWebhook(context.Context, time.Duration) (*ClaimedDelivery, error) {
@@ -133,13 +147,18 @@ func TestWebhookAndPollUseSameJobIdentity(t *testing.T) {
 		t.Fatal("workItemFromWebhook() rejected valid PR")
 	}
 	poll := WorkItem{
-		Repository: "owner/repo", Kind: "pull_request", Number: 42,
+		Repository: "owner/repo", Kind: WorkItemKindPullRequest, Number: 42,
 		UpdatedAt: time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC),
 	}
 	if webhook.IdempotencyKey() != poll.IdempotencyKey() {
 		t.Fatalf("webhook key %q != poll key %q", webhook.IdempotencyKey(), poll.IdempotencyKey())
 	}
-	if !jsonEqual(webhook.CanonicalPayload(), poll.CanonicalPayload()) {
+	if webhook.Kind != WorkItemKindPullRequest || webhook.SourceEvent != "pull_request" {
+		t.Fatalf("webhook item did not separate entity and event: %#v", webhook)
+	}
+	webhookPayload := webhook.CanonicalPayload()
+	delete(webhookPayload, "sourceEvent")
+	if !jsonEqual(webhookPayload, poll.CanonicalPayload()) {
 		t.Fatal("webhook and poll payloads did not converge")
 	}
 }
@@ -152,7 +171,7 @@ func TestRouterLeavesFailedWorkForDurableRetry(t *testing.T) {
 		},
 		enqueueError: errors.New("single-flight busy"),
 	}
-	router := Router{Store: store, Mode: ModeActive}
+	router := Router{Store: store}
 	claim := ClaimedDelivery{
 		ID: "delivery-1", DeliveryKey: "delivery-key", Token: "token",
 		Repository: "owner/repo", Event: "issues",
@@ -163,12 +182,75 @@ func TestRouterLeavesFailedWorkForDurableRetry(t *testing.T) {
 	}
 }
 
-func TestRouterMonitorOnlyNeverCreatesExecutableWork(t *testing.T) {
+func TestRouterPreservesInactiveLifecycleModeWithoutExecutableWork(t *testing.T) {
+	tests := []struct {
+		mode   lifecycle.Mode
+		reason string
+	}{
+		{mode: lifecycle.ModeMonitorOnly, reason: "lifecycle_monitor_only"},
+		{mode: lifecycle.ModeDraining, reason: "lifecycle_draining"},
+		{mode: lifecycle.ModeOff, reason: "lifecycle_off"},
+	}
+	for _, test := range tests {
+		t.Run(string(test.mode), func(t *testing.T) {
+			store := &fakeRouterStore{registration: Registration{
+				ID: "registration-1", Repository: "owner/repo", Enabled: true,
+				IssueMonitorEnabled: true, ExecutionEnabled: true, Version: 1,
+			}, currentMode: test.mode}
+			router := Router{Store: store}
+			claim := ClaimedDelivery{
+				ID: "delivery-1", DeliveryKey: "delivery-key", Token: "token",
+				Repository: "owner/repo", Event: "issues",
+				Payload: issuePayload(1, "2026-07-25T00:00:00Z"),
+			}
+			if err := router.route(context.Background(), claim); err != nil {
+				t.Fatal(err)
+			}
+			if len(store.enqueued) != 0 ||
+				store.bound != 1 ||
+				len(store.finished) != 1 ||
+				store.finished[0] != "ignored:"+test.reason {
+				t.Fatalf(
+					"%s route enqueued=%#v finished=%#v",
+					test.mode,
+					store.enqueued,
+					store.finished,
+				)
+			}
+		})
+	}
+}
+
+func TestRouterFailsClosedWhenLifecycleAuthorityIsUnavailable(t *testing.T) {
 	store := &fakeRouterStore{registration: Registration{
 		ID: "registration-1", Repository: "owner/repo", Enabled: true,
 		IssueMonitorEnabled: true, ExecutionEnabled: true, Version: 1,
-	}}
-	router := Router{Store: store, Mode: ModeMonitorOnly}
+	}, lifecycleErr: ErrStoreUnavailable}
+	router := Router{Store: store}
+	claim := ClaimedDelivery{
+		ID: "delivery-1", DeliveryKey: "delivery-key", Token: "token",
+		Repository: "owner/repo", Event: "issues",
+		Payload: issuePayload(1, "2026-07-25T00:00:00Z"),
+	}
+	if err := router.route(context.Background(), claim); !errors.Is(err, ErrStoreUnavailable) {
+		t.Fatalf("route() error = %v, want store unavailable", err)
+	}
+	if store.bound != 1 || len(store.enqueued) != 0 || len(store.finished) != 0 {
+		t.Fatalf(
+			"unavailable lifecycle bound=%d enqueued=%#v finished=%#v",
+			store.bound,
+			store.enqueued,
+			store.finished,
+		)
+	}
+}
+
+func TestRouterUsesAuthoritativeActiveLifecycle(t *testing.T) {
+	store := &fakeRouterStore{registration: Registration{
+		ID: "registration-1", Repository: "owner/repo", Enabled: true,
+		IssueMonitorEnabled: true, ExecutionEnabled: true, Version: 1,
+	}, currentMode: lifecycle.ModeActive}
+	router := Router{Store: store}
 	claim := ClaimedDelivery{
 		ID: "delivery-1", DeliveryKey: "delivery-key", Token: "token",
 		Repository: "owner/repo", Event: "issues",
@@ -177,11 +259,9 @@ func TestRouterMonitorOnlyNeverCreatesExecutableWork(t *testing.T) {
 	if err := router.route(context.Background(), claim); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.enqueued) != 0 ||
-		store.bound != 1 ||
-		len(store.finished) != 1 ||
-		store.finished[0] != "ignored:monitor_only" {
-		t.Fatalf("monitor-only route enqueued=%#v finished=%#v", store.enqueued, store.finished)
+	if len(store.enqueued) != 1 || len(store.finished) != 1 ||
+		store.finished[0] != "processed:" {
+		t.Fatalf("ACTIVE lifecycle enqueued=%#v finished=%#v", store.enqueued, store.finished)
 	}
 }
 
@@ -190,7 +270,7 @@ func TestCheckAndPushEventsBecomeDurableTypedWork(t *testing.T) {
 		ID: "registration-1", Repository: "owner/repo", Enabled: true,
 		PRMonitorEnabled: true, ExecutionEnabled: true, Version: 1,
 	}}
-	router := Router{Store: store, Mode: ModeActive}
+	router := Router{Store: store}
 	action := "completed"
 	events := []ClaimedDelivery{
 		{
@@ -222,9 +302,11 @@ func TestCheckAndPushEventsBecomeDurableTypedWork(t *testing.T) {
 		}
 	}
 	if len(store.enqueued) != 2 ||
-		store.enqueued[0].Kind != "check_run" ||
+		store.enqueued[0].Kind != WorkItemKindRepositoryHead ||
+		store.enqueued[0].SourceEvent != "check_run" ||
 		store.enqueued[0].Identity != "123" ||
-		store.enqueued[1].Kind != "push" ||
+		store.enqueued[1].Kind != WorkItemKindRepositoryHead ||
+		store.enqueued[1].SourceEvent != "push" ||
 		store.enqueued[1].Identity !=
 			"15:refs/heads/main:"+strings.Repeat("a", 40) {
 		t.Fatalf("typed work = %#v", store.enqueued)

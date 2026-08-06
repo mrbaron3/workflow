@@ -2,6 +2,7 @@ package control
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
 
 const (
@@ -59,8 +62,10 @@ type Registration struct {
 	IssueMonitorEnabled bool   `json:"issueMonitorEnabled"`
 	PRMonitorEnabled    bool   `json:"prMonitorEnabled"`
 	ExecutionEnabled    bool   `json:"executionEnabled"`
-	// Configuration is a strict desired-state contract; arbitrary commands,
-	// credentials, paths, and environment remain unrepresentable.
+	// Configuration is persisted desired state. Readers preserve bounded
+	// historical grader aliases; create and patch writers enforce the current
+	// canonical contract, so arbitrary commands, credentials, paths, and
+	// environment remain unrepresentable.
 	Configuration json.RawMessage `json:"configuration"`
 	Version       int64           `json:"version"`
 	CreatedAt     time.Time       `json:"createdAt"`
@@ -144,6 +149,34 @@ func (patch RegistrationPatch) Validate() error {
 	return nil
 }
 
+//go:generate npm --prefix ../../../agentops run sync-hard-gates
+
+//go:embed hard_gate_signal_names.generated.json
+var supportedRepositoryGraderSignalsJSON []byte
+
+var supportedRepositoryGraderSignals = mustLoadRepositoryGraderSignals()
+
+func mustLoadRepositoryGraderSignals() map[string]struct{} {
+	var names []string
+	if err := json.Unmarshal(supportedRepositoryGraderSignalsJSON, &names); err != nil {
+		panic(fmt.Sprintf("decode generated hard gate signal names: %v", err))
+	}
+	result := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			panic("generated hard gate signal name must not be empty")
+		}
+		if _, duplicate := result[name]; duplicate {
+			panic(fmt.Sprintf("duplicate generated hard gate signal name %q", name))
+		}
+		result[name] = struct{}{}
+	}
+	if len(result) == 0 {
+		panic("generated hard gate signal namespace must not be empty")
+	}
+	return result
+}
+
 func validJSONObject(raw json.RawMessage) bool {
 	supportedReviewPerspectives := map[string]struct{}{
 		"functionality": {},
@@ -174,6 +207,16 @@ func validJSONObject(raw json.RawMessage) bool {
 	if decoder.Decode(&value) != nil || decoder.Decode(&struct{}{}) != io.EOF {
 		return false
 	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return false
+	}
+	for _, key := range []string{"releaseEvidence", "gateTimeoutSeconds"} {
+		member, present := members[key]
+		if present && bytes.Equal(bytes.TrimSpace(member), []byte("null")) {
+			return false
+		}
+	}
 	allowedGateKeys := map[string]struct{}{
 		"default": {}, "planning": {}, "design": {},
 		"repository-graders": {}, "review": {}, "merge": {},
@@ -203,6 +246,11 @@ func validJSONObject(raw json.RawMessage) bool {
 		if (signal.Source != "repository-grader" && signal.Source != "github-check") ||
 			len(signal.Name) < 1 || len(signal.Name) > 128 {
 			return false
+		}
+		if signal.Source == "repository-grader" {
+			if _, supported := supportedRepositoryGraderSignals[signal.Name]; !supported {
+				return false
+			}
 		}
 		key := signal.Source + ":" + signal.Name
 		if _, duplicate := signals[key]; duplicate {
@@ -241,27 +289,6 @@ func (registration Registration) Desired(component string) bool {
 	}
 }
 
-type OperatingMode string
-
-const (
-	ModeMonitorOnly OperatingMode = "MONITOR_ONLY"
-	ModeActive      OperatingMode = "ACTIVE"
-	ModeDraining    OperatingMode = "DRAINING"
-)
-
-func ParseOperatingMode(raw string) (OperatingMode, error) {
-	switch OperatingMode(strings.ToUpper(strings.TrimSpace(raw))) {
-	case ModeMonitorOnly:
-		return ModeMonitorOnly, nil
-	case ModeActive:
-		return ModeActive, nil
-	case ModeDraining:
-		return ModeDraining, nil
-	default:
-		return "", fmt.Errorf("operating mode must be MONITOR_ONLY, ACTIVE, or DRAINING")
-	}
-}
-
 type ActualState struct {
 	Component           string     `json:"component"`
 	RegistrationVersion int64      `json:"registrationVersion"`
@@ -281,17 +308,11 @@ type ComponentProjection struct {
 	LastGoodAt    *time.Time `json:"lastGoodAt"`
 	LastError     *string    `json:"lastError"`
 	RecoveryState string     `json:"recoveryState"`
-
-	// Legacy in-process aliases keep the existing control-plane tests and
-	// supervisor helpers source compatible without weakening the API schema.
-	State         string     `json:"-"`
-	LastHealthyAt *time.Time `json:"-"`
-	Stale         bool       `json:"-"`
 }
 
 type RegistrationProjection struct {
 	Registration                 Registration                   `json:"registration"`
-	Mode                         OperatingMode                  `json:"mode"`
+	Mode                         lifecycle.Mode                 `json:"mode"`
 	Components                   map[string]ComponentProjection `json:"components"`
 	LastPoll                     map[string]*time.Time          `json:"lastPoll"`
 	LastDelivery                 *time.Time                     `json:"lastDelivery"`
@@ -442,20 +463,62 @@ type DeliveryFailureProjection struct {
 }
 
 type WorkItem struct {
-	Repository string         `json:"repository"`
-	Kind       string         `json:"kind"`
-	Number     int64          `json:"number"`
-	Identity   string         `json:"identity,omitempty"`
-	UpdatedAt  time.Time      `json:"updatedAt"`
-	Payload    map[string]any `json:"-"`
+	Repository  string         `json:"repository"`
+	Kind        string         `json:"kind"`
+	SourceEvent string         `json:"sourceEvent,omitempty"`
+	Number      int64          `json:"number"`
+	Identity    string         `json:"identity,omitempty"`
+	UpdatedAt   time.Time      `json:"updatedAt"`
+	Payload     map[string]any `json:"-"`
+}
+
+const (
+	WorkItemKindIssue          = "issue"
+	WorkItemKindPullRequest    = "pull-request"
+	WorkItemKindRepositoryHead = "repository-head"
+)
+
+func canonicalWorkItemKind(kind string) (string, bool) {
+	switch kind {
+	case WorkItemKindIssue:
+		return WorkItemKindIssue, true
+	case WorkItemKindPullRequest, "pull_request":
+		return WorkItemKindPullRequest, true
+	case WorkItemKindRepositoryHead, "push", "check_run", "check_suite":
+		return WorkItemKindRepositoryHead, true
+	default:
+		return "", false
+	}
+}
+
+// idempotencyKind preserves keys emitted before WorkItem separated entity kind
+// from the GitHub source event. New producers use canonical kinds, while old
+// values remain accepted so a replay cannot create a duplicate durable job.
+func (item WorkItem) idempotencyKind() string {
+	switch item.Kind {
+	case "pull_request", "push", "check_run", "check_suite":
+		return item.Kind
+	case WorkItemKindPullRequest:
+		return "pull_request"
+	case WorkItemKindRepositoryHead:
+		switch item.SourceEvent {
+		case "push", "check_run", "check_suite":
+			return item.SourceEvent
+		default:
+			return WorkItemKindRepositoryHead
+		}
+	default:
+		return item.Kind
+	}
 }
 
 func (item WorkItem) IdempotencyKey() string {
+	kind := item.idempotencyKind()
 	if item.Identity != "" {
 		key := fmt.Sprintf(
 			"github:%s:%s:%s",
 			strings.ToLower(item.Repository),
-			item.Kind,
+			kind,
 			item.Identity,
 		)
 		if !item.UpdatedAt.IsZero() {
@@ -466,19 +529,26 @@ func (item WorkItem) IdempotencyKey() string {
 	return fmt.Sprintf(
 		"github:%s:%s:%d:%s",
 		strings.ToLower(item.Repository),
-		item.Kind,
+		kind,
 		item.Number,
 		item.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	)
 }
 
 func (item WorkItem) CanonicalPayload() map[string]any {
-	payload := make(map[string]any, len(item.Payload)+5)
+	payload := make(map[string]any, len(item.Payload)+6)
 	for key, value := range item.Payload {
 		payload[key] = value
 	}
 	payload["repository"] = strings.ToLower(item.Repository)
-	payload["entityKind"] = item.Kind
+	kind, supported := canonicalWorkItemKind(item.Kind)
+	if !supported {
+		kind = item.Kind
+	}
+	payload["entityKind"] = kind
+	if item.SourceEvent != "" {
+		payload["sourceEvent"] = item.SourceEvent
+	}
 	if item.Number > 0 {
 		payload["number"] = item.Number
 	}
@@ -502,7 +572,8 @@ func (item WorkItem) TriagePayload() (map[string]any, error) {
 		!safeRepositoryIdentity(canonicalRepository) {
 		return nil, fmt.Errorf("triage work repository must be canonical owner/name")
 	}
-	if item.Kind != "issue" || item.Number < 1 || item.UpdatedAt.IsZero() {
+	kind, supported := canonicalWorkItemKind(item.Kind)
+	if !supported || kind != WorkItemKindIssue || item.Number < 1 || item.UpdatedAt.IsZero() {
 		return nil, fmt.Errorf("triage work requires a positive Issue observation")
 	}
 	return map[string]any{
@@ -522,7 +593,11 @@ func (item WorkItem) TriagePayload() (map[string]any, error) {
 // Every Issue is triaged first. Only the triage runner's explicit ready-label
 // promotion can create an agentops.runner development_turn for that Issue.
 func (item WorkItem) QueuedJob(sourceKind string) (string, map[string]any, error) {
-	if item.Kind == "issue" {
+	kind, supported := canonicalWorkItemKind(item.Kind)
+	if !supported {
+		return "", nil, fmt.Errorf("unsupported work item kind %q", item.Kind)
+	}
+	if kind == WorkItemKindIssue {
 		payload, err := item.TriagePayload()
 		return "agentops.triage", payload, err
 	}
@@ -542,8 +617,12 @@ func (item WorkItem) RunnerPayload(sourceKind string) (map[string]any, error) {
 	}
 	event := map[string]any{}
 	mode := "pr_reconciliation"
-	switch item.Kind {
-	case "issue":
+	kind, supported := canonicalWorkItemKind(item.Kind)
+	if !supported {
+		return nil, fmt.Errorf("unsupported executable work item kind %q", item.Kind)
+	}
+	switch kind {
+	case WorkItemKindIssue:
 		if item.Number < 1 {
 			return nil, fmt.Errorf("runner issue number must be positive")
 		}
@@ -551,20 +630,27 @@ func (item WorkItem) RunnerPayload(sourceKind string) (map[string]any, error) {
 		event = map[string]any{
 			"kind": "issue", "number": item.Number, "action": "recovery",
 		}
-	case "pull_request":
+	case WorkItemKindPullRequest:
 		if item.Number < 1 {
 			return nil, fmt.Errorf("runner pull request number must be positive")
 		}
 		event = map[string]any{
 			"kind": "pull_request", "number": item.Number, "action": "recovery",
 		}
-	case "push", "check_run", "check_suite":
+	case WorkItemKindRepositoryHead:
 		identity := item.Identity
 		if identity == "" {
 			identity = item.IdempotencyKey()
 		}
+		trigger := item.SourceEvent
+		if trigger == "" && item.Kind != WorkItemKindRepositoryHead {
+			trigger = item.Kind
+		}
+		if trigger != "push" && trigger != "check_run" && trigger != "check_suite" {
+			return nil, fmt.Errorf("repository-head work requires a supported source event")
+		}
 		event = map[string]any{
-			"kind": "repository", "trigger": item.Kind, "identity": identity,
+			"kind": "repository", "trigger": trigger, "identity": identity,
 		}
 		if ref, ok := item.Payload["ref"].(string); ok && ref != "" {
 			event["ref"] = ref
@@ -572,8 +658,6 @@ func (item WorkItem) RunnerPayload(sourceKind string) (map[string]any, error) {
 		if after, ok := item.Payload["after"].(string); ok && after != "" {
 			event["after"] = after
 		}
-	default:
-		return nil, fmt.Errorf("unsupported executable work item kind %q", item.Kind)
 	}
 	_ = sourceKind // Source identity remains in the outer durable job envelope.
 	return map[string]any{

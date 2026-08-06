@@ -18,9 +18,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mrbaron3/servo/apps/control-plane/internal/lifecycle"
 )
 
 type MonitorStore interface {
+	ManagesComponent(string) bool
+	LifecycleMode(context.Context) (lifecycle.Mode, error)
 	MonitorCursor(context.Context, string, string) (map[string]any, error)
 	SaveMonitorCursor(context.Context, string, string, map[string]any, time.Time) error
 	EnqueueWork(context.Context, Registration, string, string, WorkItem) (string, bool, error)
@@ -64,18 +68,13 @@ type CommandFactory func(context.Context, string, ...string) Command
 type ProductionRunner struct {
 	Store          MonitorStore
 	Source         MonitorSource
-	Mode           OperatingMode
 	SupervisorID   string
 	PollInterval   time.Duration
 	TransientRetry time.Duration
 	ForwarderRetry time.Duration
 	HealthInterval time.Duration
-	// SignedWebhookIngressOnly disables the legacy CLI forwarder. The signed
-	// HTTP ingress has no active reachability probe here, so this runner must
-	// neither spawn `gh webhook forward` nor project forwarder health.
-	SignedWebhookIngressOnly bool
-	Command                  CommandFactory
-	Log                      *slog.Logger
+	Command        CommandFactory
+	Log            *slog.Logger
 }
 
 func (runner *ProductionRunner) Run(
@@ -153,7 +152,11 @@ func (runner *ProductionRunner) pollOnce(
 	if err != nil {
 		return err
 	}
-	if !registration.ExecutionEnabled || runner.Mode != ModeActive {
+	mode, err := runner.Store.LifecycleMode(ctx)
+	if err != nil {
+		return err
+	}
+	if !registration.ExecutionEnabled || mode != lifecycle.ModeActive {
 		// This cursor is the durable processing boundary, not merely a read
 		// watermark. Advancing it while execution is disabled or MONITOR_ONLY
 		// would permanently skip work observed before the next ACTIVE turn.
@@ -218,7 +221,7 @@ func (runner *ProductionRunner) runForwarder(
 	if len(events) == 0 {
 		return nil
 	}
-	if runner.SignedWebhookIngressOnly {
+	if !runner.Store.ManagesComponent(ComponentForwarder) {
 		<-ctx.Done()
 		return nil
 	}
@@ -539,9 +542,13 @@ func (source GitHubSource) Poll(
 			if !cursorTime.IsZero() && updatedAt.Before(cursorTime) {
 				continue
 			}
+			entityKind, supported := canonicalWorkItemKind(kind)
+			if !supported {
+				return nil, nil, time.Time{}, fmt.Errorf("unsupported monitor entity kind %q", kind)
+			}
 			items = append(items, WorkItem{
 				Repository: registration.Repository,
-				Kind:       kind,
+				Kind:       entityKind,
 				Number:     number,
 				UpdatedAt:  updatedAt,
 			})

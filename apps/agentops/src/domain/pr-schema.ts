@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GeneratorAgent, Verdict } from './agent-runtime.js';
+import { AgentProvider, Verdict } from './agent-runtime.js';
 
 /**
  * The human review gate's external projection, when it has one (ADR-0006 G1). The store is
@@ -41,7 +41,7 @@ const PRCommon = z.object({
   issueId: z.string(),
   branch: z.string(),
   baseBranch: z.string().default('main'),
-  generator: GeneratorAgent,
+  generator: AgentProvider,
   /**
    * `issue-pipeline` PRs are created by AgentOps from a Source Issue. `repository-discovery`
    * PRs already existed on GitHub and were imported by repository-wide reconciliation.
