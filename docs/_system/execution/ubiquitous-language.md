@@ -17,7 +17,7 @@
 | LANG-execution-007 | Worktree（隔離チェックアウト） | sample ごとの git worktree。セッションが実ファイルを編集する隔離空間。sentinel と grade はここに対して行う。 |
 | LANG-execution-008 | Sentinel（完了印） | セッション完了時に worktree へ書かれる印（`.agentops/done.json`）。orchestrator が polling で検知して grade へハンドオフする。tmux の生存は状態ではない。 |
 | LANG-execution-009 | Evaluator Panel（観点パネル） | 単一 Evaluator（`LANG-evaluation-005`）でなく、**観点ごとに独立した Evaluator セッション群**。各自 Verdict（`LANG-evaluation-007`）を出し、集約する。 |
-| LANG-execution-010 | Perspective（観点） | レビューの独立した lens。**7観点**＝functionality / codeQuality / testQuality / ux / accessibility（grader 5次元）＋ security ＋ type-design。 |
+| LANG-execution-010 | Perspective（観点） | レビューの独立したlens。**7観点**＝functionality / codeQuality / testQuality / ux / accessibility（grader 5次元）＋ security ＋ type-design。永続層のperspective namespaceはこの7値に`panel-escalation`（`LANG-execution-026`）を加えた8値で、lens集合とは別である。 |
 | LANG-execution-011 | Human Review Gate（人間審査ゲート） | legacy/store 手動経路と自動処理不能時の昇格先。GitHub PR-native 通常経路の merge 条件ではなく、通常判定は `LANG-execution-021` Revision Gate が担う。 |
 | LANG-execution-012 | Scoping Guard / ai-managed | 実装層が触ってよい issue の **opt-in 指定**。`assignedAgent` が担当 AI に設定された issue のみ。未指定／他人が作った issue は決して触らない（デフォルト非処理）。 |
 | LANG-execution-013 | Execution Backend | セッションを実行する基盤の pluggable な差し替え（自前 tmux／将来 Hermes）。evaluation の AgentRunner seam（`ARCH-evaluation-002`）の裏に位置する。 |
@@ -32,3 +32,5 @@
 | LANG-execution-022 | Blocking Review Finding | P0/P1、blocker、`request_changes`、missing evidence等、current revisionのmerge資格を単独で拒否する指摘。 |
 | LANG-execution-023 | Repository-discovered PR | Repository RegistrationからGitHub current snapshotをpollして取り込んだOpen PR。個別登録を持たず、外部PR番号で冪等化し、same-repository headだけを自動修正対象にする。 |
 | LANG-execution-024 | External Work Identity | GitHub Source Issue由来の1 work unit / sampleを、canonical repository・external Issue番号・intake key・planning work-unit key・release correlation・sample indexで識別する安定identity。job-local Storeの表示ID（`ISSUE-0001`等）は含めない。branch・worktree・session・PR body markerの同じ派生元にする。 |
+| LANG-execution-025 | Kanban Lane | Dashboardのrepository別Kanbanが表示する非永続の派生値。`LANG-control-store-035` Phase、`036` Progress State、job/lease/releaseのterminal factを決定論projectorで畳む。lane idの正本は`apps/control-plane/internal/control/store.go`の`kanbanLaneFor`、id→表示labelは`apps/control-plane/internal/control/dashboard/dashboard.js`の`KANBAN_LANES`。文書は表示labelを引用できるが、filter/APIはlane idを使う。 |
+| LANG-execution-026 | Panel Escalation | review lensではなく、required reviewerが再試行後も有効な出力を返せなかったというpanel機構自身のfailure marker。`panel-escalation`として永続化し、Verdictは常に`needs_human`。required Perspectiveの充足やrelease policyの7値には数えない。`apps/agentops/src/domain/development-review.ts`の8値`DevelopmentReviewPerspective`が保持し、`apps/agentops/src/domain/review-perspectives.ts`の7値`ReviewPerspective`とは別型である。 |

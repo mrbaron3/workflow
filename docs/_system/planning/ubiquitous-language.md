@@ -20,3 +20,4 @@
 | LANG-planning-012 | in-plan / descoped | feature は既定で in-plan。roadmap 源から外すと descoped へ反転する（**フラグ**であって削除ではない）ので、署名済みの証拠が残る。 |
 | LANG-planning-013 | 再取込（Re-plan） | （変更された）roadmap を取り込み直すこと。additive かつ冪等：既存ノードと署名済み spec は保全し、真に新規の feature だけ追加する。 |
 | LANG-planning-014 | トレース | 鎖「north-star/roadmap → epic → feature → spec → 署名された AC」を双方向に辿れること。評価・回帰・影響分析の母体。 |
+| LANG-planning-015 | Theme | Epicを横断して分類する文字列軸。独立nodeや受け入れ基準の所有者ではなく、`apps/agentops/src/domain/schema.ts`の`Epic.theme`が実体である。agent promptに残る`Initiative`はThemeを指すlegacy aliasに限り、別階層が実装済みだと解釈しない。 |

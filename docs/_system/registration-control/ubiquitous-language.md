@@ -12,9 +12,10 @@
 | LANG-registration-control-008 | Truth Recovery | notificationをhintとし、周期DB reconciliationでdesired/deliveryを再発見する回復経路。 |
 | LANG-registration-control-009 | Manual Retry Attempt | observed route-attemptに束縛され、idempotentかつ監査可能なoperator command。 |
 | LANG-registration-control-010 | Compatibility Oracle | PR #9由来のTypeScript registry/router/forwarder/poll behaviorを回帰比較する非永続model。 |
-| LANG-registration-control-011 | Operating Mode | `MONITOR_ONLY` または `ACTIVE` のread-only control-process authority。前者は観測を続けるがenqueue/lease/executionを許可しない。 |
+| LANG-registration-control-011 | Startup Mode | control processが起動時に`AGENTOPS_OPERATING_MODE`から読む`MONITOR_ONLY\|ACTIVE\|DRAINING`の観測値。運転状態の権威ではなく、正本はcontrol-storeのLifecycle Mode（`LANG-control-store-016`）。drain等で乖離する期間の表示・判定はLifecycle Modeへ従う。 |
 | LANG-registration-control-012 | Component Freshness | component自身のobservedAtと300/300/60/30/15秒budgetから決める`fresh\|stale\|unknown`。query成功時刻はlast-goodではない。 |
-| LANG-registration-control-013 | Last Good | 同componentが過去にauthoritativeに正常だったhistorical evidence。現在failureをhealthyに塗り替えない。 |
+| LANG-registration-control-013 | Last Good | 同componentが過去にauthoritativeに正常だったhistorical evidence。現在failureをhealthyに塗り替えない。component projectionの正典fieldは`Actual` / `LastGoodAt` / `Freshness`。現行Go内の`State` / `LastHealthyAt` / `Stale`はJSON非公開のlegacy aliasで、新規consumerや文書語彙に使わない。 |
 | LANG-registration-control-014 | Recovery State | `none\|scheduled\|in_progress\|blocked\|recovered\|unknown` の明示的な回復進行度。新しいauthoritative snapshot前にrecoveredとしない。 |
 | LANG-registration-control-015 | Browser Operator Session | exact loopback originから一回限りbootstrapで得るserver-side session。browserはHttpOnly cookieとmemory-only CSRF proofだけを持つ。 |
 | LANG-registration-control-016 | Command Outcome | idempotency identity、observed/current fence、`applied\|duplicate\|version_conflict\|rejected\|indeterminate`、recorded timeを持つdurable command結果。 |
+| LANG-registration-control-017 | Cursor Observed At | `LANG-control-store-033` Monitor Cursor Observationのread-only projection。次期API JSON keyは`cursorObservedAt`で、registration-control側では独自に前進させない。現行`lastPoll`は互換名でありpoll attemptを意味しない。 |

@@ -3,14 +3,14 @@
 - **ARCH-webhook-001 Ingress Port** — `receive(headers, body): DeliveryReceipt`。signature/loopback境界検証→schema parse→durable save→ACKの順を固定する（ADR-0010）。
 - **ARCH-webhook-002 Repository Router** — Envelopeの`repository.full_name`とeventをRegistrationへ照合し、Normalized GitHub Eventを0..N consumerへ配送する。
 - **ARCH-webhook-003 Reconciliation Scheduler** — Webhookとは独立した周期pollがGitHub current snapshotを取得し、同じNormalized Event/consumer seamへ不足workを供給する。repository registration単位で既存Open Issue/PRも探索し、item単位の事前登録を要求しない。
-- **ARCH-webhook-004 Local Forwarder Manager** — enabled registrationごとに`gh webhook forward --repo --events`を監督し、payloadは親processだけが読めるstdout pipeで受け取ってからdaemon内で署名して`/hook`へ渡す。secretやsigning endpointをchild argvへ公開しない。設定変更時に対象processだけを再構成する。coreはprocess形を知らない。
+- **ARCH-webhook-004 Legacy CLI Forwarder Manager（compatibility oracle限定）** — `LANG-webhook-008`として、enabled registrationごとに`gh webhook forward --repo --events`を監督し、payloadは親processだけが読めるstdout pipeで受け取る。secretやsigning endpointをchild argvへ公開しない。standard OCI production entry pointでは起動せず、signed ingressの到達性証明にも使わない。
 - **ARCH-webhook-005 Consumer Adapters** — `agentops`はIssue intake/PR revision loopをwakeし、`orca-worktree-sync`は既存同期engineへ型付きeventを渡す。adapterだけが各runtimeを知る。
-- **ARCH-webhook-006 Local Control UI** — loopback限定のHTTP UI/APIがRegistration、forwarder health、delivery履歴、failure replayを操作する。任意command入力は提供しない。
-- **ARCH-webhook-007 Go production control** — productionのIngress/Router/Reconciliation/Forwarder Managerは
+- **ARCH-webhook-006 Local Control UI** — loopback限定のHTTP UI/APIがRegistration、signed ingressの設定、delivery履歴、failure replayを操作する。Legacy CLI Forwarder healthはcompatibility modeで実processを起動した場合だけ表示し、deliveryがないことから到達性を捏造しない。任意command入力は提供しない。
+- **ARCH-webhook-007 Go production control** — productionの`LANG-webhook-007` Signed Webhook Ingress、Router、Reconciliationは
   PostgreSQL Registration駆動の`apps/control-plane/cmd/agentops-control/`が所有する。
   `apps/agentops/src/webhook/`の旧TypeScript daemonは非永続compatibility oracleであり、
-  production entry pointやdual-write pathではない（ADR-0014）。
+  `LANG-webhook-008` Legacy CLI Forwarderを含めproduction entry pointやdual-write pathではない（ADR-0014）。
 - **ARCH-webhook-008 Application boundary** — webhook delivery、routing outcome、jobはPostgreSQLを介する
   durable business coordinationである。Go production controlとTypeScript runnerを同じsource treeへ戻さず、
-  root `db/` / `contracts/`をPublished Languageとする。local forwarder process、credential broker HTTP、
+  root `db/` / `contracts/`をPublished Languageとする。legacy local forwarder process、credential broker HTTP、
   egress proxyは別runtime seamであり、deliveryの別SoTにしない（ADR-0021）。

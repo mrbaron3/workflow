@@ -610,8 +610,8 @@ func TestPRIntentSignedWebhookIngressNeverExecutesControlSideGH(t *testing.T) {
 		store.mu.Lock()
 		actualStates := store.actualStates
 		store.mu.Unlock()
-		if actualStates < 2 {
-			t.Fatalf("signed webhook ingress health updates = %d, want initial + heartbeat", actualStates)
+		if actualStates != 0 {
+			t.Fatalf("signed webhook ingress fabricated %d forwarder health updates", actualStates)
 		}
 	})
 }
