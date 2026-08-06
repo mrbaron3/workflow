@@ -9,7 +9,15 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/mrbaron3/servo/apps/control-plane/internal/control"
 )
+
+func TestStandardRuntimeTopologyExcludesLegacyForwarder(t *testing.T) {
+	if standardRuntimeTopology.ManagesComponent(control.ComponentForwarder) {
+		t.Fatal("standard signed-ingress topology still manages the legacy forwarder")
+	}
+}
 
 func TestLoopbackPublishProxyRequiresLoopbackBackendAndExactHost(t *testing.T) {
 	if _, err := loopbackPublishProxy(

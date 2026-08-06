@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { INTERVENTION_KINDS } from '../src/domain/schema.js';
 import {
   LiveReleaseReceiptEvidenceV2Contract,
+  ReleaseGradeReceiptContract,
   ReleasePolicyContract,
   liveReleaseReceiptSemanticErrors,
   releasePreMergeSemanticErrors,
@@ -300,12 +301,14 @@ describe('release receipt evidence v2', () => {
       requiredGateSignals: [{ source: 'github-check', name: 'ci/custom' }],
     }).success).toBe(true);
 
-    const invalidPublishedEvidence = evidence();
-    invalidPublishedEvidence.policy.requiredGateSignals[0].name = 'contracts';
-    invalidPublishedEvidence.receipts.grades[0].signal.name = 'contracts';
-    expect(LiveReleaseReceiptEvidenceV2Contract.safeParse(invalidPublishedEvidence).success)
+    const invalidGradeEvidence = evidence();
+    invalidGradeEvidence.receipts.grades[0].signal.name = 'contracts';
+    expect(ReleaseGradeReceiptContract.safeParse(
+      invalidGradeEvidence.receipts.grades[0],
+    ).success).toBe(false);
+    expect(LiveReleaseReceiptEvidenceV2Contract.safeParse(invalidGradeEvidence).success)
       .toBe(false);
-    expect(compiled()(invalidPublishedEvidence)).toBe(false);
+    expect(compiled()(invalidGradeEvidence)).toBe(false);
   });
 
   it('accepts only review perspectives the production panel can emit', () => {
@@ -356,6 +359,8 @@ describe('release receipt evidence v2', () => {
       schemaVersion: '2.0' as const,
       receipts: legacyReceipts,
     };
+    legacy.policy.requiredGateSignals[0].name = 'contracts';
+    legacy.receipts.grades[0].signal.name = 'contracts';
 
     expect(LiveReleaseReceiptEvidenceV2Contract.parse(legacy)).toEqual(legacy);
     const validate = compiled();
@@ -412,7 +417,10 @@ describe('release receipt evidence v2', () => {
 
   it('keeps repository graders and GitHub checks as distinct gate sources', () => {
     const value = evidence();
-    value.receipts.grades[1].signal.source = 'repository-grader';
+    value.receipts.grades[1].signal = {
+      source: 'repository-grader',
+      name: 'unit_tests',
+    };
     expect(liveReleaseReceiptSemanticErrors(value)).toContain(
       'final head is missing required gate signal github-check:contracts',
     );
@@ -531,6 +539,9 @@ describe('release receipt evidence v2', () => {
 
   it('authorizes pre-merge state without requiring a completed merge receipt', () => {
     const value = LiveReleaseReceiptEvidenceV2Contract.parse(evidence());
+    if (value.schemaVersion !== '3.0') {
+      throw new Error('fixture must decode as canonical release evidence v3');
+    }
     const receipts = [
       value.receipts.authority,
       value.receipts.requirementsAuthority!,

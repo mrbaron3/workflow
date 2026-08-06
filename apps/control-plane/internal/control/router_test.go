@@ -204,6 +204,30 @@ func TestRouterMonitorOnlyNeverCreatesExecutableWork(t *testing.T) {
 	}
 }
 
+func TestRouterFailsClosedWhenLifecycleAuthorityIsUnavailable(t *testing.T) {
+	store := &fakeRouterStore{registration: Registration{
+		ID: "registration-1", Repository: "owner/repo", Enabled: true,
+		IssueMonitorEnabled: true, ExecutionEnabled: true, Version: 1,
+	}, lifecycleErr: ErrStoreUnavailable}
+	router := Router{Store: store}
+	claim := ClaimedDelivery{
+		ID: "delivery-1", DeliveryKey: "delivery-key", Token: "token",
+		Repository: "owner/repo", Event: "issues",
+		Payload: issuePayload(1, "2026-07-25T00:00:00Z"),
+	}
+	if err := router.route(context.Background(), claim); !errors.Is(err, ErrStoreUnavailable) {
+		t.Fatalf("route() error = %v, want store unavailable", err)
+	}
+	if store.bound != 1 || len(store.enqueued) != 0 || len(store.finished) != 0 {
+		t.Fatalf(
+			"unavailable lifecycle bound=%d enqueued=%#v finished=%#v",
+			store.bound,
+			store.enqueued,
+			store.finished,
+		)
+	}
+}
+
 func TestRouterUsesAuthoritativeActiveLifecycle(t *testing.T) {
 	store := &fakeRouterStore{registration: Registration{
 		ID: "registration-1", Repository: "owner/repo", Enabled: true,

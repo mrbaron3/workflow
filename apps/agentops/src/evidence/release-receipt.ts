@@ -14,6 +14,29 @@ const Timestamp = z.string().datetime({ offset: true });
 const ReceiptKey = z.string().min(1).max(256).regex(/^[A-Za-z0-9][A-Za-z0-9._:/-]*$/);
 const BoundedName = z.string().min(1).max(128);
 
+const GitHubCheckSignalContract = z.object({
+  source: z.literal('github-check'),
+  name: BoundedName,
+}).strict();
+const RepositoryGraderSignalContract = z.object({
+  source: z.literal('repository-grader'),
+  name: z.enum(HARD_GATE_SIGNAL_NAMES),
+}).strict();
+const HistoricalRepositoryGraderSignalContract = z.object({
+  source: z.literal('repository-grader'),
+  name: BoundedName,
+}).strict();
+
+/** Canonical source-discriminated signal contract used by every new writer. */
+export const ReleaseGateSignalContract = z.discriminatedUnion('source', [
+  RepositoryGraderSignalContract,
+  GitHubCheckSignalContract,
+]);
+const HistoricalReleaseGateSignalContract = z.discriminatedUnion('source', [
+  HistoricalRepositoryGraderSignalContract,
+  GitHubCheckSignalContract,
+]);
+
 const ReceiptBase = z.object({
   receiptId: Uuid,
   receiptKey: ReceiptKey,
@@ -86,14 +109,23 @@ export type ReleaseBuildReceipt = z.infer<typeof ReleaseBuildReceiptContract>;
 export const ReleaseGradeReceiptContract = ReceiptBase.extend({
   kind: z.literal('grade'),
   head: Head,
-  signal: z.object({
-    source: z.enum(['repository-grader', 'github-check']),
-    name: BoundedName,
-  }).strict(),
+  signal: ReleaseGateSignalContract,
   status: z.literal('passed'),
   detailsDigest: Digest,
 }).strict();
 export type ReleaseGradeReceipt = z.infer<typeof ReleaseGradeReceiptContract>;
+
+/** Decode-only grade receipt for immutable v2 evidence written before Stage 2. */
+export const HistoricalReleaseGradeReceiptContract = ReceiptBase.extend({
+  kind: z.literal('grade'),
+  head: Head,
+  signal: HistoricalReleaseGateSignalContract,
+  status: z.literal('passed'),
+  detailsDigest: Digest,
+}).strict();
+export type HistoricalReleaseGradeReceipt = z.infer<
+  typeof HistoricalReleaseGradeReceiptContract
+>;
 
 export const ReleaseReviewReceiptContract = ReceiptBase.extend({
   kind: z.literal('review'),
@@ -205,24 +237,46 @@ export const DurableReleaseReceiptContract = z.union([
 ]);
 export type DurableReleaseReceipt = z.infer<typeof DurableReleaseReceiptContract>;
 
+/** Decode-only union for immutable historical rows; new writes use the contract above. */
+export const HistoricalDurableReleaseReceiptContract = z.union([
+  HumanReadyAuthority,
+  AiTriageAuthority,
+  ReleaseRequirementsAuthorityReceiptContract,
+  ReleaseBuildReceiptContract,
+  HistoricalReleaseGradeReceiptContract,
+  ReleaseReviewReceiptContract,
+  ReleaseFindingResolutionReceiptContract,
+  ReleaseRuntimeReceiptContract,
+  ReleaseMergeIntentReceiptContract,
+  ReleaseMergeReceiptContract,
+  ReleaseInterventionReceiptContract,
+]);
+export type HistoricalDurableReleaseReceipt = z.infer<
+  typeof HistoricalDurableReleaseReceiptContract
+>;
+
 export const ReleasePolicyContract = z.object({
   authority: z.enum(['human-ready-allowed', 'ai-triage-required']),
-  requiredGateSignals: z.array(z.discriminatedUnion('source', [
-    z.object({
-      source: z.literal('repository-grader'),
-      name: z.enum(HARD_GATE_SIGNAL_NAMES),
-    }).strict(),
-    z.object({
-      source: z.literal('github-check'),
-      name: BoundedName,
-    }).strict(),
-  ])).min(1).max(64),
+  requiredGateSignals: z.array(ReleaseGateSignalContract).min(1).max(64),
   requiredReviewPerspectives: z.array(z.enum(REVIEW_PERSPECTIVE_KEYS))
     .min(2)
     .max(REVIEW_PERSPECTIVE_KEYS.length),
   minimumHeadEpochs: z.number().int().positive().max(32),
 }).strict();
 export type ReleasePolicy = z.infer<typeof ReleasePolicyContract>;
+
+/** Decode-only v2 policy; repository-grader names were historically open strings. */
+export const HistoricalReleasePolicyContract = z.object({
+  authority: z.enum(['human-ready-allowed', 'ai-triage-required']),
+  requiredGateSignals: z.array(HistoricalReleaseGateSignalContract).min(1).max(64),
+  requiredReviewPerspectives: z.array(z.enum(REVIEW_PERSPECTIVE_KEYS))
+    .min(2)
+    .max(REVIEW_PERSPECTIVE_KEYS.length),
+  minimumHeadEpochs: z.number().int().positive().max(32),
+}).strict();
+export type HistoricalReleasePolicy = z.infer<
+  typeof HistoricalReleasePolicyContract
+>;
 
 export const ReleaseArtifactContract = z.object({
   kind: BoundedName,
@@ -235,9 +289,7 @@ export const ReleaseArtifactContract = z.object({
 }).strict();
 export type ReleaseArtifact = z.infer<typeof ReleaseArtifactContract>;
 
-export const LiveReleaseReceiptEvidenceV2Contract = z.object({
-  schemaVersion: z.enum(['2.0', '3.0']),
-  release: z.object({
+const ReleaseEvidenceRecord = z.object({
     id: Uuid,
     repository: Repository,
     issueNumber: z.number().int().positive().max(2_147_483_647),
@@ -246,43 +298,59 @@ export const LiveReleaseReceiptEvidenceV2Contract = z.object({
     mergeSha: Head,
     createdAt: Timestamp,
     completedAt: Timestamp,
-  }).strict(),
-  policy: ReleasePolicyContract,
-  receipts: z.object({
+}).strict();
+const ReleaseReceiptCollection = {
     authority: ReleaseAuthorityReceiptContract,
-    requirementsAuthority: ReleaseRequirementsAuthorityReceiptContract.optional(),
     runtime: z.array(ReleaseRuntimeReceiptContract).min(1).max(256),
     builds: z.array(ReleaseBuildReceiptContract).min(1).max(256),
-    grades: z.array(ReleaseGradeReceiptContract).min(1).max(256),
     reviews: z.array(ReleaseReviewReceiptContract).min(2).max(512),
     findingResolutions: z.array(ReleaseFindingResolutionReceiptContract).max(1_024),
     mergeIntent: ReleaseMergeIntentReceiptContract,
     merge: ReleaseMergeReceiptContract,
     interventions: z.array(ReleaseInterventionReceiptContract).max(256),
-  }).strict(),
+};
+const ReleaseEvidenceEnvelope = {
+  release: ReleaseEvidenceRecord,
   artifacts: z.array(ReleaseArtifactContract).min(1).max(256),
   result: z.enum(['passed', 'passed-with-interventions']),
-}).strict().superRefine((value, context) => {
-  if (value.schemaVersion === '3.0' && !value.receipts.requirementsAuthority) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['receipts', 'requirementsAuthority'],
-      message: 'requirementsAuthority is required for release evidence v3',
-    });
-  }
-  if (value.schemaVersion === '2.0' && value.receipts.requirementsAuthority) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['receipts', 'requirementsAuthority'],
-      message: 'requirementsAuthority requires release evidence v3',
-    });
-  }
-});
+};
+
+const HistoricalLiveReleaseReceiptEvidenceV2Contract = z.object({
+  ...ReleaseEvidenceEnvelope,
+  schemaVersion: z.literal('2.0'),
+  policy: HistoricalReleasePolicyContract,
+  receipts: z.object({
+    ...ReleaseReceiptCollection,
+    requirementsAuthority: z.never().optional(),
+    grades: z.array(HistoricalReleaseGradeReceiptContract).min(1).max(256),
+  }).strict(),
+}).strict();
+
+const LiveReleaseReceiptEvidenceV3Contract = z.object({
+  ...ReleaseEvidenceEnvelope,
+  schemaVersion: z.literal('3.0'),
+  policy: ReleasePolicyContract,
+  receipts: z.object({
+    ...ReleaseReceiptCollection,
+    requirementsAuthority: ReleaseRequirementsAuthorityReceiptContract,
+    grades: z.array(ReleaseGradeReceiptContract).min(1).max(256),
+  }).strict(),
+}).strict();
+
+export const LiveReleaseReceiptEvidenceV2Contract = z.discriminatedUnion(
+  'schemaVersion',
+  [
+    HistoricalLiveReleaseReceiptEvidenceV2Contract,
+    LiveReleaseReceiptEvidenceV3Contract,
+  ],
+);
 export type LiveReleaseReceiptEvidenceV2 = z.infer<
   typeof LiveReleaseReceiptEvidenceV2Contract
 >;
 
-function receiptList(evidence: LiveReleaseReceiptEvidenceV2): DurableReleaseReceipt[] {
+function receiptList(
+  evidence: LiveReleaseReceiptEvidenceV2,
+): HistoricalDurableReleaseReceipt[] {
   return [
     evidence.receipts.authority,
     ...(evidence.receipts.requirementsAuthority
@@ -328,7 +396,7 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
   const errors: string[] = [];
   const release = evidence.release;
   const all = receiptList(evidence);
-  const byId = new Map<string, DurableReleaseReceipt>();
+  const byId = new Map<string, HistoricalDurableReleaseReceipt>();
 
   for (const receipt of all) {
     if (byId.has(receipt.receiptId)) {
@@ -457,7 +525,7 @@ export function liveReleaseReceiptSemanticErrors(input: unknown): string[] {
   if (new Set(requiredSignals).size !== requiredSignals.length) {
     errors.push('policy.requiredGateSignals must be unique by source and name');
   }
-  const finalGrades = new Map<string, ReleaseGradeReceipt>();
+  const finalGrades = new Map<string, HistoricalReleaseGradeReceipt>();
   for (const grade of evidence.receipts.grades) {
     const build = buildsByHead.get(grade.head);
     if (!build || !grade.causes.includes(build.receiptId)) {

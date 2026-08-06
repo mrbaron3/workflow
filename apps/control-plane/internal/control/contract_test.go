@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -63,10 +64,10 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 		{
 			name: "repository event",
 			item: WorkItem{
-				Repository: "owner/repo",
-				Kind:       WorkItemKindRepositoryHead,
+				Repository:  "owner/repo",
+				Kind:        WorkItemKindRepositoryHead,
 				SourceEvent: "push",
-				Identity:   strings.Repeat("a", 40),
+				Identity:    strings.Repeat("a", 40),
 				Payload: map[string]any{
 					"ref":              "refs/heads/main",
 					"after":            strings.Repeat("a", 40),
@@ -110,10 +111,12 @@ func TestWorkItemProjectsOnlyVersionedRunnerPayload(t *testing.T) {
 func TestWorkItemCanonicalKindsPreserveLegacyIdempotencyKeys(t *testing.T) {
 	updatedAt := time.Date(2026, 8, 6, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
+		name      string
 		legacy    WorkItem
 		canonical WorkItem
 	}{
 		{
+			name: "pull request",
 			legacy: WorkItem{
 				Repository: "owner/repo", Kind: "pull_request", Number: 42,
 				UpdatedAt: updatedAt,
@@ -124,6 +127,7 @@ func TestWorkItemCanonicalKindsPreserveLegacyIdempotencyKeys(t *testing.T) {
 			},
 		},
 		{
+			name: "push",
 			legacy: WorkItem{
 				Repository: "owner/repo", Kind: "push", Identity: "head-identity",
 				UpdatedAt: updatedAt,
@@ -133,14 +137,63 @@ func TestWorkItemCanonicalKindsPreserveLegacyIdempotencyKeys(t *testing.T) {
 				SourceEvent: "push", Identity: "head-identity", UpdatedAt: updatedAt,
 			},
 		},
+		{
+			name: "check run",
+			legacy: WorkItem{
+				Repository: "owner/repo", Kind: "check_run", Identity: "123",
+				UpdatedAt: updatedAt,
+			},
+			canonical: WorkItem{
+				Repository: "owner/repo", Kind: WorkItemKindRepositoryHead,
+				SourceEvent: "check_run", Identity: "123", UpdatedAt: updatedAt,
+			},
+		},
+		{
+			name: "check suite",
+			legacy: WorkItem{
+				Repository: "owner/repo", Kind: "check_suite", Identity: "456",
+				UpdatedAt: updatedAt,
+			},
+			canonical: WorkItem{
+				Repository: "owner/repo", Kind: WorkItemKindRepositoryHead,
+				SourceEvent: "check_suite", Identity: "456", UpdatedAt: updatedAt,
+			},
+		},
 	}
 	for _, test := range tests {
-		if test.legacy.IdempotencyKey() != test.canonical.IdempotencyKey() {
-			t.Fatalf(
-				"legacy key %q != canonical key %q",
-				test.legacy.IdempotencyKey(),
-				test.canonical.IdempotencyKey(),
-			)
+		t.Run(test.name, func(t *testing.T) {
+			if test.legacy.IdempotencyKey() != test.canonical.IdempotencyKey() {
+				t.Fatalf(
+					"legacy key %q != canonical key %q",
+					test.legacy.IdempotencyKey(),
+					test.canonical.IdempotencyKey(),
+				)
+			}
+			legacyType, legacyPayload, legacyErr := test.legacy.QueuedJob("webhook")
+			canonicalType, canonicalPayload, canonicalErr :=
+				test.canonical.QueuedJob("webhook")
+			if legacyErr != nil || canonicalErr != nil ||
+				legacyType != canonicalType ||
+				!jsonEqual(legacyPayload, canonicalPayload) {
+				t.Fatalf(
+					"legacy job = %s %#v %v; canonical job = %s %#v %v",
+					legacyType,
+					legacyPayload,
+					legacyErr,
+					canonicalType,
+					canonicalPayload,
+					canonicalErr,
+				)
+			}
+		})
+	}
+}
+
+func TestComponentProjectionDoesNotReintroduceLegacyAliases(t *testing.T) {
+	projection := reflect.TypeOf(ComponentProjection{})
+	for _, name := range []string{"State", "LastHealthyAt", "Stale"} {
+		if _, present := projection.FieldByName(name); present {
+			t.Fatalf("ComponentProjection reintroduced legacy field %s", name)
 		}
 	}
 }

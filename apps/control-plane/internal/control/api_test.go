@@ -551,6 +551,34 @@ func TestEmptyStatusProjectionStillUsesAuthoritativeLifecycleMode(t *testing.T) 
 	}
 }
 
+func TestEmptyStatusProjectionFailsClosedWhenLifecycleAuthorityIsUnavailable(t *testing.T) {
+	store := &fakeAPIStore{lifecycleError: ErrStoreUnavailable}
+	request := httptest.NewRequest(http.MethodGet, "/v1/registrations", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusServiceUnavailable ||
+		response.Header().Get("Retry-After") != "2" ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"code":"control_store_unavailable"`)) {
+		t.Fatalf("unavailable lifecycle authority = %d headers=%v body=%s", response.Code, response.Header(), response.Body)
+	}
+}
+
+func TestStatusProjectionRejectsAnItemWithoutLifecycleMode(t *testing.T) {
+	store := &fakeAPIStore{projections: []RegistrationProjection{{
+		Registration: Registration{Repository: "owner/missing-mode"},
+		Components:   map[string]ComponentProjection{},
+	}}}
+	request := httptest.NewRequest(http.MethodGet, "/v1/registrations", nil)
+	request.Header.Set("Authorization", "Bearer control-token")
+	response := httptest.NewRecorder()
+	testAPI(store).Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusBadRequest ||
+		!bytes.Contains(response.Body.Bytes(), []byte("status projection omitted lifecycle mode")) {
+		t.Fatalf("missing lifecycle mode = %d: %s", response.Code, response.Body)
+	}
+}
+
 func TestOffModeProjectsExecutionAndQueueAsBlockedByMode(t *testing.T) {
 	store := &fakeAPIStore{projections: []RegistrationProjection{{
 		Registration: Registration{

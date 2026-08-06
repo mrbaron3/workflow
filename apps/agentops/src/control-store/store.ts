@@ -19,6 +19,8 @@ import {
 } from '../domain/development-review.js';
 import {
   DurableReleaseReceiptContract,
+  HistoricalDurableReleaseReceiptContract,
+  HistoricalReleasePolicyContract,
   ReleaseArtifactContract,
   ReleaseMergeIntentReceiptContract,
   ReleaseMergeReceiptContract,
@@ -26,6 +28,8 @@ import {
   assertLiveReleaseReceiptEvidence,
   releasePreMergeSemanticErrors,
   type DurableReleaseReceipt,
+  type HistoricalDurableReleaseReceipt,
+  type HistoricalReleasePolicy,
   type LiveReleaseReceiptEvidenceV2,
   type ReleaseArtifact,
   type ReleaseMergeIntentReceipt,
@@ -188,14 +192,13 @@ function job(row: JobRow): JobEnvelope {
   };
 }
 
-function releaseRecord(row: ReleaseRow): ReleaseRecord {
+function releaseRecordBase(row: ReleaseRow): Omit<ReleaseRecord, 'policy'> {
   return {
     id: row.id,
     registrationId: row.registration_id,
     releaseKey: row.release_key,
     repository: row.repository,
     issueNumber: Number(row.issue_number),
-    policy: ReleasePolicyContract.parse(row.policy),
     status: row.status,
     pullRequest: row.pull_request_number === null
       ? null
@@ -206,6 +209,22 @@ function releaseRecord(row: ReleaseRow): ReleaseRecord {
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     completedAt: row.completed_at?.toISOString() ?? null,
+  };
+}
+
+function releaseRecord(row: ReleaseRow): ReleaseRecord {
+  return {
+    ...releaseRecordBase(row),
+    policy: ReleasePolicyContract.parse(row.policy),
+  };
+}
+
+function historicalReleaseRecord(
+  row: ReleaseRow,
+): Omit<ReleaseRecord, 'policy'> & { policy: HistoricalReleasePolicy } {
+  return {
+    ...releaseRecordBase(row),
+    policy: HistoricalReleasePolicyContract.parse(row.policy),
   };
 }
 
@@ -337,6 +356,28 @@ async function releaseReceipts(
   );
   return result.rows.map((row) => ({
     receipt: DurableReleaseReceiptContract.parse(row.payload),
+    publishedAt: row.published_at?.toISOString() ?? null,
+  }));
+}
+
+async function historicalReleaseReceipts(
+  client: PoolClient,
+  releaseId: string,
+  includeMergeIntent: boolean,
+): Promise<Array<{
+  receipt: HistoricalDurableReleaseReceipt;
+  publishedAt: string | null;
+}>> {
+  const result = await client.query<ReleaseReceiptRow>(
+    `SELECT payload, published_at
+       FROM agentops_control.release_receipt_outbox
+      WHERE release_id = $1
+        AND ($2::boolean OR kind <> 'merge-intent')
+      ORDER BY recorded_at, receipt_id`,
+    [releaseId, includeMergeIntent],
+  );
+  return result.rows.map((row) => ({
+    receipt: HistoricalDurableReleaseReceiptContract.parse(row.payload),
     publishedAt: row.published_at?.toISOString() ?? null,
   }));
 }
@@ -834,7 +875,7 @@ export class PostgresControlStore {
       );
       const row = selected.rows[0];
       if (!row) throw new Error(`no such release: ${parsedId}`);
-      const release = releaseRecord(row);
+      const release = historicalReleaseRecord(row);
       if (
         release.status !== 'merged'
         || release.pullRequest === null
@@ -844,9 +885,9 @@ export class PostgresControlStore {
       ) {
         throw new ReleaseCertificationError('only a completed release can be exported');
       }
-      const entries = await releaseReceipts(client, release.id, true);
+      const entries = await historicalReleaseReceipts(client, release.id, true);
       const receipts = entries.map((entry) => entry.receipt);
-      const one = <K extends DurableReleaseReceipt['kind']>(kind: K) =>
+      const one = <K extends HistoricalDurableReleaseReceipt['kind']>(kind: K) =>
         receipts.find((receipt) => receipt.kind === kind);
       const requirementsAuthority = one('requirements-authority');
       const artifacts = await client.query<ReleaseArtifactRow>(
